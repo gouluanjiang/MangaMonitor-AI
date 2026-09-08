@@ -100,6 +100,80 @@ fn allowed_action(task: &Task) -> bool {
     matches!(task.action.as_str(), "download" | "upgrade")
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InventoryAuthority {
+    Unsatisfied,
+    Satisfied,
+    Ambiguous,
+}
+
+/// Suppress only the V1 add-only download crash window: once authoritative
+/// inventory already owns the exact work and the exact source mapping belongs
+/// uniquely to that work, an old still-pending approval must no longer emit a
+/// second download command. Upgrade/replacement semantics remain frozen and are
+/// intentionally not inferred here.
+fn inventory_authority(state: &State, task: &Task) -> InventoryAuthority {
+    if task.action != "download" {
+        return InventoryAuthority::Unsatisfied;
+    }
+    let Some((source, source_work_id)) = task.target.source_key.split_once(':') else {
+        return InventoryAuthority::Unsatisfied;
+    };
+    if !matches!(source, "jm" | "pica") || source_work_id.trim().is_empty() {
+        // Preserve the executor's existing source-key validation path. This
+        // guard is only about already-owned exact source mappings.
+        return InventoryAuthority::Unsatisfied;
+    }
+    let Some(works) = state.inventory.get("works").and_then(Value::as_array) else {
+        return InventoryAuthority::Ambiguous;
+    };
+
+    let mut target_work_seen = 0usize;
+    let mut source_mapping_owners = 0usize;
+    let mut target_owned = false;
+    let mut target_has_exact_mapping = false;
+
+    for work in works {
+        let Some(work_id) = work.get("work_id").and_then(Value::as_str) else {
+            return InventoryAuthority::Ambiguous;
+        };
+        let Some(source_mappings) = work.get("source_mappings").and_then(Value::as_object) else {
+            return InventoryAuthority::Ambiguous;
+        };
+        let Some(ids) = source_mappings.get(source).and_then(Value::as_array) else {
+            return InventoryAuthority::Ambiguous;
+        };
+        let exact_mapping_count = ids
+            .iter()
+            .filter(|id| id.as_str() == Some(source_work_id))
+            .count();
+        if exact_mapping_count > 1 {
+            return InventoryAuthority::Ambiguous;
+        }
+        if exact_mapping_count == 1 {
+            source_mapping_owners += 1;
+        }
+        if work_id == task.work_id {
+            target_work_seen += 1;
+            target_owned = work.get("owned").and_then(Value::as_bool) == Some(true);
+            target_has_exact_mapping = exact_mapping_count == 1;
+        }
+    }
+
+    if target_work_seen > 1 || source_mapping_owners > 1 {
+        return InventoryAuthority::Ambiguous;
+    }
+    if target_work_seen == 1
+        && target_owned
+        && target_has_exact_mapping
+        && source_mapping_owners == 1
+    {
+        InventoryAuthority::Satisfied
+    } else {
+        InventoryAuthority::Unsatisfied
+    }
+}
+
 pub fn task_view(state: &State, ledger: &GateLedger, task_id: &str) -> Result<Value, String> {
     validate_ledger(ledger)?;
     let task = find_task(state, task_id)?;
@@ -107,7 +181,13 @@ pub fn task_view(state: &State, ledger: &GateLedger, task_id: &str) -> Result<Va
     let record = current_record(ledger, task);
     let recommended = record.is_some_and(|gate| gate.assistant_recommended);
     let approved = record.is_some_and(|gate| gate.user_approved);
-    let authorized = task.status == "pending" && allowed_action(task) && approved;
+    let inventory_authority = inventory_authority(state, task);
+    let inventory_satisfied = inventory_authority == InventoryAuthority::Satisfied;
+    let inventory_authority_valid = inventory_authority != InventoryAuthority::Ambiguous;
+    let authorized = task.status == "pending"
+        && allowed_action(task)
+        && approved
+        && inventory_authority == InventoryAuthority::Unsatisfied;
     let stale_bindings = ledger
         .records
         .iter()
@@ -116,6 +196,11 @@ pub fn task_view(state: &State, ledger: &GateLedger, task_id: &str) -> Result<Va
             gate.task_revision != task.task_revision || gate.target_hash != current_hash
         })
         .count();
+    let execution_block_reason = match inventory_authority {
+        InventoryAuthority::Satisfied => Some("INVENTORY_ALREADY_SATISFIED"),
+        InventoryAuthority::Ambiguous => Some("INVENTORY_AUTHORITY_AMBIGUOUS"),
+        InventoryAuthority::Unsatisfied => None,
+    };
     Ok(json!({
         "schema_version": GATE_SCHEMA_VERSION,
         "view": "task_gate",
@@ -127,6 +212,9 @@ pub fn task_view(state: &State, ledger: &GateLedger, task_id: &str) -> Result<Va
         "status": task.status,
         "assistant_recommended": recommended,
         "user_approved": approved,
+        "inventory_satisfied": inventory_satisfied,
+        "inventory_authority_valid": inventory_authority_valid,
+        "execution_block_reason": execution_block_reason,
         "download_authorized": authorized,
         "stale_binding_count": stale_bindings,
     }))
@@ -202,6 +290,15 @@ pub fn plan(
         }
         if !allowed_action(task) {
             return Err("ASSISTANT_TASK_ACTION_NOT_EXECUTABLE".into());
+        }
+        match inventory_authority(state, task) {
+            InventoryAuthority::Satisfied => {
+                return Err("ASSISTANT_TASK_INVENTORY_ALREADY_SATISFIED".into())
+            }
+            InventoryAuthority::Ambiguous => {
+                return Err("ASSISTANT_TASK_INVENTORY_AUTHORITY_AMBIGUOUS".into())
+            }
+            InventoryAuthority::Unsatisfied => {}
         }
     }
 

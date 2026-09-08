@@ -135,6 +135,7 @@ dependencies = [
 name = "cloud-monitor"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "image",
  "jm-adapter",

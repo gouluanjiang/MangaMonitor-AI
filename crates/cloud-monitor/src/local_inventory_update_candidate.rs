@@ -541,6 +541,7 @@ mod tests {
                 action: "download".into(),
                 status: "pending".into(),
                 old_local_item_ids: vec![],
+                binding_authority_hash: String::new(),
             },
         );
         let identity = title_m2::parse(
@@ -567,6 +568,7 @@ mod tests {
             scope_work_ids: vec![],
             uniqueness: "PINNED_COMPLETE_SCOPE_ALL_WORKS_EXPLICITLY_DISJOINT".into(),
             downstream_result: "PENDING".into(),
+            binding_authority_hash: None,
         };
         let context = state.context();
         state.catalog.insert(

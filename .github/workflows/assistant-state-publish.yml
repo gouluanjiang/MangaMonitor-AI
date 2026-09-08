@@ -15,6 +15,7 @@ on:
           - author
           - decision
           - task-gate
+          - scope-certificate
       operation:
         description: Operation for the selected surface
         required: true
@@ -46,6 +47,11 @@ on:
         type: string
       target_hash:
         description: Exact pending target hash for task-gate operations
+        required: false
+        default: ''
+        type: string
+      candidate_b64:
+        description: Base64 JSON candidate for an independently produced scope-certificate document
         required: false
         default: ''
         type: string
@@ -93,6 +99,7 @@ jobs:
             --bin assistant-author-edit \
             --bin assistant-decision-edit \
             --bin assistant-task-gate-edit \
+            --bin assistant-scope-certificate-stage \
             --bin assistant-publication-check
 
       - name: Stage requested deterministic operation
@@ -105,6 +112,7 @@ jobs:
           TASK_ID: ${{ inputs.task_id }}
           TASK_REVISION: ${{ inputs.task_revision }}
           TARGET_HASH: ${{ inputs.target_hash }}
+          CANDIDATE_B64: ${{ inputs.candidate_b64 }}
         run: |
           set -euo pipefail
           stage="$RUNNER_TEMP/assistant-state-stage"
@@ -146,6 +154,13 @@ jobs:
                 --task-revision "$TASK_REVISION" \
                 --target-hash "$TARGET_HASH"
               ;;
+            scope-certificate)
+              test -n "$CANDIDATE_B64" || { echo 'ASSISTANT_PUBLICATION_SCOPE_CERTIFICATE_CANDIDATE_REQUIRED' >&2; exit 64; }
+              ./target/release/assistant-scope-certificate-stage \
+                --state monitor-state \
+                --output "$stage" \
+                --candidate-b64 "$CANDIDATE_B64"
+              ;;
             *)
               echo 'ASSISTANT_PUBLICATION_INVALID_KIND' >&2
               exit 64
@@ -181,6 +196,7 @@ jobs:
             author) target='monitor-state/authors.json'; payload="$STAGE/authors.json" ;;
             decision) target='monitor-state/decisions.json'; payload="$STAGE/decisions.json" ;;
             task-gate) target='monitor-state/assistant-task-gates.json'; payload="$STAGE/assistant-task-gates.json" ;;
+            scope-certificate) target='monitor-state/scope-certificates.json'; payload="$STAGE/scope-certificates.json" ;;
             *) exit 64 ;;
           esac
 
@@ -222,8 +238,8 @@ jobs:
             echo "ASSISTANT_PUBLICATION_REMOTE_CHANGED: expected $EXPECTED_BASE found $remote" >&2
             exit 75
           }
-          git -c user.name='MangaMonitor Assistant Gate' \
-              -c user.email='mangamonitor-assistant@users.noreply.github.com' \
+          git -c user.name='gouluanjiang' \
+              -c user.email='322563162+gouluanjiang@users.noreply.github.com' \
               commit -m "Publish assistant $KIND state" -- "$TARGET"
 
           git fetch --quiet origin main
@@ -233,6 +249,15 @@ jobs:
             exit 75
           }
           git push origin HEAD:main
+
+      - name: Re-read published scope certificate payload
+        if: inputs.kind == 'scope-certificate' && env.CHANGED == 'true'
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          git show origin/main:monitor-state/scope-certificates.json | jq -S -c . > "$RUNNER_TEMP/published-scope-certificates.json"
+          jq -S -c . "$STAGE/scope-certificates.json" > "$RUNNER_TEMP/staged-scope-certificates.json"
+          cmp "$RUNNER_TEMP/published-scope-certificates.json" "$RUNNER_TEMP/staged-scope-certificates.json"
 
       - name: Finalize unchanged operation with race protection
         if: env.CHANGED == 'false'

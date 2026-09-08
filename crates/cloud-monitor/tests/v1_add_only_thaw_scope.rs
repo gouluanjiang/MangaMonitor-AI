@@ -24,6 +24,7 @@ fn fixture(action: &str, old_local_item_ids: Vec<String>) -> (State, GateLedger,
         action: action.into(),
         status: "pending".into(),
         old_local_item_ids,
+        binding_authority_hash: String::new(),
     };
     let target_hash = target_hash(&task);
     let ledger = GateLedger {

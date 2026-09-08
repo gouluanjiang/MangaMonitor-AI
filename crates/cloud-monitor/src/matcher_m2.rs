@@ -30,6 +30,8 @@ pub struct Outcome {
     pub scope_work_ids: Vec<String>,
     pub uniqueness: String,
     pub downstream_result: String,
+    #[serde(default)]
+    pub binding_authority_hash: Option<String>,
 }
 fn type_evidence(r: &Record) -> (Option<String>, Value, bool) {
     let mut kinds = BTreeSet::new();
@@ -147,6 +149,7 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
         scope_work_ids: vec![],
         uniqueness: "NO_IDENTITY_ASSERTION".into(),
         downstream_result: String::new(),
+        binding_authority_hash: None,
     };
     let positive: BTreeSet<_> = state
         .decisions
@@ -325,7 +328,7 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
         .into();
         return out;
     }
-    let certified = certificates.iter().any(|c| {
+    let certificate = certificates.iter().find(|c| {
         c.author == a && c.inventory_hash == hash(&state.inventory) && !c.reference.is_empty()
     });
     let unindexed_catalog = state.catalog.iter().any(|(other, e)| {
@@ -335,7 +338,7 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
                 .as_ref()
                 .is_some_and(|id| !out.scope_work_ids.contains(id))
     });
-    if certified && all_disjoint && !unindexed_catalog {
+    if certificate.is_some() && all_disjoint && !unindexed_catalog {
         let id = format!("WORK_SRC_{}", &hash(&k)[..20]);
         if negative.contains(&id) {
             out.reason = "REJECTED_PREVIOUS_IDENTITY".into();
@@ -346,13 +349,14 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
         out.reason = "COMPLETE_SCOPE_DISJOINT_EXPLICIT_INSTALLMENT".into();
         out.uniqueness = "PINNED_COMPLETE_SCOPE_ALL_WORKS_EXPLICITLY_DISJOINT".into();
         out.content_type_evidence["scope_certificates"] = json!(certificates);
+        out.binding_authority_hash = certificate.map(|c| c.reference.clone());
         return out;
     }
     out.reason = if !local_issues.is_empty() {
         "LOCAL_IDENTITY_UNPARSED"
     } else if !out.matching_work_ids.is_empty() {
         "LOCAL_CONTENT_TYPE_UNKNOWN_OR_CONFLICT"
-    } else if all_disjoint && !certified {
+    } else if all_disjoint && certificate.is_none() {
         "DISJOINT_INSTALLMENT_INCOMPLETE_INVENTORY_SCOPE"
     } else {
         "NO_DETERMINISTIC_IDENTITY_OR_NEW_WORK_PROOF"

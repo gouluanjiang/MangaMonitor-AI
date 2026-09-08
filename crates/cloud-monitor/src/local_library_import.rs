@@ -797,6 +797,7 @@ mod tests {
             action: "download".into(),
             status: "pending".into(),
             old_local_item_ids: Vec::new(),
+            binding_authority_hash: String::new(),
         };
         let state = State {
             authors: json!({"authors":[]}),

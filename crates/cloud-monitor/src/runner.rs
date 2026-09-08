@@ -1,5 +1,10 @@
 //! Shared scan runner. It always writes to a separate staging directory.
-use crate::{matcher_m2::repair_primary, monitor::*, persistence::*};
+use crate::{
+    matcher_m2::repair_primary,
+    monitor::*,
+    persistence::*,
+    scope_certificates::{self, ScopeCertificateDocument, ValidatedScopeCertificates},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use state_model::{Record, RequestTrace, SearchPage};
@@ -65,6 +70,7 @@ struct StageMetadata<'a> {
     batch_index: usize,
     batch_count: usize,
     selected_authors: &'a [String],
+    authority_document: Option<&'a ScopeCertificateDocument>,
 }
 
 #[derive(Clone)]
@@ -556,14 +562,31 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
         batch_index,
         batch_count,
         selected_authors: &selected,
+        authority_document: None,
     };
     let resume = args.iter().any(|s| s == "--resume");
+    let validated_certificates: Option<ValidatedScopeCertificates> = if profile == Profile::Phase3B {
+        let current = load(&input)?;
+        let document = scope_certificates::load(&input.join(scope_certificates::CERTIFICATE_FILE))?;
+        Some(scope_certificates::validate_document(document, &current.authors, &current.inventory)?)
+    } else {
+        None
+    };
+    let authority_hash = validated_certificates
+        .as_ref()
+        .map(scope_certificates::state_authority_hash)
+        .unwrap_or_default();
     let mut s = if resume {
         // A checkpoint contains scan progress, not a replacement authority.
         // Refuse recovery when the current decisions/inventory/authors input
         // has moved; silently choosing either side could publish stale state.
-        let current = load(&input)?;
-        let checkpoint = load_checkpoint(&output)?;
+        let mut current = load(&input)?;
+        current.scan.identity_authority_hash = authority_hash.clone();
+        current.scan.scope_certificates = validated_certificates
+            .as_ref()
+            .map(|validated| validated.matcher_certificates.clone())
+            .unwrap_or_default();
+        let mut checkpoint = load_checkpoint(&output)?;
         let current_authority = current.context();
         let checkpoint_authority = checkpoint.context();
         if current_authority != checkpoint_authority {
@@ -571,10 +594,22 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
                 "RESUME_AUTHORITY_MISMATCH:current={current_authority}:checkpoint={checkpoint_authority}"
             ));
         }
+        checkpoint.scan.identity_authority_hash = authority_hash.clone();
+        checkpoint.scan.scope_certificates = current.scan.scope_certificates.clone();
         checkpoint
     } else {
-        load(&input)?
+        let mut state = load(&input)?;
+        state.scan.identity_authority_hash = authority_hash;
+        state.scan.scope_certificates = validated_certificates
+            .as_ref()
+            .map(|validated| validated.matcher_certificates.clone())
+            .unwrap_or_default();
+        state
     };
+    let mut stage_metadata = stage_metadata;
+    stage_metadata.authority_document = validated_certificates
+        .as_ref()
+        .map(|validated| &validated.document);
     let replay = opt(&args, "--replay", "");
     let author_concurrency = parse_author_concurrency(&args, profile, &replay)?;
     if profile == Profile::Phase3B && !resume && !replay.is_empty() && !s.scan.complete && !strategy_complete(&s)
@@ -816,6 +851,9 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
         "selected_authors":selected,
         "complete":s.scan.complete,
         "coverage_complete":s.scan.complete,
+        "scope_certificate_set_hash":validated_certificates.as_ref().map(|v| v.document.certificate_set_hash.clone()),
+        "scope_certificate_count":validated_certificates.as_ref().map(|v| v.matcher_certificates.len()),
+        "identity_authority_hash":s.scan.identity_authority_hash,
         "strategy_complete":strategy_done,
         "catalog_records":s.catalog.len(),
         "pending":s.pending.len(),
@@ -868,6 +906,9 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
 fn stage_save(output: &Path, state: &State, profile: Profile, metadata: &StageMetadata<'_>) -> Result<(), String> {
     save(output, state)?;
     if profile == Profile::Phase3B {
+        if let Some(document) = metadata.authority_document {
+            write_json(&output.join(scope_certificates::CERTIFICATE_FILE), document)?;
+        }
         write_json(&output.join("state-manifest.json"), &json!({
             "schema_version": 1,
             "base_commit": metadata.base_commit,
@@ -880,7 +921,8 @@ fn stage_save(output: &Path, state: &State, profile: Profile, metadata: &StageMe
             "effective_requested_mode": metadata.effective_requested_mode,
             "batch_index": metadata.batch_index,
             "batch_count": metadata.batch_count,
-            "selected_authors": metadata.selected_authors
+            "selected_authors": metadata.selected_authors,
+            "identity_authority_hash": state.scan.identity_authority_hash
         }))?;
     }
     Ok(())

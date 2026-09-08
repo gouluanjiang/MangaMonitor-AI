@@ -346,6 +346,7 @@ fn reread_pending(path: &Path) -> Result<Value, String> {
         .map_err(|_| "TASK_V1_8_PENDING_REREAD_JSON_INVALID".into())
 }
 
+#[expect(clippy::too_many_arguments, reason = "V1.8 receipt construction keeps every audited evidence binding explicit so completion authority is never inferred")]
 fn make_receipt(
     outcome: &str,
     performed: bool,

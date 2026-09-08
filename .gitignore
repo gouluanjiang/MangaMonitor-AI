@@ -7,3 +7,7 @@ reports/
 .env*
 credentials*
 !reports/.gitkeep
+node_modules/
+apps/local-workbench/dist/
+apps/local-workbench/test-results/
+apps/local-workbench/playwright-report/

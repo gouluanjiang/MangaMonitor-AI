@@ -1,12 +1,22 @@
 # Active development handoff
 
-Updated 2026-09-08. This document separates the current continuation from historical milestone reports.
+Updated 2026-09-09. This document separates the current continuation from historical milestone reports.
 
-## User-requested stop boundary
+## Current continuation
+
+The pre-downloader reliability batch was merged as PR #18, public main `69fcf1dd24526b5920406c9b97bb3e8b8909c6c6`. PR run `34245102484` passed 435 Linux workspace tests, Clippy and Windows safety/build checks; post-main run `34245838729` passed both jobs. The frontend discussion stop was reached before any desktop UI construction.
+
+The user has now confirmed the first local workbench product decisions in [LOCAL_WORKBENCH_V1_DESIGN.md](LOCAL_WORKBENCH_V1_DESIGN.md): cover-library homepage, independent detail and queue pages, no V1 reader, one ZIP per work directly under the library root with internal chapter directories, automatic queue execution after confirmation, batch confirmation of download-and-import, and safe pause/exit with recovery on reopening. Normal tasks complete automatically; exceptions are handled individually.
+
+The user then asked to begin the next step. `apps/local-workbench` now contains the first React/TypeScript browser interaction sample: a cover grid, independent detail page, batch confirmation, separate simulated queue, authors and settings. Original fictional covers and visibly labeled synthetic state require no service credentials or backend. Browser-local demo persistence is strictly separate from real state.
+
+The `Local workbench UI` workflow validates the sample in GitHub Actions and publishes a static preview artifact. The implementation still needs visual acceptance from the user before broadening the frontend. Native Tauri integration, ZIP packaging, desktop coordination, safe local recovery and cloud result publication remain work to implement and verify. This is not real-execution or production acceptance.
+
+## Historical discussion stop and current boundary
 
 The user requested continued project development and an explicit stop when the work reaches construction of the local downloader, so the frontend on their Windows computer can be discussed together.
 
-Continue independently on cloud scanning, deterministic matching, state correctness, backend regression tests and GitHub PR/CI repair. **Do not scaffold, choose a frontend framework for, package, install, or start constructing the local downloader UI before that discussion.** Existing local CLI binaries are backend building blocks, not a delivered desktop application. Preparing a factual interface inventory is allowed; it is not a frontend implementation decision.
+That discussion is complete for the first sample and the user authorized its construction. The earlier stop no longer prevents the isolated UI prototype. Existing local CLI binaries remain backend building blocks; the browser sample does not expose their authority or establish a delivered desktop application.
 
 Production activation and real task execution retain their existing separate authority gates. This continuation does not create a genuine new-work task, approve one, issue a completeness certificate from incomplete inventory, or enable production.
 
@@ -20,7 +30,7 @@ Production activation and real task execution retain their existing separate aut
 - Starting CI `34235808662`: Linux workspace 416 tests plus Clippy passed; Windows selected safety tests/build passed. Independent Windows GNU workspace run: 415 passed, with the one-test difference explained by the Unix-only symlink test.
 - Independent synthetic analysis reproduced two ambiguous AUTO_EXISTING bindings: `Maße/Masse` and `Cosmic Voyage 2 Extra/Cosmic Voyage Extra 2`. Downstream stayed review in those fixtures; the defect is identity binding.
 
-## Current implementation batch
+## Completed pre-downloader implementation batch
 
 Branch: `codex/pre-downloader-reliability`.
 
@@ -40,9 +50,9 @@ Branch: `codex/pre-downloader-reliability`.
 - No weakening of the production/materialization gates or local/cloud runtime isolation.
 - Current baseline tests and added behavioral tests pass; any uncovered fault remains explicitly unresolved until fixed and retested.
 
-## Remaining work after frontend discussion
+## Remaining local implementation and acceptance work
 
-- Agree on local UI, task/approval screens, state refresh, staging/library paths, credential storage, progress/errors and receipt/recovery presentation.
+- Implement the confirmed local product behavior; refine visual layout, actual staging/library paths, credential storage and recovery presentation through the first UI sample.
 - Integrate the existing local CLI stages with a bounded local controller; do not let a UI manufacture task authority.
 - Implement the verified local inventory/completion publication bridge (Issue #7), including remote-base races and forward reconciliation of already-materialized content.
 - Complete local import/staging interruption and lost-receipt recovery, plus full V1.7/V1.8 execution-chain tests.
@@ -58,8 +68,8 @@ Full recovery starts at batch zero of the current author registry, reanalyzes re
 
 Legacy checkpoints must retain their original manifest binding. Compatibility tests include the actual committed bootstrap state shape, including its missing pre-A03 authority-hash field. Unsupported fields or corrupt bindings must still be refused.
 
-## Validation record and merge requirements
+## Historical validation method for PR #18
 
-Earlier local focused runs and code review found additional regressions, so they are not acceptance of the final patch. After desktop resource pressure was reported, all local Rust processes were stopped. The final branch must pass GitHub's Linux workspace tests, Clippy, shell orchestration checks and Windows safety/build job before merge. The associated PR check suite records exact commits and results; do not substitute the earlier baseline CI.
+Earlier local focused runs and code review found additional regressions, so they were not acceptance of the final patch. After desktop resource pressure was reported, all local Rust processes were stopped. The final branch passed GitHub's Linux workspace tests, Clippy, shell orchestration checks and Windows safety/build job before merge, followed by successful post-main CI. The associated PR check suite records exact commits and results; do not substitute the earlier baseline CI.
 
 No frontend construction, real manga execution, business-state publication or production activation is part of this batch. Passing this batch does not close final V1 end-to-end or long-running acceptance.

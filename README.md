@@ -6,6 +6,8 @@ This repository has moved far beyond the original Phase 1A smoke test. The READM
 
 The current development boundary is recorded in [docs/DEVELOPMENT_HANDOFF.md](docs/DEVELOPMENT_HANDOFF.md). On 2026-09-08 the user requested continued backend/cloud work and a stop **before constructing the local downloader frontend**, so its local interface and implementation can be discussed together. Existing command-line modules do not imply that a desktop downloader has been delivered.
 
+That stop was reached after PR #18 passed PR and post-main CI. The subsequent confirmed product decisions are recorded in [docs/LOCAL_WORKBENCH_V1_DESIGN.md](docs/LOCAL_WORKBENCH_V1_DESIGN.md): a cover-first local workbench, independent detail/queue pages, one ZIP per work, batch-confirmed automatic download-and-import, and safe exit/recovery. The user then authorized the next step: a [clickable frontend sample](apps/local-workbench/README.md) with original fictional covers and simulated task state. It is not a delivered native downloader or real end-to-end acceptance.
+
 ## V1 product target
 
 V1 is considered useful only when this complete chain can run stably for long periods without routine human intervention:
@@ -71,11 +73,11 @@ Replacement, deletion, larger concurrency, and advanced maintenance can be added
 | Persistent catalog, review, decisions, pending tasks | Implemented |
 | Assistant read-only views / review exports | Implemented |
 | Discovery → review → human decision → pending E2E | Implemented as an offline regression |
-| Resume/checkpoint and replay | Implemented; fail-closed |
+| Resume/checkpoint and replay | Implemented; explicit authority-drift full recovery and legacy checkpoint binding added in PR #18 |
 | Physical request accounting | Explicit `RequestTrace` accounting with per-batch budget |
 | Single-author JM+Pica concurrent acquisition | Implemented and retained as validation/fallback evidence |
 | Three-author bounded concurrent acquisition | **Integrated into the formal Phase3B runner/scheduler; three clean live soak rounds plus failure/resume and budget-exhaustion regressions passed** |
-| Cloud production readiness | Historical source/concurrency milestone reached; final recovery, durability and end-to-end production acceptance remain separate |
+| Cloud production readiness | Source/concurrency and authority-drift recovery milestones reached; final durability and end-to-end production acceptance remain separate |
 | First durable bootstrap | Completed for the current six-author registry: 399 physical requests across two batches, 358 catalog/review records |
 | Trusted new-work scope certificates (A03) | Local certifier, strict consumer and publication path merged in PR #10; no real certificate has been issued |
 | Local staging/execution proof chain | **Repository thaw gate accepted for approved new-work `download` tasks; real local staging acceptance still requires one genuine current approved task** |
@@ -83,7 +85,7 @@ Replacement, deletion, larger concurrency, and advanced maintenance can be added
 | Inventory mutation | V1.7 exact add-only inventory apply implemented in PR #16, including atomic write/reread and exact retry; real inventory acceptance remains outstanding |
 | Task completion | V1.8 exact task completion implemented in PR #17; real end-to-end completion remains outstanding |
 | Local result publication | Verified inventory/completion publication back to public main remains outstanding (Issue #7) |
-| Local downloader frontend | Not implemented; explicit user discussion stop before construction |
+| Local downloader frontend | First React/TypeScript interaction sample in `apps/local-workbench`; simulated library, details, batch confirmation and queue. Native shell/backend integration outstanding |
 | Replacement / physical deletion | Not authorized and not required for V1 |
 | Production monitor | **Disabled**: `production_enabled=false` |
 
@@ -106,7 +108,7 @@ Development should proceed in this order. The cloud milestones and repository-si
 7. ✅ Restore/accept only the real-download capabilities required by the V1 add-only source→media→isolated-staging pipeline.
 8. 🟨 Complete `task → command → isolated staging → manifest/proof/receipt` with one guarded **real local** download; repository implementation is ready, but acceptance is waiting for a genuine current approved new-work task.
 9. ✅ Implement narrow add-only library import/rescan, V1.7 inventory apply and V1.8 exact completion. These code milestones are merged; real local acceptance is still required.
-10. ⬜ Finish backend correctness/recovery gates, then **stop before constructing the local downloader frontend and discuss its interface with the user**.
+10. ✅ Complete pre-downloader reliability fixes (PR #18), reach the frontend discussion stop, and record the confirmed local workbench product behavior. Final V1 acceptance remains outstanding.
 11. ⬜ Integrate the agreed local application, verified inventory/completion publication, and current certificate/inventory reconciliation.
 12. ⬜ Prove one real complete task and run end-to-end crash/retry/idempotence soak.
 13. ⬜ Perform a final V1 production acceptance review.
@@ -453,6 +455,7 @@ If any step fails or becomes stale, the task remains incomplete and recoverable.
 
 - `README.md` — V1 product target, current roadmap, production acceptance definition, and new-session handoff.
 - `docs/DEVELOPMENT_HANDOFF.md` — active work, verification evidence and the user-requested local-frontend discussion stop.
+- `docs/LOCAL_WORKBENCH_V1_DESIGN.md` — confirmed local workbench behavior and pending implementation/acceptance criteria.
 - `AGENTS.md` — repository-wide development guardrails and the currently thawed authority boundary.
 - `docs/CLOUD_PRODUCTION_READINESS.md` — accepted cloud runner/soak/failure/resume/budget readiness evidence.
 - `docs/V1_ADD_ONLY_DOWNLOAD_THAW_2026-09-08.md` — accepted repository-side thaw review and exact add-only staging authority.

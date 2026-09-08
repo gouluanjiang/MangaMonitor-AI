@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560" role="img" aria-labelledby="title desc">
+  <title id="title">夏日观测</title>
+  <desc id="desc">原创虚构漫画封面。暖黄色的社团活动室，打开的窗户框住积云与夏日山野，桌上留着气象手册。</desc>
+  <defs>
+    <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#87b9ba"/><stop offset="1" stop-color="#cae0bd"/></linearGradient>
+    <pattern id="grain" width="9" height="8" patternUnits="userSpaceOnUse"><path d="M2 1v1m4 4h1" stroke="#705a3c" stroke-width=".65" opacity=".18"/></pattern>
+    <pattern id="grass" width="23" height="18" patternUnits="userSpaceOnUse"><path d="m6 15 2-7 3 7m9-10-1-4" stroke="#f2e7a0" stroke-width=".8" opacity=".48"/></pattern>
+    <clipPath id="window"><path d="M46 153h308v266H46z"/></clipPath>
+  </defs>
+  <rect width="400" height="560" fill="#e8d495"/>
+  <path d="M0 131h400v7H0zM0 460h400v4H0z" fill="#d6bc76"/>
+  <rect x="46" y="153" width="308" height="266" fill="url(#sky)"/>
+  <g clip-path="url(#window)">
+    <path d="M100 251q-13-19 6-29-5-24 19-22 0-31 25-31 27-1 28 28 26-12 34 12 35-4 36 24 23 3 20 22Z" fill="#f4f2d8"/>
+    <path d="M100 252q82-10 167 3M126 202q-9 32 20 32m34-36q-1 23 24 27" fill="none" stroke="#dfdfc5" stroke-width="2"/>
+    <path d="M250 199q-3-11 9-13 4-19 21-17 16 3 17 18 18-2 26 13Z" fill="#f0efd5"/>
+    <path d="M20 328q47-48 97-35t119-14 138 34v114H20Z" fill="#84a87e"/>
+    <path d="M12 364q84-40 169-10t193-31v104H12Z" fill="#b3bb73"/>
+    <path d="m175 429 78-97 14 0-53 97" fill="#e5d498"/>
+    <path d="M44 368h310v63H44Z" fill="url(#grass)"/>
+    <path d="M290 260v138m-26-117h52m-43-7h34m-56 17q52 24 121 14" fill="none" stroke="#567766" stroke-width="1.4"/>
+    <path d="M117 330h38v26h-38z" fill="#e6d6ae"/><path d="m110 330 25-18 26 18z" fill="#927353"/>
+    <rect x="132" y="339" width="8" height="17" fill="#6d896b"/>
+  </g>
+  <path d="M38 145h324v282H38zM47 154h306v264H47z" fill="#917c4e" fill-rule="evenodd"/>
+  <path d="M194 149h9v273h-9z" fill="#8d7950"/>
+  <path d="m48 154 58 29v247l-58-14z" fill="#e3ddb0" fill-opacity=".2" stroke="#eee1aa" stroke-width="6"/>
+  <path d="m352 154-57 29v247l57-14z" fill="#dae1b7" fill-opacity=".12" stroke="#eee1aa" stroke-width="6"/>
+  <path d="M94 292v22m-4-15h7M307 292v22m-4-15h7" stroke="#776c46" stroke-width="3"/>
+  <path d="M354 146h23q-30 78-5 153t-20 124l-26-3q31-90 9-158Z" fill="#f3e8bb" opacity=".88"/>
+  <path d="M361 156q-19 98 2 152t-25 104m31-240q-13 64-3 106" fill="none" stroke="#cbb987" stroke-width="1"/>
+  <path d="M3 426h394v11H3zM0 437h400v29H0z" fill="#b39151"/>
+  <path d="M0 444h400m-384 9h278" stroke="#d5b472" stroke-width="1"/>
+  <path d="m104 416 66-6 45 10-58 15z" fill="#7d8052" opacity=".25"/>
+  <g transform="translate(95 411) rotate(-6)">
+    <path d="M0 0q35-8 63 0 28-7 62 0v31q-34-7-62 0-29-9-63 0Z" fill="#f6ecc7" stroke="#a39363"/>
+    <path d="M63 0v30M9 6l42-2M9 11l42-2M9 16l31-2M75 6h36m-36 6h28m-28 6h34" stroke="#b2ac7c" stroke-width=".8"/>
+    <circle cx="42" cy="24" r="4" fill="none" stroke="#a58a55"/>
+  </g>
+  <path d="m231 428 35-20 3 4-34 21z" fill="#8b6650"/>
+  <path d="M52 380h20l-3 42H55z" fill="#bed0b0" fill-opacity=".7" stroke="#eae6bd"/>
+  <path d="M56 396h14m-11-31 4 29" stroke="#9a784a" stroke-width="1.5"/>
+  <path d="M38 315v-30m-5 7 10-4m-9 17 10-5" stroke="#627f4e" fill="none"/>
+  <path d="M38 291q-17-14-21-1 7 12 21 1zm0 12q14-14 23-4-2 12-23 4z" fill="#84965a"/>
+  <rect width="400" height="560" fill="url(#grain)"/>
+  <text x="35" y="40" fill="#7f7049" font-family="sans-serif" font-size="8" letter-spacing="3.8">SUMMER OBSERVATION JOURNAL</text>
+  <text x="33" y="97" fill="#4f674f" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,serif" font-size="46" letter-spacing="6">夏日观测</text>
+  <text x="37" y="122" fill="#8c784e" font-family="'Noto Serif SC',SimSun,serif" font-size="9" letter-spacing="2.3">关于云、蝉鸣与第七个夏天</text>
+  <text x="35" y="512" fill="#726b45" font-family="'Noto Serif SC',SimSun,serif" font-size="14" letter-spacing="5">日向藻</text>
+  <text x="364" y="514" text-anchor="end" fill="#9a8250" font-family="Georgia,serif" font-size="28">01</text>
+  <path d="M36 485h52" stroke="#a49460"/>
+  <text x="37" y="540" fill="#9a895a" font-family="sans-serif" font-size="7" letter-spacing="2.6">FICTIONAL COVER / ORIGINAL ART</text>
+</svg>

@@ -47,7 +47,7 @@ pub struct CompletenessAttestation {
     pub attestation_hash: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ValidatedScopeCertificates {
     pub document: ScopeCertificateDocument,
     pub matcher_certificates: Vec<MatcherCertificate>,

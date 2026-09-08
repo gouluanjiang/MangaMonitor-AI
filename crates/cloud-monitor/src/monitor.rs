@@ -1371,7 +1371,7 @@ mod a03_tests {
             "jm",
             "SOURCE_1".into(),
             vec!["santa".into()],
-            "作品 01",
+            "作品 01".to_string(),
             json!({"content_type":"manga"}),
         );
         let k = key(&record);

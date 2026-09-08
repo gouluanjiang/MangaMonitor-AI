@@ -179,10 +179,14 @@ impl JmClient {
                 if !response.status().is_success() {
                     return Err(format!("HTTP_{status}"));
                 }
-                let body = response
-                    .text()
-                    .await
-                    .map_err(|_| "INVALID_JM_SCRAMBLE_BODY")?;
+                let body = String::from_utf8(super::read_bounded_response(response).await.map_err(
+                    |error| if error == "METADATA_RESPONSE_TOO_LARGE" {
+                        "JM_SCRAMBLE_RESPONSE_TOO_LARGE"
+                    } else {
+                        "INVALID_JM_SCRAMBLE_BODY"
+                    },
+                )?)
+                .map_err(|_| "INVALID_JM_SCRAMBLE_BODY")?;
                 parse_scramble_id(&body)
             }
             .await;

@@ -12,6 +12,7 @@ use crate::{
         self, IsolatedStagingExecutionContext, IsolatedStagingExecutionResult, ProcessedMedia,
     },
     jm_media_transform,
+    media_validation,
     live_media_transport::{JmTransport, PicaTransport},
     source_media_descriptors::{self, MediaDescriptor, SourceMediaDescriptorSet},
 };
@@ -42,16 +43,6 @@ impl LiveFetcher {
     }
 }
 
-fn bytes_match_format(format: &str, bytes: &[u8]) -> bool {
-    match format {
-        "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
-        "webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
-        "jpg" | "jpeg" => bytes.len() >= 3 && bytes[..3] == [0xff, 0xd8, 0xff],
-        "png" => bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]),
-        _ => false,
-    }
-}
-
 /// A6.14B enables exactly the pinned JM block unscramble for WEBP descriptors.
 /// The transform parameter is still supplied by the already-validated A6.13
 /// descriptor and no transform can be inferred from response bytes.
@@ -79,9 +70,11 @@ fn process_downloaded_bytes(
     descriptor: &MediaDescriptor,
     bytes: Vec<u8>,
 ) -> Result<ProcessedMedia, String> {
-    if bytes.is_empty() || !bytes_match_format(&descriptor.source_format, &bytes) {
+    if bytes.is_empty() {
         return Err("LIVE_MEDIA_SOURCE_FORMAT_MISMATCH".into());
     }
+    media_validation::validate(&descriptor.source_format, &bytes)
+        .map_err(|_| "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED")?;
 
     let bytes = match source {
         "jm" => jm_media_transform::apply(
@@ -99,6 +92,9 @@ fn process_downloaded_bytes(
         },
         _ => return Err("UNSUPPORTED_LIVE_MEDIA_FETCH_SOURCE".into()),
     };
+
+    media_validation::validate(&descriptor.source_format, &bytes)
+        .map_err(|_| "LIVE_MEDIA_PROCESSED_IMAGE_DECODE_FAILED")?;
 
     Ok(ProcessedMedia {
         source_media_id: descriptor.source_media_id.clone(),
@@ -146,6 +142,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
+    use std::io::Cursor;
+
+    fn valid_image(format: ImageFormat) -> Vec<u8> {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([12, 34, 56])));
+        let mut output = Cursor::new(Vec::new());
+        image.write_to(&mut output, format).unwrap();
+        output.into_inner()
+    }
     use crate::source_media_descriptors::MediaChapterDescriptors;
 
     fn descriptor(format: &str, transform: &str, parameter: u64) -> MediaDescriptor {
@@ -207,7 +212,7 @@ mod tests {
         let processed = process_downloaded_bytes(
             "pica",
             &set.chapters[0].media[0],
-            vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1],
+            valid_image(ImageFormat::Png),
         )
         .unwrap();
         assert_eq!(processed.applied_transform, "NONE");
@@ -215,27 +220,51 @@ mod tests {
     }
 
     #[test]
-    fn jm_gif_and_zero_block_webp_are_exact_noop_transforms() {
+    fn valid_gif_and_zero_block_webp_are_exact_noop_transforms() {
         let gif = descriptor("gif", "NONE", 0);
         let gif_set = descriptor_set("jm", gif.clone());
         validate_supported_fetch_scope(&gif_set).unwrap();
         assert_eq!(
-            process_downloaded_bytes("jm", &gif, b"GIF89aA6.14".to_vec())
+            process_downloaded_bytes("jm", &gif, valid_image(ImageFormat::Gif))
                 .unwrap()
                 .bytes,
-            b"GIF89aA6.14"
+            valid_image(ImageFormat::Gif)
         );
 
         let webp = descriptor("webp", "JM_SCRAMBLE_BLOCKS", 0);
         let webp_set = descriptor_set("jm", webp.clone());
         validate_supported_fetch_scope(&webp_set).unwrap();
-        let bytes = b"RIFF1234WEBPA6.14".to_vec();
+        let bytes = valid_image(ImageFormat::WebP);
         assert_eq!(
             process_downloaded_bytes("jm", &webp, bytes.clone())
                 .unwrap()
                 .bytes,
             bytes
         );
+    }
+
+    #[test]
+    fn truncated_supported_images_never_reach_processed_media() {
+        for (format, transform) in [
+            ("gif", "NONE"),
+            ("webp", "NONE"),
+            ("png", "NONE"),
+            ("jpg", "NONE"),
+        ] {
+            let media = descriptor(format, transform, 0);
+            let valid = valid_image(match format {
+                "gif" => ImageFormat::Gif,
+                "webp" => ImageFormat::WebP,
+                "png" => ImageFormat::Png,
+                "jpg" => ImageFormat::Jpeg,
+                _ => unreachable!(),
+            });
+            let truncated = valid[..valid.len() / 2].to_vec();
+            assert_eq!(
+                process_downloaded_bytes("pica", &media, truncated).unwrap_err(),
+                "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED"
+            );
+        }
     }
 
     #[test]
@@ -259,7 +288,7 @@ mod tests {
             b"RIFF1234WEBPnot-a-real-webp".to_vec(),
         )
         .unwrap_err();
-        assert_eq!(err, "JM_MEDIA_WEBP_DECODE_FAILED");
+        assert_eq!(err, "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED");
     }
 
     #[test]
@@ -268,7 +297,7 @@ mod tests {
         assert_eq!(
             process_downloaded_bytes("pica", &media, b"<html>error</html>".to_vec())
                 .unwrap_err(),
-            "LIVE_MEDIA_SOURCE_FORMAT_MISMATCH"
+            "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED"
         );
     }
 }

@@ -20,6 +20,42 @@ pub const HOST: &str = "https://picaapi.picacomic.com/";
 const API_KEY: &str = "C69BAF41DA5ABD1FFEDC6D2FEA56B";
 const NONCE: &str = "ptxdhmjzqtnrtwndhbxcpkjamb33w837";
 const DIGEST_KEY: &str = r"~d}$Q7$eIni=V)9\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn";
+/// Maximum in-memory response size for API metadata and error envelopes.
+pub const MAX_METADATA_BYTES: u64 = 8 * 1024 * 1024;
+
+fn checked_metadata_len(current: usize, incoming: usize) -> Result<usize, String> {
+    let next = current
+        .checked_add(incoming)
+        .ok_or("METADATA_RESPONSE_SIZE_OVERFLOW")?;
+    if u64::try_from(next).map_err(|_| "METADATA_RESPONSE_SIZE_OVERFLOW")? > MAX_METADATA_BYTES {
+        return Err("METADATA_RESPONSE_TOO_LARGE".into());
+    }
+    Ok(next)
+}
+
+async fn read_bounded_response(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_METADATA_BYTES)
+    {
+        return Err("METADATA_RESPONSE_TOO_LARGE".into());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "METADATA_RESPONSE_READ_FAILED")?
+    {
+        checked_metadata_len(body.len(), chunk.len())?;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn read_json_response(response: reqwest::Response) -> Result<Value, String> {
+    let body = read_bounded_response(response).await?;
+    serde_json::from_slice(&body).map_err(|_| "INVALID_JSON".into())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PicaPreflightChapter {
@@ -110,7 +146,7 @@ impl PicaClient {
             })?;
             http_status = Some(response.status().as_u16());
             if operation == "detail" && response.status().as_u16() == 404 {
-                let body: Value = response.json().await.map_err(|_| "INVALID_JSON")?;
+                let body = read_json_response(response).await?;
                 if certified_unavailable(&body) {
                     return Err("CONFIRMED_UNAVAILABLE".into());
                 }
@@ -119,7 +155,7 @@ impl PicaClient {
             if !response.status().is_success() {
                 return Err(format!("HTTP_{}", response.status().as_u16()));
             }
-            let value: Value = response.json().await.map_err(|_| "INVALID_JSON")?;
+            let value = read_json_response(response).await?;
             if number(&value["code"]) != Some(200) {
                 return Err(format!(
                     "API_CODE_{}",
@@ -493,6 +529,11 @@ mod tests {
         let r = parse_record(&json!({"_id":"0123456789abcdef01234567","title":"title","author":"writer","_creator":{"token":"secret"},"thumb":"image"})).unwrap();
         assert_eq!(r.author, vec!["writer"]);
         assert!(!r.metadata.to_string().contains("secret"));
+    }
+    #[test]
+    fn metadata_body_limit_is_enforced_before_append() {
+        assert!(checked_metadata_len(MAX_METADATA_BYTES as usize, 1).is_err());
+        assert_eq!(checked_metadata_len(4, 5).unwrap(), 9);
     }
     #[test]
     fn signature_is_deterministic_and_path_sensitive() {

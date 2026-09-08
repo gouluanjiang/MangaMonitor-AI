@@ -114,16 +114,6 @@ fn join_portable(root: &Path, relative: &str) -> PathBuf {
         .fold(root.to_path_buf(), |path, component| path.join(component))
 }
 
-fn bytes_match_format(format: &str, bytes: &[u8]) -> bool {
-    match format {
-        "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
-        "webp" => bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
-        "jpg" | "jpeg" => bytes.len() >= 3 && bytes[..3] == [0xff, 0xd8, 0xff],
-        "png" => bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]),
-        _ => false,
-    }
-}
-
 fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -140,9 +130,11 @@ fn exact_processed_binding(
     {
         return Err("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH".into());
     }
-    if processed.bytes.is_empty() || !bytes_match_format(&descriptor.source_format, &processed.bytes) {
+    if processed.bytes.is_empty() {
         return Err("PROCESSED_MEDIA_INVALID_IMAGE_BYTES".into());
     }
+    crate::media_validation::validate(&descriptor.source_format, &processed.bytes)
+        .map_err(|_| "PROCESSED_MEDIA_INVALID_IMAGE_BYTES")?;
     Ok(())
 }
 

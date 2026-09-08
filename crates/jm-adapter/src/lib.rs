@@ -30,6 +30,42 @@ pub const BASELINE_DOMAINS: &[&str] = &[
     "www.cdnbea.net",
     "www.cdn-mspjmapiproxy.xyz",
 ];
+/// Maximum in-memory response size for encrypted JSON and metadata bodies.
+pub const MAX_METADATA_BYTES: u64 = 8 * 1024 * 1024;
+
+fn checked_metadata_len(current: usize, incoming: usize) -> Result<usize, String> {
+    let next = current
+        .checked_add(incoming)
+        .ok_or("METADATA_RESPONSE_SIZE_OVERFLOW")?;
+    if u64::try_from(next).map_err(|_| "METADATA_RESPONSE_SIZE_OVERFLOW")? > MAX_METADATA_BYTES {
+        return Err("METADATA_RESPONSE_TOO_LARGE".into());
+    }
+    Ok(next)
+}
+
+pub(crate) async fn read_bounded_response(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_METADATA_BYTES)
+    {
+        return Err("METADATA_RESPONSE_TOO_LARGE".into());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "METADATA_RESPONSE_READ_FAILED")?
+    {
+        checked_metadata_len(body.len(), chunk.len())?;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn read_json_response(response: reqwest::Response) -> Result<Value, String> {
+    let body = read_bounded_response(response).await?;
+    serde_json::from_slice(&body).map_err(|_| "INVALID_JSON".into())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JmPreflightChapter {
@@ -97,7 +133,7 @@ impl JmClient {
                 if !response.status().is_success() {
                     return Err(format!("HTTP_{status}"));
                 }
-                let body: Value = response.json().await.map_err(|_| "INVALID_JSON")?;
+                let body = read_json_response(response).await?;
                 if number(&body["code"]) != Some(200) {
                     return Err(format!(
                         "API_CODE_{}",
@@ -396,6 +432,11 @@ mod tests {
             assert!(is_retryable_transport(code));
         }
         assert!(!is_retryable_transport("INVALID_JSON"));
+    }
+    #[test]
+    fn metadata_body_limit_is_enforced_before_append() {
+        assert!(checked_metadata_len(MAX_METADATA_BYTES as usize, 1).is_err());
+        assert_eq!(checked_metadata_len(4, 5).unwrap(), 9);
     }
     #[test]
     fn preflight_chapters_match_pinned_series_and_fallback_rules() {

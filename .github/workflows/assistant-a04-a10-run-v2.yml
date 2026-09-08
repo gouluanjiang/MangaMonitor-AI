@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 20
+          fetch-depth: 24
 
       - name: Verify exact execution chain
         shell: bash
@@ -79,7 +79,14 @@ jobs:
           set -euo pipefail
           grep -q '"production_enabled"[[:space:]]*:[[:space:]]*false' monitor-config.json
           grep -q '"materialization_enabled"[[:space:]]*:[[:space:]]*false' local-materialization-policy.json
-          grep -q '"author_id"[[:space:]]*:[[:space:]]*"AUTHOR_0043"' formal-author-registry.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          registry = json.loads(Path('monitor-state/authors.json').read_text(encoding='utf-8'))
+          matches = [a for a in registry.get('authors', []) if a.get('author_id') == 'AUTHOR_0043']
+          if matches != [{'author_id': 'AUTHOR_0043', 'name': 'santa', 'enabled': True}]:
+              raise SystemExit(f'unexpected AUTHOR_0043 record: {matches!r}')
+          PY
 
       - name: Commit verified code only
         shell: bash

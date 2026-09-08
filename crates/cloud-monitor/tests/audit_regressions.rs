@@ -313,6 +313,14 @@ fn resume_refuses_to_replace_changed_authority_and_keeps_checkpoint() {
     save(&input, &original).unwrap();
     save(&output, &original).unwrap();
     let checkpoint_hash = hash(&load_checkpoint(&output).unwrap());
+    write_json(&output.join("state-manifest.json"), &json!({
+        "schema_version":1,"base_commit":"fixture-base","state_hash":checkpoint_hash,
+        "scan_id":original.scan.scan_id,"complete":false,"strategy_complete":false,
+        "requested_mode":"full","effective_requested_mode":"full",
+        "batch_index":0,"batch_count":1,"batch_size":1,"selected_authors":["Writer"],
+        "all_authors":["Writer"],"recovery":null,
+        "matcher_version":rules_core::title_m2::RULE_VERSION,"analysis_context":original.context()
+    })).unwrap();
     let mut changed = original.clone();
     changed.decisions.positive_mappings.push(Mapping {
         source_key: "jm:changed".into(),

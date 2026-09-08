@@ -27,7 +27,9 @@ on:
         default: ''
 
 concurrency:
-  group: phase3b-${{ github.event_name }}-${{ inputs.scope || 'scheduled' }}
+  # Scheduled and manual production share one writer regardless of ref or mode.
+  # Validation and the production-disabled bootstrap keep separate queues.
+  group: ${{ (github.event_name == 'schedule' || inputs.scope == 'production') && 'phase3b-production' || format('phase3b-{0}', inputs.scope || 'validation') }}
   cancel-in-progress: false
 
 jobs:

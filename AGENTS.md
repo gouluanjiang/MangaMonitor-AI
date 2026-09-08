@@ -11,6 +11,13 @@ These instructions apply to future automated or human development work in this r
 - `production_enabled=false` must remain closed unless a later, explicit production-acceptance decision changes it.
 - Do not weaken fail-closed behavior, approval-generation checks, staging isolation, inventory gates, task-revision binding, replacement gates, or physical-delete gates merely to match an upstream downloader.
 
+## Test execution and desktop resource policy
+
+- The user requested GitHub Actions as the preferred place for compilation, full test suites and cross-platform validation. Avoid repeating those workloads locally when CI provides the required evidence.
+- When local verification is necessary, use a small targeted check and only one build/test pipeline at a time across agents. The normal starting budget is `CARGO_BUILD_JOBS=2` and `--test-threads=2`; these are concurrency controls, not hard CPU or memory caps.
+- Check available resources first. Start local compilation only with at least 4 GiB available RAM. An otherwise idle desktop with at least 6 GiB available RAM may use at most 4 build jobs and 4 test threads. With less headroom, prefer existing-binary lightweight checks or GitHub Actions. Full workspace tests, clean/release builds and long soak runs belong in CI by default.
+- Keep local work gradual and explain the purpose of a necessary local check before starting. Pause local heavy work if available RAM drops below 2 GiB, total CPU remains above 80% for about 30 seconds, or the user reports slowdown. Leave cache migration/deletion as explicit separate work; avoid growing large build caches on a nearly full system drive.
+
 ## Mandatory gate before any real-download work
 
 Before implementing, enabling, modifying, or reviewing any code that can perform real JM/Pica manga download execution, media materialization to the user's library, staging-to-library promotion, replacement, or deletion:

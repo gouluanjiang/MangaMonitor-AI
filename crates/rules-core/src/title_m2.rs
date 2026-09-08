@@ -1,10 +1,37 @@
 //! Versioned, boundary/grammar based identity parser. No IO or fuzzy matching.
 //! None means unspecified, never false. Evidence offsets refer to normalized UTF-8.
-use crate::conservative_title as norm;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use unicode_casefold::{Locale, UnicodeCaseFold, Variant};
+use unicode_normalization::{char::canonical_combining_class, UnicodeNormalization};
 
-pub const RULE_VERSION: &str = "matcher-m2-v1";
+pub const RULE_VERSION: &str = "matcher-m2-v2";
+
+// Preserve the allowed NFKC normalization and attachment-preserving simple
+// casing. Full casefold can expand a letter into a different spelling (for
+// example, ß into ss), which is not sufficient title-identity evidence.
+// Keep this stricter key local to M2;
+// the compatibility/search normalizer is not an identity authority.
+fn norm(s: &str) -> String {
+    s.nfkc()
+        .map(|c| {
+            let folded = c
+                .case_fold_with(Variant::Simple, Locale::NonTurkic)
+                .next()
+                .expect("simple casefold maps one scalar");
+            // Simple folding can still turn an attached combining mark into a
+            // standalone letter (U+0345 -> U+03B9). That changes spelling too.
+            if canonical_combining_class(c) == canonical_combining_class(folded) {
+                folded
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Evidence {
@@ -461,7 +488,7 @@ pub fn parse(
             field,
             start,
             hi,
-            "matcher-m2-v1:grammar-and-collision-tests",
+            "matcher-m2-v2:grammar-and-collision-tests",
         );
         hi = start;
         trim(&normalized, &mut lo, &mut hi);
@@ -512,8 +539,29 @@ pub enum Relation {
     DifferentCore,
     Insufficient,
 }
+
+/// Veto reordered attachments when the same structural fields are present.
+/// Missing/different fields are checked separately by compare; true alone is
+/// neither a title witness nor proof of the same work.
+pub fn structural_attachment_compatible(a: &Identity, b: &Identity) -> bool {
+    fn order(identity: &Identity) -> Vec<&str> {
+        identity
+            .evidence
+            .iter()
+            .filter(|e| e.rule == "COMPLETE_SUFFIX_GRAMMAR")
+            .map(|e| e.field.as_str())
+            .collect()
+    }
+    let a_order = order(a);
+    let b_order = order(b);
+    a_order == b_order
+        || a_order.iter().collect::<BTreeSet<_>>() != b_order.iter().collect::<BTreeSet<_>>()
+}
+
 pub fn compare(a: &Identity, b: &Identity) -> Relation {
-    if !a.issues.is_empty()
+    if a.rule_version != RULE_VERSION
+        || b.rule_version != RULE_VERSION
+        || !a.issues.is_empty()
         || !b.issues.is_empty()
         || a.fields.content_type.is_none()
         || b.fields.content_type.is_none()
@@ -522,6 +570,20 @@ pub fn compare(a: &Identity, b: &Identity) -> Relation {
     }
     if a.core != b.core {
         return Relation::DifferentCore;
+    }
+    // Both types are explicit and issue-free here. Different known content
+    // types already separate these candidates, even if suffix attachment would
+    // otherwise be ambiguous. Missing/conflicting types still fail above.
+    if a.fields.content_type != b.fields.content_type {
+        return Relation::StructuralConflict;
+    }
+    // Peeling suffixes into an unordered field set loses attachment evidence:
+    // "title 2 Extra" may be an extra of installment 2, whereas "title Extra 2"
+    // may be installment 2 of the extras. Preserve the relative grammar order
+    // for every structural field, including numbered parts/chapters, without
+    // rejecting identical titles or reviewed token aliases/bracket wrappers.
+    if !structural_attachment_compatible(a, b) {
+        return Relation::Insufficient;
     }
     if a.fields == b.fields {
         return Relation::Exact;

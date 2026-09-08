@@ -710,76 +710,146 @@ impl State {
     pub fn page_boundary(&mut self, source: &str, author: &str, page: &SearchPage) -> bool {
         let ck = Self::cursor_key(source, author);
         let mode = self.effective_mode(source, author);
-        let cursor = self.scan.progress.entry(ck.clone()).or_default();
-        let previous_count = cursor.observed_ids.len();
-        let expected_page = if cursor.next_page == 0 { 1 } else { cursor.next_page };
-        let page_sequence_valid = page.page == expected_page;
-        cursor.mode = mode.clone();
-        cursor.next_page = page.page + 1;
+        let committed = self.scan.progress.get(&ck).cloned().unwrap_or_default();
+        let previous_count = committed.observed_ids.len();
+        let expected_page = if committed.next_page == 0 {
+            1
+        } else {
+            committed.next_page
+        };
+
+        // Build the next cursor off to the side. A malformed page must not
+        // consume its cursor, observations, or historical streak: resume must
+        // retry the last expected page.
+        let mut candidate = committed.clone();
+        candidate.mode = mode.clone();
+        candidate.next_page = page.page.saturating_add(1);
+        let page_sequence_valid = page.page > 0 && page.page == expected_page;
+        let mut page_ids = BTreeSet::new();
+        let mut duplicate_page = false;
         let mut early = false;
         for r in &page.records {
             let k = key(r);
-            if !cursor.observed_ids.insert(k.clone()) {
-                continue;
+            if !page_ids.insert(k.clone()) || committed.observed_ids.contains(&k) {
+                duplicate_page = true;
             }
-            if self.scan.historical_ids.contains(&k) {
-                cursor.historical_streak += 1;
-            } else {
-                cursor.historical_streak = 0;
-            }
-            if mode == "incremental" && cursor.historical_streak >= self.scan.threshold {
-                early = true;
+            if candidate.observed_ids.insert(k.clone()) {
+                if self.scan.historical_ids.contains(&k) {
+                    candidate.historical_streak += 1;
+                } else {
+                    candidate.historical_streak = 0;
+                }
+                if mode == "incremental" && candidate.historical_streak >= self.scan.threshold {
+                    early = true;
+                }
             }
         }
-        let observed_count = cursor.observed_ids.len() as u64;
-        let limit_valid = page.reported_limit.is_none_or(|limit| {
-            limit > 0 && page.records.len() as u64 <= limit
-        });
-        let total_valid = page.reported_total.is_none_or(|total| observed_count <= total);
-        let pages_valid = page.reported_pages.is_none_or(|pages| {
-            pages > 0 && page.page <= pages
-        });
-        let totals_agree = match (page.reported_total, page.reported_pages, page.reported_limit) {
+        let observed_count = candidate.observed_ids.len() as u64;
+        let limit_valid = page
+            .reported_limit
+            .is_none_or(|limit| limit > 0 && page.records.len() as u64 <= limit);
+        let total_valid = page
+            .reported_total
+            .is_none_or(|total| observed_count <= total);
+        let pages_valid = page
+            .reported_pages
+            .is_none_or(|pages| pages > 0 && page.page <= pages);
+        let totals_agree = match (
+            page.reported_total,
+            page.reported_pages,
+            page.reported_limit,
+        ) {
             (Some(total), Some(pages), Some(limit)) if total > 0 && limit > 0 => {
                 pages == total.div_ceil(limit)
             }
             (Some(0), Some(pages), _) => pages == 0 || pages == 1,
             _ => true,
         };
-        let duplicate_page = page.page > 1 && cursor.observed_ids.len() == previous_count;
+        let terminal_page = page
+            .reported_pages
+            .is_some_and(|pages| pages > 0 && page.page == pages);
+        let terminal_count_valid = !(terminal_page
+            && page
+                .reported_total
+                .is_some_and(|total| observed_count != total));
         let valid_empty = page.records.is_empty()
             && page.page == 1
             && page.reported_total == Some(0)
-            && page.reported_pages.is_none_or(|pages| pages == 0 || pages == 1);
+            && page
+                .reported_pages
+                .is_none_or(|pages| pages == 0 || pages == 1)
+            && page_sequence_valid;
         let metadata_consistent = page_sequence_valid
             && limit_valid
             && total_valid
             && pages_valid
             && totals_agree
+            && terminal_count_valid
             && !duplicate_page;
+        let page_valid = valid_empty || metadata_consistent;
         let redirect_complete = page.redirect_to_detail
             && page.records.len() == 1
             && metadata_consistent
             && page.page == 1
             && page.reported_total.is_none_or(|total| total == 1)
             && page.reported_pages.is_none_or(|pages| pages == 1);
-        let exhausted = valid_empty
-            || (metadata_consistent
-                && !page.records.is_empty()
-                && (page.reported_pages.is_some_and(|pages| page.page == pages)
-                    || page.reported_total.is_some_and(|total| observed_count == total)));
+        let exhausted = if valid_empty {
+            true
+        } else if metadata_consistent && !page.records.is_empty() {
+            match (page.reported_total, page.reported_pages) {
+                (Some(total), Some(pages)) => page.page == pages && observed_count == total,
+                (None, Some(pages)) => page.page == pages,
+                (Some(total), None) => observed_count == total,
+                (None, None) => false,
+            }
+        } else {
+            false
+        };
+
+        if !page_valid {
+            let cursor = self.scan.progress.entry(ck.clone()).or_default();
+            cursor.boundary = "INCOMPLETE_PAGINATION".into();
+            self.event(
+                format!("pagination:{}:{ck}", self.scan.scan_id),
+                "SCAN_PARTIAL",
+                json!({
+                    "source": source,
+                    "author": author,
+                    "reason": "INCOMPLETE_PAGINATION",
+                    "expected_page": expected_page,
+                    "page": page.page,
+                    "observed_count": previous_count,
+                }),
+            );
+            return true;
+        }
+
+        // Commit the candidate only after every page invariant has passed.
+        self.scan.progress.insert(ck.clone(), candidate);
         if redirect_complete || exhausted {
-            cursor.boundary = "COMPLETE".into();
+            self.scan
+                .progress
+                .get_mut(&ck)
+                .expect("candidate cursor was just inserted")
+                .boundary = "COMPLETE".into();
             if mode == "full" {
                 self.scan.last_full.insert(ck, self.scan.started_at.clone());
             }
             true
         } else if early {
-            cursor.boundary = "EARLY_STOP_HEURISTIC".into();
+            self.scan
+                .progress
+                .get_mut(&ck)
+                .expect("candidate cursor was just inserted")
+                .boundary = "EARLY_STOP_HEURISTIC".into();
             self.event(format!("early:{}:{ck}", self.scan.scan_id),"SCAN_PARTIAL",json!({"source":source,"author":author,"reason":"EARLY_STOP_HEURISTIC","boundary":"AFTER_FETCHED_PAGE"}));
             true
-        } else if !metadata_consistent || page.records.is_empty() {
-            cursor.boundary = "INCOMPLETE_PAGINATION".into();
+        } else if page.records.is_empty() {
+            self.scan
+                .progress
+                .get_mut(&ck)
+                .expect("candidate cursor was just inserted")
+                .boundary = "INCOMPLETE_PAGINATION".into();
             self.event(
                 format!("pagination:{}:{ck}", self.scan.scan_id),
                 "SCAN_PARTIAL",
@@ -787,7 +857,11 @@ impl State {
             );
             true
         } else {
-            cursor.boundary = "CHECKPOINT".into();
+            self.scan
+                .progress
+                .get_mut(&ck)
+                .expect("candidate cursor was just inserted")
+                .boundary = "CHECKPOINT".into();
             false
         }
     }

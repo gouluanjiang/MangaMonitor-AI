@@ -4,6 +4,10 @@ use state_model::{Record, SearchPage};
 use std::{collections::BTreeMap, fs, process::Command};
 
 fn state() -> State {
+    state_with("full", 5)
+}
+
+fn state_with(mode: &str, threshold: usize) -> State {
     let mut state = State {
         authors: json!({"schema_version":1,"authors":[{"name":"Writer","enabled":true}]}),
         inventory: json!({"schema_version":8,"works":[]}),
@@ -15,7 +19,13 @@ fn state() -> State {
         scan: Scan::default(),
     };
     state
-        .begin("audit-one", "2026-09-08T00:00:00Z", vec!["Writer".into()], "full", 5)
+        .begin(
+            "audit-one",
+            "2026-09-08T00:00:00Z",
+            vec!["Writer".into()],
+            mode,
+            threshold,
+        )
         .unwrap();
     state
 }
@@ -30,7 +40,13 @@ fn record(id: &str, title: &str) -> Record {
     )
 }
 
-fn page(page: u64, records: &[&str], total: Option<u64>, pages: Option<u64>, limit: Option<u64>) -> SearchPage {
+fn page(
+    page: u64,
+    records: &[&str],
+    total: Option<u64>,
+    pages: Option<u64>,
+    limit: Option<u64>,
+) -> SearchPage {
     SearchPage {
         page,
         reported_total: total,
@@ -39,7 +55,10 @@ fn page(page: u64, records: &[&str], total: Option<u64>, pages: Option<u64>, lim
         response_fields: vec![],
         record_fields: vec![],
         redirect_to_detail: false,
-        records: records.iter().map(|id| record(id, "Stable title")).collect(),
+        records: records
+            .iter()
+            .map(|id| record(id, "Stable title"))
+            .collect(),
     }
 }
 
@@ -61,7 +80,13 @@ fn source_errors_are_visible_per_scan_but_replay_idempotent_within_scan() {
     assert_eq!(state.scan.events.len(), 1);
 
     state
-        .begin("audit-two", "2026-09-08T01:00:00Z", vec!["Writer".into()], "full", 5)
+        .begin(
+            "audit-two",
+            "2026-09-08T01:00:00Z",
+            vec!["Writer".into()],
+            "full",
+            5,
+        )
         .unwrap();
     state.source_error("jm", "Writer", "FETCH_FAILED");
     assert_eq!(state.scan.events.len(), 1);
@@ -95,9 +120,18 @@ fn unchanged_pending_task_survives_unrelated_context_migration() {
     state.accept(&r, &r).unwrap();
     let before = state.pending["WORK_ONE"].clone();
 
-    state.decisions.ignored_source_records.push("jm:unrelated".into());
     state
-        .begin("audit-two", "2026-09-08T01:00:00Z", vec!["Writer".into()], "full", 5)
+        .decisions
+        .ignored_source_records
+        .push("jm:unrelated".into());
+    state
+        .begin(
+            "audit-two",
+            "2026-09-08T01:00:00Z",
+            vec!["Writer".into()],
+            "full",
+            5,
+        )
         .unwrap();
     state.accept(&r, &r).unwrap();
 
@@ -120,21 +154,19 @@ fn contradictory_pagination_is_incomplete_and_never_full() {
         "Writer",
         &page(3, &["three"], Some(21), Some(3), Some(20)),
     ));
-    assert_eq!(first.scan.progress["jm|Writer"].boundary, "INCOMPLETE_PAGINATION");
+    assert_eq!(
+        first.scan.progress["jm|Writer"].boundary,
+        "INCOMPLETE_PAGINATION"
+    );
     assert!(first.scan.last_full.is_empty());
 
     let mut duplicate = state();
-    assert!(!duplicate.page_boundary(
-        "jm",
-        "Writer",
-        &page(1, &["same"], Some(2), None, None),
-    ));
-    assert!(duplicate.page_boundary(
-        "jm",
-        "Writer",
-        &page(2, &["same"], Some(2), None, None),
-    ));
-    assert_eq!(duplicate.scan.progress["jm|Writer"].boundary, "INCOMPLETE_PAGINATION");
+    assert!(!duplicate.page_boundary("jm", "Writer", &page(1, &["same"], Some(2), None, None),));
+    assert!(duplicate.page_boundary("jm", "Writer", &page(2, &["same"], Some(2), None, None),));
+    assert_eq!(
+        duplicate.scan.progress["jm|Writer"].boundary,
+        "INCOMPLETE_PAGINATION"
+    );
     assert!(duplicate.scan.last_full.is_empty());
 
     let mut terminal = state();
@@ -146,11 +178,7 @@ fn contradictory_pagination_is_incomplete_and_never_full() {
     assert!(terminal.scan.last_full.contains_key("jm|Writer"));
 
     let mut empty = state();
-    assert!(empty.page_boundary(
-        "jm",
-        "Writer",
-        &page(1, &[], Some(0), Some(0), Some(20)),
-    ));
+    assert!(empty.page_boundary("jm", "Writer", &page(1, &[], Some(0), Some(0), Some(20)),));
     assert!(empty.scan.last_full.contains_key("jm|Writer"));
 
     let mut redirect = state();
@@ -158,6 +186,120 @@ fn contradictory_pagination_is_incomplete_and_never_full() {
     detail.redirect_to_detail = true;
     assert!(redirect.page_boundary("jm", "Writer", &detail));
     assert!(redirect.scan.last_full.contains_key("jm|Writer"));
+}
+
+#[test]
+fn a04_invalid_page_does_not_advance_cursor_and_resume_retries_it() {
+    let mut state = state();
+    assert!(!state.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &["one"], Some(3), Some(3), Some(1)),
+    ));
+    let after_page_one = state.scan.progress["jm|Writer"].clone();
+
+    // The page count contradicts total/limit. Its record must not be consumed.
+    assert!(state.page_boundary(
+        "jm",
+        "Writer",
+        &page(2, &["two"], Some(3), Some(2), Some(1)),
+    ));
+    assert_eq!(
+        state.scan.progress["jm|Writer"].next_page,
+        after_page_one.next_page
+    );
+    assert_eq!(
+        state.scan.progress["jm|Writer"].observed_ids,
+        after_page_one.observed_ids
+    );
+    assert_eq!(
+        state.scan.progress["jm|Writer"].historical_streak,
+        after_page_one.historical_streak
+    );
+    assert!(state.scan.last_full.is_empty());
+
+    // Resume starts at the same expected page and can now complete normally.
+    assert!(!state.page_boundary(
+        "jm",
+        "Writer",
+        &page(2, &["two"], Some(3), Some(3), Some(1)),
+    ));
+    assert!(state.page_boundary(
+        "jm",
+        "Writer",
+        &page(3, &["three"], Some(3), Some(3), Some(1)),
+    ));
+    assert_eq!(state.scan.progress["jm|Writer"].boundary, "COMPLETE");
+    assert!(state.scan.last_full.contains_key("jm|Writer"));
+}
+
+#[test]
+fn a04_malformed_page_cannot_trigger_historical_early_stop() {
+    let mut state = state_with("incremental", 1);
+    assert!(!state.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &["new"], Some(4), Some(4), Some(1)),
+    ));
+    state.scan.historical_ids.insert("jm:old".to_string());
+
+    // This page would reach the historical threshold, but its metadata is
+    // contradictory and must therefore fail closed before early-stop logic.
+    assert!(state.page_boundary(
+        "jm",
+        "Writer",
+        &page(2, &["old"], Some(4), Some(2), Some(1)),
+    ));
+    let cursor = &state.scan.progress["jm|Writer"];
+    assert_eq!(cursor.boundary, "INCOMPLETE_PAGINATION");
+    assert_eq!(cursor.next_page, 2);
+    assert_eq!(cursor.historical_streak, 0);
+    assert!(!cursor.observed_ids.contains("jm:old"));
+    assert!(!state
+        .scan
+        .events
+        .iter()
+        .any(|event| { event["reason"] == json!("EARLY_STOP_HEURISTIC") }));
+}
+
+#[test]
+fn a04_terminal_page_with_short_observed_count_stays_incomplete() {
+    let mut state = state();
+    assert!(!state.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &["one"], Some(3), Some(2), Some(2)),
+    ));
+    assert!(state.page_boundary(
+        "jm",
+        "Writer",
+        &page(2, &["two"], Some(3), Some(2), Some(2)),
+    ));
+    let cursor = &state.scan.progress["jm|Writer"];
+    assert_eq!(cursor.boundary, "INCOMPLETE_PAGINATION");
+    assert_eq!(cursor.next_page, 2);
+    assert_eq!(cursor.observed_ids.len(), 1);
+    assert!(state.scan.last_full.is_empty());
+}
+
+#[test]
+fn a04_partial_duplicate_overlap_fails_closed_without_deduping() {
+    let mut state = state();
+    assert!(!state.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &["one"], Some(3), Some(2), Some(2)),
+    ));
+    assert!(state.page_boundary(
+        "jm",
+        "Writer",
+        &page(2, &["one", "two"], Some(3), Some(2), Some(2)),
+    ));
+    let cursor = &state.scan.progress["jm|Writer"];
+    assert_eq!(cursor.boundary, "INCOMPLETE_PAGINATION");
+    assert_eq!(cursor.next_page, 2);
+    assert_eq!(cursor.observed_ids.len(), 1);
+    assert!(state.scan.last_full.is_empty());
 }
 
 #[test]
@@ -186,7 +328,15 @@ fn resume_refuses_to_replace_changed_authority_and_keeps_checkpoint() {
         .arg(&output)
         .args(["--authors"])
         .arg(&authors)
-        .args(["--resume", "--mode", "full", "--batch-size", "1", "--threshold", "5"])
+        .args([
+            "--resume",
+            "--mode",
+            "full",
+            "--batch-size",
+            "1",
+            "--threshold",
+            "5",
+        ])
         .output()
         .unwrap();
     assert!(!result.status.success());
@@ -209,7 +359,9 @@ fn state_loader_rejects_unknown_schema_authority_and_duplicate_review_ids() {
     .unwrap();
     future["schema_version"] = json!(99);
     write_json(&root.join("decisions.json"), &future).unwrap();
-    assert!(load(&root).unwrap_err().contains("UNSUPPORTED_SCHEMA_decisions.json_99"));
+    assert!(load(&root)
+        .unwrap_err()
+        .contains("UNSUPPORTED_SCHEMA_decisions.json_99"));
 
     save(&root, &state).unwrap();
     let mut authority = serde_json::from_slice::<serde_json::Value>(
@@ -221,10 +373,9 @@ fn state_loader_rejects_unknown_schema_authority_and_duplicate_review_ids() {
     assert_eq!(load(&root).unwrap_err(), "UNSUPPORTED_DECISIONS_FIELD");
 
     save(&root, &state).unwrap();
-    let mut review = serde_json::from_slice::<serde_json::Value>(
-        &fs::read(root.join("review.json")).unwrap(),
-    )
-    .unwrap();
+    let mut review =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(root.join("review.json")).unwrap())
+            .unwrap();
     review["match_review"] = json!([{
         "review_id":"DUP",
         "source_key":"jm:one",

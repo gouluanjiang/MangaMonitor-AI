@@ -90,7 +90,7 @@ jobs:
           test -f .github/workflows/assistant-state-publish.yml
           grep -q 'workflow_dispatch:' .github/workflows/assistant-state-publish.yml
           ! grep -Eq 'PICA_TOKEN|PICA_EMAIL|PICA_PASSWORD|--live-source|run-phase3b-cycle|jm-adapter|pica-adapter' .github/workflows/assistant-state-publish.yml
-      - name: Cloud workflows never invoke local manga executor, importer, rescan, candidate or apply authorization
+      - name: Cloud workflows never invoke local manga executor, importer, rescan, candidate or inventory apply
         run: |
           for workflow in \
             .github/workflows/phase3a.yml \
@@ -100,7 +100,7 @@ jobs:
             .github/workflows/phase3b-three-author-dual-source.yml \
             .github/workflows/assistant-state-publish.yml
           do
-            ! grep -Eq 'mangamonitor-local-executor|local_execution_orchestrator|live_media_fetch|mangamonitor-local-import|local_library_import|local_library_import_gate|mangamonitor-local-rescan|local_inventory_rescan|mangamonitor-local-inventory-candidate|local_inventory_update_candidate|mangamonitor-local-inventory-apply-gate|local_inventory_apply_authorization' "$workflow"
+            ! grep -Eq 'mangamonitor-local-executor|local_execution_orchestrator|live_media_fetch|mangamonitor-local-import|local_library_import|local_library_import_gate|mangamonitor-local-rescan|local_inventory_rescan|mangamonitor-local-inventory-candidate|local_inventory_update_candidate|mangamonitor-local-inventory-apply-gate|local_inventory_apply_authorization|mangamonitor-local-inventory-apply|local_inventory_apply' "$workflow"
           done
       - name: Phase3B scaling config is bounded and explicit
         run: |
@@ -190,11 +190,13 @@ jobs:
         run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_update_candidate'
       - name: Test V1.6 inventory apply authorization gate
         run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_apply_authorization'
+      - name: Test V1.7 crash-safe inventory apply
+        run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_apply::tests::'
       - name: Test GitHub Actions runtime refusal
-        run: cargo +1.98.1 test --locked -p cloud-monitor --bin mangamonitor-local-executor --bin mangamonitor-local-import --bin mangamonitor-local-rescan --bin mangamonitor-local-inventory-candidate --bin mangamonitor-local-inventory-apply-gate
+        run: cargo +1.98.1 test --locked -p cloud-monitor --bin mangamonitor-local-executor --bin mangamonitor-local-import --bin mangamonitor-local-rescan --bin mangamonitor-local-inventory-candidate --bin mangamonitor-local-inventory-apply-gate --bin mangamonitor-local-inventory-apply
       - name: Validate V1 staging acceptance script syntax
         shell: pwsh
         run: |
           $null = [scriptblock]::Create((Get-Content -Raw 'scripts/Run-V1AddOnlyStagingAcceptance.ps1'))
-      - name: Build Windows local executor, importer, rescan, candidate and apply gate
-        run: cargo +1.98.1 build --locked -p cloud-monitor --bin mangamonitor-local-executor --bin mangamonitor-local-import --bin mangamonitor-local-rescan --bin mangamonitor-local-inventory-candidate --bin mangamonitor-local-inventory-apply-gate
+      - name: Build Windows local executor, importer, rescan, candidate and inventory apply
+        run: cargo +1.98.1 build --locked -p cloud-monitor --bin mangamonitor-local-executor --bin mangamonitor-local-import --bin mangamonitor-local-rescan --bin mangamonitor-local-inventory-candidate --bin mangamonitor-local-inventory-apply-gate --bin mangamonitor-local-inventory-apply

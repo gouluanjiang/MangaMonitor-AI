@@ -163,12 +163,15 @@ fn inventory_authority(state: &State, task: &Task) -> InventoryAuthority {
     if target_work_seen > 1 || source_mapping_owners > 1 {
         return InventoryAuthority::Ambiguous;
     }
-    if target_work_seen == 1
-        && target_owned
-        && target_has_exact_mapping
-        && source_mapping_owners == 1
-    {
-        InventoryAuthority::Satisfied
+    if source_mapping_owners == 1 {
+        if target_work_seen == 1 && target_owned && target_has_exact_mapping {
+            InventoryAuthority::Satisfied
+        } else {
+            // The source identity is already claimed, but not by the exact
+            // owned work this task targets. Never schedule another download
+            // while authoritative inventory is contradictory.
+            InventoryAuthority::Ambiguous
+        }
     } else {
         InventoryAuthority::Unsatisfied
     }

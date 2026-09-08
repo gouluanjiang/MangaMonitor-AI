@@ -219,3 +219,29 @@ fn public_seed_is_already_at_audited_repair_after_state_and_repair_is_noop() {
     assert_eq!(hash(&repaired), before_hash);
     assert_eq!(repaired, state.inventory);
 }
+
+#[test]
+fn public_decisions_seed_matches_current_persistence_save_schema() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let state_dir = repo.join("monitor-state");
+    let state = persistence::load(&state_dir).unwrap();
+    let public: Value = serde_json::from_slice(&fs::read(state_dir.join("decisions.json")).unwrap()).unwrap();
+    assert_eq!(public["schema_version"], 3);
+    for field in ["positive_mappings", "negative_mappings", "ignored_source_records", "ignored_works"] {
+        assert_eq!(public[field], json!([]));
+    }
+
+    let output = std::env::temp_dir().join(format!(
+        "mangamonitor-public-decisions-roundtrip-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&output);
+    persistence::save(&output, &state).unwrap();
+    let saved: Value = serde_json::from_slice(&fs::read(output.join("decisions.json")).unwrap()).unwrap();
+    assert_eq!(saved, public);
+    assert_eq!(saved["schema_version"], 3);
+    for field in ["positive_mappings", "negative_mappings", "ignored_source_records", "ignored_works"] {
+        assert_eq!(saved[field], public[field]);
+    }
+    let _ = fs::remove_dir_all(output);
+}

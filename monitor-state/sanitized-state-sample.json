@@ -1,0 +1,1467 @@
+{
+  "catalog": {
+    "records": [
+      {
+        "active": true,
+        "analysis_context": "e733cf53a45352cdd47ca4f8cd206e908c3cf31feb5081331280849bec2bc24c",
+        "analysis_count": 1,
+        "author_evidence": {
+          "canonical_author": "haruhisky",
+          "matched_tokens": [
+            "haruhisky"
+          ],
+          "rule": "DIRECT_EXACT"
+        },
+        "detail_fingerprint": "9bb9b4d7b3a760a0aae28643c644900bb3d6e5de147b255b8a9e34c78782e873",
+        "identity_evidence": {
+          "author_evidence": {
+            "canonical_author": "haruhisky",
+            "matched_tokens": [
+              "haruhisky"
+            ],
+            "rule": "DIRECT_EXACT"
+          },
+          "candidate_evidence": [
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0001"
+                }
+              ],
+              "local_identity": {
+                "core": "セイバーさん ヤリモクナンパ待ち プール编",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate stay night"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate stay night",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "セイバーさん ヤリモクナンパ待ち プール编",
+                "raw": "セイバーさん ヤリモクナンパ待ち プール编",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00001"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0069"
+                }
+              ],
+              "local_identity": {
+                "core": "ゴブリンたちの雌になるまで ランサーアルトリア編",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate grand order"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate grand order",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "ゴブリンたちの雌になるまで ランサーアルトリア編",
+                "raw": "ゴブリンたちの雌になるまで ランサーアルトリア編",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00068"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0815"
+                }
+              ],
+              "local_identity": {
+                "core": "アオハルトラレ",
+                "evidence": [
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": null,
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "アオハルトラレ",
+                "raw": "アオハルトラレ",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00799"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_2628"
+                }
+              ],
+              "local_identity": {
+                "core": "バニー獅子王が騙されてhなお仕事をしちゃう本",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate grand order"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate grand order",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "バニー獅子王が騙されてhなお仕事をしちゃう本",
+                "raw": "バニー獅子王が騙されてHなお仕事をしちゃう本",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_02582"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_2629"
+                }
+              ],
+              "local_identity": {
+                "core": "セイバーさん ヤリモクナンパ待ち 温泉編",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate-stay night"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  },
+                  {
+                    "field": "metadata",
+                    "reference": "phase3b:jm:1244034",
+                    "rule": "LEADING_CLOSED_TRANSLATOR",
+                    "span": [
+                      0,
+                      14
+                    ],
+                    "text": "[路人漢化]"
+                  },
+                  {
+                    "field": "metadata",
+                    "reference": "phase3b:jm:302458",
+                    "rule": "EDGE_VERSION_METADATA",
+                    "span": [
+                      15,
+                      24
+                    ],
+                    "text": "[digital]"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate-stay night",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "[路人漢化] [digital] セイバーさん ヤリモクナンパ待ち 温泉編",
+                "raw": "[路人漢化] [Digital] セイバーさん ヤリモクナンパ待ち 温泉編",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_02583"
+            }
+          ],
+          "content_type_evidence": {
+            "conflict": false,
+            "default_manga": false,
+            "traces": []
+          },
+          "disposition": "REVIEW_REQUIRED",
+          "downstream_result": "REVIEW_REQUIRED",
+          "matching_work_ids": [],
+          "reason": "UNINTERPRETED_ANNOTATION",
+          "scope_work_ids": [
+            "WORK_00001",
+            "WORK_00068",
+            "WORK_00799",
+            "WORK_02582",
+            "WORK_02583"
+          ],
+          "source_identity": {
+            "core": "【瓜皮有償漢化】(c91) [ろいやるびっち (haruhisky)] くーねるすまた4",
+            "evidence": [
+              {
+                "field": "metadata",
+                "reference": "phase3b:jm:302458",
+                "rule": "EDGE_VERSION_METADATA",
+                "span": [
+                  113,
+                  120
+                ],
+                "text": "[dl版]"
+              },
+              {
+                "field": "fandom",
+                "reference": "phase3b:review-export",
+                "rule": "TRAILING_CLOSED_FANDOM",
+                "span": [
+                  89,
+                  112
+                ],
+                "text": "(くーねるまるた)"
+              }
+            ],
+            "fields": {
+              "chapter": null,
+              "collection": null,
+              "content_type": null,
+              "episode": null,
+              "extra": null,
+              "fandom": "くーねるまるた",
+              "front_back": null,
+              "part": null,
+              "series_number": null,
+              "subtitle": null,
+              "upper_lower": null,
+              "volume": null
+            },
+            "issues": [
+              "UNINTERPRETED_ANNOTATION"
+            ],
+            "normalized": "【瓜皮有償漢化】(c91) [ろいやるびっち (haruhisky)] くーねるすまた4 (くーねるまるた) [dl版]",
+            "raw": "【瓜皮有償漢化】(C91) [ろいやるびっち (haruhisky)] くーねるすまた4 (くーねるまるた) [DL版]",
+            "rule_version": "matcher-m2-v1"
+          },
+          "source_key": "jm:100228",
+          "uniqueness": "NO_IDENTITY_ASSERTION",
+          "work_id": null
+        },
+        "identity_provenance": {
+          "analysis_context": "e733cf53a45352cdd47ca4f8cd206e908c3cf31feb5081331280849bec2bc24c",
+          "detail_fingerprint": "9bb9b4d7b3a760a0aae28643c644900bb3d6e5de147b255b8a9e34c78782e873",
+          "matcher_version": "matcher-m2-v1",
+          "source_key": "jm:100228",
+          "trigger": "NEW_RECORD"
+        },
+        "last_unavailable_check": null,
+        "matcher_version": "matcher-m2-v1",
+        "record": {
+          "author": [
+            "haruhisky"
+          ],
+          "fingerprint": "9bb9b4d7b3a760a0aae28643c644900bb3d6e5de147b255b8a9e34c78782e873",
+          "first_seen": "2026-09-08T11:25:36.388274692+00:00",
+          "last_checked": "2026-09-08T11:25:36.388274692+00:00",
+          "last_seen": "2026-09-08T11:25:36.388274692+00:00",
+          "metadata": {
+            "actors": [],
+            "addtime": "1552810898",
+            "description": "",
+            "series": [],
+            "series_id": "0",
+            "tags": [
+              "瓜皮有償漢化",
+              "ろいやるびっち",
+              "haruhisky",
+              "くーねるすまた4",
+              "くーねるまるた",
+              "dl版",
+              "中文"
+            ],
+            "total_photos": 22,
+            "works": []
+          },
+          "processing_result": "REVIEW_REQUIRED",
+          "raw_title": "【瓜皮有償漢化】(C91) [ろいやるびっち (haruhisky)] くーねるすまた4 (くーねるまるた) [DL版]",
+          "source": "jm",
+          "source_work_id": "100228"
+        },
+        "search_fingerprint": "0215e492b0de37706a0531ea40d67e3d7f4b987691fe580ce3aa203b7790727d",
+        "search_queries": [
+          "haruhisky"
+        ],
+        "unavailable_streak": 0,
+        "work_id": null
+      },
+      {
+        "active": true,
+        "analysis_context": "e733cf53a45352cdd47ca4f8cd206e908c3cf31feb5081331280849bec2bc24c",
+        "analysis_count": 1,
+        "author_evidence": {
+          "canonical_author": "haruhisky",
+          "matched_tokens": [
+            "haruhisky"
+          ],
+          "rule": "DIRECT_EXACT"
+        },
+        "detail_fingerprint": "7ad7a8aeae1126649a5b1a968803c07780dbdfaf5fb4413c47febfb434ebc715",
+        "identity_evidence": {
+          "author_evidence": {
+            "canonical_author": "haruhisky",
+            "matched_tokens": [
+              "haruhisky"
+            ],
+            "rule": "DIRECT_EXACT"
+          },
+          "candidate_evidence": [
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0001"
+                }
+              ],
+              "local_identity": {
+                "core": "セイバーさん ヤリモクナンパ待ち プール编",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate stay night"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate stay night",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "セイバーさん ヤリモクナンパ待ち プール编",
+                "raw": "セイバーさん ヤリモクナンパ待ち プール编",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00001"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0069"
+                }
+              ],
+              "local_identity": {
+                "core": "ゴブリンたちの雌になるまで ランサーアルトリア編",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate grand order"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate grand order",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "ゴブリンたちの雌になるまで ランサーアルトリア編",
+                "raw": "ゴブリンたちの雌になるまで ランサーアルトリア編",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00068"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0815"
+                }
+              ],
+              "local_identity": {
+                "core": "アオハルトラレ",
+                "evidence": [
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": null,
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "アオハルトラレ",
+                "raw": "アオハルトラレ",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00799"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_2628"
+                }
+              ],
+              "local_identity": {
+                "core": "バニー獅子王が騙されてhなお仕事をしちゃう本",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate grand order"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate grand order",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "バニー獅子王が騙されてhなお仕事をしちゃう本",
+                "raw": "バニー獅子王が騙されてHなお仕事をしちゃう本",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_02582"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_2629"
+                }
+              ],
+              "local_identity": {
+                "core": "セイバーさん ヤリモクナンパ待ち 温泉編",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "fate-stay night"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  },
+                  {
+                    "field": "metadata",
+                    "reference": "phase3b:jm:1244034",
+                    "rule": "LEADING_CLOSED_TRANSLATOR",
+                    "span": [
+                      0,
+                      14
+                    ],
+                    "text": "[路人漢化]"
+                  },
+                  {
+                    "field": "metadata",
+                    "reference": "phase3b:jm:302458",
+                    "rule": "EDGE_VERSION_METADATA",
+                    "span": [
+                      15,
+                      24
+                    ],
+                    "text": "[digital]"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "fate-stay night",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "[路人漢化] [digital] セイバーさん ヤリモクナンパ待ち 温泉編",
+                "raw": "[路人漢化] [Digital] セイバーさん ヤリモクナンパ待ち 温泉編",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_02583"
+            }
+          ],
+          "content_type_evidence": {
+            "conflict": false,
+            "default_manga": false,
+            "traces": []
+          },
+          "disposition": "REVIEW_REQUIRED",
+          "downstream_result": "REVIEW_REQUIRED",
+          "matching_work_ids": [],
+          "reason": "UNINTERPRETED_ANNOTATION",
+          "scope_work_ids": [
+            "WORK_00001",
+            "WORK_00068",
+            "WORK_00799",
+            "WORK_02582",
+            "WORK_02583"
+          ],
+          "source_identity": {
+            "core": "[くーねるすまた3]",
+            "evidence": [
+              {
+                "field": "metadata",
+                "reference": "PHASE3B_CLOSED_CREATOR_PAIRS",
+                "rule": "LEADING_CONFIRMED_CREATOR",
+                "span": [
+                  0,
+                  34
+                ],
+                "text": "[ろいやるびっち(haruhisky)]"
+              }
+            ],
+            "fields": {
+              "chapter": null,
+              "collection": null,
+              "content_type": null,
+              "episode": null,
+              "extra": null,
+              "fandom": null,
+              "front_back": null,
+              "part": null,
+              "series_number": null,
+              "subtitle": null,
+              "upper_lower": null,
+              "volume": null
+            },
+            "issues": [
+              "UNINTERPRETED_ANNOTATION"
+            ],
+            "normalized": "[ろいやるびっち(haruhisky)][くーねるすまた3]",
+            "raw": "[ろいやるびっち(haruhisky)][くーねるすまた3]",
+            "rule_version": "matcher-m2-v1"
+          },
+          "source_key": "jm:100251",
+          "uniqueness": "NO_IDENTITY_ASSERTION",
+          "work_id": null
+        },
+        "identity_provenance": {
+          "analysis_context": "e733cf53a45352cdd47ca4f8cd206e908c3cf31feb5081331280849bec2bc24c",
+          "detail_fingerprint": "7ad7a8aeae1126649a5b1a968803c07780dbdfaf5fb4413c47febfb434ebc715",
+          "matcher_version": "matcher-m2-v1",
+          "source_key": "jm:100251",
+          "trigger": "NEW_RECORD"
+        },
+        "last_unavailable_check": null,
+        "matcher_version": "matcher-m2-v1",
+        "record": {
+          "author": [
+            "haruhisky"
+          ],
+          "fingerprint": "7ad7a8aeae1126649a5b1a968803c07780dbdfaf5fb4413c47febfb434ebc715",
+          "first_seen": "2026-09-08T11:25:36.388274692+00:00",
+          "last_checked": "2026-09-08T11:25:36.388274692+00:00",
+          "last_seen": "2026-09-08T11:25:36.388274692+00:00",
+          "metadata": {
+            "actors": [],
+            "addtime": "1552853706",
+            "description": "瓜皮有償漢化",
+            "series": [],
+            "series_id": "0",
+            "tags": [
+              "ろいやるびっち",
+              "巨乳",
+              "劇情向",
+              "束縛/調教/凌辱"
+            ],
+            "total_photos": 25,
+            "works": []
+          },
+          "processing_result": "REVIEW_REQUIRED",
+          "raw_title": "[ろいやるびっち(haruhisky)][くーねるすまた3]",
+          "source": "jm",
+          "source_work_id": "100251"
+        },
+        "search_fingerprint": "7e9d789a25047c789b8395f1d49e7e945cefcc6dc8d3c564116722cefbb8901a",
+        "search_queries": [
+          "haruhisky"
+        ],
+        "unavailable_streak": 0,
+        "work_id": null
+      }
+    ]
+  },
+  "latest": {
+    "events": [
+      {
+        "data": {
+          "matcher_version": "matcher-m2-v1",
+          "reason": "UNKNOWN_SOURCE_CONTENT_TYPE_NO_IDENTITY_PROOF",
+          "source_key": "jm:1466043"
+        },
+        "event_id": "REVIEW_4b0b679f88d462b76fb8",
+        "kind": "NEW_REVIEW"
+      },
+      {
+        "data": {
+          "matcher_version": "matcher-m2-v1",
+          "reason": "UNINTERPRETED_ANNOTATION",
+          "source_key": "jm:1465221"
+        },
+        "event_id": "REVIEW_ad258127a701c23a1f85",
+        "kind": "NEW_REVIEW"
+      }
+    ]
+  },
+  "pending": {
+    "tasks": []
+  },
+  "review": {
+    "match_review": [
+      {
+        "author": [
+          "3104丁目 (3104)"
+        ],
+        "candidates": [],
+        "identity_evidence": {
+          "author_evidence": {
+            "canonical_author": "3104",
+            "matched_tokens": [
+              "3104"
+            ],
+            "rule": "PARENTHESIZED_OFFICIAL_TOKEN"
+          },
+          "candidate_evidence": [
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0098"
+                }
+              ],
+              "local_identity": {
+                "core": "悲しみが嫌いだったら",
+                "evidence": [
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": null,
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "悲しみが嫌いだったら",
+                "raw": "悲しみが嫌いだったら",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00097"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0099"
+                }
+              ],
+              "local_identity": {
+                "core": "heroine",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "アズールレーン"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "アズールレーン",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "heroine",
+                "raw": "HEROINE",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00098"
+            }
+          ],
+          "content_type_evidence": {
+            "conflict": false,
+            "default_manga": false,
+            "traces": []
+          },
+          "disposition": "REVIEW_REQUIRED",
+          "downstream_result": "REVIEW_REQUIRED",
+          "matching_work_ids": [],
+          "reason": "UNKNOWN_SOURCE_CONTENT_TYPE_NO_IDENTITY_PROOF",
+          "scope_work_ids": [
+            "WORK_00097",
+            "WORK_00098"
+          ],
+          "source_identity": {
+            "core": "ただ悲しいフリをする",
+            "evidence": [],
+            "fields": {
+              "chapter": null,
+              "collection": null,
+              "content_type": null,
+              "episode": null,
+              "extra": null,
+              "fandom": null,
+              "front_back": null,
+              "part": null,
+              "series_number": null,
+              "subtitle": null,
+              "upper_lower": null,
+              "volume": null
+            },
+            "issues": [],
+            "normalized": "ただ悲しいフリをする",
+            "raw": "ただ悲しいフリをする",
+            "rule_version": "matcher-m2-v1"
+          },
+          "source_key": "pica:64f62c0519931c2a527cddae",
+          "uniqueness": "NO_IDENTITY_ASSERTION",
+          "work_id": null
+        },
+        "matcher_version": "matcher-m2-v1",
+        "provenance": {
+          "analysis": {
+            "analysis_context": "e733cf53a45352cdd47ca4f8cd206e908c3cf31feb5081331280849bec2bc24c",
+            "detail_fingerprint": "9762653f36a5b7a3eeb37f93d1f13c81bf0f66cccc380f569c976f2e3d096c93",
+            "matcher_version": "matcher-m2-v1",
+            "source_key": "pica:64f62c0519931c2a527cddae",
+            "trigger": "NEW_RECORD"
+          },
+          "migration": null
+        },
+        "reason": "UNKNOWN_SOURCE_CONTENT_TYPE_NO_IDENTITY_PROOF",
+        "review_id": "REVIEW_017227775f49b607d0b8",
+        "source_key": "pica:64f62c0519931c2a527cddae",
+        "status": "REVIEW_REQUIRED",
+        "title": "ただ悲しいフリをする"
+      },
+      {
+        "author": [
+          "3104丁目 (3104)"
+        ],
+        "candidates": [],
+        "identity_evidence": {
+          "author_evidence": {
+            "canonical_author": "3104",
+            "matched_tokens": [
+              "3104"
+            ],
+            "rule": "PARENTHESIZED_OFFICIAL_TOKEN"
+          },
+          "candidate_evidence": [
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0098"
+                }
+              ],
+              "local_identity": {
+                "core": "悲しみが嫌いだったら",
+                "evidence": [
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": null,
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "悲しみが嫌いだったら",
+                "raw": "悲しみが嫌いだったら",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00097"
+            },
+            {
+              "excluded_by_not_same": false,
+              "local_content_type_evidence": [
+                {
+                  "content": {
+                    "collection": false,
+                    "complete_count": null,
+                    "complete_edition": false,
+                    "coverage_ranges": [],
+                    "explicit_member_numbers": [],
+                    "extra_content": [],
+                    "part_markers": [],
+                    "type": "manga"
+                  },
+                  "local_item_id": "LOCAL_ITEM_0099"
+                }
+              ],
+              "local_identity": {
+                "core": "heroine",
+                "evidence": [
+                  {
+                    "field": "fandom",
+                    "reference": "input.fandom",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "アズールレーン"
+                  },
+                  {
+                    "field": "content_type",
+                    "reference": "input.content_type",
+                    "rule": "EXPLICIT_INPUT_FIELD",
+                    "span": null,
+                    "text": "manga"
+                  }
+                ],
+                "fields": {
+                  "chapter": null,
+                  "collection": null,
+                  "content_type": "manga",
+                  "episode": null,
+                  "extra": null,
+                  "fandom": "アズールレーン",
+                  "front_back": null,
+                  "part": null,
+                  "series_number": null,
+                  "subtitle": null,
+                  "upper_lower": null,
+                  "volume": null
+                },
+                "issues": [],
+                "normalized": "heroine",
+                "raw": "HEROINE",
+                "rule_version": "matcher-m2-v1"
+              },
+              "relation": "Insufficient",
+              "title_witness_without_type_authorization": false,
+              "work_id": "WORK_00098"
+            }
+          ],
+          "content_type_evidence": {
+            "conflict": false,
+            "default_manga": false,
+            "traces": []
+          },
+          "disposition": "REVIEW_REQUIRED",
+          "downstream_result": "REVIEW_REQUIRED",
+          "matching_work_ids": [],
+          "reason": "UNPARSED_IDENTITY_MARKER",
+          "scope_work_ids": [
+            "WORK_00097",
+            "WORK_00098"
+          ],
+          "source_identity": {
+            "core": "冬コミのおまけ本",
+            "evidence": [
+              {
+                "field": "metadata",
+                "reference": "phase3b:jm:302458",
+                "rule": "EDGE_VERSION_METADATA",
+                "span": [
+                  94,
+                  101
+                ],
+                "text": "[dl版]"
+              },
+              {
+                "field": "metadata",
+                "reference": "phase3b:jm:302458",
+                "rule": "EDGE_VERSION_METADATA",
+                "span": [
+                  80,
+                  94
+                ],
+                "text": "[中国翻訳]"
+              },
+              {
+                "field": "fandom",
+                "reference": "phase3b:review-export",
+                "rule": "TRAILING_CLOSED_FANDOM",
+                "span": [
+                  25,
+                  79
+                ],
+                "text": "(アイドルマスター シャイニーカラーズ)"
+              }
+            ],
+            "fields": {
+              "chapter": null,
+              "collection": null,
+              "content_type": null,
+              "episode": null,
+              "extra": null,
+              "fandom": "アイドルマスター シャイニーカラーズ",
+              "front_back": null,
+              "part": null,
+              "series_number": null,
+              "subtitle": null,
+              "upper_lower": null,
+              "volume": null
+            },
+            "issues": [
+              "UNPARSED_IDENTITY_MARKER"
+            ],
+            "normalized": "冬コミのおまけ本 (アイドルマスター シャイニーカラーズ) [中国翻訳][dl版]",
+            "raw": "冬コミのおまけ本 (アイドルマスター シャイニーカラーズ) [中国翻訳][DL版]",
+            "rule_version": "matcher-m2-v1"
+          },
+          "source_key": "pica:5e4e2e741415be3c4cb55c60",
+          "uniqueness": "NO_IDENTITY_ASSERTION",
+          "work_id": null
+        },
+        "matcher_version": "matcher-m2-v1",
+        "provenance": {
+          "analysis": {
+            "analysis_context": "e733cf53a45352cdd47ca4f8cd206e908c3cf31feb5081331280849bec2bc24c",
+            "detail_fingerprint": "f99a897a12eea2a36e9f1470ac2828a95eb2be12aa36f7f1867a19373dc7f22f",
+            "matcher_version": "matcher-m2-v1",
+            "source_key": "pica:5e4e2e741415be3c4cb55c60",
+            "trigger": "NEW_RECORD"
+          },
+          "migration": null
+        },
+        "reason": "UNPARSED_IDENTITY_MARKER",
+        "review_id": "REVIEW_01e647a6864d014634fb",
+        "source_key": "pica:5e4e2e741415be3c4cb55c60",
+        "status": "REVIEW_REQUIRED",
+        "title": "冬コミのおまけ本 (アイドルマスター シャイニーカラーズ) [中国翻訳][DL版]"
+      }
+    ]
+  },
+  "sanitized": true,
+  "scan_state": {
+    "complete": true,
+    "direct_failures": {},
+    "progress": {
+      "jm|santa": {
+        "boundary": "COMPLETE",
+        "historical_streak": 0,
+        "mode": "full",
+        "next_page": 3,
+        "observed_ids": [
+          "jm:100907",
+          "jm:1022259",
+          "jm:1027110",
+          "jm:103851",
+          "jm:1049600",
+          "jm:1049601",
+          "jm:1050057",
+          "jm:113384",
+          "jm:11544",
+          "jm:119524",
+          "jm:1205534",
+          "jm:1205820",
+          "jm:120644",
+          "jm:1211485",
+          "jm:123098",
+          "jm:1237136",
+          "jm:123900",
+          "jm:1242657",
+          "jm:1251647",
+          "jm:1252141",
+          "jm:1457494",
+          "jm:1468172",
+          "jm:1468430",
+          "jm:147087",
+          "jm:180837",
+          "jm:18889",
+          "jm:18890",
+          "jm:18893",
+          "jm:21647",
+          "jm:223145",
+          "jm:224",
+          "jm:231852",
+          "jm:235572",
+          "jm:25451",
+          "jm:25452",
+          "jm:25453",
+          "jm:25707",
+          "jm:259266",
+          "jm:274260",
+          "jm:279366",
+          "jm:295648",
+          "jm:30219",
+          "jm:306361",
+          "jm:309266",
+          "jm:315759",
+          "jm:375752",
+          "jm:377686",
+          "jm:378097",
+          "jm:37820",
+          "jm:37899",
+          "jm:37900",
+          "jm:394449",
+          "jm:396515",
+          "jm:415789",
+          "jm:47647",
+          "jm:485723",
+          "jm:485797",
+          "jm:486469",
+          "jm:51894",
+          "jm:52308",
+          "jm:528897",
+          "jm:529182",
+          "jm:531281",
+          "jm:533978",
+          "jm:53538",
+          "jm:539833",
+          "jm:556349",
+          "jm:601512",
+          "jm:60417",
+          "jm:61591",
+          "jm:620556",
+          "jm:620898",
+          "jm:62826",
+          "jm:63033",
+          "jm:63519",
+          "jm:63681",
+          "jm:63703",
+          "jm:639417",
+          "jm:69620",
+          "jm:7510",
+          "jm:7512",
+          "jm:80212",
+          "jm:82315",
+          "jm:82511",
+          "jm:90772",
+          "jm:90774",
+          "jm:90775",
+          "jm:94262",
+          "jm:94263",
+          "jm:94264",
+          "jm:94265"
+        ],
+        "pagination_contract": {
+          "reported_limit": null,
+          "reported_pages": null,
+          "reported_total": 91
+        }
+      },
+      "pica|santa": {
+        "boundary": "COMPLETE",
+        "historical_streak": 0,
+        "mode": "full",
+        "next_page": 4,
+        "observed_ids": [
+          "pica:582190335f6b9a4f93e3acfb",
+          "pica:582196095f6b9a4f93e7b235",
+          "pica:5821a4765f6b9a4f93f0fba9",
+          "pica:5821ac6c5f6b9a4f93f541e9",
+          "pica:5821afea5f6b9a4f93f6ea3f",
+          "pica:597ea4b792c786325e1a026e",
+          "pica:59a6223a4fdb0f59ee259565",
+          "pica:5a4a101dd5158b4a7cefea5b",
+          "pica:5b72fac3473be51732d08037",
+          "pica:5b73ceb83584064c55ca1bd9",
+          "pica:5b7444ddbd003a57b480beb6",
+          "pica:5c131d3ebafe76224d849f13",
+          "pica:5c306243ea8bf973be7b6a24",
+          "pica:5c99c702df1b8c38016dad1b",
+          "pica:5d2a9bd7c0965715090cde3b",
+          "pica:5d551e7d36f2cf3362ce0f28",
+          "pica:5e0e037798515f2815e4b13a",
+          "pica:5e8b5ab76e483d487905c93f",
+          "pica:5fac0d13c157b87f661e57ac",
+          "pica:6016d012cbf56a60f6e57789",
+          "pica:60b05958fb5f6a1bedf77db7",
+          "pica:60c3c60c491dd251e0879d26",
+          "pica:611f8ab862cfde1d001b9c71",
+          "pica:617adb9b3385a67d196152d9",
+          "pica:61b0564f002434489f7267b2",
+          "pica:61cec3929cff0334078754e0",
+          "pica:61eeb3145f4a1b6a4601ee8c",
+          "pica:61fcd6f08c1ff550381970c7",
+          "pica:62125c6aa4bc14602718da92",
+          "pica:62d2e0bab3b0a812db299300",
+          "pica:62e94e6d72a321097c372c22",
+          "pica:631a0016f06b112a10763408",
+          "pica:631cc5d9f06b112a107675a3",
+          "pica:6384d7db9e06a12d38388dbf",
+          "pica:63b984244224ed3e4d590adf",
+          "pica:63d14900a70f2074cabeb0e5",
+          "pica:64f62ca419931c2a527cddd4",
+          "pica:64f9ef0b0834b636acd11f83",
+          "pica:6551196daef85c72a976ef0d",
+          "pica:66c4b41f32156f25d8e7ad5e",
+          "pica:6717c4859cb3162387b8d0bf",
+          "pica:674b2a1a8f09b864fb32e76f",
+          "pica:677ab434793316474ba2fa10",
+          "pica:67dd6a4efa6ac608a1f9cc20",
+          "pica:68c47e11991e2d7e08b6467d",
+          "pica:68dd19d988a6896d402c5708",
+          "pica:693d7816aaa57d2d465f31fe",
+          "pica:69651b1ef7306773b4793d19",
+          "pica:69652379a11e197407c25708",
+          "pica:697793659f18fe74b838cca5"
+        ],
+        "pagination_contract": {
+          "reported_limit": 20,
+          "reported_pages": 3,
+          "reported_total": 50
+        }
+      }
+    },
+    "requested_mode": "full",
+    "scan_id": "2026-09-08T11:29:29.585438390+00:00",
+    "threshold": 5
+  },
+  "schema_version": 1
+}

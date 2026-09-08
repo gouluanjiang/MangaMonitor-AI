@@ -1,35 +1,35 @@
 {
-  "schema_version": 1,
   "authors": [
     {
       "author_id": "AUTHOR_0001",
-      "name": "10驛",
-      "enabled": true
+      "enabled": true,
+      "name": "10驛"
     },
     {
       "author_id": "AUTHOR_0002",
-      "name": "2-G",
-      "enabled": true
+      "enabled": true,
+      "name": "2-G"
     },
     {
       "author_id": "AUTHOR_0003",
-      "name": "3104",
-      "enabled": true
+      "enabled": true,
+      "name": "3104"
     },
     {
       "author_id": "AUTHOR_0019",
-      "name": "Bee導師",
-      "enabled": true
+      "enabled": true,
+      "name": "Bee導師"
     },
     {
       "author_id": "AUTHOR_0042",
-      "name": "haruhisky",
-      "enabled": true
+      "enabled": true,
+      "name": "haruhisky"
     },
     {
       "author_id": "AUTHOR_0043",
-      "name": "santa",
-      "enabled": true
+      "enabled": true,
+      "name": "santa"
     }
-  ]
+  ],
+  "schema_version": 1
 }

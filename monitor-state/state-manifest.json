@@ -1,0 +1,16 @@
+{
+  "base_commit": "2215b7c4d98cabdd9c974892fcc14232ceac48b4",
+  "batch_count": 2,
+  "batch_index": 1,
+  "complete": true,
+  "coverage_complete": true,
+  "effective_requested_mode": "full",
+  "requested_mode": "full",
+  "scan_id": "2026-09-08T11:29:29.585438390+00:00",
+  "schema_version": 1,
+  "selected_authors": [
+    "santa"
+  ],
+  "state_hash": "f64e4ca90118b66eadb54b2d4aafd92a4d2eb26b8b5941c8405788f0e955e93f",
+  "strategy_complete": true
+}

@@ -1,7 +1,7 @@
 {
-  "schema_version": 3,
-  "positive_mappings": [],
-  "negative_mappings": [],
   "ignored_source_records": [],
-  "ignored_works": []
+  "ignored_works": [],
+  "negative_mappings": [],
+  "positive_mappings": [],
+  "schema_version": 3
 }

@@ -70,6 +70,8 @@ pub struct Task {
     pub action: String,
     pub status: String,
     pub old_local_item_ids: Vec<String>,
+    #[serde(default)]
+    pub binding_authority_hash: String,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Decisions {
@@ -146,6 +148,10 @@ pub struct Scan {
     pub inventory_repairs: Vec<Value>,
     #[serde(default)]
     pub review_migration: ReviewMigrationAudit,
+    #[serde(default)]
+    pub identity_authority_hash: String,
+    #[serde(skip)]
+    pub scope_certificates: Vec<crate::matcher_m2::ScopeCertificate>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
@@ -182,12 +188,17 @@ impl State {
         // therefore trigger the same offline reanalysis as decisions/inventory.
         // The frozen matcher version is an input too: changing the rule set must
         // cause exactly one deterministic production reanalysis.
-        hash(&(
+        let base = (
             rules_core::title_m2::RULE_VERSION,
             &self.decisions,
             semantic_document(&self.inventory),
             semantic_document(&self.authors),
-        ))
+        );
+        if self.scan.identity_authority_hash.is_empty() {
+            hash(&base)
+        } else {
+            hash(&(base, &self.scan.identity_authority_hash))
+        }
     }
     pub fn event(&mut self, id: String, kind: &str, data: Value) {
         if self.scan.event_keys.insert(id.clone()) {
@@ -412,7 +423,19 @@ impl State {
     }
     fn analyze(&mut self, k: &str, trigger: AnalysisTrigger) {
         let r = self.catalog[k].record.clone();
-        let outcome = crate::matcher_m2::decide(self, &r, &[]);
+        let canonical_author = resolve_author_evidence(&r, &self.author_names()).canonical_author;
+        let certificates: Vec<_> = canonical_author
+            .as_deref()
+            .and_then(|author| {
+                self.scan
+                    .scope_certificates
+                    .iter()
+                    .find(|certificate| certificate.author == author)
+                    .cloned()
+            })
+            .into_iter()
+            .collect();
+        let outcome = crate::matcher_m2::decide(self, &r, &certificates);
         self.apply_identity_outcome(k, &r, outcome, trigger);
     }
 
@@ -472,6 +495,7 @@ impl State {
                 r,
                 work_id,
                 outcome.author_evidence.canonical_author.clone(),
+                outcome.binding_authority_hash.clone(),
             );
         } else {
             // A record that no longer has a trusted work binding must stop its
@@ -586,7 +610,14 @@ impl State {
         }
     }
     /// Shared downstream version/coverage path for legacy and controlled M2 identity.
-    pub(crate) fn bind_work(&mut self, k: &str, r: &Record, work: String, author: Option<String>) {
+    pub(crate) fn bind_work(
+        &mut self,
+        k: &str,
+        r: &Record,
+        work: String,
+        author: Option<String>,
+        binding_authority_hash: Option<String>,
+    ) {
         for t in self
             .pending
             .values_mut()
@@ -612,6 +643,7 @@ impl State {
             version: version(r),
             coverage: Value::Null,
         };
+        let new_authority = binding_authority_hash.unwrap_or_default();
         let owned = self.inventory["works"]
             .as_array()
             .into_iter()
@@ -646,6 +678,26 @@ impl State {
         }
         if let Some(old) = self.pending.get(&work).cloned() {
             if old.target.source_key == target.source_key && hash(&old.target) == hash(&target) {
+                let authority_changed = old.binding_authority_hash != new_authority;
+                if old.status == "pending" && !authority_changed {
+                    return;
+                }
+                let t = self.pending.get_mut(&work).unwrap();
+                t.task_revision += 1;
+                t.binding_authority_hash = new_authority;
+                t.status = "pending".into();
+                let rev = t.task_revision;
+                let task_id = t.task_id.clone();
+                self.event(
+                    format!("{task_id}:{rev}"),
+                    if authority_changed {
+                        "PENDING_AUTHORITY_EPOCH"
+                    } else {
+                        "PENDING_AUTHORITY_RESTORED"
+                    },
+                    json!({"task_id":task_id,"task_revision":rev}),
+                );
+                self.catalog.get_mut(k).unwrap().record.processing_result = "PENDING".into();
                 return;
             }
             let mut old_candidate = candidate(&old.target);
@@ -658,6 +710,7 @@ impl State {
                     let t = self.pending.get_mut(&work).unwrap();
                     t.task_revision += 1;
                     t.target = target;
+                    t.binding_authority_hash = new_authority.clone();
                     t.status = "pending".into();
                     let rev = t.task_revision;
                     let task_id = t.task_id.clone();
@@ -686,6 +739,7 @@ impl State {
                     action: action.into(),
                     status: "pending".into(),
                     old_local_item_ids: old_ids,
+                    binding_authority_hash: new_authority,
                 },
             );
             self.event(
@@ -1306,4 +1360,73 @@ fn local_version(v: &Value) -> Version {
 }
 pub fn now() -> String {
     Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod a03_tests {
+    use super::*;
+
+    fn fixture() -> (State, Record) {
+        let record = Record::new(
+            "jm",
+            "SOURCE_1".into(),
+            vec!["santa".into()],
+            "作品 01".to_string(),
+            json!({"content_type":"manga"}),
+        );
+        let k = key(&record);
+        let mut state = State {
+            authors: json!({"authors":[{"name":"santa","enabled":true}]}),
+            inventory: json!({"works":[]}),
+            catalog: BTreeMap::new(),
+            pending: BTreeMap::new(),
+            review: BTreeMap::new(),
+            cleanup_review: json!([]),
+            decisions: Decisions::default(),
+            scan: Scan { started_at: "fixed".into(), ..Scan::default() },
+        };
+        state.catalog.insert(
+            k,
+            Entry {
+                record: record.clone(),
+                author_evidence: AuthorEvidence::default(),
+                search_fingerprint: record.fingerprint.clone(),
+                detail_fingerprint: record.fingerprint.clone(),
+                analysis_context: String::new(),
+                work_id: None,
+                analysis_count: 0,
+                unavailable_streak: 0,
+                active: true,
+                last_unavailable_check: None,
+                search_queries: BTreeSet::new(),
+                matcher_version: String::new(),
+                identity_evidence: Value::Null,
+                identity_provenance: Value::Null,
+            },
+        );
+        (state, record)
+    }
+
+    #[test]
+    fn authority_epoch_changes_pending_revision_and_reactivation() {
+        let (mut state, record) = fixture();
+        let k = key(&record);
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-a".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 1);
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-a".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 1);
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 2);
+        assert!(state.pending["WORK_1"].binding_authority_hash.is_empty());
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-a".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 3);
+        assert_eq!(state.pending["WORK_1"].binding_authority_hash, "cert-a");
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-b".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 4);
+        assert_eq!(state.pending["WORK_1"].binding_authority_hash, "cert-b");
+        state.pending.get_mut("WORK_1").unwrap().status = "superseded_by_identity_reanalysis".into();
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-b".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 5);
+        assert_eq!(state.pending["WORK_1"].status, "pending");
+    }
 }

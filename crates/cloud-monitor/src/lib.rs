@@ -32,4 +32,5 @@ pub mod source_media_descriptors;
 pub mod source_preflight;
 pub mod source_preflight_authorization;
 pub mod staging_manifest;
+pub mod scope_certificates;
 pub mod verified_execution_receipt;

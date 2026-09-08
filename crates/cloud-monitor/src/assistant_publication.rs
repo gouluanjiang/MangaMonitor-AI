@@ -10,7 +10,10 @@
 //! exactly. Any scan/review/inventory/task/gate drift therefore invalidates a
 //! stale proposal.
 
-use crate::{assistant_author, assistant_decision, assistant_task_gate, monitor, persistence};
+use crate::{
+    assistant_author, assistant_decision, assistant_task_gate, monitor, persistence,
+    scope_certificates,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, fs, path::Path};
@@ -22,6 +25,7 @@ enum Kind {
     Author,
     Decision,
     TaskGate,
+    ScopeCertificate,
 }
 
 impl Kind {
@@ -30,6 +34,7 @@ impl Kind {
             "author" => Ok(Self::Author),
             "decision" => Ok(Self::Decision),
             "task-gate" => Ok(Self::TaskGate),
+            "scope-certificate" => Ok(Self::ScopeCertificate),
             _ => Err("ASSISTANT_PUBLICATION_INVALID_KIND".into()),
         }
     }
@@ -39,6 +44,7 @@ impl Kind {
             Self::Author => "author",
             Self::Decision => "decision",
             Self::TaskGate => "task-gate",
+            Self::ScopeCertificate => "scope-certificate",
         }
     }
 
@@ -47,6 +53,7 @@ impl Kind {
             Self::Author => "authors.json",
             Self::Decision => "decisions.json",
             Self::TaskGate => "assistant-task-gates.json",
+            Self::ScopeCertificate => scope_certificates::CERTIFICATE_FILE,
         }
     }
 
@@ -59,6 +66,7 @@ impl Kind {
                 "executor-preview.json",
                 "task-gate-change.json",
             ],
+            Self::ScopeCertificate => &["scope-certificates.json", "scope-certificate-change.json"],
         }
     }
 }
@@ -219,6 +227,10 @@ fn verify_task_gate(state_dir: &Path, staging: &Path) -> Result<Value, String> {
     Ok(staged_payload)
 }
 
+fn verify_scope_certificate(state_dir: &Path, staging: &Path) -> Result<Value, String> {
+    scope_certificates::verify_staged_candidate(state_dir, staging)
+}
+
 /// Revalidate one staged A3/A4/A5 mutation against current monitor state.
 ///
 /// Success authorizes publishing exactly one JSON state file. It never grants
@@ -237,6 +249,7 @@ pub fn check(state_dir: &Path, staging: &Path, kind: &str) -> Result<Publication
         Kind::Author => verify_author(state_dir, staging)?,
         Kind::Decision => verify_decision(state_dir, staging)?,
         Kind::TaskGate => verify_task_gate(state_dir, staging)?,
+        Kind::ScopeCertificate => verify_scope_certificate(state_dir, staging)?,
     };
     Ok(PublicationCheck {
         schema_version: ASSISTANT_PUBLICATION_SCHEMA_VERSION,

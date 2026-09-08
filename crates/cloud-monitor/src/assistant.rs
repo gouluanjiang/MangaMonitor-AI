@@ -191,6 +191,7 @@ pub fn pending_task_summary(state: &State) -> Value {
                 "first_seen": task.first_seen,
                 "target": task.target,
                 "old_local_item_ids": task.old_local_item_ids,
+                "binding_authority_hash": task.binding_authority_hash,
             })
         })
         .collect();

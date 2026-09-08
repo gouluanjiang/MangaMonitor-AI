@@ -1,4 +1,4 @@
-use crate::monitor::*;
+use crate::{monitor::*, scope_certificates};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, fs, path::Path};
 
@@ -15,6 +15,8 @@ pub const FILES: [&str; 8] = [
 const AUTHORS_SCHEMA_VERSION: u64 = 1;
 const INVENTORY_SCHEMA_VERSION: u64 = 8;
 const CORE_SCHEMA_VERSION: u64 = 3;
+const AUTHORITY_PENDING_SCHEMA_VERSION: u64 = 4;
+const AUTHORITY_SCAN_SCHEMA_VERSION: u64 = 4;
 
 fn read(dir: &Path, name: &str) -> Result<Value, String> {
     serde_json::from_slice(&fs::read(dir.join(name)).map_err(|_| format!("READ_{name}"))?)
@@ -46,9 +48,11 @@ pub fn load(dir: &Path) -> Result<State, String> {
     }
     validate_schema("authors.json", &docs["authors.json"], AUTHORS_SCHEMA_VERSION, true)?;
     validate_schema("inventory_index.json", &docs["inventory_index.json"], INVENTORY_SCHEMA_VERSION, true)?;
-    for name in ["catalog.json", "pending.json", "review.json", "decisions.json", "scan_state.json", "latest.json"] {
+    for name in ["catalog.json", "review.json", "decisions.json", "latest.json"] {
         validate_schema(name, &docs[name], CORE_SCHEMA_VERSION, false)?;
     }
+    validate_schema("pending.json", &docs["pending.json"], AUTHORITY_PENDING_SCHEMA_VERSION, false)?;
+    validate_schema("scan_state.json", &docs["scan_state.json"], AUTHORITY_SCAN_SCHEMA_VERSION, false)?;
     if let Some(object) = docs["decisions.json"].as_object() {
         let allowed = [
             "schema_version",
@@ -146,6 +150,8 @@ pub fn save(dir: &Path, s: &State) -> Result<(), String> {
     fs::rename(dir.join("checkpoint.tmp"), dir.join("checkpoint.json"))
         .map_err(|_| "COMMIT_CHECKPOINT")?;
     let mut decisions = serde_json::to_value(&s.decisions).unwrap();
+    let pending_schema = if s.pending.values().any(|task| !task.binding_authority_hash.is_empty()) { 4 } else { 3 };
+    let scan_schema = if s.scan.identity_authority_hash.is_empty() { 3 } else { 4 };
     decisions["schema_version"] = json!(3);
     for (name, v) in [
         ("authors.json", s.authors.clone()),
@@ -156,7 +162,7 @@ pub fn save(dir: &Path, s: &State) -> Result<(), String> {
         ),
         (
             "pending.json",
-            json!({"schema_version":3,"tasks":s.pending.values().collect::<Vec<_>>()}),
+            json!({"schema_version":pending_schema,"tasks":s.pending.values().collect::<Vec<_>>() }),
         ),
         (
             "review.json",
@@ -165,7 +171,7 @@ pub fn save(dir: &Path, s: &State) -> Result<(), String> {
         ("decisions.json", decisions),
         (
             "scan_state.json",
-            json!({"schema_version":3,"phase3a_scan":s.scan}),
+            json!({"schema_version":scan_schema,"phase3a_scan":s.scan}),
         ),
         (
             "latest.json",
@@ -173,6 +179,14 @@ pub fn save(dir: &Path, s: &State) -> Result<(), String> {
         ),
     ] {
         write_json(&dir.join(name), &v)?;
+    }
+    // Give every synthetic/legacy state an explicit no-authority document.
+    // Non-empty documents are written by runner::stage_save after validation.
+    if s.scan.identity_authority_hash.is_empty() {
+        write_json(
+            &dir.join(scope_certificates::CERTIFICATE_FILE),
+            &scope_certificates::empty_document(),
+        )?;
     }
     export_reviews(dir, s)?;
     write_json(

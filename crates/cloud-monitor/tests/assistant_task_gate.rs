@@ -38,6 +38,7 @@ fn task(status: &str, action: &str) -> Task {
         action: action.into(),
         status: status.into(),
         old_local_item_ids: Vec::new(),
+        binding_authority_hash: String::new(),
     }
 }
 

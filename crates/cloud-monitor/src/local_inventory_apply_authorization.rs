@@ -476,6 +476,7 @@ mod tests {
                 action: "download".into(),
                 status: "pending".into(),
                 old_local_item_ids: vec![],
+                binding_authority_hash: String::new(),
             },
         );
         let record = Record {

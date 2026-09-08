@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 fn usage() -> ! {
     eprintln!(
-        "usage: assistant-publication-check --state <monitor-state> --staging <dir> --kind <author|decision|task-gate>"
+        "usage: assistant-publication-check --state <monitor-state> --staging <dir> --kind <author|decision|task-gate|scope-certificate>"
     );
     std::process::exit(2);
 }

@@ -852,7 +852,7 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
     report.insert("complete".into(), json!(s.scan.complete));
     report.insert("coverage_complete".into(), json!(s.scan.complete));
     report.insert("scope_certificate_set_hash".into(), json!(validated_certificates.as_ref().map(|v| v.document.certificate_set_hash.clone())));
-    report.insert("scope_certificate_count".into(), json!(validated_certificates.as_ref().map(|v| v.matcher_certificates.len()));
+    report.insert("scope_certificate_count".into(), json!(validated_certificates.as_ref().map(|v| v.matcher_certificates.len())));
     report.insert("identity_authority_hash".into(), json!(s.scan.identity_authority_hash));
     report.insert("strategy_complete".into(), json!(strategy_done));
     report.insert("catalog_records".into(), json!(s.catalog.len()));

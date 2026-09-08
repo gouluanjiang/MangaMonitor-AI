@@ -6,34 +6,52 @@ fn authors() -> serde_json::Value {
 }
 
 fn inventory() -> serde_json::Value {
-    json!({"schema_version":8,"works":[]})
+    json!({
+        "schema_version":8,
+        "works":[{"work_id":"LOCAL_1","authors_confirmed":["santa"]}]
+    })
+}
+
+fn complete_snapshot() -> serde_json::Value {
+    json!({
+        "complete":true,
+        "works":[{"work_id":"LOCAL_1","authors_confirmed":["santa"]}]
+    })
+}
+
+fn attestation(snapshot: &serde_json::Value, projection: &serde_json::Value) -> scope_certificates::CompletenessAttestation {
+    let producer_evidence_hash = hash(&"fixture-evidence");
+    scope_certificates::CompletenessAttestation {
+        schema_version: scope_certificates::ATTESTATION_SCHEMA_VERSION,
+        snapshot_hash: hash(snapshot),
+        inventory_hash: hash(&inventory()),
+        projection_hash: hash(projection),
+        projection_count: projection.as_array().unwrap().len() as u64,
+        producer: "independent-fixture".into(),
+        producer_evidence_hash: producer_evidence_hash.clone(),
+        attestation_hash: hash(&(
+            scope_certificates::ATTESTATION_SCHEMA_VERSION,
+            hash(snapshot),
+            hash(&inventory()),
+            hash(projection),
+            projection.as_array().unwrap().len() as u64,
+            "independent-fixture",
+            producer_evidence_hash,
+        )),
+    }
 }
 
 fn valid_record() -> scope_certificates::ScopeCertificateRecord {
-    let snapshot = json!({"complete":true,"works":[{"work_id":"LOCAL_1"}]});
-    let projection = json!([{"work_id":"LOCAL_1"}]);
-    let attestation = scope_certificates::CompletenessAttestation {
-        snapshot_hash: hash(&snapshot),
-        inventory_hash: hash(&inventory()),
-        projection_hash: hash(&projection),
-        projection_count: 1,
-        producer: "independent-fixture".into(),
-        attestation_hash: hash(&(
-            hash(&snapshot),
-            hash(&inventory()),
-            hash(&projection),
-            1_u64,
-            "independent-fixture",
-        )),
-    };
+    let snapshot = complete_snapshot();
+    let projection = scope_certificates::canonical_author_projection("santa", &snapshot).unwrap();
+    let attestation = attestation(&snapshot, &projection);
     scope_certificates::certify_snapshot(
         "santa",
         &authors(),
         &inventory(),
         &snapshot,
-        &projection,
         &attestation,
-        "title-m2-test",
+        rules_core::title_m2::RULE_VERSION,
     )
     .unwrap()
 }
@@ -86,25 +104,13 @@ fn malformed_future_and_unknown_fields_fail_closed() {
 
 #[test]
 fn local_certifier_requires_complete_snapshot_and_independent_attestation() {
-    let mut snapshot = json!({"complete":false,"works":[]});
-    let projection = json!([]);
-    let attestation = scope_certificates::CompletenessAttestation {
-        snapshot_hash: hash(&snapshot),
-        inventory_hash: hash(&inventory()),
-        projection_hash: hash(&projection),
-        projection_count: 0,
-        producer: "independent-fixture".into(),
-        attestation_hash: hash(&(
-            hash(&snapshot),
-            hash(&inventory()),
-            hash(&projection),
-            0_u64,
-            "independent-fixture",
-        )),
-    };
+    let mut snapshot = complete_snapshot();
+    snapshot["complete"] = json!(false);
+    let projection = scope_certificates::canonical_author_projection("santa", &snapshot).unwrap();
+    let attestation = attestation(&snapshot, &projection);
     assert_eq!(
         scope_certificates::certify_snapshot(
-            "santa", &authors(), &inventory(), &snapshot, &projection, &attestation, "rule"
+            "santa", &authors(), &inventory(), &snapshot, &attestation, rules_core::title_m2::RULE_VERSION
         )
         .unwrap_err(),
         "LOCAL_CERTIFIER_REQUIRES_COMPLETE_SNAPSHOT"
@@ -114,9 +120,39 @@ fn local_certifier_requires_complete_snapshot_and_independent_attestation() {
     no_independent.producer = "local-certifier".into();
     assert_eq!(
         scope_certificates::certify_snapshot(
-            "santa", &authors(), &inventory(), &snapshot, &projection, &no_independent, "rule"
+            "santa", &authors(), &inventory(), &snapshot, &no_independent, rules_core::title_m2::RULE_VERSION
         )
         .unwrap_err(),
-        "LOCAL_CERTIFIER_REQUIRES_INDEPENDENT_ATTESTATION"
+        "LOCAL_CERTIFIER_REQUIRES_EXTERNAL_ATTESTATION_ENVELOPE"
+    );
+}
+
+#[test]
+fn projection_mismatch_and_rule_version_fail_closed() {
+    let snapshot = json!({
+        "complete":true,
+        "works":[{"work_id":"LOCAL_2","authors_confirmed":["santa"]}]
+    });
+    let valid_projection = scope_certificates::canonical_author_projection("santa", &complete_snapshot()).unwrap();
+    let attestation = attestation(&snapshot, &valid_projection);
+    assert_eq!(
+        scope_certificates::certify_snapshot(
+            "santa", &authors(), &inventory(), &snapshot, &attestation, rules_core::title_m2::RULE_VERSION
+        )
+        .unwrap_err(),
+        "LOCAL_CERTIFIER_AUTHOR_SCOPE_PROJECTION_MISMATCH"
+    );
+
+    let record = valid_record();
+    let mut document = scope_certificates::ScopeCertificateDocument {
+        schema_version: 1,
+        certificate_set_hash: scope_certificates::certificate_set_hash(std::slice::from_ref(&record)),
+        certificates: vec![record],
+    };
+    document.certificates[0].rule_version = "obsolete-rule".into();
+    document.certificate_set_hash = scope_certificates::certificate_set_hash(&document.certificates);
+    assert_eq!(
+        scope_certificates::validate_document(document, &authors(), &inventory()).unwrap_err(),
+        "SCOPE_CERTIFICATE_RULE_VERSION_STALE"
     );
 }

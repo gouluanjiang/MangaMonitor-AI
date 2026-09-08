@@ -238,8 +238,8 @@ jobs:
             echo "ASSISTANT_PUBLICATION_REMOTE_CHANGED: expected $EXPECTED_BASE found $remote" >&2
             exit 75
           }
-          git -c user.name='gouluanjiang' \
-              -c user.email='322563162+gouluanjiang@users.noreply.github.com' \
+          git -c user.name='MangaMonitor Assistant Gate' \
+              -c user.email='mangamonitor-assistant@users.noreply.github.com' \
               commit -m "Publish assistant $KIND state" -- "$TARGET"
 
           git fetch --quiet origin main

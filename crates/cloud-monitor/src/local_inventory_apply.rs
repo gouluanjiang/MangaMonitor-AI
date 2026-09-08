@@ -227,7 +227,7 @@ fn prepare_synced_replacement(path: &Path, expected: &[u8]) -> Result<(), String
     file.write_all(expected)
         .map_err(|_| "INVENTORY_V1_7_TEMP_WRITE_FAILED")?;
     file.sync_all()
-        .map_err(|_| "INVENTORY_V1_7_TEMP_SYNC_FAILED")
+        .map_err(|_| "INVENTORY_V1_7_TEMP_SYNC_FAILED".to_string())
 }
 
 #[cfg(windows)]
@@ -379,7 +379,13 @@ pub fn apply(
         if reloaded.inventory != post {
             return Err("INVENTORY_V1_7_POST_STATE_RELOAD_MISMATCH".into());
         }
-        return Ok(receipt("APPLIED_EXACT_POST", true, candidate, authorization, &post));
+        return Ok(receipt(
+            "APPLIED_EXACT_POST",
+            true,
+            candidate,
+            authorization,
+            &post,
+        ));
     }
 
     let pre = reconstruct_pre_from_exact_post(&current_state.inventory, candidate, authorization)
@@ -483,7 +489,11 @@ mod tests {
         }
     }
 
-    fn fixture() -> (Value, InventoryUpdateCandidate, InventoryApplyAuthorization) {
+    fn fixture() -> (
+        Value,
+        InventoryUpdateCandidate,
+        InventoryApplyAuthorization,
+    ) {
         let pre = json!({
             "schema_version":8,
             "rules_version":"fixture-rules-v1",
@@ -516,7 +526,8 @@ mod tests {
     fn exact_post_reverses_to_unique_pre_and_rebuilds() {
         let (pre, candidate, authorization) = fixture();
         let post = expected_post_inventory(&pre, &candidate, &authorization).unwrap();
-        let reversed = reconstruct_pre_from_exact_post(&post, &candidate, &authorization).unwrap();
+        let reversed =
+            reconstruct_pre_from_exact_post(&post, &candidate, &authorization).unwrap();
         assert_eq!(reversed, pre);
         assert_eq!(
             expected_post_inventory(&reversed, &candidate, &authorization).unwrap(),

@@ -160,6 +160,16 @@ pub enum Detail {
 
 impl State {
     pub fn context(&self) -> String {
+        // Schema metadata describes the representation, not the authority
+        // content. Excluding it keeps staged assistant replays stable when a
+        // legacy in-memory value is normalized on persistence.
+        let semantic_document = |value: &Value| {
+            let mut value = value.clone();
+            if let Some(object) = value.as_object_mut() {
+                object.remove("schema_version");
+            }
+            value
+        };
         // Author registry edits can change deterministic author evidence and must
         // therefore trigger the same offline reanalysis as decisions/inventory.
         // The frozen matcher version is an input too: changing the rule set must
@@ -167,8 +177,8 @@ impl State {
         hash(&(
             rules_core::title_m2::RULE_VERSION,
             &self.decisions,
-            &self.inventory,
-            &self.authors,
+            semantic_document(&self.inventory),
+            semantic_document(&self.authors),
         ))
     }
     pub fn event(&mut self, id: String, kind: &str, data: Value) {
@@ -424,13 +434,6 @@ impl State {
             // Legacy automatic bindings are not an authority under M2.
             entry.work_id = None;
         }
-        for task in self
-            .pending
-            .values_mut()
-            .filter(|task| task.target.source_key == k)
-        {
-            task.status = "superseded_by_identity_reanalysis".into();
-        }
         if outcome.disposition == "IGNORED" {
             let source_ignore_changed = outcome.reason == "HUMAN_IGNORE_SOURCE"
                 && self.catalog[k].record.processing_result != "IGNORED";
@@ -463,6 +466,16 @@ impl State {
                 outcome.author_evidence.canonical_author.clone(),
             );
         } else {
+            // A record that no longer has a trusted work binding must stop its
+            // old pending task. A stable binding is handled by bind_work and
+            // keeps an executable pending task across unrelated migrations.
+            for task in self
+                .pending
+                .values_mut()
+                .filter(|task| task.target.source_key == k)
+            {
+                task.status = "superseded_by_identity_reanalysis".into();
+            }
             self.review_identity_item(k, &outcome, trigger, &provenance);
         }
         outcome.downstream_result = self.catalog[k].record.processing_result.clone();
@@ -699,6 +712,8 @@ impl State {
         let mode = self.effective_mode(source, author);
         let cursor = self.scan.progress.entry(ck.clone()).or_default();
         let previous_count = cursor.observed_ids.len();
+        let expected_page = if cursor.next_page == 0 { 1 } else { cursor.next_page };
+        let page_sequence_valid = page.page == expected_page;
         cursor.mode = mode.clone();
         cursor.next_page = page.page + 1;
         let mut early = false;
@@ -716,11 +731,44 @@ impl State {
                 early = true;
             }
         }
-        let exhausted = page.reported_pages.is_some_and(|p| page.page >= p)
-            || page
-                .reported_total
-                .is_some_and(|t| cursor.observed_ids.len() as u64 >= t);
-        if exhausted {
+        let observed_count = cursor.observed_ids.len() as u64;
+        let limit_valid = page.reported_limit.is_none_or(|limit| {
+            limit > 0 && page.records.len() as u64 <= limit
+        });
+        let total_valid = page.reported_total.is_none_or(|total| observed_count <= total);
+        let pages_valid = page.reported_pages.is_none_or(|pages| {
+            pages > 0 && page.page <= pages
+        });
+        let totals_agree = match (page.reported_total, page.reported_pages, page.reported_limit) {
+            (Some(total), Some(pages), Some(limit)) if total > 0 && limit > 0 => {
+                pages == total.div_ceil(limit)
+            }
+            (Some(0), Some(pages), _) => pages == 0 || pages == 1,
+            _ => true,
+        };
+        let duplicate_page = page.page > 1 && cursor.observed_ids.len() == previous_count;
+        let valid_empty = page.records.is_empty()
+            && page.page == 1
+            && page.reported_total == Some(0)
+            && page.reported_pages.is_none_or(|pages| pages == 0 || pages == 1);
+        let metadata_consistent = page_sequence_valid
+            && limit_valid
+            && total_valid
+            && pages_valid
+            && totals_agree
+            && !duplicate_page;
+        let redirect_complete = page.redirect_to_detail
+            && page.records.len() == 1
+            && metadata_consistent
+            && page.page == 1
+            && page.reported_total.is_none_or(|total| total == 1)
+            && page.reported_pages.is_none_or(|pages| pages == 1);
+        let exhausted = valid_empty
+            || (metadata_consistent
+                && !page.records.is_empty()
+                && (page.reported_pages.is_some_and(|pages| page.page == pages)
+                    || page.reported_total.is_some_and(|total| observed_count == total)));
+        if redirect_complete || exhausted {
             cursor.boundary = "COMPLETE".into();
             if mode == "full" {
                 self.scan.last_full.insert(ck, self.scan.started_at.clone());
@@ -728,12 +776,12 @@ impl State {
             true
         } else if early {
             cursor.boundary = "EARLY_STOP_HEURISTIC".into();
-            self.event(format!("early:{ck}"),"SCAN_PARTIAL",json!({"source":source,"author":author,"reason":"EARLY_STOP_HEURISTIC","boundary":"AFTER_FETCHED_PAGE"}));
+            self.event(format!("early:{}:{ck}", self.scan.scan_id),"SCAN_PARTIAL",json!({"source":source,"author":author,"reason":"EARLY_STOP_HEURISTIC","boundary":"AFTER_FETCHED_PAGE"}));
             true
-        } else if page.records.is_empty() || cursor.observed_ids.len() == previous_count {
+        } else if !metadata_consistent || page.records.is_empty() {
             cursor.boundary = "INCOMPLETE_PAGINATION".into();
             self.event(
-                format!("pagination:{ck}"),
+                format!("pagination:{}:{ck}", self.scan.scan_id),
                 "SCAN_PARTIAL",
                 json!({"source":source,"author":author,"reason":"INCOMPLETE_PAGINATION"}),
             );

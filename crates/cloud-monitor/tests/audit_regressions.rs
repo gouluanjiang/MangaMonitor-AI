@@ -1,7 +1,7 @@
-use cloud_monitor::{monitor::*, persistence::export_reviews};
+use cloud_monitor::{monitor::*, persistence::*};
 use serde_json::json;
-use state_model::Record;
-use std::{collections::BTreeMap, fs};
+use state_model::{Record, SearchPage};
+use std::{collections::BTreeMap, fs, process::Command};
 
 fn state() -> State {
     let mut state = State {
@@ -28,6 +28,23 @@ fn record(id: &str, title: &str) -> Record {
         title.into(),
         json!({"content_type":"manga"}),
     )
+}
+
+fn page(page: u64, records: &[&str], total: Option<u64>, pages: Option<u64>, limit: Option<u64>) -> SearchPage {
+    SearchPage {
+        page,
+        reported_total: total,
+        reported_pages: pages,
+        reported_limit: limit,
+        response_fields: vec![],
+        record_fields: vec![],
+        redirect_to_detail: false,
+        records: records.iter().map(|id| record(id, "Stable title")).collect(),
+    }
+}
+
+fn temp_root(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("mangamonitor-{label}-{}", hash(&now())))
 }
 
 #[test]
@@ -64,5 +81,168 @@ fn review_csv_neutralizes_formula_leading_values() {
     export_reviews(&root, &state).unwrap();
     let csv = fs::read_to_string(root.join("review-export.csv")).unwrap();
     assert!(csv.contains("\"'=HYPERLINK(\"\"https://example.invalid\"\")\""));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn unchanged_pending_task_survives_unrelated_context_migration() {
+    let mut state = state();
+    state.decisions.positive_mappings.push(Mapping {
+        source_key: "jm:stable".into(),
+        work_id: "WORK_ONE".into(),
+    });
+    let r = record("stable", "Stable title");
+    state.accept(&r, &r).unwrap();
+    let before = state.pending["WORK_ONE"].clone();
+
+    state.decisions.ignored_source_records.push("jm:unrelated".into());
+    state
+        .begin("audit-two", "2026-09-08T01:00:00Z", vec!["Writer".into()], "full", 5)
+        .unwrap();
+    state.accept(&r, &r).unwrap();
+
+    let after = &state.pending["WORK_ONE"];
+    assert_eq!(after.status, "pending");
+    assert_eq!(after.task_revision, before.task_revision);
+    assert_eq!(hash(&after.target), hash(&before.target));
+}
+
+#[test]
+fn contradictory_pagination_is_incomplete_and_never_full() {
+    let mut first = state();
+    assert!(first.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &["one"], Some(21), Some(1), Some(20)),
+    ));
+    assert!(first.page_boundary(
+        "jm",
+        "Writer",
+        &page(3, &["three"], Some(21), Some(3), Some(20)),
+    ));
+    assert_eq!(first.scan.progress["jm|Writer"].boundary, "INCOMPLETE_PAGINATION");
+    assert!(first.scan.last_full.is_empty());
+
+    let mut duplicate = state();
+    assert!(!duplicate.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &["same"], Some(2), None, None),
+    ));
+    assert!(duplicate.page_boundary(
+        "jm",
+        "Writer",
+        &page(2, &["same"], Some(2), None, None),
+    ));
+    assert_eq!(duplicate.scan.progress["jm|Writer"].boundary, "INCOMPLETE_PAGINATION");
+    assert!(duplicate.scan.last_full.is_empty());
+
+    let mut terminal = state();
+    assert!(terminal.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &["terminal"], Some(1), Some(1), Some(20)),
+    ));
+    assert!(terminal.scan.last_full.contains_key("jm|Writer"));
+
+    let mut empty = state();
+    assert!(empty.page_boundary(
+        "jm",
+        "Writer",
+        &page(1, &[], Some(0), Some(0), Some(20)),
+    ));
+    assert!(empty.scan.last_full.contains_key("jm|Writer"));
+
+    let mut redirect = state();
+    let mut detail = page(1, &["redirect"], Some(1), Some(1), Some(20));
+    detail.redirect_to_detail = true;
+    assert!(redirect.page_boundary("jm", "Writer", &detail));
+    assert!(redirect.scan.last_full.contains_key("jm|Writer"));
+}
+
+#[test]
+fn resume_refuses_to_replace_changed_authority_and_keeps_checkpoint() {
+    let root = temp_root("resume-authority");
+    let input = root.join("input");
+    let output = root.join("output");
+    let authors = root.join("authors.json");
+    fs::create_dir_all(&root).unwrap();
+    let original = state();
+    save(&input, &original).unwrap();
+    save(&output, &original).unwrap();
+    let checkpoint_hash = hash(&load_checkpoint(&output).unwrap());
+    let mut changed = original.clone();
+    changed.decisions.positive_mappings.push(Mapping {
+        source_key: "jm:changed".into(),
+        work_id: "WORK_CHANGED".into(),
+    });
+    save(&input, &changed).unwrap();
+    write_json(&authors, &json!(["Writer"])).unwrap();
+
+    let result = Command::new(env!("CARGO_BIN_EXE_phase3b"))
+        .args(["--state"])
+        .arg(&input)
+        .args(["--output"])
+        .arg(&output)
+        .args(["--authors"])
+        .arg(&authors)
+        .args(["--resume", "--mode", "full", "--batch-size", "1", "--threshold", "5"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("RESUME_AUTHORITY_MISMATCH"));
+    assert_eq!(hash(&load_checkpoint(&output).unwrap()), checkpoint_hash);
+    assert!(!output.join("scan-report.json").exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn state_loader_rejects_unknown_schema_authority_and_duplicate_review_ids() {
+    let root = temp_root("schema");
+    fs::create_dir_all(&root).unwrap();
+    let state = state();
+    save(&root, &state).unwrap();
+
+    let mut future = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(root.join("decisions.json")).unwrap(),
+    )
+    .unwrap();
+    future["schema_version"] = json!(99);
+    write_json(&root.join("decisions.json"), &future).unwrap();
+    assert!(load(&root).unwrap_err().contains("UNSUPPORTED_SCHEMA_decisions.json_99"));
+
+    save(&root, &state).unwrap();
+    let mut authority = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(root.join("decisions.json")).unwrap(),
+    )
+    .unwrap();
+    authority["new_authority_field"] = json!(true);
+    write_json(&root.join("decisions.json"), &authority).unwrap();
+    assert_eq!(load(&root).unwrap_err(), "UNSUPPORTED_DECISIONS_FIELD");
+
+    save(&root, &state).unwrap();
+    let mut review = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(root.join("review.json")).unwrap(),
+    )
+    .unwrap();
+    review["match_review"] = json!([{
+        "review_id":"DUP",
+        "source_key":"jm:one",
+        "reason":"TEST",
+        "author":["Writer"],
+        "title":"one",
+        "candidates":[],
+        "status":"REVIEW_REQUIRED"
+    }, {
+        "review_id":"DUP",
+        "source_key":"jm:two",
+        "reason":"TEST",
+        "author":["Writer"],
+        "title":"two",
+        "candidates":[],
+        "status":"REVIEW_REQUIRED"
+    }]);
+    write_json(&root.join("review.json"), &review).unwrap();
+    assert_eq!(load(&root).unwrap_err(), "DUPLICATE_REVIEW_ID");
     let _ = fs::remove_dir_all(root);
 }

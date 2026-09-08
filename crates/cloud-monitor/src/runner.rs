@@ -558,7 +558,23 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
         selected_authors: &selected,
     };
     let resume = args.iter().any(|s| s == "--resume");
-    let mut s = if resume { load_checkpoint(&output)? } else { load(&input)? };
+    let mut s = if resume {
+        // A checkpoint contains scan progress, not a replacement authority.
+        // Refuse recovery when the current decisions/inventory/authors input
+        // has moved; silently choosing either side could publish stale state.
+        let current = load(&input)?;
+        let checkpoint = load_checkpoint(&output)?;
+        let current_authority = current.context();
+        let checkpoint_authority = checkpoint.context();
+        if current_authority != checkpoint_authority {
+            return Err(format!(
+                "RESUME_AUTHORITY_MISMATCH:current={current_authority}:checkpoint={checkpoint_authority}"
+            ));
+        }
+        checkpoint
+    } else {
+        load(&input)?
+    };
     let replay = opt(&args, "--replay", "");
     let author_concurrency = parse_author_concurrency(&args, profile, &replay)?;
     if profile == Profile::Phase3B && !resume && !replay.is_empty() && !s.scan.complete && !strategy_complete(&s)

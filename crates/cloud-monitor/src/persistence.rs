@@ -203,8 +203,7 @@ fn csv_cell(value: &str) -> String {
     // value while making CSV exports inert when opened in a spreadsheet.
     let formula_leading = value
         .chars()
-        .skip_while(|ch| matches!(ch, ' ' | '\t' | '\r' | '\n'))
-        .next()
+        .find(|ch| !matches!(ch, ' ' | '\t' | '\r' | '\n'))
         .is_some_and(|ch| matches!(ch, '=' | '+' | '-' | '@'));
     let safe = if formula_leading {
         format!("'{value}")

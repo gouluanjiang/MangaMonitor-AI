@@ -42,19 +42,20 @@ fn main() {
     let rule_version = rule_version.unwrap_or_else(|| usage());
     let output_path = output.unwrap_or_else(|| usage());
 
-    let result = (|| {
+    let result: Result<(), String> = (|| {
         let authors: serde_json::Value = serde_json::from_slice(
-            &fs::read(authors_path).map_err(|_| "LOCAL_CERTIFIER_AUTHORS_READ")?,
+            &fs::read(authors_path).map_err(|_| "LOCAL_CERTIFIER_AUTHORS_READ".to_string())?,
         )
-        .map_err(|_| "LOCAL_CERTIFIER_AUTHORS_JSON")?;
+        .map_err(|_| "LOCAL_CERTIFIER_AUTHORS_JSON".to_string())?;
         let inventory: serde_json::Value = serde_json::from_slice(
-            &fs::read(inventory_path).map_err(|_| "LOCAL_CERTIFIER_INVENTORY_READ")?,
+            &fs::read(inventory_path).map_err(|_| "LOCAL_CERTIFIER_INVENTORY_READ".to_string())?,
         )
-        .map_err(|_| "LOCAL_CERTIFIER_INVENTORY_JSON")?;
+        .map_err(|_| "LOCAL_CERTIFIER_INVENTORY_JSON".to_string())?;
         let attestation: CompletenessAttestation = serde_json::from_slice(
-            &fs::read(attestation_path).map_err(|_| "LOCAL_CERTIFIER_ATTESTATION_READ")?,
+            &fs::read(attestation_path)
+                .map_err(|_| "LOCAL_CERTIFIER_ATTESTATION_READ".to_string())?,
         )
-        .map_err(|_| "LOCAL_CERTIFIER_ATTESTATION_JSON")?;
+        .map_err(|_| "LOCAL_CERTIFIER_ATTESTATION_JSON".to_string())?;
         let record = scope_certificates::certify_snapshot_file(
             author.as_str(),
             &authors,
@@ -63,9 +64,11 @@ fn main() {
             &attestation,
             &rule_version,
         )?;
-        let bytes = serde_json::to_vec_pretty(&record).map_err(|_| "LOCAL_CERTIFIER_OUTPUT_JSON")?;
-        fs::write(output_path, bytes).map_err(|_| "LOCAL_CERTIFIER_OUTPUT_WRITE")?;
-        Ok::<(), &str>(())
+        let bytes = serde_json::to_vec_pretty(&record)
+            .map_err(|_| "LOCAL_CERTIFIER_OUTPUT_JSON".to_string())?;
+        fs::write(output_path, bytes)
+            .map_err(|_| "LOCAL_CERTIFIER_OUTPUT_WRITE".to_string())?;
+        Ok(())
     })();
     if let Err(error) = result {
         eprintln!("{error}");

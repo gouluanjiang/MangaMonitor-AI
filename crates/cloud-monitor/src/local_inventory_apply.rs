@@ -15,7 +15,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -199,19 +199,27 @@ fn temp_path(target: &Path, authorization: &InventoryApplyAuthorization) -> Resu
     )))
 }
 
+fn open_rw(path: &Path, error: &'static str) -> Result<std::fs::File, String> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| error.into())
+}
+
 fn prepare_synced_replacement(path: &Path, expected: &[u8]) -> Result<(), String> {
     if path.exists() {
         let existing = fs::read(path).map_err(|_| "INVENTORY_V1_7_TEMP_READ_FAILED")?;
         if existing != expected {
             return Err("INVENTORY_V1_7_TEMP_CONFLICT".into());
         }
-        File::open(path)
-            .map_err(|_| "INVENTORY_V1_7_TEMP_OPEN_FAILED")?
+        open_rw(path, "INVENTORY_V1_7_TEMP_OPEN_FAILED")?
             .sync_all()
             .map_err(|_| "INVENTORY_V1_7_TEMP_SYNC_FAILED")?;
         return Ok(());
     }
     let mut file = OpenOptions::new()
+        .read(true)
         .write(true)
         .create_new(true)
         .open(path)
@@ -269,8 +277,7 @@ fn atomic_replace_file(target: &Path, replacement: &Path) -> Result<(), String> 
 }
 
 fn sync_target(path: &Path) -> Result<(), String> {
-    File::open(path)
-        .map_err(|_| "INVENTORY_V1_7_TARGET_OPEN_FAILED")?
+    open_rw(path, "INVENTORY_V1_7_TARGET_OPEN_FAILED")?
         .sync_all()
         .map_err(|_| "INVENTORY_V1_7_TARGET_SYNC_FAILED".into())
 }
@@ -400,6 +407,7 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn candidate(pre: &Value, proposed_work: Value) -> InventoryUpdateCandidate {
         let source_identity_hash = hash(&json!({"identity":"fixture"}));
@@ -437,9 +445,7 @@ mod tests {
         }
     }
 
-    fn authorization(
-        candidate: &InventoryUpdateCandidate,
-    ) -> InventoryApplyAuthorization {
+    fn authorization(candidate: &InventoryUpdateCandidate) -> InventoryApplyAuthorization {
         InventoryApplyAuthorization {
             schema_version: 1,
             authorization_id: "INVENTORY_APPLY_AUTH_fixture".into(),
@@ -536,18 +542,20 @@ mod tests {
 
     #[test]
     fn atomic_replace_round_trip() {
-        let unique = format!(
-            "mangamonitor-v17-{}-{}",
-            std::process::id(),
-            &hash(&std::thread::current().id().as_u64().get())[..12]
-        );
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let unique = format!("mangamonitor-v17-{}-{stamp}", std::process::id());
         let dir = std::env::temp_dir().join(unique);
         fs::create_dir_all(&dir).unwrap();
         let target = dir.join("inventory_index.json");
         let replacement = dir.join("replacement.tmp");
         fs::write(&target, b"pre").unwrap();
         fs::write(&replacement, b"post").unwrap();
-        File::open(&replacement).unwrap().sync_all().unwrap();
+        open_rw(&replacement, "TEST_REPLACEMENT_OPEN")?
+            .sync_all()
+            .unwrap();
         atomic_replace_file(&target, &replacement).unwrap();
         sync_target(&target).unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"post");

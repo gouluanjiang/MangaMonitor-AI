@@ -89,7 +89,6 @@ for ((batch_index=start_batch; batch_index<batch_count; batch_index++)); do
     --actual-base-sha "$base_commit" \
     --max-requests "$max_requests" \
     --author-concurrency "$author_concurrency" \
-    --repair-overlay fixtures/matcher-m2/inventory-primary-repair.json \
     --live-source \
     "${extra[@]}"
 

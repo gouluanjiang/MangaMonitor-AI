@@ -107,6 +107,7 @@ jobs:
           jq -e '.soft_batch_size >= 1 and .soft_batch_size <= 200 and .max_requests_per_batch >= 1 and .live_canary_size >= 1 and .live_canary_size <= 200' monitor-config.json
           grep -Fq -- '--max-requests "$max_requests"' scripts/run-phase3b-cycle.sh
           grep -Fq -- '--author-concurrency "$author_concurrency"' scripts/run-phase3b-cycle.sh
+          ! grep -Fq -- '--repair-overlay fixtures/matcher-m2/inventory-primary-repair.json' scripts/run-phase3b-cycle.sh
           grep -Fq 'author_concurrency=3' scripts/run-phase3b-cycle.sh
           grep -Fq 'manifest_strategy_complete' scripts/run-phase3b-cycle.sh
           grep -Fq -- '--author-concurrency 3' .github/workflows/phase3b.yml

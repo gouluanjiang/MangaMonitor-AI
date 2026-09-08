@@ -4,13 +4,17 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.19.0",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/demo-store.test.mjs",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "format": "prettier --write src tests *.json playwright.config.ts",
+    "format:check": "prettier --check src tests *.json playwright.config.ts"
   },
   "dependencies": {
     "react": "19.2.8",
@@ -20,6 +24,7 @@
     "@playwright/test": "1.63.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
+    "prettier": "3.9.6",
     "typescript": "7.0.2",
     "vite": "8.2.2"
   }

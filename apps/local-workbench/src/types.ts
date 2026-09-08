@@ -1,10 +1,10 @@
-export type WorkStatus = 'owned' | 'ready' | 'review';
+export type WorkStatus = "owned" | "ready" | "review";
 export interface Work {
   id: string;
   title: string;
   subtitle: string;
   author: string;
-  source: 'JM' | 'Pica';
+  source: "JM" | "Pica";
   cover: string;
   accent: string;
   tags: string[];
@@ -17,7 +17,15 @@ export interface Work {
   updated: string;
 }
 
-export type TaskStage = 'queued' | 'downloading' | 'verifying' | 'packing' | 'importing' | 'sync_pending' | 'completed' | 'error';
+export type TaskStage =
+  | "queued"
+  | "downloading"
+  | "verifying"
+  | "packing"
+  | "importing"
+  | "sync_pending"
+  | "completed"
+  | "error";
 export interface DemoTask {
   id: string;
   workId: string;

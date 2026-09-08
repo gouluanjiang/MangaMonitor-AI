@@ -42,6 +42,8 @@ jobs:
           run_install: false
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Check source formatting
+        run: pnpm format:check
       - name: Test the demo state transitions
         run: pnpm test
       - name: Type-check and build the web app
@@ -57,6 +59,14 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Test the mock workbench in Chromium
         run: pnpm test:ui
+      - name: Upload rendered preview screens
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-workbench-screens
+          path: apps/local-workbench/test-results/**/preview-*.png
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Upload UI failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

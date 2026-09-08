@@ -103,6 +103,12 @@ pub struct Review {
     #[serde(default)]
     pub provenance: Value,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaginationContract {
+    pub reported_total: Option<u64>,
+    pub reported_pages: Option<u64>,
+    pub reported_limit: Option<u64>,
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Cursor {
     pub next_page: u64,
@@ -110,6 +116,8 @@ pub struct Cursor {
     pub observed_ids: BTreeSet<String>,
     pub boundary: String,
     pub mode: String,
+    #[serde(default)]
+    pub pagination_contract: Option<PaginationContract>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ReviewMigrationAudit {
@@ -160,6 +168,16 @@ pub enum Detail {
 
 impl State {
     pub fn context(&self) -> String {
+        // Schema metadata describes the representation, not the authority
+        // content. Excluding it keeps staged assistant replays stable when a
+        // legacy in-memory value is normalized on persistence.
+        let semantic_document = |value: &Value| {
+            let mut value = value.clone();
+            if let Some(object) = value.as_object_mut() {
+                object.remove("schema_version");
+            }
+            value
+        };
         // Author registry edits can change deterministic author evidence and must
         // therefore trigger the same offline reanalysis as decisions/inventory.
         // The frozen matcher version is an input too: changing the rule set must
@@ -167,8 +185,8 @@ impl State {
         hash(&(
             rules_core::title_m2::RULE_VERSION,
             &self.decisions,
-            &self.inventory,
-            &self.authors,
+            semantic_document(&self.inventory),
+            semantic_document(&self.authors),
         ))
     }
     pub fn event(&mut self, id: String, kind: &str, data: Value) {
@@ -424,13 +442,6 @@ impl State {
             // Legacy automatic bindings are not an authority under M2.
             entry.work_id = None;
         }
-        for task in self
-            .pending
-            .values_mut()
-            .filter(|task| task.target.source_key == k)
-        {
-            task.status = "superseded_by_identity_reanalysis".into();
-        }
         if outcome.disposition == "IGNORED" {
             let source_ignore_changed = outcome.reason == "HUMAN_IGNORE_SOURCE"
                 && self.catalog[k].record.processing_result != "IGNORED";
@@ -463,6 +474,16 @@ impl State {
                 outcome.author_evidence.canonical_author.clone(),
             );
         } else {
+            // A record that no longer has a trusted work binding must stop its
+            // old pending task. A stable binding is handled by bind_work and
+            // keeps an executable pending task across unrelated migrations.
+            for task in self
+                .pending
+                .values_mut()
+                .filter(|task| task.target.source_key == k)
+            {
+                task.status = "superseded_by_identity_reanalysis".into();
+            }
             self.review_identity_item(k, &outcome, trigger, &provenance);
         }
         outcome.downstream_result = self.catalog[k].record.processing_result.clone();
@@ -688,7 +709,7 @@ impl State {
         let ck = Self::cursor_key(source, author);
         self.scan.progress.entry(ck.clone()).or_default().boundary = "SOURCE_ERROR".into();
         self.event(
-            format!("warning:{ck}:{code}"),
+            format!("warning:{}:{ck}:{code}", self.scan.scan_id),
             "SCAN_PARTIAL",
             json!({"source":source,"author":author,"reason":"SOURCE_ERROR","code":code}),
         );
@@ -697,49 +718,166 @@ impl State {
     pub fn page_boundary(&mut self, source: &str, author: &str, page: &SearchPage) -> bool {
         let ck = Self::cursor_key(source, author);
         let mode = self.effective_mode(source, author);
-        let cursor = self.scan.progress.entry(ck.clone()).or_default();
-        let previous_count = cursor.observed_ids.len();
-        cursor.mode = mode.clone();
-        cursor.next_page = page.page + 1;
+        let committed = self.scan.progress.get(&ck).cloned().unwrap_or_default();
+        let previous_count = committed.observed_ids.len();
+        let expected_page = if committed.next_page == 0 {
+            1
+        } else {
+            committed.next_page
+        };
+        let page_contract = PaginationContract {
+            reported_total: page.reported_total,
+            reported_pages: page.reported_pages,
+            reported_limit: page.reported_limit,
+        };
+
+        // Build the next cursor off to the side. A malformed page must not
+        // consume its cursor, observations, historical streak, or the
+        // first-page pagination contract: resume must retry the same page.
+        let mut candidate = committed.clone();
+        candidate.mode = mode.clone();
+        candidate.next_page = page.page.saturating_add(1);
+        let page_sequence_valid = page.page > 0 && page.page == expected_page;
+        let contract_consistent = if expected_page == 1 {
+            page_sequence_valid && committed.pagination_contract.is_none()
+        } else {
+            committed.pagination_contract.as_ref() == Some(&page_contract)
+        };
+        if page.page == 1 {
+            candidate.pagination_contract = Some(page_contract.clone());
+        }
+
+        let mut page_ids = BTreeSet::new();
+        let mut duplicate_page = false;
         let mut early = false;
         for r in &page.records {
             let k = key(r);
-            if !cursor.observed_ids.insert(k.clone()) {
-                continue;
+            if !page_ids.insert(k.clone()) || committed.observed_ids.contains(&k) {
+                duplicate_page = true;
             }
-            if self.scan.historical_ids.contains(&k) {
-                cursor.historical_streak += 1;
-            } else {
-                cursor.historical_streak = 0;
-            }
-            if mode == "incremental" && cursor.historical_streak >= self.scan.threshold {
-                early = true;
+            if candidate.observed_ids.insert(k.clone()) {
+                if self.scan.historical_ids.contains(&k) {
+                    candidate.historical_streak += 1;
+                } else {
+                    candidate.historical_streak = 0;
+                }
+                if mode == "incremental" && candidate.historical_streak >= self.scan.threshold {
+                    early = true;
+                }
             }
         }
-        let exhausted = page.reported_pages.is_some_and(|p| page.page >= p)
-            || page
+        let observed_count = candidate.observed_ids.len() as u64;
+        let limit_valid = page
+            .reported_limit
+            .is_none_or(|limit| limit > 0 && page.records.len() as u64 <= limit);
+        let total_valid = page
+            .reported_total
+            .is_none_or(|total| observed_count <= total);
+        let pages_valid = page
+            .reported_pages
+            .is_none_or(|pages| pages > 0 && page.page <= pages);
+        let totals_agree = match (
+            page.reported_total,
+            page.reported_pages,
+            page.reported_limit,
+        ) {
+            (Some(total), Some(pages), Some(limit)) if total > 0 && limit > 0 => {
+                pages == total.div_ceil(limit)
+            }
+            (Some(0), Some(pages), _) => pages == 0 || pages == 1,
+            _ => true,
+        };
+        let terminal_page = page
+            .reported_pages
+            .is_some_and(|pages| pages > 0 && page.page == pages);
+        let terminal_count_valid = !(terminal_page
+            && page
                 .reported_total
-                .is_some_and(|t| cursor.observed_ids.len() as u64 >= t);
-        if exhausted {
-            cursor.boundary = "COMPLETE".into();
+                .is_some_and(|total| observed_count != total));
+        let valid_empty = page.records.is_empty()
+            && page.page == 1
+            && page.reported_total == Some(0)
+            && page
+                .reported_pages
+                .is_none_or(|pages| pages == 0 || pages == 1)
+            && page_sequence_valid
+            && contract_consistent;
+        let metadata_consistent = page_sequence_valid
+            && contract_consistent
+            && limit_valid
+            && total_valid
+            && pages_valid
+            && totals_agree
+            && terminal_count_valid
+            && !duplicate_page;
+        // Only the canonical zero-result first page may be empty. Every
+        // ordinary empty page fails before candidate commit so resume cannot
+        // skip an unproven page.
+        let page_valid = valid_empty || (!page.records.is_empty() && metadata_consistent);
+        let redirect_complete = page.redirect_to_detail
+            && page.records.len() == 1
+            && metadata_consistent
+            && page.page == 1
+            && page.reported_total.is_none_or(|total| total == 1)
+            && page.reported_pages.is_none_or(|pages| pages == 1);
+        let exhausted = if valid_empty {
+            true
+        } else if metadata_consistent && !page.records.is_empty() {
+            match (page.reported_total, page.reported_pages) {
+                (Some(total), Some(pages)) => page.page == pages && observed_count == total,
+                (None, Some(pages)) => page.page == pages,
+                (Some(total), None) => observed_count == total,
+                (None, None) => false,
+            }
+        } else {
+            false
+        };
+
+        if !page_valid {
+            let cursor = self.scan.progress.entry(ck.clone()).or_default();
+            cursor.boundary = "INCOMPLETE_PAGINATION".into();
+            self.event(
+                format!("pagination:{}:{ck}", self.scan.scan_id),
+                "SCAN_PARTIAL",
+                json!({
+                    "source": source,
+                    "author": author,
+                    "reason": "INCOMPLETE_PAGINATION",
+                    "expected_page": expected_page,
+                    "page": page.page,
+                    "observed_count": previous_count,
+                }),
+            );
+            return true;
+        }
+
+        // Commit the candidate only after every page invariant, including the
+        // durable first-page pagination contract, has passed.
+        self.scan.progress.insert(ck.clone(), candidate);
+        if redirect_complete || exhausted {
+            self.scan
+                .progress
+                .get_mut(&ck)
+                .expect("candidate cursor was just inserted")
+                .boundary = "COMPLETE".into();
             if mode == "full" {
                 self.scan.last_full.insert(ck, self.scan.started_at.clone());
             }
             true
         } else if early {
-            cursor.boundary = "EARLY_STOP_HEURISTIC".into();
-            self.event(format!("early:{ck}"),"SCAN_PARTIAL",json!({"source":source,"author":author,"reason":"EARLY_STOP_HEURISTIC","boundary":"AFTER_FETCHED_PAGE"}));
-            true
-        } else if page.records.is_empty() || cursor.observed_ids.len() == previous_count {
-            cursor.boundary = "INCOMPLETE_PAGINATION".into();
-            self.event(
-                format!("pagination:{ck}"),
-                "SCAN_PARTIAL",
-                json!({"source":source,"author":author,"reason":"INCOMPLETE_PAGINATION"}),
-            );
+            self.scan
+                .progress
+                .get_mut(&ck)
+                .expect("candidate cursor was just inserted")
+                .boundary = "EARLY_STOP_HEURISTIC".into();
+            self.event(format!("early:{}:{ck}", self.scan.scan_id),"SCAN_PARTIAL",json!({"source":source,"author":author,"reason":"EARLY_STOP_HEURISTIC","boundary":"AFTER_FETCHED_PAGE"}));
             true
         } else {
-            cursor.boundary = "CHECKPOINT".into();
+            self.scan
+                .progress
+                .get_mut(&ck)
+                .expect("candidate cursor was just inserted")
+                .boundary = "CHECKPOINT".into();
             false
         }
     }
@@ -757,7 +895,7 @@ impl State {
             Detail::SourceError(code) => {
                 self.scan.direct_failures.insert(k.into(), code.clone());
                 self.event(
-                    format!("direct-error:{k}:{code}"),
+                    format!("direct-error:{}:{k}:{code}", self.scan.scan_id),
                     "SCAN_WARNING",
                     json!({"source_key":k,"reason":"SOURCE_ERROR","code":code}),
                 );

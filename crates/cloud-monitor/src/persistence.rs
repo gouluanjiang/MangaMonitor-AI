@@ -12,14 +12,56 @@ pub const FILES: [&str; 8] = [
     "scan_state.json",
     "latest.json",
 ];
+const AUTHORS_SCHEMA_VERSION: u64 = 1;
+const INVENTORY_SCHEMA_VERSION: u64 = 8;
+const CORE_SCHEMA_VERSION: u64 = 3;
+
 fn read(dir: &Path, name: &str) -> Result<Value, String> {
     serde_json::from_slice(&fs::read(dir.join(name)).map_err(|_| format!("READ_{name}"))?)
         .map_err(|_| format!("INVALID_{name}"))
 }
+
+fn validate_schema(name: &str, value: &Value, maximum: u64, allow_legacy_missing: bool) -> Result<(), String> {
+    let Some(version) = value.get("schema_version").and_then(Value::as_u64) else {
+        // Early authors/inventory documents predate explicit schema markers;
+        // their shape is still validated below and they are preserved as-is.
+        // All newer core documents must carry a marker so they cannot be
+        // silently interpreted as an older format.
+        return if allow_legacy_missing {
+            Ok(())
+        } else {
+            Err(format!("MISSING_SCHEMA_{name}"))
+        };
+    };
+    if version == 0 || version > maximum {
+        return Err(format!("UNSUPPORTED_SCHEMA_{name}_{version}"));
+    }
+    Ok(())
+}
+
 pub fn load(dir: &Path) -> Result<State, String> {
     let mut docs = BTreeMap::new();
     for name in FILES {
         docs.insert(name, read(dir, name)?);
+    }
+    validate_schema("authors.json", &docs["authors.json"], AUTHORS_SCHEMA_VERSION, true)?;
+    validate_schema("inventory_index.json", &docs["inventory_index.json"], INVENTORY_SCHEMA_VERSION, true)?;
+    for name in ["catalog.json", "pending.json", "review.json", "decisions.json", "scan_state.json", "latest.json"] {
+        validate_schema(name, &docs[name], CORE_SCHEMA_VERSION, false)?;
+    }
+    if let Some(object) = docs["decisions.json"].as_object() {
+        let allowed = [
+            "schema_version",
+            "positive_mappings",
+            "negative_mappings",
+            "ignored_source_records",
+            "ignored_works",
+        ];
+        if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+            return Err("UNSUPPORTED_DECISIONS_FIELD".into());
+        }
+    } else {
+        return Err("INVALID_decisions.json".into());
     }
     for (file, field) in [
         ("authors.json", "authors"),
@@ -66,7 +108,9 @@ pub fn load(dir: &Path) -> Result<State, String> {
     let mut review = BTreeMap::new();
     for v in docs["review.json"]["match_review"].as_array().unwrap() {
         let r: Review = serde_json::from_value(v.clone()).map_err(|_| "INVALID_REVIEW")?;
-        review.insert(r.review_id.clone(), r);
+        if review.insert(r.review_id.clone(), r).is_some() {
+            return Err("DUPLICATE_REVIEW_ID".into());
+        }
     }
     let decisions =
         serde_json::from_value(docs["decisions.json"].clone()).map_err(|_| "INVALID_DECISIONS")?;
@@ -154,7 +198,19 @@ pub fn save(dir: &Path, s: &State) -> Result<(), String> {
 }
 
 fn csv_cell(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
+    // Spreadsheet applications may evaluate cells beginning with one of these
+    // characters as formulas. Prefixing a single quote keeps the displayed
+    // value while making CSV exports inert when opened in a spreadsheet.
+    let formula_leading = value
+        .chars()
+        .find(|ch| !matches!(ch, ' ' | '\t' | '\r' | '\n'))
+        .is_some_and(|ch| matches!(ch, '=' | '+' | '-' | '@'));
+    let safe = if formula_leading {
+        format!("'{value}")
+    } else {
+        value.to_owned()
+    };
+    format!("\"{}\"", safe.replace('"', "\"\""))
 }
 
 pub fn review_export(s: &State) -> Value {

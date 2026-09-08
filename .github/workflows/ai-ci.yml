@@ -41,6 +41,9 @@ on:
       - '.github/workflows/phase3b-single-author-dual-source.yml'
       - '.github/workflows/phase3b-three-author-dual-source.yml'
   workflow_dispatch:
+concurrency:
+  group: mangamonitor-validation-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -49,6 +52,16 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Cargo registry, git sources, and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-
       - name: Install pinned Rust
         run: rustup toolchain install 1.98.1 --profile minimal --component clippy
       - name: Workspace tests
@@ -94,6 +107,7 @@ jobs:
           jq -e '.soft_batch_size >= 1 and .soft_batch_size <= 200 and .max_requests_per_batch >= 1 and .live_canary_size >= 1 and .live_canary_size <= 200' monitor-config.json
           grep -Fq -- '--max-requests "$max_requests"' scripts/run-phase3b-cycle.sh
           grep -Fq -- '--author-concurrency "$author_concurrency"' scripts/run-phase3b-cycle.sh
+          ! grep -Fq -- '--repair-overlay fixtures/matcher-m2/inventory-primary-repair.json' scripts/run-phase3b-cycle.sh
           grep -Fq 'author_concurrency=3' scripts/run-phase3b-cycle.sh
           grep -Fq 'manifest_strategy_complete' scripts/run-phase3b-cycle.sh
           grep -Fq -- '--author-concurrency 3' .github/workflows/phase3b.yml
@@ -150,6 +164,16 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Cache Cargo registry, git sources, and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-
       - name: Install pinned Rust
         run: rustup toolchain install 1.98.1 --profile minimal
       - name: Test V1 add-only thaw scope and completion contracts
@@ -160,6 +184,8 @@ jobs:
         run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_library_import'
       - name: Test local inventory rescan
         run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_rescan'
+      - name: Test Windows-safe Phase3B scan progress
+        run: cargo +1.98.1 test --locked -p cloud-monitor --test phase3b_scan_progress
       - name: Test V1.5 read-only inventory candidate builder
         run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_update_candidate'
       - name: Test V1.6 inventory apply authorization gate

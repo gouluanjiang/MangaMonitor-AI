@@ -10,9 +10,11 @@ use cloud_monitor::{
     source_preflight::{self, PreflightChapter, SourcePreflightEvidence, SourcePreflightProof},
 };
 use serde_json::Value;
+use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use state_model::Version;
 use std::{
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -210,13 +212,17 @@ fn execution_context<'a>(
 }
 
 fn fake_bytes(format: &str) -> Vec<u8> {
-    match format {
-        "gif" => b"GIF89aA6.12".to_vec(),
-        "png" => vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3],
-        "jpg" | "jpeg" => vec![0xff, 0xd8, 0xff, 1, 2, 3],
-        "webp" => b"RIFF1234WEBPA6.12".to_vec(),
-        _ => vec![],
-    }
+    let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([12, 34, 56])));
+    let image_format = match format {
+        "gif" => ImageFormat::Gif,
+        "png" => ImageFormat::Png,
+        "jpg" | "jpeg" => ImageFormat::Jpeg,
+        "webp" => ImageFormat::WebP,
+        _ => return vec![],
+    };
+    let mut output = Cursor::new(Vec::new());
+    image.write_to(&mut output, image_format).unwrap();
+    output.into_inner()
 }
 
 fn processed(descriptor: &MediaDescriptor) -> ProcessedMedia {

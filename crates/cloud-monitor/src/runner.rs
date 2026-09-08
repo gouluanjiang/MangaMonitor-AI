@@ -1,5 +1,6 @@
 //! Shared scan runner. It always writes to a separate staging directory.
 use crate::{
+    authority_recovery::{self, Classification, Recovery},
     matcher_m2::repair_primary,
     monitor::*,
     persistence::*,
@@ -65,12 +66,16 @@ struct Tape {
 
 struct StageMetadata<'a> {
     base_commit: &'a str,
+    input_state_hash: &'a str,
     requested_mode: &'a str,
     effective_requested_mode: &'a str,
     batch_index: usize,
+    batch_size: usize,
     batch_count: usize,
     selected_authors: &'a [String],
+    all_authors: &'a [String],
     authority_document: Option<&'a ScopeCertificateDocument>,
+    recovery: Option<&'a Recovery>,
 }
 
 #[derive(Clone)]
@@ -182,12 +187,30 @@ fn cursor_complete(state: &State, source: &str, author: &str) -> bool {
 }
 
 fn strategy_complete(state: &State) -> bool {
-    state.scan.direct_failures.is_empty()
-        && state.scan.selected_authors.iter().all(|author| {
-            ["jm", "pica"]
-                .iter()
-                .all(|source| cursor_complete(state, source, author))
-        })
+    authority_recovery::strategy_complete(state)
+}
+
+/// Dedicated machine-readable preflight; called before `run`, so even the
+/// output directory is not created and no repair/source work can occur.
+pub fn resume_preflight(args: &[String]) -> authority_recovery::Preflight {
+    let classify = || -> Result<authority_recovery::Preflight, String> {
+        let input = PathBuf::from(opt(args, "--state", "state"));
+        let output = PathBuf::from(opt(args, "--output", "reports/phase3b-staging"));
+        let authors = read_author_selection(&PathBuf::from(opt(args, "--authors", "fixtures/phase3a-authors.json")))?;
+        let mode = opt(args, "--mode", "full");
+        let options = authority_recovery::Options {
+            requested_mode: &mode,
+            threshold: opt(args, "--threshold", "5").parse().map_err(|_| "THRESHOLD")?,
+            batch_size: opt(args, "--batch-size", "200").parse().map_err(|_| "BATCH_SIZE")?,
+            batch_index: opt(args, "--recovery-from-batch-index", &opt(args, "--batch-index", "0"))
+                .parse().map_err(|_| "BATCH_INDEX")?,
+            all_authors: &authors,
+        };
+        Ok(authority_recovery::preflight(&input, &output, &options))
+    };
+    classify().unwrap_or_else(|reason| authority_recovery::Preflight {
+        classification: Classification::OptionsMismatch, reason,
+    })
 }
 
 fn planned_direct_check_keys(state: &State) -> Vec<String> {
@@ -542,7 +565,7 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
     }
 
     let requested_mode = opt(&args, "--mode", "full");
-    let mode = match requested_mode.as_str() {
+    let mut mode = match requested_mode.as_str() {
         "full" => "full",
         "incremental" => "incremental",
         "monthly" if profile == Profile::Phase3B => "incremental",
@@ -554,17 +577,62 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
         return Err("BASE_COMMIT_MISMATCH".into());
     }
 
+    let resume = args.iter().any(|s| s == "--resume");
+    let recover = args.iter().any(|s| s == "--recover-authority-drift-full");
+    let continue_cycle = args.iter().any(|s| s == "--continue-cycle");
+    if recover && (profile != Profile::Phase3B || resume || continue_cycle || batch_index != 0) {
+        return Err("RECOVERY_REQUIRES_PHASE3B_FRESH_BATCH_ZERO".into());
+    }
+    if !recover && args.iter().any(|s| s == "--recovery-from-batch-index") {
+        return Err("RECOVERY_FROM_BATCH_REQUIRES_RECOVERY".into());
+    }
+    if profile == Profile::Phase3B && (resume || recover) {
+        let result = resume_preflight(&args);
+        let expected = if recover { Classification::AuthorityDriftRequiresFullRecovery } else { Classification::ResumableExact };
+        if result.classification != expected {
+            return Err(format!("{}:{:?}", result.reason, result.classification));
+        }
+    }
+    let recovery = if recover {
+        let mut current = load(&input)?;
+        let document = scope_certificates::load(&input.join(scope_certificates::CERTIFICATE_FILE))?;
+        let certificates = scope_certificates::validate_document(document, &current.authors, &current.inventory)?;
+        current.scan.identity_authority_hash = scope_certificates::state_authority_hash(&certificates);
+        Some(authority_recovery::recovery_from(&output, &expected_base, current.context(), now())?)
+    } else if profile == Profile::Phase3B && resume {
+        authority_recovery::bound_checkpoint(&output)?.1.recovery
+    } else if profile == Profile::Phase3B && input.join("state-manifest.json").exists() {
+        let (_, prior) = authority_recovery::bound_checkpoint(&input)?;
+        if prior.recovery.is_some() {
+            let active = !prior.strategy_complete || prior.batch_index + 1 < prior.batch_count;
+            if active {
+                if !continue_cycle || !prior.strategy_complete || batch_index != prior.batch_index + 1
+                    || requested_mode != prior.requested_mode || prior.batch_size != Some(batch_size)
+                    || prior.all_authors.as_ref() != Some(&all_authors)
+                { return Err("RECOVERY_CYCLE_REQUIRES_EXACT_FULL_CONTINUATION".into()); }
+                prior.recovery
+            } else {
+                if continue_cycle || batch_index != 0 { return Err("RECOVERY_CYCLE_ALREADY_COMPLETE".into()); }
+                None
+            }
+        } else { None }
+    } else { None };
+    if recovery.is_some() { mode = "full"; }
+    let input_state_hash = hash(&load(&input)?);
     let batch_count = all_authors.len().div_ceil(batch_size);
     let stage_metadata = StageMetadata {
         base_commit: &expected_base,
+        input_state_hash: &input_state_hash,
         requested_mode: &requested_mode,
         effective_requested_mode: mode,
         batch_index,
+        batch_size,
         batch_count,
         selected_authors: &selected,
+        all_authors: &all_authors,
         authority_document: None,
+        recovery: recovery.as_ref(),
     };
-    let resume = args.iter().any(|s| s == "--resume");
     let validated_certificates: Option<ValidatedScopeCertificates> = if profile == Profile::Phase3B {
         let current = load(&input)?;
         let document = scope_certificates::load(&input.join(scope_certificates::CERTIFICATE_FILE))?;
@@ -594,6 +662,12 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
                 "RESUME_AUTHORITY_MISMATCH:current={current_authority}:checkpoint={checkpoint_authority}"
             ));
         }
+        // A durably committed partial may receive a legitimate local task
+        // completion edit without changing identity authority. Preserve current
+        // business exports when they describe this exact scan generation.
+        if hash(&current.scan) == hash(&checkpoint.scan) {
+            checkpoint = current.clone();
+        }
         checkpoint.scan.identity_authority_hash = authority_hash.clone();
         checkpoint.scan.scope_certificates = current.scan.scope_certificates.clone();
         checkpoint
@@ -612,9 +686,8 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
         .map(|validated| &validated.document);
     let replay = opt(&args, "--replay", "");
     let author_concurrency = parse_author_concurrency(&args, profile, &replay)?;
-    if profile == Profile::Phase3B && !resume && !replay.is_empty() && !s.scan.complete && !strategy_complete(&s)
-        && !s.scan.scan_id.is_empty() && !s.scan.selected_authors.is_empty() {
-        return Err("INCOMPLETE_SCAN_REQUIRES_RESUME".into());
+    if profile == Profile::Phase3B && !resume && !recover && authority_recovery::is_partial(&s) {
+        return Err("INCOMPLETE_SCAN_REQUIRES_RESUME_OR_FULL_RECOVERY".into());
     }
 
     let repair_overlay = opt(&args, "--repair-overlay", "");
@@ -634,8 +707,14 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
             return Err("RESUME_OPTIONS_MISMATCH".into());
         }
     } else {
-        let preserve_latest = profile == Profile::Phase3B && args.iter().any(|value| value == "--continue-cycle");
-        s.begin_with_event_history(&now(), &now(), selected.clone(), mode, threshold, preserve_latest)?;
+        let preserve_latest = profile == Profile::Phase3B && (continue_cycle || recover);
+        let scan_id = recovery.as_ref().map(|r| format!("recovery-{}-batch-{batch_index}", r.generation_id)).unwrap_or_else(now);
+        if recover {
+            // Revalidate every retained source identity against current public
+            // authority before any recovered pending task is persisted.
+            for entry in s.catalog.values_mut() { entry.analysis_context.clear(); }
+        }
+        s.begin_with_event_history(&scan_id, &now(), selected.clone(), mode, threshold, preserve_latest)?;
     }
     stage_save(&output, &s, profile, &stage_metadata)?;
 
@@ -838,6 +917,7 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
     report.insert("base_commit".into(), if expected_base.is_empty(){Value::Null}else{json!(expected_base)});
     report.insert("requested_mode".into(), json!(requested_mode));
     report.insert("effective_requested_mode".into(), json!(mode));
+    report.insert("recovery".into(), json!(recovery));
     report.insert("batch_index".into(), json!(batch_index));
     report.insert("batch_size".into(), json!(batch_size));
     report.insert("batch_count".into(), json!(batch_count));
@@ -912,6 +992,7 @@ fn stage_save(output: &Path, state: &State, profile: Profile, metadata: &StageMe
         write_json(&output.join("state-manifest.json"), &json!({
             "schema_version": 1,
             "base_commit": metadata.base_commit,
+            "input_state_hash": metadata.input_state_hash,
             "state_hash": hash(state),
             "scan_id": state.scan.scan_id,
             "complete": state.scan.complete,
@@ -920,9 +1001,14 @@ fn stage_save(output: &Path, state: &State, profile: Profile, metadata: &StageMe
             "requested_mode": metadata.requested_mode,
             "effective_requested_mode": metadata.effective_requested_mode,
             "batch_index": metadata.batch_index,
+            "batch_size": metadata.batch_size,
             "batch_count": metadata.batch_count,
             "selected_authors": metadata.selected_authors,
-            "identity_authority_hash": state.scan.identity_authority_hash
+            "all_authors": metadata.all_authors,
+            "matcher_version": rules_core::title_m2::RULE_VERSION,
+            "analysis_context": state.context(),
+            "identity_authority_hash": state.scan.identity_authority_hash,
+            "recovery": metadata.recovery
         }))?;
     }
     Ok(())
@@ -930,11 +1016,7 @@ fn stage_save(output: &Path, state: &State, profile: Profile, metadata: &StageMe
 
 fn read_author_selection(path: &Path) -> Result<Vec<String>, String> {
     let value: Value = serde_json::from_slice(&fs::read(path).map_err(|_| "AUTHORS_READ")?).map_err(|_| "AUTHORS_JSON")?;
-    if let Ok(names) = serde_json::from_value::<Vec<String>>(value.clone()) { return Ok(names); }
-    value["authors"].as_array().ok_or_else(|| String::from("AUTHORS_JSON"))?.iter()
-        .filter(|author| author["enabled"] != false)
-        .map(|author| author["name"].as_str().map(str::to_owned).ok_or_else(|| String::from("AUTHORS_JSON")))
-        .collect()
+    authority_recovery::author_selection(&value)
 }
 
 fn apply(s: &mut State, o: &Observation) -> Result<(), String> {

@@ -232,6 +232,7 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
     let mut all_disjoint = !works.is_empty();
     let mut local_issues = BTreeSet::new();
     let mut collision_unknown = false;
+    let mut structural_attachment_unknown = false;
     for w in works {
         let id = w["work_id"].as_str().unwrap_or("").to_owned();
         out.scope_work_ids.push(id.clone());
@@ -241,7 +242,7 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
             .flatten()
             .collect();
         if titles.is_empty() {
-            missing = true;
+            missing |= !negative.contains(&id);
             all_disjoint = false;
         }
         let lt = local_type(w);
@@ -254,9 +255,13 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
                 lt.as_deref(),
             );
             if t["primary"].as_str().is_none_or(|s| s.trim().is_empty()) {
-                missing = true;
+                missing |= !negative.contains(&id);
             }
             let relation = title_m2::compare(&source, &local);
+            let attachment_unknown = source.core == local.core
+                && !title_m2::structural_attachment_compatible(&source, &local);
+            structural_attachment_unknown |=
+                attachment_unknown && relation == Relation::Insufficient && !negative.contains(&id);
             if !negative.contains(&id)
                 && (!local.issues.is_empty()
                     || (source.core == local.core && relation == Relation::Insufficient))
@@ -269,12 +274,13 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
             lf.content_type = None;
             let title_witness = source.issues.is_empty()
                 && local.issues.is_empty()
+                && !attachment_unknown
                 && source.core == local.core
                 && sf == lf;
             if title_witness && !negative.contains(&id) {
                 witnesses.insert(id.clone());
             }
-            if source.core == local.core {
+            if source.core == local.core && !negative.contains(&id) {
                 local_issues.extend(local.issues.iter().cloned());
             }
             if relation == Relation::Exact && !negative.contains(&id) {
@@ -282,6 +288,7 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
             }
             work_disjoint &= numbering_disjoint(&source, &local);
             out.candidate_evidence.push(json!({"work_id":id,"local_identity":local,"relation":relation,
+                "structural_attachment_ambiguous":attachment_unknown,
                 "title_witness_without_type_authorization":title_witness,"excluded_by_not_same":negative.contains(&id),
                 "local_content_type_evidence":w["versions"].as_array().unwrap_or(&vec![]).iter().map(|v|json!({"local_item_id":v["local_item_id"],"content":v["content"]})).collect::<Vec<_>>() }));
         }
@@ -297,6 +304,10 @@ pub fn decide(state: &State, r: &Record, certificates: &[ScopeCertificate]) -> O
     }
     if !source.issues.is_empty() {
         out.reason = source.issues.iter().next().unwrap().clone();
+        return out;
+    }
+    if structural_attachment_unknown {
+        out.reason = "STRUCTURAL_ATTACHMENT_UNRESOLVED".into();
         return out;
     }
     if exact.len() > 1 {

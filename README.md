@@ -4,6 +4,8 @@ MangaMonitor-AI is a safety-first manga monitoring and automation system for JM 
 
 This repository has moved far beyond the original Phase 1A smoke test. The README is the primary project handoff and roadmap for new development sessions. Always combine it with the current repository state, `AGENTS.md`, current tests, and the safety documents referenced below; current code and GitHub state win if any historical note becomes stale.
 
+The current development boundary is recorded in [docs/DEVELOPMENT_HANDOFF.md](docs/DEVELOPMENT_HANDOFF.md). On 2026-09-08 the user requested continued backend/cloud work and a stop **before constructing the local downloader frontend**, so its local interface and implementation can be discussed together. Existing command-line modules do not imply that a desktop downloader has been delivered.
+
 ## V1 product target
 
 V1 is considered useful only when this complete chain can run stably for long periods without routine human intervention:
@@ -73,15 +75,23 @@ Replacement, deletion, larger concurrency, and advanced maintenance can be added
 | Physical request accounting | Explicit `RequestTrace` accounting with per-batch budget |
 | Single-author JM+Pica concurrent acquisition | Implemented and retained as validation/fallback evidence |
 | Three-author bounded concurrent acquisition | **Integrated into the formal Phase3B runner/scheduler; three clean live soak rounds plus failure/resume and budget-exhaustion regressions passed** |
-| Cloud production readiness | **Reached; production activation remains deliberately disabled** |
+| Cloud production readiness | Historical source/concurrency milestone reached; final recovery, durability and end-to-end production acceptance remain separate |
+| First durable bootstrap | Completed for the current six-author registry: 399 physical requests across two batches, 358 catalog/review records |
+| Trusted new-work scope certificates (A03) | Local certifier, strict consumer and publication path merged in PR #10; no real certificate has been issued |
 | Local staging/execution proof chain | **Repository thaw gate accepted for approved new-work `download` tasks; real local staging acceptance still requires one genuine current approved task** |
-| Inventory mutation | V1.6 is authorization-only; it does not write `inventory_index.json`; real materialization/apply remains outside the accepted thaw |
+| Duplicate download suppression | Exact inventory ownership/source mapping suppresses an already-satisfied download; PR #14 merged |
+| Inventory mutation | V1.7 exact add-only inventory apply implemented in PR #16, including atomic write/reread and exact retry; real inventory acceptance remains outstanding |
+| Task completion | V1.8 exact task completion implemented in PR #17; real end-to-end completion remains outstanding |
+| Local result publication | Verified inventory/completion publication back to public main remains outstanding (Issue #7) |
+| Local downloader frontend | Not implemented; explicit user discussion stop before construction |
 | Replacement / physical deletion | Not authorized and not required for V1 |
 | Production monitor | **Disabled**: `production_enabled=false` |
 
 The cloud-monitoring half has reached the V1 production-readiness milestone, and the smallest V1 add-only source/media/staging path was explicitly thawed on 2026-09-08 after the mandatory upstream and safety review. The thaw is intentionally narrow: it permits real JM/Pica retrieval only for a current user-approved genuinely new `download` task and only into fresh command-owned staging. Library materialization, inventory mutation, task completion, replacement, deletion, and production enablement remain separate closed authorities.
 
 The current committed `monitor-state/pending.json` contains no tasks. Therefore the next real acceptance step cannot be fabricated: the project is waiting for a genuine new-work task to be produced and approved before running the guarded local staging acceptance. See `docs/V1_ADD_ONLY_DOWNLOAD_THAW_2026-09-08.md` and `docs/V1_ADD_ONLY_STAGING_ACCEPTANCE.md` for the accepted boundary and procedure. Cloud readiness evidence remains in `docs/CLOUD_PRODUCTION_READINESS.md`.
+
+The durable bootstrap is already complete, not a pending task to repeat. Run `34220356044` published the six-author scan in `e12ccc66405381801c851680a5d6abc048f839be`. The current inventory is still a 15-work seed and `scope-certificates.json` is empty. Code implementation, synthetic tests, real source observations and real local end-to-end acceptance are distinct milestones.
 
 ## V1 execution order
 
@@ -95,11 +105,12 @@ Development should proceed in this order. The cloud milestones and repository-si
 6. ✅ Re-review the pinned JM/Pica upstream implementations and the current local executor before changing real-download behavior.
 7. ✅ Restore/accept only the real-download capabilities required by the V1 add-only source→media→isolated-staging pipeline.
 8. 🟨 Complete `task → command → isolated staging → manifest/proof/receipt` with one guarded **real local** download; repository implementation is ready, but acceptance is waiting for a genuine current approved new-work task.
-9. ⬜ After that real staging acceptance, implement a narrow add-only library materialization/inventory apply executor.
-10. ⬜ Re-read inventory and filesystem state and allow task completion only after the current evidence is verified.
-11. ⬜ Run real end-to-end crash/retry/idempotence soak.
-12. ⬜ Perform a final V1 production acceptance review.
-13. ⬜ Change `production_enabled` only after an explicit user decision to enable production.
+9. ✅ Implement narrow add-only library import/rescan, V1.7 inventory apply and V1.8 exact completion. These code milestones are merged; real local acceptance is still required.
+10. ⬜ Finish backend correctness/recovery gates, then **stop before constructing the local downloader frontend and discuss its interface with the user**.
+11. ⬜ Integrate the agreed local application, verified inventory/completion publication, and current certificate/inventory reconciliation.
+12. ⬜ Prove one real complete task and run end-to-end crash/retry/idempotence soak.
+13. ⬜ Perform a final V1 production acceptance review.
+14. ⬜ Change `production_enabled` only after an explicit user decision to enable production, then observe repeated scheduled cycles.
 
 Do **not** automatically move from three-author concurrency to 5/10/20-author tests merely because three-author operation is fast. Three active authors are the conservative V1 target. Throughput is secondary to correctness and recoverability.
 
@@ -392,13 +403,15 @@ The real local executor remains forbidden in GitHub Actions. `upgrade`, library 
 
 Before modifying the accepted add-only source/media/staging scope, follow `AGENTS.md` and the recorded thaw contract. Any upstream-pin change or authority expansion to library materialization, inventory mutation, task completion, replacement, or deletion requires the applicable gate to be re-run in that development session.
 
-### Inventory apply target for V1
+### Inventory apply implementation and acceptance
 
 V1.6 is an inventory-apply **authorization gate only**. It does not write `inventory_index.json`.
 
+V1.7 is implemented separately in `local_inventory_apply::apply` and `mangamonitor-local-inventory-apply`. It revalidates the V1.6 chain, appends exactly one authorized work, performs an atomic same-directory replacement, rereads the post-state, and recognizes an exact already-applied retry. PR #16 merged the implementation without applying a real user's inventory.
+
 Per the accepted thaw contract, the project must first pass one guarded real local staging-only acceptance using a genuine current approved new-work task. Only after that evidence exists should development cross into real add-only library materialization/inventory mutation.
 
-The next V1-local transition should remain deliberately narrow and add-only. A real inventory-apply executor must, at minimum:
+Real local acceptance of this implemented transition must still prove:
 
 - reject an existing destination rather than overwrite it;
 - use crash-safe/atomic filesystem and inventory operations where applicable;
@@ -410,7 +423,9 @@ The next V1-local transition should remain deliberately narrow and add-only. A r
 
 Replacement and physical deletion are not part of this V1 transition.
 
-### Task completion target for V1
+### Task completion implementation and acceptance
+
+V1.8 is implemented in `local_task_completion::complete` and `mangamonitor-local-task-complete` (PR #17). It rechecks the filesystem and the V1.5/V1.6/V1.7 evidence chain, then changes only the exact current task generation in `pending.json`; an exact completed retry is write-free. Its implementation does not establish real end-to-end acceptance, and its completion state still needs the separate public reconciliation bridge.
 
 A task may become `completed` only when all required current evidence remains valid, including:
 
@@ -437,6 +452,7 @@ If any step fails or becomes stale, the task remains incomplete and recoverable.
 ## Key documentation
 
 - `README.md` — V1 product target, current roadmap, production acceptance definition, and new-session handoff.
+- `docs/DEVELOPMENT_HANDOFF.md` — active work, verification evidence and the user-requested local-frontend discussion stop.
 - `AGENTS.md` — repository-wide development guardrails and the currently thawed authority boundary.
 - `docs/CLOUD_PRODUCTION_READINESS.md` — accepted cloud runner/soak/failure/resume/budget readiness evidence.
 - `docs/V1_ADD_ONLY_DOWNLOAD_THAW_2026-09-08.md` — accepted repository-side thaw review and exact add-only staging authority.
@@ -455,7 +471,7 @@ A new development conversation should not require a large copied prompt. Start b
 
 At the start of a new session:
 
-1. Read `README.md` and `AGENTS.md`.
+1. Read `README.md`, `AGENTS.md` and `docs/DEVELOPMENT_HANDOFF.md`.
 2. Fetch the current `main` head, open PRs/branches relevant to the current work, and recent GitHub Actions results.
 3. If real-download/local execution work is about to begin, read the current thaw/upstream documents required by `AGENTS.md` in that same development session. Do not assume the accepted scope covers a new authority expansion.
 4. Continue from the most advanced real repository state; do not restart an already completed phase merely because an older result document contains stale wording.

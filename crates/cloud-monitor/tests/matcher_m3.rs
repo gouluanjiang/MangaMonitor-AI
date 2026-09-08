@@ -62,7 +62,10 @@ fn production_path_migrates_215_reviews_without_duplicate_notifications_and_is_i
         String::from_utf8_lossy(&run.stderr)
     );
     let first_report = read(&first.join("scan-report.json"));
-    assert_eq!(first_report["matcher_version"], "matcher-m2-v1");
+    assert_eq!(
+        first_report["matcher_version"],
+        rules_core::title_m2::RULE_VERSION
+    );
     assert_eq!(first_report["reanalyzed"], 215);
     assert_eq!(first_report["review"], 215);
     assert_eq!(first_report["new_review_events"], 0);
@@ -96,7 +99,7 @@ fn production_path_migrates_215_reviews_without_duplicate_notifications_and_is_i
         first_state
             .catalog
             .values()
-            .filter(|entry| entry.matcher_version == "matcher-m2-v1")
+            .filter(|entry| entry.matcher_version == rules_core::title_m2::RULE_VERSION)
             .count(),
         215
     );

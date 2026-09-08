@@ -1,45 +1,15 @@
 name: MangaMonitor AI baseline CI
 on:
   push:
-    branches: [main, 'assistant-*']
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - 'crates/**'
-      - 'fixtures/**'
-      - 'monitor-config.json'
-      - 'scripts/run-phase3b-cycle.sh'
-      - 'scripts/run-phase3b-bootstrap.sh'
-      - 'scripts/test-run-phase3b-bootstrap.sh'
-      - 'scripts/commit-monitor-state.sh'
-      - 'scripts/Run-V1AddOnlyStagingAcceptance.ps1'
-      - '.github/workflows/ai-ci.yml'
-      - '.github/workflows/assistant-state-publish.yml'
-      - '.github/workflows/phase3b.yml'
-      - '.github/workflows/phase3b-live-canary.yml'
-      - '.github/workflows/phase3b-single-author-dual-source.yml'
-      - '.github/workflows/phase3b-three-author-dual-source.yml'
+    branches: [main, 'assistant-*', 'codex/**']
+    # Durable scan/publication output does not need another validation run.
+    # Everything else, including new safety policies and scripts, is covered.
+    paths-ignore:
+      - 'monitor-state/**'
+      - 'evidence/**'
   pull_request:
     branches: [main]
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - 'crates/**'
-      - 'fixtures/**'
-      - 'monitor-config.json'
-      - 'scripts/run-phase3b-cycle.sh'
-      - 'scripts/run-phase3b-bootstrap.sh'
-      - 'scripts/test-run-phase3b-bootstrap.sh'
-      - 'scripts/commit-monitor-state.sh'
-      - 'scripts/Run-V1AddOnlyStagingAcceptance.ps1'
-      - '.github/workflows/ai-ci.yml'
-      - '.github/workflows/assistant-state-publish.yml'
-      - '.github/workflows/phase3b.yml'
-      - '.github/workflows/phase3b-live-canary.yml'
-      - '.github/workflows/phase3b-single-author-dual-source.yml'
-      - '.github/workflows/phase3b-three-author-dual-source.yml'
+    # Always report PR checks, including documentation/state-only PRs.
   workflow_dispatch:
 concurrency:
   group: mangamonitor-validation-${{ github.head_ref || github.ref_name }}
@@ -52,6 +22,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Verify workflow scheduling and CI trigger contracts
+        run: python3 scripts/test-workflow-contracts.py
       - name: Cache Cargo registry, git sources, and target
         uses: actions/cache@v4
         with:
@@ -156,6 +128,12 @@ jobs:
           grep -Fq 'inventory_mutation_authorized = $false' scripts/Run-V1AddOnlyStagingAcceptance.ps1
           grep -Fq 'replacement_authorized = $false' scripts/Run-V1AddOnlyStagingAcceptance.ps1
           grep -Fq 'physical_delete_authorized = $false' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+      - name: Authority drift recovery orchestration stays full and read-only at preflight
+        run: |
+          bash -n scripts/run-phase3b-cycle.sh scripts/test-run-phase3b-authority-recovery.sh
+          bash scripts/test-run-phase3b-authority-recovery.sh
+      - name: Durable publication rejects a stale remote base and accepts a refreshed base
+        run: bash scripts/test-commit-monitor-state.sh "$PWD/monitor-state"
       - name: Production gate remains closed
         run: test "$(jq -r '.production_enabled' monitor-config.json)" = false
 
@@ -186,6 +164,8 @@ jobs:
         run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_rescan'
       - name: Test Windows-safe Phase3B scan progress
         run: cargo +1.98.1 test --locked -p cloud-monitor --test phase3b_scan_progress
+      - name: Test title safety and staged authority recovery on Windows
+        run: cargo +1.98.1 test --locked -p cloud-monitor --test title_identity_safety --test authority_recovery
       - name: Test V1.5 read-only inventory candidate builder
         run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_update_candidate'
       - name: Test V1.6 inventory apply authorization gate

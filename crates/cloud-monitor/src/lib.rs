@@ -3,6 +3,7 @@ pub mod assistant_author;
 pub mod assistant_decision;
 pub mod assistant_publication;
 pub mod assistant_task_gate;
+pub mod authority_recovery;
 pub mod executor_handoff;
 pub mod filesystem_verifier;
 pub mod image_download_authorization;

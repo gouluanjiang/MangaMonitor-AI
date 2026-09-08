@@ -14,6 +14,7 @@ mod live_media_transport;
 pub mod live_source_preflight;
 pub mod local_execution_orchestrator;
 pub mod local_executor;
+pub mod local_inventory_apply;
 pub mod local_inventory_apply_authorization;
 pub mod local_inventory_rescan;
 pub mod local_inventory_update_candidate;

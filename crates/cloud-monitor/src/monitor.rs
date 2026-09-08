@@ -103,6 +103,12 @@ pub struct Review {
     #[serde(default)]
     pub provenance: Value,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaginationContract {
+    pub reported_total: Option<u64>,
+    pub reported_pages: Option<u64>,
+    pub reported_limit: Option<u64>,
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Cursor {
     pub next_page: u64,
@@ -110,6 +116,8 @@ pub struct Cursor {
     pub observed_ids: BTreeSet<String>,
     pub boundary: String,
     pub mode: String,
+    #[serde(default)]
+    pub pagination_contract: Option<PaginationContract>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ReviewMigrationAudit {
@@ -717,14 +725,28 @@ impl State {
         } else {
             committed.next_page
         };
+        let page_contract = PaginationContract {
+            reported_total: page.reported_total,
+            reported_pages: page.reported_pages,
+            reported_limit: page.reported_limit,
+        };
 
         // Build the next cursor off to the side. A malformed page must not
-        // consume its cursor, observations, or historical streak: resume must
-        // retry the last expected page.
+        // consume its cursor, observations, historical streak, or the
+        // first-page pagination contract: resume must retry the same page.
         let mut candidate = committed.clone();
         candidate.mode = mode.clone();
         candidate.next_page = page.page.saturating_add(1);
         let page_sequence_valid = page.page > 0 && page.page == expected_page;
+        let contract_consistent = if expected_page == 1 {
+            page_sequence_valid && committed.pagination_contract.is_none()
+        } else {
+            committed.pagination_contract.as_ref() == Some(&page_contract)
+        };
+        if page.page == 1 {
+            candidate.pagination_contract = Some(page_contract.clone());
+        }
+
         let mut page_ids = BTreeSet::new();
         let mut duplicate_page = false;
         let mut early = false;
@@ -778,15 +800,20 @@ impl State {
             && page
                 .reported_pages
                 .is_none_or(|pages| pages == 0 || pages == 1)
-            && page_sequence_valid;
+            && page_sequence_valid
+            && contract_consistent;
         let metadata_consistent = page_sequence_valid
+            && contract_consistent
             && limit_valid
             && total_valid
             && pages_valid
             && totals_agree
             && terminal_count_valid
             && !duplicate_page;
-        let page_valid = valid_empty || metadata_consistent;
+        // Only the canonical zero-result first page may be empty. Every
+        // ordinary empty page fails before candidate commit so resume cannot
+        // skip an unproven page.
+        let page_valid = valid_empty || (!page.records.is_empty() && metadata_consistent);
         let redirect_complete = page.redirect_to_detail
             && page.records.len() == 1
             && metadata_consistent
@@ -824,7 +851,8 @@ impl State {
             return true;
         }
 
-        // Commit the candidate only after every page invariant has passed.
+        // Commit the candidate only after every page invariant, including the
+        // durable first-page pagination contract, has passed.
         self.scan.progress.insert(ck.clone(), candidate);
         if redirect_complete || exhausted {
             self.scan
@@ -843,18 +871,6 @@ impl State {
                 .expect("candidate cursor was just inserted")
                 .boundary = "EARLY_STOP_HEURISTIC".into();
             self.event(format!("early:{}:{ck}", self.scan.scan_id),"SCAN_PARTIAL",json!({"source":source,"author":author,"reason":"EARLY_STOP_HEURISTIC","boundary":"AFTER_FETCHED_PAGE"}));
-            true
-        } else if page.records.is_empty() {
-            self.scan
-                .progress
-                .get_mut(&ck)
-                .expect("candidate cursor was just inserted")
-                .boundary = "INCOMPLETE_PAGINATION".into();
-            self.event(
-                format!("pagination:{}:{ck}", self.scan.scan_id),
-                "SCAN_PARTIAL",
-                json!({"source":source,"author":author,"reason":"INCOMPLETE_PAGINATION"}),
-            );
             true
         } else {
             self.scan

@@ -22,6 +22,7 @@ pub mod local_inventory_update_candidate;
 mod local_library_import;
 #[expect(clippy::too_many_arguments, reason = "V1.3 public gate keeps every safety binding explicit, including the current-state reload callback")]
 pub mod local_library_import_gate;
+pub mod local_task_completion;
 pub mod matcher_m2;
 pub(crate) mod media_validation;
 pub mod monitor;

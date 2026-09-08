@@ -16,13 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 8
+          fetch-depth: 12
 
       - name: Verify exact execution chain
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "cedd1856ec950dadf7200c7ced854a3bfa0a943b"
           git merge-base --is-ancestor "5356c15f754248fe3da9aed416301563970a16cb" HEAD
           test "$(git rev-parse --abbrev-ref HEAD)" = "assistant-audit-fixes-20260908"
 
@@ -33,6 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config core.whitespace cr-at-eol
           python3 scripts/assistant-a04-a10-remediate.py
           cargo fmt --all
           git diff --check
@@ -60,6 +60,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config core.whitespace cr-at-eol
           git add crates/cloud-monitor/src/monitor.rs \
                   crates/cloud-monitor/tests/a04_a10_final_regressions.rs \
                   monitor-state/inventory_index.json

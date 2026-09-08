@@ -1,0 +1,72 @@
+name: Verified offline A04 A10 remediation v2
+
+on:
+  push:
+    branches:
+      - assistant-audit-fixes-20260908
+    paths:
+      - .github/workflows/assistant-a04-a10-run-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 8
+
+      - name: Verify exact execution chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "cedd1856ec950dadf7200c7ced854a3bfa0a943b"
+          git merge-base --is-ancestor "5356c15f754248fe3da9aed416301563970a16cb" HEAD
+          test "$(git rev-parse --abbrev-ref HEAD)" = "assistant-audit-fixes-20260908"
+
+      - name: Install pinned formatting and lint components
+        run: rustup component add rustfmt clippy
+
+      - name: Apply narrow remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/assistant-a04-a10-remediate.py
+          cargo fmt --all
+          git diff --check
+          unexpected="$(git diff --name-only | grep -Ev '^(crates/cloud-monitor/src/monitor.rs|crates/cloud-monitor/tests/a04_a10_final_regressions.rs|monitor-state/inventory_index.json)$' || true)"
+          test -z "$unexpected"
+
+      - name: Run focused final regressions
+        run: cargo test --locked -p cloud-monitor --test a04_a10_final_regressions
+
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Verify safety defaults remain closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '"production_enabled"[[:space:]]*:[[:space:]]*false' monitor-config.json
+          grep -q '"materialization_enabled"[[:space:]]*:[[:space:]]*false' local-materialization-policy.json
+          grep -q '"author_id"[[:space:]]*:[[:space:]]*"AUTHOR_0043"' formal-author-registry.json
+
+      - name: Commit verified code only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add crates/cloud-monitor/src/monitor.rs \
+                  crates/cloud-monitor/tests/a04_a10_final_regressions.rs \
+                  monitor-state/inventory_index.json
+          git diff --cached --check
+          test "$(git diff --cached --name-only | wc -l)" -eq 3
+          git config user.name "gouluanjiang"
+          git config user.email "322563162+gouluanjiang@users.noreply.github.com"
+          git commit -m "Close A04 pagination and A10 bootstrap blockers"
+          test "$(git show -s --format='%ae%n%ce' HEAD | sort -u)" = "322563162+gouluanjiang@users.noreply.github.com"
+          git push origin HEAD:assistant-audit-fixes-20260908

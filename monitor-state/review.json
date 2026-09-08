@@ -1,0 +1,636 @@
+{
+  "schema_version": 1,
+  "match_review": [],
+  "cleanup_review": [
+    {
+      "review_id": "CLEANUP_WORK_00002",
+      "work_id": "WORK_00002",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0002",
+        "LOCAL_ITEM_0925"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00009",
+      "work_id": "WORK_00009",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0009",
+        "LOCAL_ITEM_1407"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00015",
+      "work_id": "WORK_00015",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0015",
+        "LOCAL_ITEM_0477"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00021",
+      "work_id": "WORK_00021",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0021",
+        "LOCAL_ITEM_0856"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00046",
+      "work_id": "WORK_00046",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0046",
+        "LOCAL_ITEM_0504"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00059",
+      "work_id": "WORK_00059",
+      "kind": "SAMPLE_AND_FULL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0059",
+        "LOCAL_ITEM_2702"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2702"
+      ],
+      "recommendation": "PREFER_FULL_CHINESE_VERSION_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same author/title group contains sample/preview and non-sample versions."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00061",
+      "work_id": "WORK_00061",
+      "kind": "SAMPLE_AND_FULL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0061",
+        "LOCAL_ITEM_0062"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_0062"
+      ],
+      "recommendation": "PREFER_FULL_CHINESE_VERSION_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same author/title group contains sample/preview and non-sample versions."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00067",
+      "work_id": "WORK_00067",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0068",
+        "LOCAL_ITEM_2764"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00211",
+      "work_id": "WORK_00211",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0212",
+        "LOCAL_ITEM_0916"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00253",
+      "work_id": "WORK_00253",
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_0254",
+        "LOCAL_ITEM_0255"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_0254"
+      ],
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same normalized filename content; archive/container extension difference is ignored."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00257",
+      "work_id": "WORK_00257",
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_0259",
+        "LOCAL_ITEM_0260"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_0259"
+      ],
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same normalized filename content; archive/container extension difference is ignored."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00314",
+      "work_id": "WORK_00314",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0317",
+        "LOCAL_ITEM_0318"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00318",
+      "work_id": "WORK_00318",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0322",
+        "LOCAL_ITEM_0325"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00352",
+      "work_id": "WORK_00352",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0357",
+        "LOCAL_ITEM_2269"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00387",
+      "work_id": "WORK_00387",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0392",
+        "LOCAL_ITEM_0411",
+        "LOCAL_ITEM_0425"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00389",
+      "work_id": "WORK_00389",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0394",
+        "LOCAL_ITEM_0414"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00401",
+      "work_id": "WORK_00401",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0406",
+        "LOCAL_ITEM_0417"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00402",
+      "work_id": "WORK_00402",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0407",
+        "LOCAL_ITEM_0418"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00403",
+      "work_id": "WORK_00403",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0408",
+        "LOCAL_ITEM_0419"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00405",
+      "work_id": "WORK_00405",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0410",
+        "LOCAL_ITEM_0424"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00413",
+      "work_id": "WORK_00413",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0423",
+        "LOCAL_ITEM_0426"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00462",
+      "work_id": "WORK_00462",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0475",
+        "LOCAL_ITEM_1276"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00463",
+      "work_id": "WORK_00463",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0476",
+        "LOCAL_ITEM_1277"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00464",
+      "work_id": "WORK_00464",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0478",
+        "LOCAL_ITEM_2523"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00494",
+      "work_id": "WORK_00494",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0509",
+        "LOCAL_ITEM_0555"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00555",
+      "work_id": "WORK_00555",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0571",
+        "LOCAL_ITEM_1801"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00565",
+      "work_id": "WORK_00565",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0581",
+        "LOCAL_ITEM_0983"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00899",
+      "work_id": "WORK_00899",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0917",
+        "LOCAL_ITEM_0981",
+        "LOCAL_ITEM_2609"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00900",
+      "work_id": "WORK_00900",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0918",
+        "LOCAL_ITEM_0982"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00901",
+      "work_id": "WORK_00901",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0919",
+        "LOCAL_ITEM_0984",
+        "LOCAL_ITEM_2610"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_00988",
+      "work_id": "WORK_00988",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1011",
+        "LOCAL_ITEM_1822"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01019",
+      "work_id": "WORK_01019",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1042",
+        "LOCAL_ITEM_1043"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01140",
+      "work_id": "WORK_01140",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1164",
+        "LOCAL_ITEM_1165"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01259",
+      "work_id": "WORK_01259",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1286",
+        "LOCAL_ITEM_1300"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01395",
+      "work_id": "WORK_01395",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1424",
+        "LOCAL_ITEM_1425"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01421",
+      "work_id": "WORK_01421",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1451",
+        "LOCAL_ITEM_1452"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01444",
+      "work_id": "WORK_01444",
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_1475",
+        "LOCAL_ITEM_1476"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_1475"
+      ],
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same normalized filename content; archive/container extension difference is ignored."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01502",
+      "work_id": "WORK_01502",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1534",
+        "LOCAL_ITEM_2686"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01763",
+      "work_id": "WORK_01763",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1795",
+        "LOCAL_ITEM_1800"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01810",
+      "work_id": "WORK_01810",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1845",
+        "LOCAL_ITEM_1857"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_01965",
+      "work_id": "WORK_01965",
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_2001",
+        "LOCAL_ITEM_2009"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2001"
+      ],
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same normalized filename content; archive/container extension difference is ignored."
+    },
+    {
+      "review_id": "CLEANUP_WORK_02133",
+      "work_id": "WORK_02133",
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_2170",
+        "LOCAL_ITEM_2171"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2170"
+      ],
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same normalized filename content; archive/container extension difference is ignored."
+    },
+    {
+      "review_id": "CLEANUP_WORK_02344",
+      "work_id": "WORK_02344",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2383",
+        "LOCAL_ITEM_2384"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_02418",
+      "work_id": "WORK_02418",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2458",
+        "LOCAL_ITEM_2472"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_02511",
+      "work_id": "WORK_02511",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2553",
+        "LOCAL_ITEM_2554"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    },
+    {
+      "review_id": "CLEANUP_WORK_02524",
+      "work_id": "WORK_02524",
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_2567",
+        "LOCAL_ITEM_2568"
+      ],
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2567"
+      ],
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "auto_delete_allowed": false,
+      "reason": "Same normalized filename content; archive/container extension difference is ignored."
+    },
+    {
+      "review_id": "CLEANUP_WORK_02703",
+      "work_id": "WORK_02703",
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2751",
+        "LOCAL_ITEM_2805"
+      ],
+      "recommended_keep_local_item_ids": [],
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "auto_delete_allowed": false,
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration."
+    }
+  ]
+}

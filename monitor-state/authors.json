@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "authors": [
+    {
+      "author_id": "AUTHOR_0001",
+      "name": "10驛",
+      "enabled": true
+    },
+    {
+      "author_id": "AUTHOR_0002",
+      "name": "2-G",
+      "enabled": true
+    },
+    {
+      "author_id": "AUTHOR_0003",
+      "name": "3104",
+      "enabled": true
+    },
+    {
+      "author_id": "AUTHOR_0019",
+      "name": "Bee導師",
+      "enabled": true
+    },
+    {
+      "author_id": "AUTHOR_0042",
+      "name": "haruhisky",
+      "enabled": true
+    },
+    {
+      "author_id": "AUTHOR_0043",
+      "name": "santa",
+      "enabled": true
+    }
+  ]
+}

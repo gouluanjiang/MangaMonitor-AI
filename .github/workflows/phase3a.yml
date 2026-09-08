@@ -1,0 +1,67 @@
+name: Phase 3A artifact-only E2E
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_run:
+        description: Optional previous Phase 3A run ID to replay without source requests
+        type: string
+        default: ''
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: phase3a-artifact-only
+  cancel-in-progress: false
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - name: Preserve all Phase 1A tests and validate Phase 3A transitions
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          cargo +1.98.1 test --workspace --locked 2>&1 | tee reports/phase3a-tests-linux.log
+          cargo +1.98.1 build -p cloud-monitor --bin phase3a --locked
+      - name: First read-only scan of five confirmed authors
+        if: inputs.evidence_run == ''
+        env:
+          PICA_TOKEN: ${{ secrets.PICA_TOKEN }}
+          PICA_EMAIL: ${{ secrets.PICA_EMAIL }}
+          PICA_PASSWORD: ${{ secrets.PICA_PASSWORD }}
+        run: ./target/debug/phase3a --state fixtures/phase3a-seed --output reports/phase3a-first --authors fixtures/phase3a-authors.json --mode full --max-requests 400
+      - name: Retrieve previous sanitized source observations
+        if: inputs.evidence_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_RUN: ${{ inputs.evidence_run }}
+        run: gh run download "$EVIDENCE_RUN" --repo "$GITHUB_REPOSITORY" --name "phase3a-evidence-$EVIDENCE_RUN" --dir reports/reference
+      - name: Reevaluate captured observations with current code
+        if: inputs.evidence_run != ''
+        run: ./target/debug/phase3a --state fixtures/phase3a-seed --output reports/phase3a-first --authors fixtures/phase3a-authors.json --mode full --replay reports/reference/phase3a-first/observations.json
+      - name: Second pass with exactly the same captured input
+        run: ./target/debug/phase3a --state reports/phase3a-first --output reports/phase3a-second --authors fixtures/phase3a-authors.json --mode full --replay reports/phase3a-first/observations.json --assert-idempotent
+      - name: Incremental historical-ID boundary from captured input
+        run: ./target/debug/phase3a --state reports/phase3a-first --output reports/phase3a-incremental --authors fixtures/phase3a-authors.json --mode incremental --replay reports/phase3a-first/observations.json
+      - name: Validate full, idempotent and incremental reports
+        run: |
+          jq -e '.complete == true and ([.boundaries[].boundary] | all(. == "COMPLETE"))' reports/phase3a-first/scan-report.json
+          jq -e '.requests == 0 and .business_state_unchanged == true and .new_events == 0 and .reanalyzed == 0' reports/phase3a-second/scan-report.json
+          jq -e '.complete == false and ([.boundaries[].boundary] | any(. == "EARLY_STOP_HEURISTIC"))' reports/phase3a-incremental/scan-report.json
+      - name: Simulate source failure without unavailable evidence
+        run: |
+          ./target/debug/phase3a --state reports/phase3a-first --output reports/phase3a-source-error --authors fixtures/phase3a-authors.json --mode full --replay fixtures/phase3a-source-error-tape.json
+          jq -e '.complete == false and .source_error_boundaries == 1 and .inactive_records == 0 and .unavailable_streak_nonzero == 0 and .direct_source_failures == 0' reports/phase3a-source-error/scan-report.json
+          jq -e '.phase3a_scan.progress["jm|10驛"].boundary == "SOURCE_ERROR"' reports/phase3a-source-error/scan_state.json
+          jq -e '[.records[] | (.unavailable_streak == 0 and .active == true)] | all' reports/phase3a-source-error/catalog.json
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3a-evidence-${{ github.run_id }}
+          path: reports/
+          retention-days: 14
+          if-no-files-found: warn

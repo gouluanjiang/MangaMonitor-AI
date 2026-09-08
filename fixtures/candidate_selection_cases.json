@@ -1,0 +1,152 @@
+[
+  {
+    "id": "SEL_001",
+    "description": "中文有码黑白优先于未汉化无码全彩",
+    "candidates": [
+      {
+        "id": "A",
+        "source": "jm",
+        "chinese": true,
+        "uncensored": false,
+        "color": false,
+        "translation": "human",
+        "size": 100
+      },
+      {
+        "id": "B",
+        "source": "pica",
+        "chinese": false,
+        "uncensored": true,
+        "color": true,
+        "translation": "human",
+        "size": 300
+      }
+    ],
+    "expected": "A"
+  },
+  {
+    "id": "SEL_002",
+    "description": "同为中文时无码优先；AI无码胜过人工有码",
+    "candidates": [
+      {
+        "id": "A",
+        "source": "jm",
+        "chinese": true,
+        "uncensored": false,
+        "color": false,
+        "translation": "human",
+        "size": 200
+      },
+      {
+        "id": "B",
+        "source": "pica",
+        "chinese": true,
+        "uncensored": true,
+        "color": false,
+        "translation": "ai",
+        "size": 100
+      }
+    ],
+    "expected": "B"
+  },
+  {
+    "id": "SEL_003",
+    "description": "语言和无码相同后全彩优先",
+    "candidates": [
+      {
+        "id": "A",
+        "source": "jm",
+        "chinese": true,
+        "uncensored": true,
+        "color": false,
+        "translation": "human",
+        "size": 300
+      },
+      {
+        "id": "B",
+        "source": "pica",
+        "chinese": true,
+        "uncensored": true,
+        "color": true,
+        "translation": "ai",
+        "size": 100
+      }
+    ],
+    "expected": "B"
+  },
+  {
+    "id": "SEL_004",
+    "description": "所有高优先级相同才用人工汉化作为候选偏好",
+    "candidates": [
+      {
+        "id": "A",
+        "source": "jm",
+        "chinese": true,
+        "uncensored": true,
+        "color": true,
+        "translation": "ai",
+        "size": 300
+      },
+      {
+        "id": "B",
+        "source": "pica",
+        "chinese": true,
+        "uncensored": true,
+        "color": true,
+        "translation": "human",
+        "size": 100
+      }
+    ],
+    "expected": "B"
+  },
+  {
+    "id": "SEL_005",
+    "description": "属性全同且双方文件大小可靠时选更大",
+    "candidates": [
+      {
+        "id": "A",
+        "source": "jm",
+        "chinese": true,
+        "uncensored": true,
+        "color": true,
+        "translation": "human",
+        "size": 100
+      },
+      {
+        "id": "B",
+        "source": "pica",
+        "chinese": true,
+        "uncensored": true,
+        "color": true,
+        "translation": "human",
+        "size": 150
+      }
+    ],
+    "expected": "B"
+  },
+  {
+    "id": "SEL_006",
+    "description": "文件大小不可可靠比较时最终选JM",
+    "candidates": [
+      {
+        "id": "A",
+        "source": "jm",
+        "chinese": true,
+        "uncensored": true,
+        "color": true,
+        "translation": "human",
+        "size": null
+      },
+      {
+        "id": "B",
+        "source": "pica",
+        "chinese": true,
+        "uncensored": true,
+        "color": true,
+        "translation": "human",
+        "size": 150
+      }
+    ],
+    "expected": "A"
+  }
+]

@@ -1,0 +1,20 @@
+[workspace]
+members = ["crates/state-model", "crates/rules-core", "crates/jm-adapter", "crates/pica-adapter", "crates/cloud-monitor"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+image = { version = "=0.25.5", default-features = false, features = ["webp"] }
+state-model = { path = "crates/state-model" }
+

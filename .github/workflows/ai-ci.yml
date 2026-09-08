@@ -1,0 +1,174 @@
+name: MangaMonitor AI baseline CI
+on:
+  push:
+    branches: [main, 'assistant-*']
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - 'fixtures/**'
+      - 'monitor-config.json'
+      - 'scripts/run-phase3b-cycle.sh'
+      - 'scripts/run-phase3b-bootstrap.sh'
+      - 'scripts/test-run-phase3b-bootstrap.sh'
+      - 'scripts/commit-monitor-state.sh'
+      - 'scripts/Run-V1AddOnlyStagingAcceptance.ps1'
+      - '.github/workflows/ai-ci.yml'
+      - '.github/workflows/assistant-state-publish.yml'
+      - '.github/workflows/phase3b.yml'
+      - '.github/workflows/phase3b-live-canary.yml'
+      - '.github/workflows/phase3b-single-author-dual-source.yml'
+      - '.github/workflows/phase3b-three-author-dual-source.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - 'fixtures/**'
+      - 'monitor-config.json'
+      - 'scripts/run-phase3b-cycle.sh'
+      - 'scripts/run-phase3b-bootstrap.sh'
+      - 'scripts/test-run-phase3b-bootstrap.sh'
+      - 'scripts/commit-monitor-state.sh'
+      - 'scripts/Run-V1AddOnlyStagingAcceptance.ps1'
+      - '.github/workflows/ai-ci.yml'
+      - '.github/workflows/assistant-state-publish.yml'
+      - '.github/workflows/phase3b.yml'
+      - '.github/workflows/phase3b-live-canary.yml'
+      - '.github/workflows/phase3b-single-author-dual-source.yml'
+      - '.github/workflows/phase3b-three-author-dual-source.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rust-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.98.1 --profile minimal --component clippy
+      - name: Workspace tests
+        run: cargo +1.98.1 test --workspace --locked
+      - name: Build assistant view CLI
+        run: cargo +1.98.1 build --locked -p cloud-monitor --bin assistant-view
+      - name: Clippy
+        run: cargo +1.98.1 clippy --workspace --all-targets --locked -- -D warnings
+      - name: Assistant runtime remains read-only and offline
+        env:
+          HTTP_PROXY: http://127.0.0.1:1
+          HTTPS_PROXY: http://127.0.0.1:1
+          ALL_PROXY: http://127.0.0.1:1
+        run: |
+          find fixtures/matcher-m3/phase3b-old-state -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/assistant-before.sha256
+          ./target/debug/assistant-view --state fixtures/matcher-m3/phase3b-old-state --view scan-summary > /tmp/scan-summary.json
+          ./target/debug/assistant-view --state fixtures/matcher-m3/phase3b-old-state --view review-summary > /tmp/review-summary.json
+          ./target/debug/assistant-view --state fixtures/matcher-m3/phase3b-old-state --view review-batch --limit 3 > /tmp/review-batch.json
+          ./target/debug/assistant-view --state fixtures/matcher-m3/phase3b-old-state --view pending > /tmp/pending.json
+          ./target/debug/assistant-view --state fixtures/matcher-m3/phase3b-old-state --view collection > /tmp/collection.json
+          jq -e '.view == "review_batch" and .returned == 3 and .limit == 3' /tmp/review-batch.json
+          find fixtures/matcher-m3/phase3b-old-state -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/assistant-after.sha256
+          cmp /tmp/assistant-before.sha256 /tmp/assistant-after.sha256
+      - name: Assistant publication remains state-only
+        run: |
+          test -f .github/workflows/assistant-state-publish.yml
+          grep -q 'workflow_dispatch:' .github/workflows/assistant-state-publish.yml
+          ! grep -Eq 'PICA_TOKEN|PICA_EMAIL|PICA_PASSWORD|--live-source|run-phase3b-cycle|jm-adapter|pica-adapter' .github/workflows/assistant-state-publish.yml
+      - name: Cloud workflows never invoke local manga executor, importer, rescan, candidate or apply authorization
+        run: |
+          for workflow in \
+            .github/workflows/phase3a.yml \
+            .github/workflows/phase3b.yml \
+            .github/workflows/phase3b-live-canary.yml \
+            .github/workflows/phase3b-single-author-dual-source.yml \
+            .github/workflows/phase3b-three-author-dual-source.yml \
+            .github/workflows/assistant-state-publish.yml
+          do
+            ! grep -Eq 'mangamonitor-local-executor|local_execution_orchestrator|live_media_fetch|mangamonitor-local-import|local_library_import|local_library_import_gate|mangamonitor-local-rescan|local_inventory_rescan|mangamonitor-local-inventory-candidate|local_inventory_update_candidate|mangamonitor-local-inventory-apply-gate|local_inventory_apply_authorization' "$workflow"
+          done
+      - name: Phase3B scaling config is bounded and explicit
+        run: |
+          jq -e '.soft_batch_size >= 1 and .soft_batch_size <= 200 and .max_requests_per_batch >= 1 and .live_canary_size >= 1 and .live_canary_size <= 200' monitor-config.json
+          grep -Fq -- '--max-requests "$max_requests"' scripts/run-phase3b-cycle.sh
+          grep -Fq -- '--author-concurrency "$author_concurrency"' scripts/run-phase3b-cycle.sh
+          grep -Fq 'author_concurrency=3' scripts/run-phase3b-cycle.sh
+          grep -Fq 'manifest_strategy_complete' scripts/run-phase3b-cycle.sh
+          grep -Fq -- '--author-concurrency 3' .github/workflows/phase3b.yml
+          grep -Fq '.author_concurrency == 3 and .source_concurrency == 2 and .durable_writer_serialized == true' .github/workflows/phase3b.yml
+          grep -Fq 'const MAX_AUTHOR_CONCURRENCY: usize = 3;' crates/cloud-monitor/src/runner.rs
+          grep -Fq 'AUTHOR_CONCURRENCY_REQUIRES_PHASE3B' crates/cloud-monitor/src/runner.rs
+          grep -Fq 'AUTHOR_CONCURRENCY_REQUIRES_LIVE_SOURCE' crates/cloud-monitor/src/runner.rs
+          grep -Fq 'PICA_AUTH_REQUIRED_FOR_LIVE_CANARY' .github/workflows/phase3b-live-canary.yml
+          grep -Fq 'PICA_AUTH_REQUIRED_FOR_DUAL_SOURCE_VALIDATION' .github/workflows/phase3b-single-author-dual-source.yml
+          grep -Fq -- '--batch-size 1' .github/workflows/phase3b-single-author-dual-source.yml
+          grep -Fq 'durable_state_mutated == false' .github/workflows/phase3b-single-author-dual-source.yml
+          grep -Fq 'PICA_AUTH_REQUIRED_FOR_THREE_AUTHOR_VALIDATION' .github/workflows/phase3b-three-author-dual-source.yml
+          grep -Fq -- '--batch-size 3' .github/workflows/phase3b-three-author-dual-source.yml
+          grep -Fq -- '--author-concurrency 3' .github/workflows/phase3b-three-author-dual-source.yml
+          grep -Fq 'Concurrent source failure remains resumable' .github/workflows/phase3b-three-author-dual-source.yml
+          grep -Fq 'Shared concurrent request budget fails closed' .github/workflows/phase3b-three-author-dual-source.yml
+          grep -Fq 'REQUEST_BUDGET_CHECKPOINT' .github/workflows/phase3b-three-author-dual-source.yml
+          grep -Fq 'Run two additional consecutive formal Phase3B soak rounds' .github/workflows/phase3b-three-author-dual-source.yml
+          grep -Fq 'Verify three formal runner rounds remain equivalent and clean' .github/workflows/phase3b-three-author-dual-source.yml
+      - name: One-time Phase3B bootstrap remains production-closed and atomic
+        run: |
+          bash -n scripts/run-phase3b-bootstrap.sh scripts/test-run-phase3b-bootstrap.sh
+          bash scripts/test-run-phase3b-bootstrap.sh
+          grep -Fq -- '- bootstrap' .github/workflows/phase3b.yml
+          grep -Fq 'BOOTSTRAP_REQUIRES_MAIN_REF' .github/workflows/phase3b.yml
+          grep -Fq 'BOOTSTRAP_REQUIRES_PRODUCTION_DISABLED' .github/workflows/phase3b.yml
+          grep -Fq 'Run one-time current-registry durable bootstrap' .github/workflows/phase3b.yml
+          grep -Fq 'BOOTSTRAP_STATE_TARGET_NOT_ALLOWED' scripts/run-phase3b-bootstrap.sh
+          grep -Fq 'BOOTSTRAP_REPORT_ROOT_INSIDE_STATE' scripts/run-phase3b-bootstrap.sh
+          grep -Fq 'BOOTSTRAP_STATE_NOT_PRISTINE' scripts/run-phase3b-bootstrap.sh
+          grep -Fq 'BOOTSTRAP_BATCH_INCOMPLETE' scripts/run-phase3b-bootstrap.sh
+          grep -Fq 'BOOTSTRAP_INVENTORY_DRIFT' scripts/run-phase3b-bootstrap.sh
+          grep -Fq 'BOOTSTRAP_AUTHORS_DRIFT' scripts/run-phase3b-bootstrap.sh
+          grep -Fq 'BOOTSTRAP_DECISIONS_DRIFT' scripts/run-phase3b-bootstrap.sh
+          test "$(grep -Fc '"$commit_monitor_state" "$base_commit" "$final_state" "$state_dir"' scripts/run-phase3b-bootstrap.sh)" -eq 1
+      - name: V1 add-only thaw remains narrow and staging-only
+        run: |
+          grep -Fq 'V1_ADD_ONLY_LIVE_EXECUTION_REQUIRES_DOWNLOAD_ACTION' crates/cloud-monitor/src/source_preflight_authorization.rs
+          grep -Fq 'V1_ADD_ONLY_LIVE_EXECUTION_REQUIRES_NEW_WORK' crates/cloud-monitor/src/source_preflight_authorization.rs
+          grep -Fq 'task.action != "download" || !task.old_local_item_ids.is_empty()' crates/cloud-monitor/src/executor_handoff.rs
+          grep -Fq 'V1_ADD_ONLY_ACCEPTANCE_GITHUB_ACTIONS_FORBIDDEN' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+          grep -Fq 'V1_ADD_ONLY_ACCEPTANCE_STATE_MUTATED' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+          grep -Fq 'V1_ADD_ONLY_ACCEPTANCE_STAGING_ESCAPED_COMMAND_DIR' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+          grep -Fq "status = 'V1_ADD_ONLY_STAGING_ACCEPTED'" scripts/Run-V1AddOnlyStagingAcceptance.ps1
+          grep -Fq 'production_enablement_authorized = $false' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+          grep -Fq 'inventory_mutation_authorized = $false' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+          grep -Fq 'replacement_authorized = $false' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+          grep -Fq 'physical_delete_authorized = $false' scripts/Run-V1AddOnlyStagingAcceptance.ps1
+      - name: Production gate remains closed
+        run: test "$(jq -r '.production_enabled' monitor-config.json)" = false
+
+  windows-local-executor:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - name: Test V1 add-only thaw scope and completion contracts
+        run: cargo +1.98.1 test --locked -p cloud-monitor --test v1_add_only_thaw_scope --test thaw_protocol_completion
+      - name: Test local orchestration contract
+        run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_execution_orchestrator::tests::'
+      - name: Test local import implementation and public gate
+        run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_library_import'
+      - name: Test local inventory rescan
+        run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_rescan'
+      - name: Test V1.5 read-only inventory candidate builder
+        run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_update_candidate'
+      - name: Test V1.6 inventory apply authorization gate
+        run: 'cargo +1.98.1 test --locked -p cloud-monitor --lib local_inventory_apply_authorization'
+      - name: Test GitHub Actions runtime refusal
+        run: cargo +1.98.1 test --locked -p cloud-monitor --bin mangamonitor-local-executor --bin mangamonitor-local-import --bin mangamonitor-local-rescan --bin mangamonitor-local-inventory-candidate --bin mangamonitor-local-inventory-apply-gate
+      - name: Validate V1 staging acceptance script syntax
+        shell: pwsh
+        run: |
+          $null = [scriptblock]::Create((Get-Content -Raw 'scripts/Run-V1AddOnlyStagingAcceptance.ps1'))
+      - name: Build Windows local executor, importer, rescan, candidate and apply gate
+        run: cargo +1.98.1 build --locked -p cloud-monitor --bin mangamonitor-local-executor --bin mangamonitor-local-import --bin mangamonitor-local-rescan --bin mangamonitor-local-inventory-candidate --bin mangamonitor-local-inventory-apply-gate

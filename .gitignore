@@ -1,0 +1,9 @@
+.tools/
+target/
+handoff/
+state/
+reports/
+*.local.*
+.env*
+credentials*
+!reports/.gitkeep

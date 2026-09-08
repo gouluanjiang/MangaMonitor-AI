@@ -1,0 +1,3831 @@
+{
+  "cleanup_review": [
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0002",
+        "LOCAL_ITEM_0925"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00002",
+      "work_id": "WORK_00002"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0009",
+        "LOCAL_ITEM_1407"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00009",
+      "work_id": "WORK_00009"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0015",
+        "LOCAL_ITEM_0477"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00015",
+      "work_id": "WORK_00015"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0021",
+        "LOCAL_ITEM_0856"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00021",
+      "work_id": "WORK_00021"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0046",
+        "LOCAL_ITEM_0504"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00046",
+      "work_id": "WORK_00046"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "SAMPLE_AND_FULL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0059",
+        "LOCAL_ITEM_2702"
+      ],
+      "reason": "Same author/title group contains sample/preview and non-sample versions.",
+      "recommendation": "PREFER_FULL_CHINESE_VERSION_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2702"
+      ],
+      "review_id": "CLEANUP_WORK_00059",
+      "work_id": "WORK_00059"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "SAMPLE_AND_FULL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0061",
+        "LOCAL_ITEM_0062"
+      ],
+      "reason": "Same author/title group contains sample/preview and non-sample versions.",
+      "recommendation": "PREFER_FULL_CHINESE_VERSION_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_0062"
+      ],
+      "review_id": "CLEANUP_WORK_00061",
+      "work_id": "WORK_00061"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0068",
+        "LOCAL_ITEM_2764"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00067",
+      "work_id": "WORK_00067"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0212",
+        "LOCAL_ITEM_0916"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00211",
+      "work_id": "WORK_00211"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_0254",
+        "LOCAL_ITEM_0255"
+      ],
+      "reason": "Same normalized filename content; archive/container extension difference is ignored.",
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_0254"
+      ],
+      "review_id": "CLEANUP_WORK_00253",
+      "work_id": "WORK_00253"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_0259",
+        "LOCAL_ITEM_0260"
+      ],
+      "reason": "Same normalized filename content; archive/container extension difference is ignored.",
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_0259"
+      ],
+      "review_id": "CLEANUP_WORK_00257",
+      "work_id": "WORK_00257"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0317",
+        "LOCAL_ITEM_0318"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00314",
+      "work_id": "WORK_00314"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0322",
+        "LOCAL_ITEM_0325"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00318",
+      "work_id": "WORK_00318"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0357",
+        "LOCAL_ITEM_2269"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00352",
+      "work_id": "WORK_00352"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0392",
+        "LOCAL_ITEM_0411",
+        "LOCAL_ITEM_0425"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00387",
+      "work_id": "WORK_00387"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0394",
+        "LOCAL_ITEM_0414"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00389",
+      "work_id": "WORK_00389"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0406",
+        "LOCAL_ITEM_0417"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00401",
+      "work_id": "WORK_00401"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0407",
+        "LOCAL_ITEM_0418"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00402",
+      "work_id": "WORK_00402"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0408",
+        "LOCAL_ITEM_0419"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00403",
+      "work_id": "WORK_00403"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0410",
+        "LOCAL_ITEM_0424"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00405",
+      "work_id": "WORK_00405"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0423",
+        "LOCAL_ITEM_0426"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00413",
+      "work_id": "WORK_00413"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0475",
+        "LOCAL_ITEM_1276"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00462",
+      "work_id": "WORK_00462"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0476",
+        "LOCAL_ITEM_1277"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00463",
+      "work_id": "WORK_00463"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0478",
+        "LOCAL_ITEM_2523"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00464",
+      "work_id": "WORK_00464"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0509",
+        "LOCAL_ITEM_0555"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00494",
+      "work_id": "WORK_00494"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0571",
+        "LOCAL_ITEM_1801"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00555",
+      "work_id": "WORK_00555"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0581",
+        "LOCAL_ITEM_0983"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00565",
+      "work_id": "WORK_00565"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0917",
+        "LOCAL_ITEM_0981",
+        "LOCAL_ITEM_2609"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00899",
+      "work_id": "WORK_00899"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0918",
+        "LOCAL_ITEM_0982"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00900",
+      "work_id": "WORK_00900"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_0919",
+        "LOCAL_ITEM_0984",
+        "LOCAL_ITEM_2610"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00901",
+      "work_id": "WORK_00901"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1011",
+        "LOCAL_ITEM_1822"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_00988",
+      "work_id": "WORK_00988"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1042",
+        "LOCAL_ITEM_1043"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01019",
+      "work_id": "WORK_01019"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1164",
+        "LOCAL_ITEM_1165"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01140",
+      "work_id": "WORK_01140"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1286",
+        "LOCAL_ITEM_1300"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01259",
+      "work_id": "WORK_01259"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1424",
+        "LOCAL_ITEM_1425"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01395",
+      "work_id": "WORK_01395"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1451",
+        "LOCAL_ITEM_1452"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01421",
+      "work_id": "WORK_01421"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_1475",
+        "LOCAL_ITEM_1476"
+      ],
+      "reason": "Same normalized filename content; archive/container extension difference is ignored.",
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_1475"
+      ],
+      "review_id": "CLEANUP_WORK_01444",
+      "work_id": "WORK_01444"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1534",
+        "LOCAL_ITEM_2686"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01502",
+      "work_id": "WORK_01502"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1795",
+        "LOCAL_ITEM_1800"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01763",
+      "work_id": "WORK_01763"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_1845",
+        "LOCAL_ITEM_1857"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_01810",
+      "work_id": "WORK_01810"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_2001",
+        "LOCAL_ITEM_2009"
+      ],
+      "reason": "Same normalized filename content; archive/container extension difference is ignored.",
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2001"
+      ],
+      "review_id": "CLEANUP_WORK_01965",
+      "work_id": "WORK_01965"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_2170",
+        "LOCAL_ITEM_2171"
+      ],
+      "reason": "Same normalized filename content; archive/container extension difference is ignored.",
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2170"
+      ],
+      "review_id": "CLEANUP_WORK_02133",
+      "work_id": "WORK_02133"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2383",
+        "LOCAL_ITEM_2384"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_02344",
+      "work_id": "WORK_02344"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2458",
+        "LOCAL_ITEM_2472"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_02418",
+      "work_id": "WORK_02418"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2553",
+        "LOCAL_ITEM_2554"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_02511",
+      "work_id": "WORK_02511"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "EXACT_PACKAGING_DUPLICATE",
+      "local_item_ids": [
+        "LOCAL_ITEM_2567",
+        "LOCAL_ITEM_2568"
+      ],
+      "reason": "Same normalized filename content; archive/container extension difference is ignored.",
+      "recommendation": "KEEP_ONE_PACKAGING_COPY_REVIEW",
+      "recommended_keep_local_item_ids": [
+        "LOCAL_ITEM_2567"
+      ],
+      "review_id": "CLEANUP_WORK_02524",
+      "work_id": "WORK_02524"
+    },
+    {
+      "auto_delete_allowed": false,
+      "kind": "HISTORICAL_VERSION_GROUP",
+      "local_item_ids": [
+        "LOCAL_ITEM_2751",
+        "LOCAL_ITEM_2805"
+      ],
+      "reason": "Same confirmed author + conservative title key; versions differ by language/version metadata or filename decoration.",
+      "recommendation": "REVIEW_UNKNOWN_BLOCKS_AUTO_CLEANUP",
+      "recommended_keep_local_item_ids": [],
+      "review_id": "CLEANUP_WORK_02703",
+      "work_id": "WORK_02703"
+    }
+  ],
+  "match_review": [
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_015264c44d1b4a8f1c9a",
+      "source_key": "jm:149633",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C97) [3104丁目 (3104)] Soon Lazy"
+    },
+    {
+      "author": [
+        "ちまた(2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_024cd796e4c1636888f6",
+      "source_key": "jm:59308",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ちまた(2-G)][２年G組１學期!!]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_057bee24fa34f2904a65",
+      "source_key": "jm:616279",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] (C104) [ろいやるびっち (haruhisky)] 妻が、他人の雌になるまで。里 ―ショートカット巨乳妻・佐々木美咲の場合― (オリジナル)"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_09fa350b3395a3c24a85",
+      "source_key": "jm:1230043",
+      "status": "REVIEW_REQUIRED",
+      "title": "[一億萬軒茶屋 (2-G)] 委員長は押しに弱い 〜もう一回セックスしたら勉強するから〜 [中國翻譯]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_0c6fc7d38bea3b941bcc",
+      "source_key": "jm:561704",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Origin個人測試漢化] [ろいやるびっち (haruhisky)] みょーちゃん先生かくパコりき (みょーちゃん先生はかく語りき) [DL版]"
+    },
+    {
+      "author": [
+        "一億万軒茶屋 (2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_0cc5825d4ee3391e5efa",
+      "source_key": "pica:68dbc05a700d871dff89d55b",
+      "status": "REVIEW_REQUIRED",
+      "title": "マチアプ女にハメられて連続射精でチンポぶっ壊れるまで搾り尽くされた"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_0d58b7c5de1a43bbf2d8",
+      "source_key": "jm:302458",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化]  [HoneyRoad (Bee導師)] 配達バニーガール [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_0e9d8072e4af7a3fd067",
+      "source_key": "pica:5e4e2e741415be3c4cb55c60",
+      "status": "REVIEW_REQUIRED",
+      "title": "冬コミのおまけ本 (アイドルマスター シャイニーカラーズ) [中国翻訳][DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_0ee674b8dbb5d3916dab",
+      "source_key": "jm:1048481",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] (C105) [3104丁目 (3104)] 紫のショウメイ[中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_10efcb360f97095ba80d",
+      "source_key": "pica:67ab76328c3c50428a91da44",
+      "status": "REVIEW_REQUIRED",
+      "title": " 紫のショウメイ[中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_12d036f7bb6299fa5098",
+      "source_key": "jm:413563",
+      "status": "REVIEW_REQUIRED",
+      "title": "[haruhisky] バニーコスでボテるまで出られない初夢。【ラフ】 (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_12ea76e67c7ec3bdcd43",
+      "source_key": "jm:1244034",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C107) [路人漢化] [Digital] [ろいやるびっち (haruhisky)] セイバーさん ヤリモクナンパ待ち 溫泉編 (Fate/stay night) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_138d8bf21a3aedd9c9f3",
+      "source_key": "pica:5b96a7f4e643e44afd9bcf97",
+      "status": "REVIEW_REQUIRED",
+      "title": "師匠に土下座して恋人エッチしてもらう本。"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_14830f048cce0a6002f0",
+      "source_key": "jm:526669",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Rogan個人翻譯] [haruhisky] 涼宮ハルヒの最終癡〇電車 (涼宮ハルヒの憂鬱) [中國翻譯]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_159c4081e6777854d329",
+      "source_key": "jm:1114759",
+      "status": "REVIEW_REQUIRED",
+      "title": "[haruhisky] 流され生ハメセイバーさん (Fate/stay night)（Chinese）"
+    },
+    {
+      "author": [
+        "Gun2g"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_1694dda9122e7c158e20",
+      "source_key": "pica:5d61498d4b4df031401d292a",
+      "status": "REVIEW_REQUIRED",
+      "title": "風見幽香は動かない"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_16fe36db13b59afeac2f",
+      "source_key": "jm:485873",
+      "status": "REVIEW_REQUIRED",
+      "title": "[3104丁目 (3104)] ただ悲しいフリをする｜ 隻是假裝在悲傷 [Looike漢化組] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_17ab9032bfb548798a83",
+      "source_key": "pica:676043e072a2d055b1d42c24",
+      "status": "REVIEW_REQUIRED",
+      "title": "妻が、他人の雌になるまで・裏 ―ショートカット巨乳妻・佐々木美咲の場合―[中国翻译]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_18449f458a694e788b85",
+      "source_key": "jm:1444812",
+      "status": "REVIEW_REQUIRED",
+      "title": "[天魔的黑兔個人漢化] [ろいやるびっち (haruhisky)] アオハルトラレ"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_18c93de3d7f3ac91ea92",
+      "source_key": "jm:95172",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] くーねるすまた 5 (くーねるまるた)"
+    },
+    {
+      "author": [
+        "一億万軒茶屋 (2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_1a49891c66d3df1125c9",
+      "source_key": "pica:6a42a9faaf64e16a597dbfbf",
+      "status": "REVIEW_REQUIRED",
+      "title": "竿役募集してる推しの爆乳エロ配信者が妹になりました"
+    },
+    {
+      "author": [
+        "ろいやるびっち (Haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "LOW_INFORMATION_OR_COLLECTION_TITLE",
+      "review_id": "REVIEW_1be067aaca7ef60861f3",
+      "source_key": "pica:62efce7336b1dd04e7330099",
+      "status": "REVIEW_REQUIRED",
+      "title": "はるこす1--13+ 総集編1-3(涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [
+        "Haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_1e6ed195534bee59b8be",
+      "source_key": "jm:1112225",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Haruhisky] マイクロビキニハルヒさん"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_1eee537059c5d8326b4a",
+      "source_key": "jm:616184",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C104) [HoneyRoad (Bee導師)] 配達バニーガールとサービスえっち (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_1f5a77f2048c311c02bc",
+      "source_key": "jm:302447",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C99) [HoneyRoad (Bee導師)] 配達バニーガール [DL版]"
+    },
+    {
+      "author": [
+        "一億万軒茶屋 (2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_1f833daab4a265564b62",
+      "source_key": "pica:694ab21368ff321b09ca140d",
+      "status": "REVIEW_REQUIRED",
+      "title": "深夜の無人駅で巨乳家出JK拾った"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_2383f88e40f0fa294681",
+      "source_key": "pica:630b00ce1a5a322a28b0849f",
+      "status": "REVIEW_REQUIRED",
+      "title": " アイの中に閉じ込めた (アズールレーン) [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち",
+        "(haruhisky)"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_263d2f190e4ee3719284",
+      "source_key": "jm:1137287",
+      "status": "REVIEW_REQUIRED",
+      "title": "(COMIC1☆15) [ろいやるびっち (haruhisky)] 師匠を孕ませるまででられないシミュレーター (FateGrand Order)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_27b1bf7ea9a05fe0b1aa",
+      "source_key": "pica:66feae276fa62d5284be89a9",
+      "status": "REVIEW_REQUIRED",
+      "title": " 妻が他人の雌になるま裏 [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_281cc44da1c53af36199",
+      "source_key": "jm:532019",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C103)[ろいやるびっち (haruhisky)] みょーちゃん先生かくパコりき (みょーちゃん先生はかく語りき) [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_287a45fb5524966fdd3f",
+      "source_key": "jm:482816",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C102) [ろいやるびっち (haruhisky)] 妻が、他人の雌になるまで―ショートカット巨乳妻・佐々木美咲編― (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "ちまた (2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_2b0ae642152ee94863a4",
+      "source_key": "pica:59a3eb39901a9659dfad5fe9",
+      "status": "REVIEW_REQUIRED",
+      "title": "（C80）２年G組１学期!! (バカとテストと召喚獣/笨蛋测验召唤兽)"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_2bb86750e23ebd1f7bfe",
+      "source_key": "pica:5e588a571415be3c4cb6caab",
+      "status": "REVIEW_REQUIRED",
+      "title": "散ルアウト (アイドルマスター シャイニーカラーズ) [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_2c23bc8cc01fd763b472",
+      "source_key": "pica:5eb166f2d1c6403f668390ed",
+      "status": "REVIEW_REQUIRED",
+      "title": "はるこす10"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_2cc4eb549d80768dc9f0",
+      "source_key": "jm:413564",
+      "status": "REVIEW_REQUIRED",
+      "title": "[haruhisky] バニー風俗のハルヒさん【ラフ】 (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_2fbf74dccbaa3f68a9c5",
+      "source_key": "jm:148465",
+      "status": "REVIEW_REQUIRED",
+      "title": "[灰羽社漢化] (C88) [ろいやるびっち (haruhisky)] くーねるすまた2 (くーねるまるた)"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_301d15761f0bd32370d3",
+      "source_key": "jm:611605",
+      "status": "REVIEW_REQUIRED",
+      "title": "[HoneyRoad (Bee導師)] アリサII 外傳おまけ本 BAD後日談編["
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_3150599295a4688e53ef",
+      "source_key": "jm:203756",
+      "status": "REVIEW_REQUIRED",
+      "title": "[真の叡智個人漢化] (C97) [ろいやるびっち (haruhisky)] 姉は親父に抱かれてる"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_32a1e8d13443cf323cea",
+      "source_key": "jm:1466136",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C108) [ろいやるびっち (haruhisky)] ゴブリンたちの雌になるまで ランサーアルトリア編 (Fate/Grand Order)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_32cc6a535e13d3777d4e",
+      "source_key": "jm:480262",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C102) [ろいやるびっち (haruhisky)] 妻が、他人の雌になるまで―ショートカット巨乳妻・佐々木美咲編― (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "Hello",
+        "Girls!(10駅)"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_330a66fc28c0a2845932",
+      "source_key": "jm:101745",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Hello Girls!(10驛)][噓つき眠り姫](少女前線)"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_33192c392f4567650824",
+      "source_key": "jm:1219492",
+      "status": "REVIEW_REQUIRED",
+      "title": "[一億萬軒茶屋(2-G)]マチアプ女にハメられて連續射精でチンポぶっ壊れるまで搾り儘くされた [中國翻譯][DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_338ebe9ef667c9e34f49",
+      "source_key": "jm:164341",
+      "status": "REVIEW_REQUIRED",
+      "title": "[3104丁目 (3104)] 散ルアウト (アイドルマスター シャイニーカラーズ) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_36b7d9374b0463cab94c",
+      "source_key": "pica:5e5083953abef73c5b51cfb9",
+      "status": "REVIEW_REQUIRED",
+      "title": "なまはめトライ!"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_37a8db24531532bc10fa",
+      "source_key": "jm:1445392",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Amerins漢化] [一億萬軒茶屋(2-G)] マチアプ女にハメられて連續射精でチンポぶっ壊れるまで搾り儘くされた カラー版 [中國翻譯]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_37e5ac074188e3e03fbe",
+      "source_key": "jm:1241833",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] [3104丁目 (3104)] 紫のショウメイ〜黒い夢中〜 [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_3bdfa2c5d3b588e182ec",
+      "source_key": "jm:1216029",
+      "status": "REVIEW_REQUIRED",
+      "title": "與兔女郎配送員的特殊服務做愛 [白楊漢化組] (C106) [HoneyRoad (Bee導師)] 配達バニーガールとサービスえっち3 [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_3d9f70410942ef39cf22",
+      "source_key": "pica:6994a06ca899c7764382b596",
+      "status": "REVIEW_REQUIRED",
+      "title": " 配達バニーガールとサービスえっち4 [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_3fdfac0475fd8150f937",
+      "source_key": "pica:5fcb509202d92a101297f13c",
+      "status": "REVIEW_REQUIRED",
+      "title": " 居眠りネルソンにイタズラ (アズールレーン) [中国翻訳]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_411c9f728a698c44896d",
+      "source_key": "jm:1127144",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 妻が、他人の雌になるまで―ショートカット巨乳妻・佐々木美咲編― [中國翻譯] [無修正] [DL版]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_4120c81e8b18172e2574",
+      "source_key": "jm:411336",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] (C101) [Hello Girls! (10驛)] 白うさぎの奉仕記錄♥ (ブルーアーカイブ) [中國翻譯]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_412ce836848586c0b8d3",
+      "source_key": "pica:63cc08e107c611391d54f846",
+      "status": "REVIEW_REQUIRED",
+      "title": "最強のJKくノ一が催眠術で処女を奪われた件"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097"
+      ],
+      "reason": "UNKNOWN_LOCAL_VERSION",
+      "review_id": "REVIEW_41670a9cf817733277a6",
+      "source_key": "pica:5eecb90cd4e4dd51499aa482",
+      "status": "REVIEW_REQUIRED",
+      "title": "悲しみが嫌いだったら"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_43754ce155422d401975",
+      "source_key": "jm:123617",
+      "status": "REVIEW_REQUIRED",
+      "title": "[黎歐×新橋月白日語社] (C96) [ろいやるびっち (haruhisky)] 師匠を孕ませるまででられないシミュレーター2 (Fate/Grand Order) [中國翻譯]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_43f09d37e8c4da03de24",
+      "source_key": "jm:95170",
+      "status": "REVIEW_REQUIRED",
+      "title": "(COMIC1☆14) [ろいやるびっち (haruhisky)] BBちゃんとバッドエンドを (FateGrand Order)"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_443033f7e0872a70ff22",
+      "source_key": "pica:6509d524a4051f3112f16c36",
+      "status": "REVIEW_REQUIRED",
+      "title": "君はイカサマをしている (コミックホットミルク 2022年5月号)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_449c489c9d7af57a3d73",
+      "source_key": "jm:276173",
+      "status": "REVIEW_REQUIRED",
+      "title": "[黎歐x新橋月白日語社漢化]  [ろいやるびっち (haruhisky)] 水著師匠と戀人エッチする本。 (Fate/Grand Order) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104",
+        "3104丁目"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_491c444561fced60c8ca",
+      "source_key": "jm:178631",
+      "status": "REVIEW_REQUIRED",
+      "title": "[如若昇天個人漢化] (C97) [3104丁目 (3104)] Soon Lazy [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_4b0e17d2300e224142b3",
+      "source_key": "pica:64f62c0519931c2a527cddae",
+      "status": "REVIEW_REQUIRED",
+      "title": "ただ悲しいフリをする"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_4dc855f54bee64f03647",
+      "source_key": "jm:341302",
+      "status": "REVIEW_REQUIRED",
+      "title": "Pixiv碧藍航線NTR漫畫(尼特子個人漢化) [3104]PixivアズールレーンNTR漫畫(Chinese)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_52b2f9a88949393f054c",
+      "source_key": "pica:695a895aefd3a177b41c44de",
+      "status": "REVIEW_REQUIRED",
+      "title": "セイバーさん ヤリモクナンパ待ち 温泉編 (Fate/stay night)"
+    },
+    {
+      "author": [
+        "ろいやるびっち",
+        "(haruhisky)"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_535e4f787f1998619b0a",
+      "source_key": "jm:114071",
+      "status": "REVIEW_REQUIRED",
+      "title": "(COMIC1☆15) [ろいやるびっち (haruhisky)] 師匠を孕ませるまででられないシミュレーター (FateGrand Order) [黎歐×新橋月白日語社]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_549dd45dd9abd58be61a",
+      "source_key": "jm:1131995",
+      "status": "REVIEW_REQUIRED",
+      "title": "曾經的回憶與芬芳已不在[3104丁目 (3104)] オモイデもカオリも [中國翻譯] [無修正] [DL版]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_558c01052f873c6ea4ec",
+      "source_key": "jm:82976",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C94) [ろいやるびっち (haruhisky)] 水著師匠と戀人エッチする本 (Fate Grand Order) [空氣系☆漢化]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_55d7af3ea1d8a94063ed",
+      "source_key": "jm:630604",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C104) [ろいやるびっち (haruhisky)] みょーちゃん先生かくパコりき。2 (みょーちゃん先生はかく語りき) [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_56fe2515883e0e2839c7",
+      "source_key": "pica:5d8e219419ac96021d3942f6",
+      "status": "REVIEW_REQUIRED",
+      "title": "(COMIC1☆14) BBちゃんとバッドエンドを (Fate/Grand Order)"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_570238b686506d0c3e5b",
+      "source_key": "jm:478815",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C102) [HoneyRoad (Bee導師)] アリサ2 -紅の魔族- (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_571298b89dd9f4afab04",
+      "source_key": "jm:1016608",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Hello Girls! (10驛)] 前哨基地の活動報告 (勝利の女神:NIKKE)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00799"
+      ],
+      "reason": "UNKNOWN_LOCAL_VERSION",
+      "review_id": "REVIEW_577fe51df93f5a881c45",
+      "source_key": "pica:692f2e2a2439ee5832b5114a",
+      "status": "REVIEW_REQUIRED",
+      "title": "アオハルトラレ"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_57a7e3c1a748c2d7b9ad",
+      "source_key": "jm:1231260",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C105)[3104丁目 (3104)] 紫のショウメイ[中國翻譯] [無修正] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_5879aab1dd19930f88d4",
+      "source_key": "jm:532621",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C103) [ろいやるびっち (haruhisky)] ムチ宮ハルヒの困惑 (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち",
+        "haruhisky"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_597b4857dd2b04c432a6",
+      "source_key": "jm:265102",
+      "status": "REVIEW_REQUIRED",
+      "title": "[甜橙漢化組][ろいやるびっち (haruhisky)] JKギャルに轉生したのでパッコパコ♥"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_5adc33d7cd1f94454dbb",
+      "source_key": "jm:623646",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C104) [Hello Girls! (10驛)] 前哨基地の活動報告 (勝利の女神：NIKKE) [DL版]"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_5b4c84a2475812530db0",
+      "source_key": "jm:1424546",
+      "status": "REVIEW_REQUIRED",
+      "title": "攝った女をデリヘル嬢にできる神アプリ -俺の事が嫌いな爆乳ギャルに戀人プレイで処女を捧げさせた- (オリジナル)"
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172"
+      ],
+      "reason": "UNKNOWN_LOCAL_VERSION",
+      "review_id": "REVIEW_5c8f7995711765722452",
+      "source_key": "pica:66bcce2a41a5931b3b878cb9",
+      "status": "REVIEW_REQUIRED",
+      "title": "配達バニーガール 2"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_5e6b30fcadccc2b9f914",
+      "source_key": "pica:629b147abd4d5417d4f9463d",
+      "status": "REVIEW_REQUIRED",
+      "title": "BAD GIRLS"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_63a2f1d811a5c7e74d2c",
+      "source_key": "jm:1207476",
+      "status": "REVIEW_REQUIRED",
+      "title": "[路人漢化] (C106) [ろいやるびっち (haruhisky)] セイバーさん ヤリモクナンパ待ち プール編 (Fate/stay night) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_64d1f4162e0dc2d89d3b",
+      "source_key": "pica:68c02b6740672720d7842d8a",
+      "status": "REVIEW_REQUIRED",
+      "title": " 紫のショウメイ〜オレンジに変わったら〜 [中国翻訳] [DL版]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_66b8037e9e9d891b6f84",
+      "source_key": "jm:81172",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C91) [ろいやるびっち (Haruhisky)] はるこす 4 (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_67275daaa37eba4366ff",
+      "source_key": "jm:371595",
+      "status": "REVIEW_REQUIRED",
+      "title": "仙醉酒 (原神)  [黎歐出資漢化] (C100) [Hello Girls! (10驛)] 仙醉酒 (原神) [中國翻譯]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_69a7ee6e9258564b7fc5",
+      "source_key": "jm:277547",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 姉は親父に抱かれてる 3"
+    },
+    {
+      "author": [
+        "3104",
+        "3104丁目"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_6a1b083d911d4c8cc86a",
+      "source_key": "jm:201485",
+      "status": "REVIEW_REQUIRED",
+      "title": "[天煌漢化組] [3104丁目 (3104)] 悲しみが嫌いだったら [中國翻譯]"
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6b19065876c02cf41fcb",
+      "source_key": "pica:64e887cc19931c2a527c73f8",
+      "status": "REVIEW_REQUIRED",
+      "title": "アリサ2 紅の魔族"
+    },
+    {
+      "author": [
+        "ろいやるびっち (Haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6b42942e382ff5cedfff",
+      "source_key": "pica:5e5084873abef73c5b51d0ba",
+      "status": "REVIEW_REQUIRED",
+      "title": "はるこす++"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6c08a1c828eaa56a7f6f",
+      "source_key": "jm:100251",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち(haruhisky)][くーねるすまた3]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6d8230c088d0279ccf99",
+      "source_key": "jm:1048382",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C105) [Hello Girls! (10驛)] リナが酷い目に遭う話 (ゼンレスゾーンゼロ)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6daf05a93043daf3e0ca",
+      "source_key": "jm:100228",
+      "status": "REVIEW_REQUIRED",
+      "title": "【瓜皮有償漢化】(C91) [ろいやるびっち (haruhisky)] くーねるすまた4 (くーねるまるた) [DL版]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_6dc3af76a7cc87ad824a",
+      "source_key": "jm:80154",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C93) [ろいやるびっち (Haruhisky)] はるこす6 (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6dd66fc513566af66adf",
+      "source_key": "jm:1434106",
+      "status": "REVIEW_REQUIRED",
+      "title": "[一億萬軒茶屋(2-G)] コンビニのバイトJKはXXLサイズのコンドームを買うお客さんが氣になって仕方ない [中國翻譯]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (Haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6ecda6e0fcba08b4cef6",
+      "source_key": "pica:62efcf0cbdca3504d68ac963",
+      "status": "REVIEW_REQUIRED",
+      "title": "Haruhi Lingerie Collection 01 (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_6f6a1372ba89eedf8def",
+      "source_key": "jm:1212524",
+      "status": "REVIEW_REQUIRED",
+      "title": "[AI Translated] (C102) [Hello Girls! (10驛)] 青うさぎの奉仕記錄 (ブルーアーカイブ) [中國翻譯]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_70745043e0b52534c85f",
+      "source_key": "jm:1464355",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C108) [ろいやるびっち (haruhisky)] はるこす 2026・夏 (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [
+        "ちまた、trueblue (2-G、あにぃ)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_709e6f545fa790854d8b",
+      "source_key": "pica:60577b5512b6a86d5e7ec068",
+      "status": "REVIEW_REQUIRED",
+      "title": "Tempt Apple"
+    },
+    {
+      "author": [
+        "ろいやるびっち",
+        "(haruhisky)"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_720f1c40f666ece37ef5",
+      "source_key": "jm:103440",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 水著師匠と戀人エッチする本。 (FGO)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_733ceca62a379687ffc0",
+      "source_key": "jm:205999",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] [ろいやるびっち (haruhisky)] バニー獅子王が騙されてHなお仕事をしちゃう本 (Fate/Grand Order) [DL版]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_73d58518b70a9bc26812",
+      "source_key": "jm:1466043",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Hello Girls! (10驛)] 鄰人付き愛_〜欲求不満のおすそ分け〜"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_749b2933d59ab608c69f",
+      "source_key": "jm:81173",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C90) [ろいやるびっち (haruhisky)] はるこす (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_7595cea3f5b70993d801",
+      "source_key": "jm:376515",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C100) [HoneyRoad (Bee導師)] アリサ 貪欲な王の罠 (オリジナル) [DL版]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_75a13f2bdd7a590ab4ea",
+      "source_key": "jm:84653",
+      "status": "REVIEW_REQUIRED",
+      "title": "[龜速昂貴品質淒慘漢化組][ろいやるびっち (haruhisky)] JKギャルに轉生したのでパッコパコ♥ [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_76824ba4495a4b2d60d7",
+      "source_key": "pica:613719cb0dac716f6a9efaf8",
+      "status": "REVIEW_REQUIRED",
+      "title": "姉は親父に抱かれてる 1-3 (オリジナル) [DL版]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_77219a592ba7c7babfe5",
+      "source_key": "jm:95171",
+      "status": "REVIEW_REQUIRED",
+      "title": "[臉腫漢化組] (C86) [ろいやるびっち (haruhisky)] ちあハル (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (Haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_775aa840f75fea91f68d",
+      "source_key": "pica:633860a37c2b0c1abb3b85c1",
+      "status": "REVIEW_REQUIRED",
+      "title": "[無修正] 凉宫春日•酥胸肥屄CG图集"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_77be9476690298953531",
+      "source_key": "jm:407859",
+      "status": "REVIEW_REQUIRED",
+      "title": "最強JK庫諾被奪走處女 [3104] 最強のJKくノ一が催眠術で処女を奪われた件 [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_7ccaa72edee4f1af7751",
+      "source_key": "jm:239742",
+      "status": "REVIEW_REQUIRED",
+      "title": "[黑色彼岸花個人漢化] (C86) [ろいやるびっち (haruhisky)] くーねるすまた (くーねるまるた) [中國翻譯]"
+    },
+    {
+      "author": [
+        "一億万軒茶屋(2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_7d59e432e51f89f1cbd3",
+      "source_key": "pica:69f3980f07e6c5575129cca2",
+      "status": "REVIEW_REQUIRED",
+      "title": "コンビニのバイトJKはXXLサイズのコンドームを買うお客さんが気になって仕方ない"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_7d885669893d3178c165",
+      "source_key": "jm:411005",
+      "status": "REVIEW_REQUIRED",
+      "title": "[996重嵌] [灰羽社漢化] (C88) [ろいやるびっち (haruhisky)] くーねるすまた2 (くーねるまるた) [中國翻譯] [無修正]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_7f8cc24c0058f44e4040",
+      "source_key": "jm:1196395",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] [3104丁目 (3104)] 紫のショウメイ〜オレンジに變わったら〜 [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_810475b8947738cee5cb",
+      "source_key": "pica:6131be0faf9fc16f52ded42c",
+      "status": "REVIEW_REQUIRED",
+      "title": " 水着師匠と恋人エッチする本。 (Fate/Grand Order) [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_816af9430cb5450f8aca",
+      "source_key": "jm:1023748",
+      "status": "REVIEW_REQUIRED",
+      "title": "小美老師各種性交技巧2 [ろいやるびっち (haruhisky)] みょーちゃん先生かくパコりき 2 (みょーちゃん先生はかく語りき)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_81737280be3349015ece",
+      "source_key": "jm:1460892",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C108) [ろいやるびっち (haruhisky)] ゴブリンたちの雌になるまで ランサーアルトリア編 (Fate/grand order) [Chinese] [路人漢化]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_82aed81bbbfab65c599e",
+      "source_key": "pica:5e0e03ca5ed75427ee617104",
+      "status": "REVIEW_REQUIRED",
+      "title": "散ルアウト (アイドルマスター シャイニーカラーズ) [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097"
+      ],
+      "reason": "UNKNOWN_LOCAL_VERSION",
+      "review_id": "REVIEW_85ade9b5f02aa95e933b",
+      "source_key": "pica:5ef4e9131b877a1ddde7d357",
+      "status": "REVIEW_REQUIRED",
+      "title": "悲しみが嫌いだったら "
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_868719adf74eb676cc6a",
+      "source_key": "pica:6320fb480fc2c153fd215387",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C100)  アリサ 貪欲な王の罠 (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_86f1d600c5add1ca5fc5",
+      "source_key": "jm:1206249",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C106) [Hello Girls! (10驛)] 甘々人形"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_87fc1e3afdf58eca8d05",
+      "source_key": "pica:6630e08dfe2ca401c4b2ab34",
+      "status": "REVIEW_REQUIRED",
+      "title": "妻が、他人の雌になるまで―ショートカット巨乳妻・佐々木美咲編― [中国语]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_8a7f5924e901f70948f5",
+      "source_key": "jm:625249",
+      "status": "REVIEW_REQUIRED",
+      "title": "[KK個人漢化] (C104) [ろいやるびっち (haruhisky)] SOS團ソープへようこそ (涼宮ハルヒの憂鬱) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "Haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_8b87a3c0d6ad777c0e19",
+      "source_key": "jm:408469",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C101)[ろいやるびっち (Haruhisky)] はるこす14 (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_8df2f800e7c38c9fb85c",
+      "source_key": "jm:142119",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] バニー師子王が騙されてHなお仕事をしちゃう本 (FateGrand Order)"
+    },
+    {
+      "author": [
+        "ろいやるびっち(haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9132f4cbd16590641e99",
+      "source_key": "jm:8669",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち(haruhisky)][ちあハル]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_93198e2ec40a99c19349",
+      "source_key": "pica:63cffd61a70f2074cabea2c5",
+      "status": "REVIEW_REQUIRED",
+      "title": "はるこす14"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_93eab6a0f9a29ed7abbf",
+      "source_key": "pica:6a7e060a9f23f630cfb587db",
+      "status": "REVIEW_REQUIRED",
+      "title": "ゴブリンたちの雌になるまで ランサーアルトリア編 (Fate/grand order)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_96677d6b0febbe7386b0",
+      "source_key": "pica:5ba7a9d70e01b54aefa5535f",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C94) 水着師匠と恋人エッチする本。"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_96ccb9db092e7417cddd",
+      "source_key": "pica:5c8cd9d226e04a6cafdc31ff",
+      "status": "REVIEW_REQUIRED",
+      "title": "くーねるすまた4 (くーねるまるた)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9be5cbee2991624c6afa",
+      "source_key": "jm:374494",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 姉は親父に抱かれてる 3 [中國翻譯][無修正]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9cc3b098bc60f99b62a4",
+      "source_key": "pica:6131be0aaf9fc16f52ded412",
+      "status": "REVIEW_REQUIRED",
+      "title": " 師匠に土下座して恋人エッチしてもらう本。 (Fate/Grand Order) [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "Haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9d94deb96007894724ad",
+      "source_key": "jm:428396",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Haruhisky] セイバーの浮氣SEX (Fate/stay night) [中譯]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9da2726ba05d1e49d30f",
+      "source_key": "pica:60d1517898d3d12a995c2142",
+      "status": "REVIEW_REQUIRED",
+      "title": " 手繰り寄せる甘い誘惑 (コミックホットミルク 2021年7月号) [中文翻译] [DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9e4573b6c7d5f43bd3f9",
+      "source_key": "jm:262051",
+      "status": "REVIEW_REQUIRED",
+      "title": "[兩面包夾漢化組]  [3104] 手繰り寄せる甘い誘惑 (コミックホットミルク 2021年7月號) [中文翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9e71ae5e01917eb42861",
+      "source_key": "jm:235554",
+      "status": "REVIEW_REQUIRED",
+      "title": "[不夠色漢化組] [3104丁目 (3104)] HEROINE (アズールレーン) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_9fc08c8d4444de7fa059",
+      "source_key": "jm:495593",
+      "status": "REVIEW_REQUIRED",
+      "title": "[是小狐狸哦] [3104] 君はイカサマをしている (コミックホットミルク 2022年5月號) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_a019f66faa13cb6b3415",
+      "source_key": "jm:95175",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C91) [ろいやるびっち (haruhisky)] くーねるすまた總集編1~3 (くーねるまるた)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_a1b1b892842736d2c17a",
+      "source_key": "jm:1046982",
+      "status": "REVIEW_REQUIRED",
+      "title": "[今晚鹿島幹死你個人漢化] [ろいやるびっち (haruhisky)] ムチ宮ハルヒの困惑 (涼宮ハルヒの憂鬱) [中國翻譯] [無修正] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_a28536e75aad797c1fcb",
+      "source_key": "jm:1247353",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C107) [ろいやるびっち (haruhisky)] セイバーさん ヤリモクナンパ待ち 溫泉編 (Fate/stay night) [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_a49f17ac43fe3865454d",
+      "source_key": "pica:582191805f6b9a4f93e4cd0d",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C86)ちあハル (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_a4a54b6c9c36ef8947a4",
+      "source_key": "jm:213410",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 姉は親父に抱かれてる 2 おまけイラスト集"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_a6e330b25b1d68643d3d",
+      "source_key": "pica:5d50f9b023846102a39cc942",
+      "status": "REVIEW_REQUIRED",
+      "title": "師匠を孕ませるまででられないシミュレーター2 (Fate/Grand Order))"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_aa048fe9a6096d776c86",
+      "source_key": "jm:1090113",
+      "status": "REVIEW_REQUIRED",
+      "title": "[禁漫漢化組](C105)[HoneyRoad(Bee導師)]サオリとホテルで密會えっち(ブルーアーカイブ)"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ab6b1ba406b2de103e92",
+      "source_key": "pica:691f5616e0c5bc16c3ebc534",
+      "status": "REVIEW_REQUIRED",
+      "title": "紫のショウメイ 紫色印證"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ad6c2bda20cc7c31f3ca",
+      "source_key": "jm:148507",
+      "status": "REVIEW_REQUIRED",
+      "title": "[灰羽社漢化] [ろいやるびっち (haruhisky)] くーねるすまた 5 (くーねるまるた) ["
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ad7167d1d94ece51b598",
+      "source_key": "jm:480389",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C102) [3104丁目 (3104)] ただ悲しいフリをする (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ad767c2b35df7ccc2051",
+      "source_key": "pica:5f05ff1f3b3f1f26226e848f",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C97)  姉は親父に抱かれてる [中國翻訳] "
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ade1350c51fd64ca2918",
+      "source_key": "pica:67ab74e4a6960606a2b15e30",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C105)  配達バニーガールとサービスえっち2 [中国翻訳]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_ae69111ac55c46119665",
+      "source_key": "jm:84904",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち(haruhisky)][JKギャルに轉生したのでパッコパコ♥]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_afa3531bae3055b4180e",
+      "source_key": "jm:79354",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち(haruhisky)][ときこぼん]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_b092adbd078eeb8ee5fe",
+      "source_key": "jm:80191",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C87) [ろいやるびっち (haruhisky)] はるこす (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_b0dce0667204f6723cc7",
+      "source_key": "jm:114492",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち(haruhisky)][師匠を孕ませるまででられないシミュレーター]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (Haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b251aec4c7e4f2876608",
+      "source_key": "pica:5e500f88d249753c61dbeb3a",
+      "status": "REVIEW_REQUIRED",
+      "title": "はるこす7 "
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b25a41091471ad97491e",
+      "source_key": "pica:5e50841f1556913c47ab525d",
+      "status": "REVIEW_REQUIRED",
+      "title": "はるこす 9"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b2a46f01f66d795283ef",
+      "source_key": "jm:626260",
+      "status": "REVIEW_REQUIRED",
+      "title": "同狂犬、深夜散步 [白楊漢化組] [Hello Girls! (10驛)] 狂犬と、深夜散步 (ブルーアーカイブ)"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b3a506811c369e82be8a",
+      "source_key": "jm:1434527",
+      "status": "REVIEW_REQUIRED",
+      "title": "深夜の公園で巨乳ホームレスJK拾った (オリジナル)"
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b40a2a1564b1f7f32fa9",
+      "source_key": "pica:66be18bc9d3c3a1b488e8b8e",
+      "status": "REVIEW_REQUIRED",
+      "title": "配達バニーガールとサービスえっち 3 | 外卖兔女郎的杀必死涩涩3"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_b486097a7484dc0fe7ad",
+      "source_key": "jm:95177",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C85) [ろいやるびっち (haruhisky)] はるぼん (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b4f2288e778cebe32e93",
+      "source_key": "pica:68e4ff0640524f74e62f2c20",
+      "status": "REVIEW_REQUIRED",
+      "title": "配達バニーガールとサービスえっち3  | 与兔女郎配送员的特殊服务做爱3"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_b50e32e58e0cf270d62a",
+      "source_key": "jm:81171",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C93) [ろいやるびっち (haruhisky)] はるこす6 (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b58193465bf340d68f43",
+      "source_key": "jm:482311",
+      "status": "REVIEW_REQUIRED",
+      "title": "[白楊漢化組] (C102) [HoneyRoad (Bee導師)] アリサ2 -紅の魔族- (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_b9c5fcf9b9510794d038",
+      "source_key": "pica:661be7cee41e7d40dd9328a0",
+      "status": "REVIEW_REQUIRED",
+      "title": "みょーちゃん先生かくパコりき (みょーちゃん先生はかく語りき)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_bad193c55ba8cea04f27",
+      "source_key": "pica:5dd01d1fb180cc02dea477d4",
+      "status": "REVIEW_REQUIRED",
+      "title": "(COMIC1☆16)  バニー獅子王が騙されてHなお仕事をしちゃう本 (Fate/Grand Order)"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_bad263cd438ed46bd07a",
+      "source_key": "jm:1449300",
+      "status": "REVIEW_REQUIRED",
+      "title": "竿役募集してる推しの爆乳エロ配信者が妹になりました (オリジナル)"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_bb814466015372e6bab2",
+      "source_key": "jm:152504",
+      "status": "REVIEW_REQUIRED",
+      "title": "[水也木又個人漢化] [3104丁目 (3104)] 冬コミのおまけ本 (アイドルマスター シャイニーカラーズ) ["
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_bc297cabd6a4f8ec1f19",
+      "source_key": "jm:329697",
+      "status": "REVIEW_REQUIRED",
+      "title": "[3104] アズレンオムニバスNTR漫畫 (アズールレーン)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_bc305ff1d2b9fa92c2a2",
+      "source_key": "jm:1468461",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C108)[ろいやるびっち (haruhisky)] アオハルトラレ 爆乳女教師・尾奈ほなみ編 [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_bf27b124d769b1ce043d",
+      "source_key": "jm:416349",
+      "status": "REVIEW_REQUIRED",
+      "title": "996重嵌][黎歐×新橋月白日語社] (C96) [ろいやるびっち (haruhisky)] 師匠を孕ませるまででられないシミュレーター2 (FateGrand Order) [中國翻譯] [無修正]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_c476456d295a3654b3a7",
+      "source_key": "jm:1047146",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] (C105) [HoneyRoad (Bee導師)] 配達バニーガールとサービスえっち2 "
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_c513422231315cb08066",
+      "source_key": "jm:1050136",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C105)[HoneyRoad(Bee導師)]配達バニーガールとサービスえっち2(オリジナル)"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_c59d25090b9432630de1",
+      "source_key": "pica:67780a3301ec814922b403e9",
+      "status": "REVIEW_REQUIRED",
+      "title": "紫のショウメイ"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_c60648210cc4a315c76f",
+      "source_key": "jm:101900",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C95) [Hello Girls! (10驛)] 噓つき眠り姫 (少女前線) [屏幕臟了漢化組]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_c7a09f7fd9da432240b8",
+      "source_key": "jm:1259285",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] [Digital] [HoneyRoad (Bee導師)] 配達バニーガールとサービスえっち4 [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "一億万軒茶屋 (2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_c988dcea61c53d1b1952",
+      "source_key": "pica:69f75fab6d3d83668eb2de08",
+      "status": "REVIEW_REQUIRED",
+      "title": "深夜の公園で巨乳ホームレスＪＫ拾った"
+    },
+    {
+      "author": [
+        "HoneyRoad (Bee導師)"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_c9b6cc063018c82897ba",
+      "source_key": "pica:61d71c00c2f2764728fce46b",
+      "status": "REVIEW_REQUIRED",
+      "title": " 配達バニーガール [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ca645aa7ff1b6537b964",
+      "source_key": "jm:616277",
+      "status": "REVIEW_REQUIRED",
+      "title": "外賣兔女郎的殺必死澀澀3 [欶瀾漢化組] (C104) [HoneyRoad (Bee導師)] 配達バニーガールとサービスえっち 3"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_cbe09e2b47334312d1c2",
+      "source_key": "jm:1208370",
+      "status": "REVIEW_REQUIRED",
+      "title": "甜蜜人形 [活力少女戰線×大受氣包烤RO組](C106)[Hello Girls! (10驛)] 甘々人形 (ドールズフロントライン2: エクシリウム) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "2-G"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ccb78fad9fdd4447850b",
+      "source_key": "jm:1240374",
+      "status": "REVIEW_REQUIRED",
+      "title": "[一億萬軒茶屋 (2-G)] 深夜の無人驛で巨乳家出JK拾った [中國翻譯]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_cde9be43eb58dd0dc9b6",
+      "source_key": "jm:372490",
+      "status": "REVIEW_REQUIRED",
+      "title": "[尼特子個人漢化] (C100) [3104丁目 (3104)] アイの中に閉じ込めた (アズールレーン) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_cffd7d9faa5aba453b5c",
+      "source_key": "pica:5c8cd9e3633a456cdee7118e",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C89) くーねるすまた3 (くーねるまるた)"
+    },
+    {
+      "author": [
+        "ろいやるびっち",
+        "(haruhisky)"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_d20c0174f077bed399c6",
+      "source_key": "jm:103439",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 師匠を孕ませるまで出られないシミュレーター(FGO)"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_d21b9160cff8979abaf7",
+      "source_key": "jm:234503",
+      "status": "REVIEW_REQUIRED",
+      "title": "[不可視漢化][3104丁目 (3104)] HEROINE (アズールレーン)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_d441f4f64e0fa8c12bc4",
+      "source_key": "jm:1037076",
+      "status": "REVIEW_REQUIRED",
+      "title": "[超勇漢化組] [ろいやるびっち (haruhisky)]妻が、他人の雌になるまで・里 ―ショートカット巨乳妻・佐々木美咲の場合―"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_d4bfb833f6b22f2904d8",
+      "source_key": "jm:1205968",
+      "status": "REVIEW_REQUIRED",
+      "title": "小美老師如是啪啪啪 [Origin個人測試漢化][ろいやるびっち (haruhisky)] みょーちゃん先生かくパコりき。 (みょーちゃん先生はかく語りき) [中國翻譯] [無修正] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_d7da002c6b251e9511e5",
+      "source_key": "pica:5e193a887deb19777b34fe38",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C88)くーねるすまた2 (くーねるまるた) [中国翻訳]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_d81cb06fbe7e11d9d678",
+      "source_key": "pica:697e2f81527f0a0e25213c98",
+      "status": "REVIEW_REQUIRED",
+      "title": "紫のショウメイ〜黒い夢中〜 [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "LOW_INFORMATION_OR_COLLECTION_TITLE",
+      "review_id": "REVIEW_d9ca111ba56cf5ae2308",
+      "source_key": "pica:66d0934cdba8ca3871f85548",
+      "status": "REVIEW_REQUIRED",
+      "title": "ムチ宮ハルヒの困惑+2023ハルヒ支援サイトCG集総集編 (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_dcdb6b87dc0c7756ec94",
+      "source_key": "jm:1441008",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] みょーちゃん先生かくパコりき3 文化祭ソープ編 (みょーちゃん先生はかく語りき) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_dce3ae760a28dcdfb542",
+      "source_key": "jm:1465221",
+      "status": "REVIEW_REQUIRED",
+      "title": "黒兔女郎的侍奉記錄♥ [最愛吃手手的大bt個人漢化] [Hello Girls! (10驛)] 黒うさぎの奉仕記錄♥ (ブルーアーカイブ) [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ddbc9d8f315e44e22056",
+      "source_key": "pica:68062b980877555c05bb6f36",
+      "status": "REVIEW_REQUIRED",
+      "title": "オモイデもカオリも"
+    },
+    {
+      "author": [
+        "一億万軒茶屋 (2-G)"
+      ],
+      "candidates": [
+        "WORK_02657"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_de344859ccd328129249",
+      "source_key": "pica:69ce9a5318353472193bc6ce",
+      "status": "REVIEW_REQUIRED",
+      "title": "撮った女をデリヘル嬢にできる神アプリ -俺の事が嫌いな爆乳ギャルに恋人プレイで処女を捧げさせた-"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_dec48f0ec3759838d83a",
+      "source_key": "jm:98072",
+      "status": "REVIEW_REQUIRED",
+      "title": "[3104] 95式が體をお偉いさん方に好き勝手される (少女前線)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_dfe70aadb1dc741bc48b",
+      "source_key": "jm:231742",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 氷ちゃんのシコシコバニーソープ"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_e4e83d8092ab2e630fef",
+      "source_key": "jm:202779",
+      "status": "REVIEW_REQUIRED",
+      "title": "[無毒漢化組] [ろいやるびっち (haruhisky)] BBちゃんとバッドエンドを (Fate/Grand Order) [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_e52ea5fe6406e1dca817",
+      "source_key": "jm:616531",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C104) [3104丁目 (3104)] オモイデもカオリも (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_e9d4fe1708b451878371",
+      "source_key": "pica:66feae70698c49527cbf7f13",
+      "status": "REVIEW_REQUIRED",
+      "title": " オモイデもカオリも [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ea506c990a449366038f",
+      "source_key": "jm:1216028",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C106) [HoneyRoad (Bee導師)] 配達バニーガールとサービスえっち3 [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_eb682b64ffad8a225933",
+      "source_key": "jm:1127145",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 妻が他人の雌になるま里 [空氣系☆漢化] [DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ebd2b7a01fe7ec8b1850",
+      "source_key": "jm:617827",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化]  [3104丁目 (3104)] オモイデもカオリも [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ebff4fc8d6276ad1f76b",
+      "source_key": "pica:5e1a8b9d3610de778163ec0d",
+      "status": "REVIEW_REQUIRED",
+      "title": "くーねるすまた 5 (くーねるまるた) [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ec005fe13d2e23872b7f",
+      "source_key": "pica:5d5d7c2174184679c1e641ad",
+      "status": "REVIEW_REQUIRED",
+      "title": " くーねるすまた6 (くーねるまるた) [中国翻訳] [無修正] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ecfcc899a3631e6ee5d6",
+      "source_key": "jm:1043488",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C105) [ろいやるびっち (haruhisky)] アオハルトラレ (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ed0c253c837fe3d38f92",
+      "source_key": "jm:483345",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C102) [HoneyRoad (Bee導師)] アリサ2外傳 おまけ-BAD後日談編- (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_edc48ef488ef977f3d31",
+      "source_key": "jm:378660",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C100) [HoneyRoad (Bee導師)] アリサ 貪欲な王の罠 (オリジナル) [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ef05b5f9b3d245099e90",
+      "source_key": "jm:623135",
+      "status": "REVIEW_REQUIRED",
+      "title": "(C104) [ろいやるびっち (haruhisky)] SOS團ソープへようこそ (涼宮ハルヒの憂鬱) [DL版]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_ef39f95d7332005b4d0b",
+      "source_key": "jm:83215",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち(haruhisky)][水著師匠と戀人エッチする本。]"
+    },
+    {
+      "author": [
+        "Bee導師"
+      ],
+      "candidates": [
+        "WORK_01172",
+        "WORK_01173",
+        "WORK_01175"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_ef9a928998dc6666544c",
+      "source_key": "jm:616490",
+      "status": "REVIEW_REQUIRED",
+      "title": "外賣兔女郎 2 [驢子漢化組] [HoneyRoad (Bee導師)] 配達バニーガール 2 [中國翻譯] [DL版]"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_eff4bbfd0960f6fd096a",
+      "source_key": "pica:60118765f8d9774a09d46a66",
+      "status": "REVIEW_REQUIRED",
+      "title": " HEROINE (アズールレーン) [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_f2652f54117e1713cbac",
+      "source_key": "jm:136539",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] くーねるすまた6 (くーねるまるた) [中國翻譯] [無修正]"
+    },
+    {
+      "author": [],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_f2c41b229f31d458ffe0",
+      "source_key": "jm:104197",
+      "status": "REVIEW_REQUIRED",
+      "title": "Artist - Haruhisky"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_f44a8caaf697514cf0be",
+      "source_key": "jm:216791",
+      "status": "REVIEW_REQUIRED",
+      "title": "姐姐投入了父親的懷抱2 [A-HY個人漢化] [ろいやるびっち (haruhisky)] 姉は親父に抱かれてる 2 [中國翻譯] [無修正]"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_f49b3d0b82f805cc4f27",
+      "source_key": "pica:68a74893dbeebf5c23e27386",
+      "status": "REVIEW_REQUIRED",
+      "title": "セイバーさん ヤリモクナンパ待ち プール編 (Fate/stay night)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_f51219b2a7aa7eaf01b3",
+      "source_key": "pica:58df562bf812533976fcebcd",
+      "status": "REVIEW_REQUIRED",
+      "title": "はるこす4 (涼宮ハルヒの憂鬱)"
+    },
+    {
+      "author": [
+        "ろいやるびっち (haruhisky)"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_f63ae0753046f8493b67",
+      "source_key": "pica:5cc1b5cdc897694df7ec5487",
+      "status": "REVIEW_REQUIRED",
+      "title": "師匠を孕ませるまで出られないシミュレーター (Fate/Grand Order) [DL版]"
+    },
+    {
+      "author": [
+        "3104"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_f94f489a73d1a623c0f9",
+      "source_key": "pica:5c710c8d9b0f6b1108882574",
+      "status": "REVIEW_REQUIRED",
+      "title": "95式が体をお偉いさん方に好き勝手される (少女前線)"
+    },
+    {
+      "author": [
+        "haruhisk"
+      ],
+      "candidates": [],
+      "reason": "UNCONFIRMED_AUTHOR",
+      "review_id": "REVIEW_f9f20564236a83e6c3e2",
+      "source_key": "jm:103441",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 師匠に土下座して戀人エッチしてもらう本。 (FGO)"
+    },
+    {
+      "author": [
+        "haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_fa8538ad4c498ba60eb8",
+      "source_key": "jm:231801",
+      "status": "REVIEW_REQUIRED",
+      "title": "[ろいやるびっち (haruhisky)] 氷ちゃんのAVショップ一日店長さん"
+    },
+    {
+      "author": [
+        "Haruhisky"
+      ],
+      "candidates": [
+        "WORK_00001",
+        "WORK_00068",
+        "WORK_00799",
+        "WORK_02582",
+        "WORK_02583"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_fae8e00971f57b62ae95",
+      "source_key": "pica:5e756304d0894c7413f1ef9b",
+      "status": "REVIEW_REQUIRED",
+      "title": "[Artist]Haruhisky"
+    },
+    {
+      "author": [
+        "3104丁目 (3104)"
+      ],
+      "candidates": [
+        "WORK_00097",
+        "WORK_00098"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_fbc5483c2fe84943fce8",
+      "source_key": "pica:5e6ed3d5f451fa758e6404f0",
+      "status": "REVIEW_REQUIRED",
+      "title": "Soon Lazy [中国翻訳] [DL版]"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_fe9521853e9f6185e804",
+      "source_key": "jm:408377",
+      "status": "REVIEW_REQUIRED",
+      "title": "[空氣系☆漢化] (C100) [Hello Girls! (10驛)] 仙醉酒 (原神)"
+    },
+    {
+      "author": [
+        "10駅"
+      ],
+      "candidates": [
+        "WORK_01166",
+        "WORK_01167",
+        "WORK_01168",
+        "WORK_01169"
+      ],
+      "reason": "UNRESOLVED_TITLE_IDENTITY",
+      "review_id": "REVIEW_fed7078706890c7c7f19",
+      "source_key": "jm:1016609",
+      "status": "REVIEW_REQUIRED",
+      "title": "[萌意永久潤色機翻] (C103) [Tear Drop (ついな)] D Dungeon for Adult Lv.6 (トゥハート)"
+    }
+  ],
+  "schema_version": 2
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "materialization_enabled": false,
+  "command_id": null,
+  "task_id": null,
+  "task_revision": null,
+  "target_hash": null,
+  "manifest_hash": null
+}

@@ -1,0 +1,51 @@
+name: Phase 1A read-only smoke
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Source to validate
+        type: choice
+        options: [both, jm, pica]
+        default: both
+      jm_domain:
+        description: Pinned upstream API domain
+        type: choice
+        options: [www.cdnhth.cc, www.cdnzack.cc, www.cdnhth.net, www.cdnbea.net, www.cdn-mspjmapiproxy.xyz]
+        default: www.cdnhth.cc
+permissions:
+  contents: read
+concurrency:
+  group: phase1a-read-only
+  cancel-in-progress: false
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tested Rust version
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - name: Rust fixture and adapter tests
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          cargo +1.98.1 test --workspace --locked 2>&1 | tee reports/rust-tests-linux.log
+      - name: Build metadata smoke
+        run: cargo +1.98.1 build -p cloud-monitor --locked
+      - name: Run bounded read-only source checks
+        env:
+          PICA_TOKEN: ${{ secrets.PICA_TOKEN }}
+          PICA_EMAIL: ${{ secrets.PICA_EMAIL }}
+          PICA_PASSWORD: ${{ secrets.PICA_PASSWORD }}
+          TEST_SOURCE: ${{ inputs.source }}
+          JM_DOMAIN: ${{ inputs.jm_domain }}
+        run: |
+          ./target/debug/cloud-monitor --authors fixtures/smoke_authors.json --max-pages 5 --details-per-author 2 --source "$TEST_SOURCE" --jm-domain "$JM_DOMAIN" --report reports/linux-smoke.json
+      - name: Preserve sanitized evidence even after source failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1a-evidence-${{ github.run_id }}
+          path: reports/
+          retention-days: 14
+          if-no-files-found: warn

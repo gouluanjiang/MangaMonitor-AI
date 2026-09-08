@@ -1,0 +1,256 @@
+name: Assistant state publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_base:
+        description: Exact main commit SHA used when preparing the assistant operation
+        required: true
+        type: string
+      kind:
+        description: Assistant state surface to update
+        required: true
+        type: choice
+        options:
+          - author
+          - decision
+          - task-gate
+      operation:
+        description: Operation for the selected surface
+        required: true
+        type: string
+      author_name:
+        description: Author name for author add/enable/disable
+        required: false
+        default: ''
+        type: string
+      review_id:
+        description: Active review ID for SAME/NOT_SAME/IGNORE
+        required: false
+        default: ''
+        type: string
+      work_id:
+        description: Candidate work ID for SAME/NOT_SAME; empty for IGNORE
+        required: false
+        default: ''
+        type: string
+      task_id:
+        description: Pending task ID for recommendation/approval gate
+        required: false
+        default: ''
+        type: string
+      task_revision:
+        description: Exact pending task revision for task-gate operations
+        required: false
+        default: ''
+        type: string
+      target_hash:
+        description: Exact pending target hash for task-gate operations
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: assistant-state-publication
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Require exact current main generation
+        env:
+          EXPECTED_BASE: ${{ inputs.expected_base }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_BASE" || {
+            echo "ASSISTANT_PUBLICATION_BASE_STALE: expected $EXPECTED_BASE found $actual" >&2
+            exit 75
+          }
+          git fetch --quiet origin main
+          remote="$(git rev-parse origin/main)"
+          test "$remote" = "$EXPECTED_BASE" || {
+            echo "ASSISTANT_PUBLICATION_REMOTE_BASE_STALE: expected $EXPECTED_BASE found $remote" >&2
+            exit 75
+          }
+
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.98.1 --profile minimal
+
+      - name: Build deterministic assistant state tools
+        run: |
+          cargo +1.98.1 build --release --locked -p cloud-monitor \
+            --bin assistant-author-edit \
+            --bin assistant-decision-edit \
+            --bin assistant-task-gate-edit \
+            --bin assistant-publication-check
+
+      - name: Stage requested deterministic operation
+        env:
+          KIND: ${{ inputs.kind }}
+          OPERATION: ${{ inputs.operation }}
+          AUTHOR_NAME: ${{ inputs.author_name }}
+          REVIEW_ID: ${{ inputs.review_id }}
+          WORK_ID: ${{ inputs.work_id }}
+          TASK_ID: ${{ inputs.task_id }}
+          TASK_REVISION: ${{ inputs.task_revision }}
+          TARGET_HASH: ${{ inputs.target_hash }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/assistant-state-stage"
+          test ! -e "$stage"
+          case "$KIND" in
+            author)
+              test -n "$AUTHOR_NAME" || { echo 'ASSISTANT_PUBLICATION_AUTHOR_NAME_REQUIRED' >&2; exit 64; }
+              ./target/release/assistant-author-edit \
+                --input monitor-state/authors.json \
+                --output "$stage" \
+                --operation "$OPERATION" \
+                --name "$AUTHOR_NAME"
+              ;;
+            decision)
+              test -n "$REVIEW_ID" || { echo 'ASSISTANT_PUBLICATION_REVIEW_ID_REQUIRED' >&2; exit 64; }
+              args=(
+                --state monitor-state
+                --output "$stage"
+                --review-id "$REVIEW_ID"
+                --decision "$OPERATION"
+              )
+              if [[ -n "$WORK_ID" ]]; then
+                args+=(--work-id "$WORK_ID")
+              fi
+              ./target/release/assistant-decision-edit "${args[@]}"
+              ;;
+            task-gate)
+              test -n "$TASK_ID" || { echo 'ASSISTANT_PUBLICATION_TASK_ID_REQUIRED' >&2; exit 64; }
+              [[ "$TASK_REVISION" =~ ^[1-9][0-9]*$ ]] || {
+                echo 'ASSISTANT_PUBLICATION_TASK_REVISION_REQUIRED' >&2
+                exit 64
+              }
+              test -n "$TARGET_HASH" || { echo 'ASSISTANT_PUBLICATION_TARGET_HASH_REQUIRED' >&2; exit 64; }
+              ./target/release/assistant-task-gate-edit \
+                --state monitor-state \
+                --output "$stage" \
+                --operation "$OPERATION" \
+                --task-id "$TASK_ID" \
+                --task-revision "$TASK_REVISION" \
+                --target-hash "$TARGET_HASH"
+              ;;
+            *)
+              echo 'ASSISTANT_PUBLICATION_INVALID_KIND' >&2
+              exit 64
+              ;;
+          esac
+          echo "STAGE=$stage" >> "$GITHUB_ENV"
+
+      - name: Revalidate staged operation against current live state
+        env:
+          KIND: ${{ inputs.kind }}
+        run: |
+          set -euo pipefail
+          ./target/release/assistant-publication-check \
+            --state monitor-state \
+            --staging "$STAGE" \
+            --kind "$KIND" > "$RUNNER_TEMP/publication-check.json"
+          jq -e '
+            .staging_verified == true and
+            .monitor_state_mutation_authorized == true and
+            .manga_file_access_authorized == false and
+            .download_execution_authorized == false and
+            .production_enablement_authorized == false and
+            .scope == "MONITOR_STATE_SINGLE_FILE_ONLY"
+          ' "$RUNNER_TEMP/publication-check.json"
+          cat "$RUNNER_TEMP/publication-check.json"
+
+      - name: Apply exactly one canonical state file
+        env:
+          KIND: ${{ inputs.kind }}
+        run: |
+          set -euo pipefail
+          case "$KIND" in
+            author) target='monitor-state/authors.json'; payload="$STAGE/authors.json" ;;
+            decision) target='monitor-state/decisions.json'; payload="$STAGE/decisions.json" ;;
+            task-gate) target='monitor-state/assistant-task-gates.json'; payload="$STAGE/assistant-task-gates.json" ;;
+            *) exit 64 ;;
+          esac
+
+          staged_json="$(jq -S -c . "$payload")"
+          if [[ -f "$target" ]]; then
+            current_json="$(jq -S -c . "$target")"
+          elif [[ "$KIND" == 'task-gate' ]]; then
+            current_json='{"records":[],"schema_version":1}'
+          else
+            echo "ASSISTANT_PUBLICATION_TARGET_MISSING: $target" >&2
+            exit 65
+          fi
+          if [[ "$staged_json" == "$current_json" ]]; then
+            echo 'ASSISTANT_STATE_UNCHANGED'
+            echo 'CHANGED=false' >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          install -m 0644 "$payload" "$target"
+          git add -- "$target"
+          changed="$(git diff --cached --name-only)"
+          test "$changed" = "$target" || {
+            echo "ASSISTANT_PUBLICATION_SCOPE_VIOLATION: $changed" >&2
+            exit 66
+          }
+          echo "TARGET=$target" >> "$GITHUB_ENV"
+          echo 'CHANGED=true' >> "$GITHUB_ENV"
+
+      - name: Commit with race protection
+        if: env.CHANGED == 'true'
+        env:
+          EXPECTED_BASE: ${{ inputs.expected_base }}
+          KIND: ${{ inputs.kind }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          remote="$(git rev-parse origin/main)"
+          test "$remote" = "$EXPECTED_BASE" || {
+            echo "ASSISTANT_PUBLICATION_REMOTE_CHANGED: expected $EXPECTED_BASE found $remote" >&2
+            exit 75
+          }
+          git -c user.name='MangaMonitor Assistant Gate' \
+              -c user.email='mangamonitor-assistant@users.noreply.github.com' \
+              commit -m "Publish assistant $KIND state" -- "$TARGET"
+
+          git fetch --quiet origin main
+          remote="$(git rev-parse origin/main)"
+          test "$remote" = "$EXPECTED_BASE" || {
+            echo "ASSISTANT_PUBLICATION_REMOTE_CHANGED_DURING_COMMIT: expected $EXPECTED_BASE found $remote" >&2
+            exit 75
+          }
+          git push origin HEAD:main
+
+      - name: Finalize unchanged operation with race protection
+        if: env.CHANGED == 'false'
+        env:
+          EXPECTED_BASE: ${{ inputs.expected_base }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$EXPECTED_BASE" || {
+            echo "ASSISTANT_PUBLICATION_NOOP_LOCAL_BASE_STALE: expected $EXPECTED_BASE found $actual" >&2
+            exit 75
+          }
+          git fetch --quiet origin main
+          remote="$(git rev-parse origin/main)"
+          test "$remote" = "$EXPECTED_BASE" || {
+            echo "ASSISTANT_PUBLICATION_NOOP_REMOTE_BASE_STALE: expected $EXPECTED_BASE found $remote" >&2
+            exit 75
+          }
+          # This push is a no-op only while main is still exactly EXPECTED_BASE.
+          # If main advances after the fetch, Git rejects the stale non-fast-forward push.
+          git push origin HEAD:main

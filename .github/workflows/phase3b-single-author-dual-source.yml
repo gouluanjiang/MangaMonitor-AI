@@ -1,0 +1,133 @@
+name: Phase3B single-author dual-source concurrency validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - assistant-phase3b-single-author-dual-source-concurrency
+    paths:
+      - 'crates/cloud-monitor/src/bin/phase3b-dual-source-acquire.rs'
+      - '.github/workflows/phase3b-single-author-dual-source.yml'
+
+concurrency:
+  group: phase3b-single-author-dual-source-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      PICA_TOKEN: ${{ secrets.PICA_TOKEN }}
+      PICA_EMAIL: ${{ secrets.PICA_EMAIL }}
+      PICA_PASSWORD: ${{ secrets.PICA_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require usable Pica authentication
+        shell: bash
+        run: |
+          if [[ -z "${PICA_TOKEN:-}" && ( -z "${PICA_EMAIL:-}" || -z "${PICA_PASSWORD:-}" ) ]]; then
+            echo 'PICA_AUTH_REQUIRED_FOR_DUAL_SOURCE_VALIDATION' >&2
+            exit 78
+          fi
+
+      - name: Build one confirmed dual-source author fixture
+        shell: bash
+        run: |
+          jq '{schema_version: (.schema_version // 1), authors: [.authors[] | select(.enabled != false and .name == "2-G")]}' \
+            monitor-state/authors.json > dual-source-author.json
+          jq -e '.authors | length == 1' dual-source-author.json
+          jq -r '.authors[] | [.author_id, .name] | @tsv' dual-source-author.json
+
+      - name: Install pinned Rust and test acquisition probe
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          cargo +1.98.1 test --locked -p cloud-monitor --bin phase3b-dual-source-acquire
+          cargo +1.98.1 build --release --locked -p cloud-monitor --bin phase3b --bin phase3b-dual-source-acquire
+
+      - name: Run serial Phase3B baseline for the same author
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          mkdir -p reports/phase3b-single-author-dual-source/serial
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-single-author-dual-source/serial \
+            --authors dual-source-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size 1 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --max-requests 120 \
+            --live-source
+
+      - name: Acquire JM and Pica concurrently for one author
+        shell: bash
+        run: |
+          mkdir -p reports/phase3b-single-author-dual-source/acquire
+          ./target/release/phase3b-dual-source-acquire \
+            --state monitor-state \
+            --output reports/phase3b-single-author-dual-source/acquire \
+            --authors dual-source-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --max-requests 120
+
+      - name: Replay concurrent acquisition through deterministic Phase3B writer
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          mkdir -p reports/phase3b-single-author-dual-source/replay
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-single-author-dual-source/replay \
+            --authors dual-source-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size 1 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --replay reports/phase3b-single-author-dual-source/acquire/observations.json
+
+      - name: Verify concurrency and serial-equivalent source evidence
+        shell: bash
+        run: |
+          root=reports/phase3b-single-author-dual-source
+          jq -e '.complete == true and .source_error_boundaries == 0 and .selected_authors == ["2-G"]' "$root/serial/scan-report.json"
+          jq -e '.complete == true and .source_error_boundaries == 0 and .selected_authors == ["2-G"]' "$root/replay/scan-report.json"
+          jq -e '.author == "2-G" and .jm_boundary == "COMPLETE" and .pica_boundary == "COMPLETE" and .overlap_observed == true and .requests > 0 and .durable_state_mutated == false and .inventory_mutation_authorized == false and .task_completion_authorized == false and .promotion_authorized == false and .replacement_authorized == false and .physical_delete_authorized == false and .production_enablement_authorized == false' "$root/acquire/acquisition-report.json"
+
+          jq -S '[.observations[] | {source, author, page:(.page.page // null), record_ids:([.page.records[]?.source_work_id] | sort), detail_ids:(.details | keys | sort), error}]' "$root/serial/observations.json" > /tmp/serial-observations.json
+          jq -S '[.observations[] | {source, author, page:(.page.page // null), record_ids:([.page.records[]?.source_work_id] | sort), detail_ids:(.details | keys | sort), error}]' "$root/acquire/observations.json" > /tmp/concurrent-observations.json
+          cmp /tmp/serial-observations.json /tmp/concurrent-observations.json
+
+          jq -S '.boundaries' "$root/serial/scan-report.json" > /tmp/serial-boundaries.json
+          jq -S '.boundaries' "$root/replay/scan-report.json" > /tmp/replay-boundaries.json
+          cmp /tmp/serial-boundaries.json /tmp/replay-boundaries.json
+
+          jq -S '{complete,catalog_records,pending,review,review_reasons,new_events,event_kinds,source_error_boundaries}' "$root/serial/scan-report.json" > /tmp/serial-summary.json
+          jq -S '{complete,catalog_records,pending,review,review_reasons,new_events,event_kinds,source_error_boundaries}' "$root/replay/scan-report.json" > /tmp/replay-summary.json
+          cmp /tmp/serial-summary.json /tmp/replay-summary.json
+
+          serial_ms="$(jq -r '.elapsed_ms' "$root/serial/scan-report.json")"
+          concurrent_ms="$(jq -r '.dual_source_wall_elapsed_ms' "$root/acquire/acquisition-report.json")"
+          jm_ms="$(jq -r '.jm_elapsed_ms' "$root/acquire/acquisition-report.json")"
+          pica_ms="$(jq -r '.pica_elapsed_ms' "$root/acquire/acquisition-report.json")"
+          printf 'SERIAL_WALL_MS=%s\nCONCURRENT_SOURCE_WALL_MS=%s\nJM_SOURCE_MS=%s\nPICA_SOURCE_MS=%s\n' "$serial_ms" "$concurrent_ms" "$jm_ms" "$pica_ms"
+
+      - name: Upload sanitized concurrency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3b-single-author-dual-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dual-source-author.json
+            reports/phase3b-single-author-dual-source/
+          retention-days: 30
+          if-no-files-found: warn

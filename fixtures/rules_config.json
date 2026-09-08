@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "rules_version": "2026-09-05-v1",
+  "scan": {
+    "monthly_incremental": true,
+    "consecutive_historical_id_stop_threshold": 5,
+    "threshold_is_configurable": true,
+    "periodic_full_rescan_months": 6,
+    "request_delay_seconds_min": 1,
+    "request_delay_seconds_max": 3,
+    "author_batch_soft_limit": 200
+  },
+  "priorities": [
+    "chinese",
+    "uncensored",
+    "color",
+    "human_translation_candidate_tiebreak_only",
+    "reliable_file_size",
+    "jm_final_tiebreak"
+  ],
+  "initial_cleanup_auto_delete": false,
+  "pending_unavailable_successful_checks_before_deactivate": 3
+}

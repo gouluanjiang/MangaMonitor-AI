@@ -1,0 +1,38 @@
+{
+  "boundaries": {
+    "jm|10驛": {
+      "boundary": "SOURCE_ERROR",
+      "historical_streak": 0,
+      "mode": "",
+      "next_page": 0,
+      "observed_ids": []
+    }
+  },
+  "business_state_unchanged": true,
+  "catalog_records": 215,
+  "complete": false,
+  "direct_source_failures": 0,
+  "elapsed_ms": 214,
+  "git_commit": null,
+  "github_run_id": null,
+  "image_requests": 0,
+  "inactive_records": 0,
+  "input_state_modified": false,
+  "new_events": 1,
+  "pending": 0,
+  "phase": "3A_ARTIFACT_ONLY",
+  "reanalyzed": 0,
+  "replay": true,
+  "requests": 0,
+  "requests_trace": {},
+  "review": 215,
+  "selected_authors": [
+    "10驛",
+    "2-G",
+    "3104",
+    "Bee導師",
+    "haruhisky"
+  ],
+  "source_error_boundaries": 1,
+  "unavailable_streak_nonzero": 0
+}

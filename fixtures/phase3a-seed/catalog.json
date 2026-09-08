@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "description": "Replaces pure seen.json. Stores source records and lightweight change fingerprints after scans.",
+  "records": []
+}

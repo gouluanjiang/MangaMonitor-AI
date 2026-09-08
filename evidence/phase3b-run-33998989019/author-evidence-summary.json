@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "run_id": "33998989019",
+  "total_records": 215,
+  "author_evidence_by_source": [
+    {
+      "key": "jm|DIRECT_EXACT",
+      "count": 95
+    },
+    {
+      "key": "jm|DIRECT_NORMALIZED",
+      "count": 16
+    },
+    {
+      "key": "jm|MULTIPLE_RAW_AUTHOR_FIELDS",
+      "count": 8
+    },
+    {
+      "key": "jm|NO_CONFIRMED_AUTHOR_EVIDENCE",
+      "count": 19
+    },
+    {
+      "key": "jm|PARENTHESIZED_OFFICIAL_TOKEN",
+      "count": 2
+    },
+    {
+      "key": "pica|DIRECT_EXACT",
+      "count": 6
+    },
+    {
+      "key": "pica|DIRECT_NORMALIZED",
+      "count": 1
+    },
+    {
+      "key": "pica|NO_CONFIRMED_AUTHOR_EVIDENCE",
+      "count": 1
+    },
+    {
+      "key": "pica|PARENTHESIZED_OFFICIAL_TOKEN",
+      "count": 67
+    }
+  ],
+  "review_reason_by_source": [
+    {
+      "key": "jm|UNCONFIRMED_AUTHOR",
+      "count": 27
+    },
+    {
+      "key": "jm|UNRESOLVED_TITLE_IDENTITY",
+      "count": 113
+    },
+    {
+      "key": "pica|LOW_INFORMATION_OR_COLLECTION_TITLE",
+      "count": 2
+    },
+    {
+      "key": "pica|UNCONFIRMED_AUTHOR",
+      "count": 1
+    },
+    {
+      "key": "pica|UNKNOWN_LOCAL_VERSION",
+      "count": 4
+    },
+    {
+      "key": "pica|UNRESOLVED_TITLE_IDENTITY",
+      "count": 68
+    }
+  ]
+}

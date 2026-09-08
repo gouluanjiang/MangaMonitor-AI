@@ -1,0 +1,30 @@
+{
+  "authors": [
+    {
+      "author_id": "AUTHOR_0001",
+      "enabled": true,
+      "name": "10驛"
+    },
+    {
+      "author_id": "AUTHOR_0002",
+      "enabled": true,
+      "name": "2-G"
+    },
+    {
+      "author_id": "AUTHOR_0003",
+      "enabled": true,
+      "name": "3104"
+    },
+    {
+      "author_id": "AUTHOR_0019",
+      "enabled": true,
+      "name": "Bee導師"
+    },
+    {
+      "author_id": "AUTHOR_0042",
+      "enabled": true,
+      "name": "haruhisky"
+    }
+  ],
+  "schema_version": 1
+}

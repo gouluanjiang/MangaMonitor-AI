@@ -1,0 +1,599 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded atomic-waker v1.1.2
+  Downloaded bitflags v2.13.1
+  Downloaded autocfg v1.5.1
+  Downloaded base64 v0.22.1
+  Downloaded aes v0.8.4
+  Downloaded icu_provider v2.3.1
+  Downloaded openssl-probe v0.2.1
+  Downloaded time-core v0.1.9
+  Downloaded block-buffer v0.10.4
+  Downloaded fnv v1.0.7
+  Downloaded form_urlencoded v1.2.2
+  Downloaded potential_utf v0.1.6
+  Downloaded slab v0.4.12
+  Downloaded rand_chacha v0.3.1
+  Downloaded time-macros v0.2.32
+  Downloaded tinystr v0.8.4
+  Downloaded hyper-tls v0.6.0
+  Downloaded equivalent v1.0.2
+  Downloaded document-features v0.2.12
+  Downloaded http-body v1.1.0
+  Downloaded idna_adapter v1.2.2
+  Downloaded crypto-common v0.1.7
+  Downloaded foreign-types v0.3.2
+  Downloaded futures-core v0.3.34
+  Downloaded futures-sink v0.3.34
+  Downloaded num-conv v0.2.2
+  Downloaded psl-types v2.0.11
+  Downloaded version_check v0.9.5
+  Downloaded tower-service v0.3.3
+  Downloaded powerfmt v0.2.0
+  Downloaded cfg-if v1.0.4
+  Downloaded inout v0.1.4
+  Downloaded md5 v0.7.0
+  Downloaded mime v0.3.17
+  Downloaded serde_urlencoded v0.7.1
+  Downloaded generic-array v0.14.7
+  Downloaded unicode-casefold v0.2.0
+  Downloaded untrusted v0.9.0
+  Downloaded tinyvec_macros v0.1.1
+  Downloaded sync_wrapper v1.0.2
+  Downloaded cpufeatures v0.2.17
+  Downloaded foreign-types-shared v0.1.1
+  Downloaded http-body-util v0.1.5
+  Downloaded itoa v1.0.18
+  Downloaded percent-encoding v2.3.2
+  Downloaded cipher v0.4.4
+  Downloaded deranged v0.5.8
+  Downloaded hyper-rustls v0.27.9
+  Downloaded pin-project-lite v0.2.17
+  Downloaded rand_core v0.6.4
+  Downloaded shlex v2.0.1
+  Downloaded smallvec v1.16.0
+  Downloaded displaydoc v0.2.7
+  Downloaded find-msvc-tools v0.1.12
+  Downloaded futures-task v0.3.34
+  Downloaded ipnet v2.12.1
+  Downloaded openssl-macros v0.1.1
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded zerofrom-derive v0.1.7
+  Downloaded want v0.3.1
+  Downloaded pkg-config v0.3.34
+  Downloaded digest v0.10.7
+  Downloaded litemap v0.8.3
+  Downloaded once_cell v1.21.4
+  Downloaded sha2 v0.10.9
+  Downloaded litrs v1.0.0
+  Downloaded quote v1.0.47
+  Downloaded ryu v1.0.23
+  Downloaded serde_core v1.0.229
+  Downloaded tokio-macros v2.7.2
+  Downloaded utf8_iter v1.0.4
+  Downloaded cookie v0.18.2
+  Downloaded cookie_store v0.22.1
+  Downloaded futures-channel v0.3.34
+  Downloaded getrandom v0.2.17
+  Downloaded hmac v0.12.1
+  Downloaded iana-time-zone v0.1.65
+  Downloaded log v0.4.34
+  Downloaded native-tls v0.2.18
+  Downloaded num-traits v0.2.19
+  Downloaded proc-macro2 v1.0.107
+  Downloaded serde_derive v1.0.229
+  Downloaded try-lock v0.2.5
+  Downloaded httparse v1.10.1
+  Downloaded rustls-pki-types v1.15.1
+  Downloaded bytes v1.12.1
+  Downloaded icu_locale_core v2.3.0
+  Downloaded icu_normalizer_data v2.3.0
+  Downloaded openssl-sys v0.9.117
+  Downloaded icu_collections v2.3.0
+  Downloaded publicsuffix v2.3.0
+  Downloaded serde v1.0.229
+  Downloaded zerofrom v0.1.8
+  Downloaded icu_properties v2.3.0
+  Downloaded indexmap v2.14.2
+  Downloaded mio v1.2.3
+  Downloaded rand v0.8.8
+  Downloaded rustls-webpki v0.103.15
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded tower-layer v0.3.3
+  Downloaded yoke-derive v0.8.2
+  Downloaded cc v1.4.5
+  Downloaded http v1.5.0
+  Downloaded hyper-util v0.1.20
+  Downloaded memchr v2.8.3
+  Downloaded subtle v2.6.1
+  Downloaded idna v1.1.0
+  Downloaded reqwest v0.12.28
+  Downloaded serde_json v1.0.151
+  Downloaded hashbrown v0.17.1
+  Downloaded writeable v0.6.4
+  Downloaded futures-util v0.3.34
+  Downloaded h2 v0.4.19
+  Downloaded hyper v1.11.1
+  Downloaded icu_properties_data v2.3.0
+  Downloaded zerovec-derive v0.11.6
+  Downloaded zmij v1.0.23
+  Downloaded chrono v0.4.45
+  Downloaded synstructure v0.13.2
+  Downloaded openssl v0.10.81
+  Downloaded syn v2.0.119
+  Downloaded rustls v0.23.43
+  Downloaded icu_normalizer v2.3.0
+  Downloaded zeroize v1.9.0
+  Downloaded tokio-rustls v0.26.5
+  Downloaded tokio-native-tls v0.3.1
+  Downloaded yoke v0.8.3
+  Downloaded libc v0.2.189
+  Downloaded encoding_rs v0.8.35
+  Downloaded ring v0.17.14
+  Downloaded tinyvec v1.13.2
+  Downloaded unicode-ident v1.0.24
+  Downloaded socket2 v0.6.5
+  Downloaded tracing-core v0.1.36
+  Downloaded url v2.5.8
+  Downloaded zerotrie v0.2.5
+  Downloaded tower v0.5.3
+  Downloaded typenum v1.20.1
+  Downloaded zerovec v0.11.8
+  Downloaded unicode-normalization v0.1.25
+  Downloaded tokio-util v0.7.19
+  Downloaded tower-http v0.6.11
+  Downloaded time v0.3.55
+  Downloaded vcpkg v0.2.15
+  Downloaded zerocopy v0.8.56
+  Downloaded syn v3.0.5
+  Downloaded tracing v0.1.44
+  Downloaded tokio v1.53.1
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling version_check v0.9.5
+   Compiling libc v0.2.189
+   Compiling syn v3.0.5
+   Compiling syn v2.0.119
+   Compiling cfg-if v1.0.4
+   Compiling itoa v1.0.18
+   Compiling synstructure v0.13.2
+   Compiling generic-array v0.14.7
+   Compiling zerofrom-derive v0.1.7
+   Compiling typenum v1.20.1
+   Compiling zerofrom v0.1.8
+   Compiling yoke-derive v0.8.2
+   Compiling stable_deref_trait v1.2.1
+   Compiling serde_core v1.0.229
+   Compiling yoke v0.8.3
+   Compiling zerovec-derive v0.11.6
+   Compiling serde v1.0.229
+   Compiling zerovec v0.11.8
+   Compiling crypto-common v0.1.7
+   Compiling serde_derive v1.0.229
+   Compiling displaydoc v0.2.7
+   Compiling zmij v1.0.23
+   Compiling pin-project-lite v0.2.17
+   Compiling serde_json v1.0.151
+   Compiling bytes v1.12.1
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling block-buffer v0.10.4
+   Compiling futures-core v0.3.34
+   Compiling subtle v2.6.1
+   Compiling memchr v2.8.3
+   Compiling digest v0.10.7
+   Compiling tinystr v0.8.4
+   Compiling smallvec v1.16.0
+   Compiling shlex v2.0.1
+   Compiling litemap v0.8.3
+   Compiling find-msvc-tools v0.1.12
+   Compiling writeable v0.6.4
+   Compiling cpufeatures v0.2.17
+   Compiling icu_locale_core v2.3.0
+   Compiling cc v1.4.5
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.3
+   Compiling tokio-macros v2.7.2
+   Compiling vcpkg v0.2.15
+   Compiling icu_properties_data v2.3.0
+   Compiling pkg-config v0.3.34
+   Compiling icu_normalizer_data v2.3.0
+   Compiling utf8_iter v1.0.4
+   Compiling iana-time-zone v0.1.65
+   Compiling chrono v0.4.45
+   Compiling openssl-sys v0.9.117
+   Compiling icu_collections v2.3.0
+   Compiling tokio v1.53.1
+   Compiling icu_provider v2.3.1
+   Compiling sha2 v0.10.9
+   Compiling percent-encoding v2.3.2
+   Compiling http v1.5.0
+   Compiling slab v0.4.12
+   Compiling icu_normalizer v2.3.0
+   Compiling icu_properties v2.3.0
+   Compiling state-model v0.1.0 (/home/runner/work/MangaMonitor/MangaMonitor/crates/state-model)
+   Compiling once_cell v1.21.4
+   Compiling tracing-core v0.1.36
+   Compiling idna_adapter v1.2.2
+   Compiling http-body v1.1.0
+   Compiling hashbrown v0.17.1
+   Compiling equivalent v1.0.2
+   Compiling futures-task v0.3.34
+   Compiling openssl v0.10.81
+   Compiling futures-sink v0.3.34
+   Compiling httparse v1.10.1
+   Compiling bitflags v2.13.1
+   Compiling foreign-types-shared v0.1.1
+   Compiling foreign-types v0.3.2
+   Compiling tokio-util v0.7.19
+   Compiling indexmap v2.14.2
+   Compiling futures-util v0.3.34
+   Compiling tracing v0.1.44
+   Compiling idna v1.1.0
+   Compiling form_urlencoded v1.2.2
+   Compiling openssl-macros v0.1.1
+   Compiling time-core v0.1.9
+   Compiling fnv v1.0.7
+   Compiling native-tls v0.2.18
+   Compiling try-lock v0.2.5
+   Compiling tower-service v0.3.3
+   Compiling zerocopy v0.8.56
+   Compiling num-conv v0.2.2
+   Compiling log v0.4.34
+   Compiling atomic-waker v1.1.2
+   Compiling h2 v0.4.19
+   Compiling time-macros v0.2.32
+   Compiling want v0.3.1
+   Compiling futures-channel v0.3.34
+   Compiling cookie v0.18.2
+   Compiling openssl-probe v0.2.1
+   Compiling powerfmt v0.2.0
+   Compiling deranged v0.5.8
+   Compiling time v0.3.55
+   Compiling hyper v1.11.1
+   Compiling url v2.5.8
+   Compiling sync_wrapper v1.0.2
+   Compiling getrandom v0.2.17
+   Compiling psl-types v2.0.11
+   Compiling tower-layer v0.3.3
+   Compiling ipnet v2.12.1
+   Compiling base64 v0.22.1
+   Compiling litrs v1.0.0
+   Compiling document-features v0.2.12
+   Compiling hyper-util v0.1.20
+   Compiling ppv-lite86 v0.2.21
+   Compiling tower v0.5.3
+   Compiling publicsuffix v2.3.0
+   Compiling rand_core v0.6.4
+   Compiling tokio-native-tls v0.3.1
+   Compiling http-body-util v0.1.5
+   Compiling zeroize v1.9.0
+   Compiling ryu v1.0.23
+   Compiling tinyvec_macros v0.1.1
+   Compiling tinyvec v1.13.2
+   Compiling serde_urlencoded v0.7.1
+   Compiling rustls-pki-types v1.15.1
+   Compiling hyper-tls v0.6.0
+   Compiling cookie_store v0.22.1
+   Compiling rand_chacha v0.3.1
+   Compiling tower-http v0.6.11
+   Compiling encoding_rs v0.8.35
+   Compiling mime v0.3.17
+   Compiling rand v0.8.8
+   Compiling reqwest v0.12.28
+   Compiling unicode-normalization v0.1.25
+   Compiling unicode-casefold v0.2.0
+   Compiling inout v0.1.4
+   Compiling cipher v0.4.4
+   Compiling rules-core v0.1.0 (/home/runner/work/MangaMonitor/MangaMonitor/crates/rules-core)
+   Compiling aes v0.8.4
+   Compiling hmac v0.12.1
+   Compiling md5 v0.7.0
+   Compiling jm-adapter v0.1.0 (/home/runner/work/MangaMonitor/MangaMonitor/crates/jm-adapter)
+   Compiling pica-adapter v0.1.0 (/home/runner/work/MangaMonitor/MangaMonitor/crates/pica-adapter)
+   Compiling cloud-monitor v0.1.0 (/home/runner/work/MangaMonitor/MangaMonitor/crates/cloud-monitor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 04s
+     Running unittests src/lib.rs (target/debug/deps/cloud_monitor-f4802602d9e3fe76)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/cloud_monitor-2bf5a56d31e8d4ab)
+
+running 2 tests
+test tests::missing_timestamps_do_not_verify_sort ... ok
+test tests::inversions_are_detected ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/matcher-m2.rs (target/debug/deps/matcher_m2-3481c66921151bb0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/phase3a.rs (target/debug/deps/phase3a-7a431be9ba3d1e32)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/phase3b.rs (target/debug/deps/phase3b-6955604e0a29bbc2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/matcher_m2.rs (target/debug/deps/matcher_m2-4dfec02b80e8b47d)
+
+running 20 tests
+test complete_pinned_scope_and_disjoint_installment_can_prove_new ... ok
+test changed_source_metadata_invalidates_cached_identity ... ok
+test duplicate_exact_candidates_are_review ... ok
+test human_same_and_same_site_ids_remain_authoritative ... ok
+test explicit_type_conflict_and_different_type_never_auto_bind ... ok
+test incomplete_scope_and_empty_scope_never_prove_new ... ok
+test multiple_authorities_and_disagreement_are_review ... ok
+test ignore_keeps_existing_pending_task_inactive ... ok
+test null_primary_cannot_hide_behind_an_exact_candidate ... ok
+test not_same_vetoes_automatic_and_conflicting_authority ... ok
+test repeated_replay_is_idempotent_and_decisions_reanalyze_without_network ... ok
+test same_author_different_title_is_not_new_proof ... ok
+test stale_scope_certificate_is_rejected ... ok
+test unique_existing_has_full_evidence_chain_and_keeps_unknown_version_review ... ok
+test unknown_fandom_can_hide_a_collision_and_prevents_binding ... ok
+test unknown_local_type_cannot_hide_a_collision ... ok
+test unknown_source_type_and_categories_do_not_default_to_manga ... ok
+test repair_is_auditable_idempotent_and_refuses_overwrite ... ok
+test unsupported_explicit_type_is_not_overridden_by_title_annotation ... ok
+test zero_spelling_range_and_extra_do_not_prove_new ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/matcher_m2_cli.rs (target/debug/deps/matcher_m2_cli-0a313c37236dbf18)
+
+running 2 tests
+test cli_rejects_source_flags_and_writes_into_seed ... ok
+test full_215_cli_replay_is_offline_idempotent_and_keeps_seed_unchanged ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
+     Running tests/phase3a.rs (target/debug/deps/phase3a-31719101bb0ec42a)
+
+running 31 tests
+test ambiguous_inventory_never_auto_matches ... ok
+test available_after_inactive_restores_pending_once ... ok
+test changed_decisions_apply_before_any_network_request ... ok
+test confirmed_author_evidence_is_normalized_without_changing_raw_fields ... ok
+test confirmed_ten_station_glyph_equivalence_is_closed_and_audited ... ok
+test conflicting_version_evidence_is_unknown ... ok
+test core_title_only_removes_confirmed_metadata_brackets ... ok
+test decisions_persist_and_override_missing_author ... ok
+test discovery_once_and_repeat_idempotent ... ok
+test distinct_content_types_do_not_auto_match ... ok
+test explicit_metadata_wrappers_allow_conservative_cross_source_match ... ok
+test explicit_untranslated_is_false_and_conflict_is_unknown ... ok
+test fingerprint_change_requires_reanalysis ... ok
+test checkpoint_and_eight_files_round_trip ... ok
+test full_ignores_threshold_and_six_month_recovery ... ok
+test jm_unavailable_claim_is_never_accepted_as_a_certificate ... ok
+test incremental_five_historical_boundary_does_not_remove_unseen ... ok
+test negative_mapping_prevents_automatic_merge ... ok
+test parenthesized_author_requires_one_unambiguous_official_token ... ok
+test newly_discovered_ids_do_not_become_historical_mid_scan ... ok
+test pending_upgrade_keeps_identity_and_increments_revision ... ok
+test repeated_page_without_progress_stops_as_partial ... ok
+test search_and_direct_errors_never_count_unavailable ... ok
+test seed_black_white_value_allows_explicit_color_upgrade ... ok
+test source_mapping_is_authoritative_without_title_author_inference ... ok
+test structure_is_preserved_and_unknown_coverage_never_authorizes_delete ... ok
+test success_resets_unavailable_streak ... ok
+test three_explicit_checks_not_three_retries_inactivate ... ok
+test unchanged_review_reason_does_not_notify_again_after_fingerprint_change ... ok
+test unknown_and_noisy_author_go_to_review ... ok
+test unknown_cannot_replace_known_candidate ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/phase3a_cli.rs (target/debug/deps/phase3a_cli-1c313d08699776b3)
+
+running 2 tests
+test five_author_cli_replay_is_idempotent_and_input_is_unchanged ... ok
+test cli_resume_keeps_start_snapshot_and_completes_remaining_pages ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/phase3b.rs (target/debug/deps/phase3b-b2f39424560c1e28)
+
+running 4 tests
+test phase3b_base_commit_mismatch_fails_before_state_load_or_requests ... ok
+test phase3b_soft_batch_monthly_and_commit_manifest_are_deterministic ... ok
+test phase3b_partial_source_failure_checkpoint_resumes_without_unavailable_inference ... ok
+test phase3b_soft_batches_keep_one_latest_event_window_for_the_cycle ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running unittests src/lib.rs (target/debug/deps/jm_adapter-9c34c6159d0523ff)
+
+running 2 tests
+test tests::corrupt_protocol_payload_is_an_error ... ok
+test tests::identity_is_namespaced_and_checked ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/pica_adapter-21743e79fe0aaca2)
+
+running 3 tests
+test tests::metadata_excludes_secrets_and_image_urls ... ok
+test tests::only_observed_not_found_envelope_certifies_unavailable ... ok
+test tests::signature_is_deterministic_and_path_sensitive ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/rules_core-db2a1ac8bf30c51f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/matcher_m1.rs (target/debug/deps/matcher_m1-c730edc6d16801c9)
+
+running 30 tests
+test after_story_main ... ok
+test bonus_main ... ok
+test bracket_extra ... ok
+test chapter ... ok
+test episode ... ok
+test episode_collection ... ok
+test extra_main ... ok
+test front_back ... ok
+test generic_brackets ... ok
+test inline_metadata ... ok
+test low_information_same_author ... ok
+test manga_artbook ... ok
+test manga_cg ... ok
+test manga_novel ... ok
+test manga_settings ... ok
+test missing_primary_and_unknown_types_never_become_false_or_exact ... ok
+test normalization_is_nfkc_casefold_only_and_metadata_is_audited ... ok
+test number_2_3 ... ok
+test number_3_4 ... ok
+test number_tokens_have_no_inferred_unit_or_coverage ... ok
+test part ... ok
+test range ... ok
+test real_samples_keep_hand_reviewed_identity_evidence ... ok
+test subtitle ... ok
+test unapproved_wrappers_and_glyphs_are_preserved ... ok
+test unknown_type ... ok
+test unsafe_glyph ... ok
+test upper_lower ... ok
+test volume ... ok
+test corpus_is_complete_and_fixtures_are_real_unmodified_source_titles ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/matcher_m2.rs (target/debug/deps/matcher_m2-656405e5abf0ab95)
+
+running 31 tests
+test after_story_boundary ... ok
+test back_closed_alias ... ok
+test bonus_boundary ... ok
+test chapter_english ... ok
+test all_m1_adversarial_cases_remain_nonmatches_in_m2 ... ok
+test collection_boundary ... ok
+test creator_pair_requires_confirmed_exact_author ... ok
+test closed_wrappers_have_traceable_spans ... ok
+test duplicate_fields_and_type_conflicts_fail_closed ... ok
+test episode_cjk ... ok
+test episode_english ... ok
+test extra_boundary ... ok
+test front_field ... ok
+test known_fandom_is_a_field_not_discarded_text ... ok
+test lower_bracket ... ok
+test malformed_and_bilingual_are_never_exact ... ok
+test nfkc_casefold_keep_provenance_and_leading_zero_distinction ... ok
+test no_global_glyph_or_fandom_aliases ... ok
+test omitted_and_explicit_structure_never_collapse ... ok
+test ordinary_body_characters_do_not_create_structure ... ok
+test part_bracket ... ok
+test range_has_explicit_unit_and_provenance ... ok
+test series_boundary ... ok
+test series_closed_attached ... ok
+test subtitle_preserved ... ok
+test typed_range_is_not_episode_or_collection ... ok
+test unknown_type_and_numeric_only_titles_are_review ... ok
+test upper_boundary ... ok
+test volume_boundary ... ok
+test volume_english ... ok
+test wrappers_are_never_substring_or_interior_permissions ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/phase2a.rs (target/debug/deps/phase2a-a68f8cd0400214c1)
+
+running 43 tests
+test cat_001 ... ok
+test cat_002 ... ok
+test cat_003 ... ok
+test cat_005 ... ok
+test cat_004 ... ok
+test cov_001 ... ok
+test cov_002 ... ok
+test cov_003 ... ok
+test cov_004 ... ok
+test cov_005 ... ok
+test cov_006 ... ok
+test cov_007 ... ok
+test del_001 ... ok
+test cov_008 ... ok
+test del_002 ... ok
+test del_003 ... ok
+test norm_001 ... ok
+test norm_002 ... ok
+test norm_003 ... ok
+test norm_004 ... ok
+test norm_005 ... ok
+test sel_001 ... ok
+test sel_003 ... ok
+test sel_002 ... ok
+test sel_005 ... ok
+test sel_006 ... ok
+test sel_004 ... ok
+test task_001 ... ok
+test task_002 ... ok
+test task_003 ... ok
+test two_unknown_higher_attributes_do_not_allow_color_upgrade ... ok
+test task_requires_target_content ... ok
+test unknown_collection_does_not_authorize_coverage_removal ... ok
+test up_001 ... ok
+test up_002 ... ok
+test up_003 ... ok
+test up_004 ... ok
+test up_005 ... ok
+test up_006 ... ok
+test up_008 ... ok
+test up_009 ... ok
+test up_010 ... ok
+test up_007 ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/state_model-0b66a41fef84d6da)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cloud_monitor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jm_adapter
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pica_adapter
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rules_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests state_model
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

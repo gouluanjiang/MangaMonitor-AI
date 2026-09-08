@@ -1,0 +1,53 @@
+[
+  {
+    "id": "TASK_001",
+    "description": "升级任务目标为中文无码；手动加入中文有码不能DONE",
+    "target": {
+      "revision": 1,
+      "chinese": true,
+      "uncensored": true,
+      "color": null
+    },
+    "local": {
+      "chinese": true,
+      "uncensored": false,
+      "color": false
+    },
+    "completion_revision": 1,
+    "expected": false
+  },
+  {
+    "id": "TASK_002",
+    "description": "目标中文无码；本地手动加入中文无码可DONE",
+    "target": {
+      "revision": 1,
+      "chinese": true,
+      "uncensored": true,
+      "color": null
+    },
+    "local": {
+      "chinese": true,
+      "uncensored": true,
+      "color": false
+    },
+    "completion_revision": 1,
+    "expected": true
+  },
+  {
+    "id": "TASK_003",
+    "description": "任务候选已升级到revision2，旧revision1完成记录不能覆盖新任务",
+    "target": {
+      "revision": 2,
+      "chinese": true,
+      "uncensored": true,
+      "color": true
+    },
+    "local": {
+      "chinese": true,
+      "uncensored": true,
+      "color": false
+    },
+    "completion_revision": 1,
+    "expected": false
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "NORM_001",
+    "a": "ＡＢＣ　Title",
+    "b": "abc title",
+    "expected_equal": true
+  },
+  {
+    "id": "NORM_002",
+    "a": "作品 Part 1",
+    "b": "作品 Part 2",
+    "expected_equal": false
+  },
+  {
+    "id": "NORM_003",
+    "a": "作品 前篇",
+    "b": "作品 後篇",
+    "expected_equal": false
+  },
+  {
+    "id": "NORM_004",
+    "a": "作品 1-5",
+    "b": "作品 1-4",
+    "expected_equal": false
+  },
+  {
+    "id": "NORM_005",
+    "a": "作品・タイトル",
+    "b": "作品 タイトル",
+    "expected_equal": true
+  }
+]

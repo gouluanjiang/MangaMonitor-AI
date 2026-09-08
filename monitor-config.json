@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "production_enabled": false,
+  "state_directory": "monitor-state",
+  "author_file": "monitor-state/authors.json",
+  "default_mode": "monthly",
+  "historical_id_threshold": 5,
+  "soft_batch_size": 5,
+  "max_requests_per_batch": 400,
+  "live_canary_size": 6,
+  "note": "Six-author JM+Pica live-source validation passed with Pica authentication and 376 physical requests. Production remains disabled. The production cycle now uses conservative five-author soft batches with an explicit 400-request budget; the live canary samples up to six enabled authors from the current registry rather than depending on the legacy five-author fixture."
+}

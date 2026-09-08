@@ -1,0 +1,102 @@
+name: Phase 3B JM+Pica live canary
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - assistant-download-thaw-guard-and-source-reliability
+
+concurrency:
+  group: phase3b-live-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      PICA_TOKEN: ${{ secrets.PICA_TOKEN }}
+      PICA_EMAIL: ${{ secrets.PICA_EMAIL }}
+      PICA_PASSWORD: ${{ secrets.PICA_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require usable Pica authentication
+        shell: bash
+        run: |
+          if [[ -z "${PICA_TOKEN:-}" && ( -z "${PICA_EMAIL:-}" || -z "${PICA_PASSWORD:-}" ) ]]; then
+            echo 'PICA_AUTH_REQUIRED_FOR_LIVE_CANARY' >&2
+            exit 78
+          fi
+
+      - name: Build current-registry canary author set
+        shell: bash
+        run: |
+          authors_file="$(jq -r '.author_file' monitor-config.json)"
+          configured_size="$(jq -r '.live_canary_size // 6' monitor-config.json)"
+          if ! [[ "$configured_size" =~ ^[0-9]+$ ]] || (( configured_size < 1 || configured_size > 200 )); then
+            echo 'INVALID_LIVE_CANARY_SIZE' >&2
+            exit 64
+          fi
+          enabled_count="$(jq '[.authors[] | select(.enabled != false)] | length' "$authors_file")"
+          if (( enabled_count < 1 )); then
+            echo 'EMPTY_LIVE_CANARY_AUTHOR_SET' >&2
+            exit 64
+          fi
+          if (( configured_size > enabled_count )); then
+            configured_size="$enabled_count"
+          fi
+          jq --argjson n "$configured_size" \
+            '{schema_version: (.schema_version // 1), authors: ([.authors[] | select(.enabled != false)] | .[0:$n])}' \
+            "$authors_file" > live-canary-authors.json
+          jq -e --argjson n "$configured_size" '.authors | length == $n' live-canary-authors.json
+          jq -r '.authors[] | [.author_id, .name] | @tsv' live-canary-authors.json
+          echo "CANARY_SIZE=$configured_size" >> "$GITHUB_ENV"
+
+      - name: Install pinned Rust and build Phase3B
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          cargo +1.98.1 test --workspace --locked
+          cargo +1.98.1 build -p cloud-monitor --bin phase3b --release --locked
+
+      - name: Run registry-driven JM+Pica live canary
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          max_requests="$(jq -r '.max_requests_per_batch // 400' monitor-config.json)"
+          mkdir -p reports/phase3b-live-canary
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-live-canary \
+            --authors live-canary-authors.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size "$CANARY_SIZE" \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --max-requests "$max_requests" \
+            --live-source
+
+      - name: Verify complete dual-source coverage
+        shell: bash
+        run: |
+          jq -e '.complete == true and .source_error_boundaries == 0' reports/phase3b-live-canary/scan-report.json
+          jq -e --argjson n "$CANARY_SIZE" '.selected_authors | length == $n' reports/phase3b-live-canary/scan-report.json
+          while IFS= read -r author; do
+            jq -e --arg author "$author" '[.observations[] | select(.author == $author and .source == "jm" and .page != null)] | length > 0' reports/phase3b-live-canary/observations.json
+            jq -e --arg author "$author" '[.observations[] | select(.author == $author and .source == "pica" and .page != null)] | length > 0' reports/phase3b-live-canary/observations.json
+          done < <(jq -r '.authors[].name' live-canary-authors.json)
+
+      - name: Upload sanitized live-canary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3b-live-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            live-canary-authors.json
+            reports/phase3b-live-canary/
+          retention-days: 30
+          if-no-files-found: warn

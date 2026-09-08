@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "requests": 228,
+  "elapsed_ms": 490859,
+  "jm_requests": 145,
+  "pica_requests": 83,
+  "delay_ms": {
+    "min": 1018.0,
+    "max": 2979.0,
+    "average": 2014.0
+  },
+  "boundaries": [
+    {
+      "key": "jm|10驛",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 15
+    },
+    {
+      "key": "jm|2-G",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 9
+    },
+    {
+      "key": "jm|3104",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 23
+    },
+    {
+      "key": "jm|Bee導師",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 17
+    },
+    {
+      "key": "jm|haruhisky",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 76
+    },
+    {
+      "key": "pica|10驛",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 0
+    },
+    {
+      "key": "pica|2-G",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 9
+    },
+    {
+      "key": "pica|3104",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 3,
+      "observed_ids": 22
+    },
+    {
+      "key": "pica|Bee導師",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 2,
+      "observed_ids": 8
+    },
+    {
+      "key": "pica|haruhisky",
+      "boundary": "COMPLETE",
+      "mode": "full",
+      "next_page": 3,
+      "observed_ids": 36
+    }
+  ],
+  "image_requests": 0
+}

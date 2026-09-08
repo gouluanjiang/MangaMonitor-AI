@@ -1,0 +1,41 @@
+{
+  "tested_commit": "c20109e342999290a49dbe1cea6b06134e813b4a",
+  "actions_run_id": 34011408700,
+  "windows_tests": 170,
+  "linux_tests": 170,
+  "new_m2_tests": 53,
+  "cross_platform_before_after_sha256": "7aa6498b734abe49867367b96c89f03f93248d3e0eb0e2c28b87ba08887192b4",
+  "byte_identical_before_after": true,
+  "m1_group_transitions": [
+    {
+      "m1_group": "IDENTITY_SENSITIVE_OR_LOW_INFORMATION",
+      "after": "REVIEW_REQUIRED",
+      "count": 9
+    },
+    {
+      "m1_group": "LOCAL_PRIMARY_LITERAL_WITH_RESIDUAL",
+      "after": "REVIEW_REQUIRED",
+      "count": 21
+    },
+    {
+      "m1_group": "LOCAL_REPRESENTATION_DIFFERENCE",
+      "after": "REVIEW_REQUIRED",
+      "count": 10
+    },
+    {
+      "m1_group": "MALFORMED_BRACKETS",
+      "after": "REVIEW_REQUIRED",
+      "count": 5
+    },
+    {
+      "m1_group": "NO_LITERAL_LOCAL_PRIMARY_WITNESS",
+      "after": "REVIEW_REQUIRED",
+      "count": 119
+    },
+    {
+      "m1_group": "NULL_LOCAL_PRIMARY",
+      "after": "REVIEW_REQUIRED",
+      "count": 17
+    }
+  ]
+}

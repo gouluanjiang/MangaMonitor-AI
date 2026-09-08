@@ -1,0 +1,37 @@
+name: Matcher M2 offline validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - name: Complete workspace regression suite
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          cargo +1.98.1 test --workspace --locked 2>&1 | tee reports/matcher-m2-linux-tests.log
+          cargo +1.98.1 build --locked -p cloud-monitor --bin matcher-m2
+      - name: Replay captured details twice with disabled network proxies
+        env:
+          HTTP_PROXY: http://127.0.0.1:1
+          HTTPS_PROXY: http://127.0.0.1:1
+          ALL_PROXY: http://127.0.0.1:1
+        run: |
+          test "$(jq -r '.production_enabled' monitor-config.json)" = false
+          ./target/debug/matcher-m2 --state monitor-state --export evidence/phase3b-run-33998989019/review-export.json --observations fixtures/matcher-m2/phase3b-observations.json --repair fixtures/matcher-m2/inventory-primary-repair.json --output reports/m2-first
+          ./target/debug/matcher-m2 --state monitor-state --export evidence/phase3b-run-33998989019/review-export.json --observations fixtures/matcher-m2/phase3b-observations.json --repair fixtures/matcher-m2/inventory-primary-repair.json --resume reports/m2-first --output reports/m2-second
+          jq -e '.count == 215 and .business_state_unchanged == true and .reanalyzed == 0 and .new_events == 0 and .source_requests == 0 and .image_requests == 0' reports/m2-second/summary.json
+          cmp reports/m2-first/checkpoint.json reports/m2-second/checkpoint.json
+          git diff --exit-code -- monitor-state monitor-config.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matcher-m2-evidence-${{ github.run_id }}
+          path: reports/
+          retention-days: 30

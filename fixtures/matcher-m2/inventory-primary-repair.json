@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "analysis_inventory_hash_before": "d9b034ae3e9c9a814a72589b157df9c37ef989761723fabc13012b29c05b2d23",
+  "analysis_inventory_hash_after": "00cb47d2cb9c302cbf4406523bf7097300138854cf6c727f0b7b6482f103b005",
+  "provenance": {
+    "source": "official 2833 inventory.json",
+    "source_sha256": "c7c869ccb3c43dbc38659f5bf115098cb63735883a935f9ad23fd01cf6ca61fe",
+    "local_item_id": "LOCAL_ITEM_2705",
+    "work_id": "WORK_02657",
+    "line_number": 2705
+  },
+  "source_item": {
+    "local_item_id": "LOCAL_ITEM_2705",
+    "line_number": 2705,
+    "owned": true,
+    "filename_raw": "竿役募集してる推しの爆乳エロ配信者が妹になりました (オリジナル).zip",
+    "filename_normalized": "竿役募集してる推しの爆乳エロ配信者が妹になりました (オリジナル).zip",
+    "authors_confirmed": [
+      "2-G"
+    ],
+    "title": {
+      "raw_after_creator": null,
+      "primary": null,
+      "normalized_key": null,
+      "fandom_or_source": null,
+      "parse_evidence": "NO_SAFE_CREATOR_ANCHOR"
+    },
+    "language": {
+      "chinese": "unknown",
+      "evidence": "INSUFFICIENT_EVIDENCE"
+    },
+    "version": {
+      "censorship": "unknown",
+      "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+      "color": "unknown",
+      "color_evidence": "NO_COLOR_EVIDENCE",
+      "translation_type": "unknown",
+      "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+      "sample_or_preview": false,
+      "sample_evidence": "NO_SAMPLE_TAG",
+      "ignored_quality_source_flags": [
+        "PACKAGING"
+      ]
+    },
+    "content": {
+      "type": "manga",
+      "collection": false,
+      "complete_edition": false,
+      "coverage_ranges": [],
+      "explicit_member_numbers": [],
+      "part_markers": [],
+      "complete_count": null,
+      "extra_content": []
+    },
+    "source_mappings": {
+      "jm": [],
+      "pica": []
+    },
+    "work_id": "WORK_02657"
+  },
+  "expected_before": [
+    {
+      "primary": null,
+      "normalized_key": null,
+      "fandom_or_source": null
+    }
+  ],
+  "expected_primary": "竿役募集してる推しの爆乳エロ配信者が妹になりました",
+  "expected_fandom": "オリジナル"
+}

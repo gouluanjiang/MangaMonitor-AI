@@ -1,0 +1,106 @@
+{
+  "after": {
+    "AUTHORITATIVE_EXISTING": 0,
+    "AUTO_EXISTING": 0,
+    "IGNORED": 0,
+    "PROVEN_NEW": 0,
+    "REVIEW_REQUIRED": 215
+  },
+  "automatic_or_authoritative_rules": {},
+  "before": {
+    "LOW_INFORMATION_OR_COLLECTION_TITLE": 2,
+    "UNCONFIRMED_AUTHOR": 28,
+    "UNKNOWN_LOCAL_VERSION": 4,
+    "UNRESOLVED_TITLE_IDENTITY": 181
+  },
+  "business_state_unchanged": false,
+  "count": 215,
+  "deletion_authorized": false,
+  "downloads": 0,
+  "export_sha256": "148bd714a8cf7a7940b197cfa8019fa1b41324759eb079d30b9361734b608370",
+  "image_requests": 0,
+  "inventory_repair": {
+    "after": [
+      {
+        "fandom_or_source": "オリジナル",
+        "normalized_key": null,
+        "primary": "竿役募集してる推しの爆乳エロ配信者が妹になりました"
+      }
+    ],
+    "before": [
+      {
+        "fandom_or_source": null,
+        "normalized_key": null,
+        "primary": null
+      }
+    ],
+    "local_item_id": "LOCAL_ITEM_2705",
+    "parse": {
+      "core": "竿役募集してる推しの爆乳エロ配信者が妹になりました",
+      "evidence": [
+        {
+          "field": "content_type",
+          "reference": "input.content_type",
+          "rule": "EXPLICIT_INPUT_FIELD",
+          "span": null,
+          "text": "manga"
+        },
+        {
+          "field": "fandom",
+          "reference": "phase3b:review-export",
+          "rule": "TRAILING_CLOSED_FANDOM",
+          "span": [
+            76,
+            93
+          ],
+          "text": "(オリジナル)"
+        }
+      ],
+      "fields": {
+        "chapter": null,
+        "collection": null,
+        "content_type": "manga",
+        "episode": null,
+        "extra": null,
+        "fandom": "オリジナル",
+        "front_back": null,
+        "part": null,
+        "series_number": null,
+        "subtitle": null,
+        "upper_lower": null,
+        "volume": null
+      },
+      "issues": [],
+      "normalized": "竿役募集してる推しの爆乳エロ配信者が妹になりました (オリジナル)",
+      "raw": "竿役募集してる推しの爆乳エロ配信者が妹になりました (オリジナル)",
+      "rule_version": "matcher-m2-v1"
+    },
+    "provenance": {
+      "line_number": 2705,
+      "local_item_id": "LOCAL_ITEM_2705",
+      "source": "official 2833 inventory.json",
+      "source_sha256": "c7c869ccb3c43dbc38659f5bf115098cb63735883a935f9ad23fd01cf6ca61fe",
+      "work_id": "WORK_02657"
+    },
+    "rule": "OFFICIAL_AUTHOR_ANCHORED_BASENAME_ZIP_SUFFIX_AND_CLOSED_FANDOM",
+    "work_id": "WORK_02657"
+  },
+  "new_events": 215,
+  "observations_sha256": "ce9d43ee711cc456ed1069cac78da9267d85122d858a7b117e2395ae60f83224",
+  "production_enabled": false,
+  "reanalyzed": 215,
+  "replay_scope": "Captured detail records from full Phase3B observations; identity/downstream state replay, not pagination rescan",
+  "review_reasons": {
+    "BILINGUAL_UNRESOLVED": 3,
+    "LOW_INFORMATION_TITLE": 2,
+    "MALFORMED_BRACKETS": 5,
+    "NO_DETERMINISTIC_IDENTITY_OR_NEW_WORK_PROOF": 2,
+    "TITLE_WITNESS_UNKNOWN_SOURCE_CONTENT_TYPE": 13,
+    "UNCONFIRMED_AUTHOR": 28,
+    "UNINTERPRETED_ANNOTATION": 48,
+    "UNKNOWN_SOURCE_CONTENT_TYPE_NO_IDENTITY_PROOF": 107,
+    "UNPARSED_IDENTITY_MARKER": 7
+  },
+  "rule_version": "matcher-m2-v1",
+  "source_requests": 0
+}

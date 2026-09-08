@@ -1,0 +1,192 @@
+[
+  {
+    "id": "UP_001",
+    "description": "明确未汉化 -> 明确中文",
+    "local": {
+      "chinese": false,
+      "uncensored": false,
+      "color": false,
+      "translation": "unknown",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": false,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "expected": "UPGRADE"
+  },
+  {
+    "id": "UP_002",
+    "description": "本地中文状态UNKNOWN，候选中文，不能自动认定升级",
+    "local": {
+      "chinese": null,
+      "uncensored": false,
+      "color": false,
+      "translation": "unknown",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": false,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "expected": "REVIEW_UNKNOWN"
+  },
+  {
+    "id": "UP_003",
+    "description": "中文有码 -> 中文无码",
+    "local": {
+      "chinese": true,
+      "uncensored": false,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": true,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "expected": "UPGRADE"
+  },
+  {
+    "id": "UP_004",
+    "description": "本地无码状态UNKNOWN，候选无码，不能自动升级",
+    "local": {
+      "chinese": true,
+      "uncensored": null,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": true,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "expected": "REVIEW_UNKNOWN"
+  },
+  {
+    "id": "UP_005",
+    "description": "中文无码黑白不能被中文有码全彩替换",
+    "local": {
+      "chinese": true,
+      "uncensored": true,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": false,
+      "color": true,
+      "translation": "human",
+      "sample": false
+    },
+    "expected": "NO_UPGRADE"
+  },
+  {
+    "id": "UP_006",
+    "description": "中文黑白 -> 中文全彩，且不损失更高属性",
+    "local": {
+      "chinese": true,
+      "uncensored": true,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": true,
+      "color": true,
+      "translation": "ai",
+      "sample": false
+    },
+    "expected": "UPGRADE"
+  },
+  {
+    "id": "UP_007",
+    "description": "AI中文 -> 人工中文本身不强制升级",
+    "local": {
+      "chinese": true,
+      "uncensored": true,
+      "color": true,
+      "translation": "ai",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": true,
+      "color": true,
+      "translation": "human",
+      "sample": false
+    },
+    "expected": "NO_UPGRADE"
+  },
+  {
+    "id": "UP_008",
+    "description": "未汉化有码 -> 未汉化无码不自动升级",
+    "local": {
+      "chinese": false,
+      "uncensored": false,
+      "color": false,
+      "translation": "unknown",
+      "sample": false
+    },
+    "candidate": {
+      "chinese": false,
+      "uncensored": true,
+      "color": false,
+      "translation": "unknown",
+      "sample": false
+    },
+    "expected": "NO_UPGRADE"
+  },
+  {
+    "id": "UP_009",
+    "description": "中文试看 -> 同级中文完整版",
+    "local": {
+      "chinese": true,
+      "uncensored": false,
+      "color": false,
+      "translation": "human",
+      "sample": true
+    },
+    "candidate": {
+      "chinese": true,
+      "uncensored": false,
+      "color": false,
+      "translation": "human",
+      "sample": false
+    },
+    "expected": "UPGRADE"
+  },
+  {
+    "id": "UP_010",
+    "description": "中文试看 vs 未汉化完整版：获取完整版但不能删除中文试看",
+    "local": {
+      "chinese": true,
+      "uncensored": false,
+      "color": false,
+      "translation": "human",
+      "sample": true
+    },
+    "candidate": {
+      "chinese": false,
+      "uncensored": false,
+      "color": false,
+      "translation": "unknown",
+      "sample": false
+    },
+    "expected": "ADD_CONTENT_KEEP_OLD"
+  }
+]

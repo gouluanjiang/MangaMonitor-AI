@@ -1,0 +1,806 @@
+{
+  "schema_version": 8,
+  "rules_version": "2026-09-05-v1",
+  "total_work_ids": 15,
+  "works": [
+    {
+      "work_id": "WORK_00001",
+      "local_item_ids": [
+        "LOCAL_ITEM_0001"
+      ],
+      "authors_confirmed": [
+        "haruhisky"
+      ],
+      "title_candidates": [
+        {
+          "primary": "セイバーさん ヤリモクナンパ待ち プール编",
+          "normalized_key": "セイバーさんヤリモクナンパ待ちプール编",
+          "fandom_or_source": "Fate stay night"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_0001",
+          "language": {
+            "chinese": "confirmed",
+            "evidence": "EXPLICIT_CHINESE_OR_TRANSLATION_TAG"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unspecified_chinese",
+            "translation_type_evidence": "CHINESE_CONFIRMED_METHOD_UNKNOWN",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "DL_VERSION",
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_00068",
+      "local_item_ids": [
+        "LOCAL_ITEM_0069"
+      ],
+      "authors_confirmed": [
+        "haruhisky"
+      ],
+      "title_candidates": [
+        {
+          "primary": "ゴブリンたちの雌になるまで ランサーアルトリア編",
+          "normalized_key": "ゴブリンたちの雌になるまでランサーアルトリア編",
+          "fandom_or_source": "Fate grand order"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_0069",
+          "language": {
+            "chinese": "confirmed",
+            "evidence": "EXPLICIT_CHINESE_OR_TRANSLATION_TAG"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unspecified_chinese",
+            "translation_type_evidence": "CHINESE_CONFIRMED_METHOD_UNKNOWN",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_00097",
+      "local_item_ids": [
+        "LOCAL_ITEM_0098"
+      ],
+      "authors_confirmed": [
+        "3104"
+      ],
+      "title_candidates": [
+        {
+          "primary": "悲しみが嫌いだったら",
+          "normalized_key": "悲しみが嫌いだったら",
+          "fandom_or_source": null
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_0098",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_00098",
+      "local_item_ids": [
+        "LOCAL_ITEM_0099"
+      ],
+      "authors_confirmed": [
+        "3104"
+      ],
+      "title_candidates": [
+        {
+          "primary": "HEROINE",
+          "normalized_key": "heroine",
+          "fandom_or_source": "アズールレーン"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_0099",
+          "language": {
+            "chinese": "confirmed",
+            "evidence": "EXPLICIT_CHINESE_OR_TRANSLATION_TAG"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unspecified_chinese",
+            "translation_type_evidence": "CHINESE_CONFIRMED_METHOD_UNKNOWN",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "DL_VERSION",
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_00799",
+      "local_item_ids": [
+        "LOCAL_ITEM_0815"
+      ],
+      "authors_confirmed": [
+        "haruhisky"
+      ],
+      "title_candidates": [
+        {
+          "primary": "アオハルトラレ",
+          "normalized_key": "アオハルトラレ",
+          "fandom_or_source": null
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_0815",
+          "language": {
+            "chinese": "confirmed",
+            "evidence": "EXPLICIT_CHINESE_OR_TRANSLATION_TAG"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "human_or_group",
+            "translation_type_evidence": "EXPLICIT_HUMAN_OR_GROUP_TRANSLATION_TAG",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_01166",
+      "local_item_ids": [
+        "LOCAL_ITEM_1191"
+      ],
+      "authors_confirmed": [
+        "10驛"
+      ],
+      "title_candidates": [
+        {
+          "primary": "狂犬と、深夜散步",
+          "normalized_key": "狂犬と、深夜散步",
+          "fandom_or_source": "ブルーアーカイブ"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_1191",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_01167",
+      "local_item_ids": [
+        "LOCAL_ITEM_1192"
+      ],
+      "authors_confirmed": [
+        "10驛"
+      ],
+      "title_candidates": [
+        {
+          "primary": "前哨基地の活動報告",
+          "normalized_key": "前哨基地の活動報告",
+          "fandom_or_source": "勝利の女神:NIKKE"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_1192",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_01168",
+      "local_item_ids": [
+        "LOCAL_ITEM_1193"
+      ],
+      "authors_confirmed": [
+        "10驛"
+      ],
+      "title_candidates": [
+        {
+          "primary": "仙醉酒 (原神)",
+          "normalized_key": "仙醉酒原神",
+          "fandom_or_source": null
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_1193",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_01169",
+      "local_item_ids": [
+        "LOCAL_ITEM_1194"
+      ],
+      "authors_confirmed": [
+        "10驛"
+      ],
+      "title_candidates": [
+        {
+          "primary": "リナが酷い目に遭う話",
+          "normalized_key": "リナが酷い目に遭う話",
+          "fandom_or_source": "ゼンレスゾーンゼロ"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_1194",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_01172",
+      "local_item_ids": [
+        "LOCAL_ITEM_1197"
+      ],
+      "authors_confirmed": [
+        "Bee導師"
+      ],
+      "title_candidates": [
+        {
+          "primary": "配達バニーガール 2",
+          "normalized_key": "配達バニーガール2",
+          "fandom_or_source": null
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_1197",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_01173",
+      "local_item_ids": [
+        "LOCAL_ITEM_1198"
+      ],
+      "authors_confirmed": [
+        "Bee導師"
+      ],
+      "title_candidates": [
+        {
+          "primary": "配達バニーガールとサービスえっち 3 丨 外卖兔女郎的杀必死涩涩3",
+          "normalized_key": "配達バニーガールとサービスえっち3丨外卖兔女郎的杀必死涩涩3",
+          "fandom_or_source": null
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_1198",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_01175",
+      "local_item_ids": [
+        "LOCAL_ITEM_1200"
+      ],
+      "authors_confirmed": [
+        "Bee導師"
+      ],
+      "title_candidates": [
+        {
+          "primary": "配達バニーガールとサービスえっち2",
+          "normalized_key": "配達バニーガールとサービスえっち2",
+          "fandom_or_source": "オリジナル"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_1200",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_02582",
+      "local_item_ids": [
+        "LOCAL_ITEM_2628"
+      ],
+      "authors_confirmed": [
+        "haruhisky"
+      ],
+      "title_candidates": [
+        {
+          "primary": "バニー獅子王が騙されてHなお仕事をしちゃう本",
+          "normalized_key": "バニー獅子王が騙されてhなお仕事をしちゃう本",
+          "fandom_or_source": "Fate Grand Order"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_2628",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_02583",
+      "local_item_ids": [
+        "LOCAL_ITEM_2629"
+      ],
+      "authors_confirmed": [
+        "haruhisky"
+      ],
+      "title_candidates": [
+        {
+          "primary": "[路人漢化] [Digital] セイバーさん ヤリモクナンパ待ち 温泉編",
+          "normalized_key": "路人漢化digitalセイバーさんヤリモクナンパ待ち温泉編",
+          "fandom_or_source": "Fate-stay night"
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_2629",
+          "language": {
+            "chinese": "confirmed",
+            "evidence": "EXPLICIT_CHINESE_OR_TRANSLATION_TAG"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unspecified_chinese",
+            "translation_type_evidence": "CHINESE_CONFIRMED_METHOD_UNKNOWN",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "DL_VERSION",
+              "DIGITAL",
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    },
+    {
+      "work_id": "WORK_02657",
+      "local_item_ids": [
+        "LOCAL_ITEM_2705"
+      ],
+      "authors_confirmed": [
+        "2-G"
+      ],
+      "title_candidates": [
+        {
+          "primary": null,
+          "normalized_key": null,
+          "fandom_or_source": null
+        }
+      ],
+      "owned": true,
+      "versions": [
+        {
+          "local_item_id": "LOCAL_ITEM_2705",
+          "language": {
+            "chinese": "unknown",
+            "evidence": "INSUFFICIENT_EVIDENCE"
+          },
+          "version": {
+            "censorship": "unknown",
+            "censorship_evidence": "NO_CENSORSHIP_EVIDENCE",
+            "color": "unknown",
+            "color_evidence": "NO_COLOR_EVIDENCE",
+            "translation_type": "unknown",
+            "translation_type_evidence": "NO_TRANSLATION_METHOD_EVIDENCE",
+            "sample_or_preview": false,
+            "sample_evidence": "NO_SAMPLE_TAG",
+            "ignored_quality_source_flags": [
+              "PACKAGING"
+            ]
+          },
+          "content": {
+            "type": "manga",
+            "collection": false,
+            "complete_edition": false,
+            "coverage_ranges": [],
+            "explicit_member_numbers": [],
+            "part_markers": [],
+            "complete_count": null,
+            "extra_content": []
+          }
+        }
+      ],
+      "source_mappings": {
+        "jm": [],
+        "pica": []
+      }
+    }
+  ]
+}

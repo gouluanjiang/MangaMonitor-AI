@@ -1,0 +1,12 @@
+{
+  "observations": [
+    {
+      "source": "jm",
+      "author": "10驛",
+      "page": null,
+      "details": {},
+      "error": "SIMULATED_SOURCE_FAILURE"
+    }
+  ],
+  "direct_checks": []
+}

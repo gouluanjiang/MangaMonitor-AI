@@ -1,0 +1,303 @@
+name: Phase3B three-author dual-source concurrency validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - assistant-phase3b-three-author-dual-source-concurrency
+      - assistant-phase3b-runner-three-author-concurrency
+    paths:
+      - 'crates/cloud-monitor/src/runner.rs'
+      - 'crates/cloud-monitor/src/bin/phase3b-three-author-dual-source-acquire.rs'
+      - 'crates/jm-adapter/src/**'
+      - 'crates/pica-adapter/src/**'
+      - 'monitor-config.json'
+      - 'monitor-state/authors.json'
+      - '.github/workflows/phase3b-three-author-dual-source.yml'
+
+concurrency:
+  group: phase3b-three-author-dual-source-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    env:
+      PICA_TOKEN: ${{ secrets.PICA_TOKEN }}
+      PICA_EMAIL: ${{ secrets.PICA_EMAIL }}
+      PICA_PASSWORD: ${{ secrets.PICA_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require usable Pica authentication
+        shell: bash
+        run: |
+          if [[ -z "${PICA_TOKEN:-}" && ( -z "${PICA_EMAIL:-}" || -z "${PICA_PASSWORD:-}" ) ]]; then
+            echo 'PICA_AUTH_REQUIRED_FOR_THREE_AUTHOR_VALIDATION' >&2
+            exit 78
+          fi
+
+      - name: Build three confirmed dual-source author fixture
+        shell: bash
+        run: |
+          jq '{schema_version: (.schema_version // 1), authors: [.authors[] | select(.enabled != false and (.name == "2-G" or .name == "3104" or .name == "haruhisky"))]}' \
+            monitor-state/authors.json > three-author.json
+          jq -e '.authors | length == 3' three-author.json
+          jq -e '[.authors[].name] == ["2-G","3104","haruhisky"]' three-author.json
+          jq -r '.authors[] | [.author_id, .name] | @tsv' three-author.json
+
+      - name: Install pinned Rust and test runner concurrency guards
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          cargo +1.98.1 test --locked -p cloud-monitor --lib runner::tests::
+          cargo +1.98.1 test --locked -p cloud-monitor --bin phase3b-three-author-dual-source-acquire
+          cargo +1.98.1 build --release --locked -p cloud-monitor --bin phase3b --bin phase3b-three-author-dual-source-acquire
+
+      - name: Run serial Phase3B baseline for the same three authors
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          mkdir -p reports/phase3b-three-author-dual-source/serial
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-three-author-dual-source/serial \
+            --authors three-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size 3 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --max-requests 400 \
+            --live-source
+
+      - name: Run formal Phase3B runner with three-author dual-source concurrency
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          mkdir -p reports/phase3b-three-author-dual-source/round1
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-three-author-dual-source/round1 \
+            --authors three-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size 3 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --max-requests 400 \
+            --author-concurrency 3 \
+            --live-source
+
+      - name: Replay formal-runner observations through deterministic Phase3B writer
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          mkdir -p reports/phase3b-three-author-dual-source/replay
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-three-author-dual-source/replay \
+            --authors three-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size 3 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --replay reports/phase3b-three-author-dual-source/round1/observations.json
+
+      - name: Verify formal runner equivalence and safety contract
+        shell: bash
+        run: |
+          root=reports/phase3b-three-author-dual-source
+          expected='["2-G","3104","haruhisky"]'
+          jq -e --argjson expected "$expected" '.complete == true and .coverage_complete == true and .strategy_complete == true and .source_error_boundaries == 0 and .selected_authors == $expected and .author_concurrency == 1 and .source_concurrency == 1 and .durable_writer_serialized == true' "$root/serial/scan-report.json"
+          jq -e --argjson expected "$expected" '.complete == true and .coverage_complete == true and .strategy_complete == true and .source_error_boundaries == 0 and .selected_authors == $expected and .author_concurrency == 3 and .source_concurrency == 2 and .durable_writer_serialized == true and .input_state_modified == false' "$root/round1/scan-report.json"
+          jq -e --argjson expected "$expected" '.complete == true and .coverage_complete == true and .strategy_complete == true and .source_error_boundaries == 0 and .selected_authors == $expected and .replay == true and .author_concurrency == 1 and .durable_writer_serialized == true' "$root/replay/scan-report.json"
+
+          jq -S '[.observations[] | {source, author, page:(.page.page // null), record_ids:([.page.records[]?.source_work_id] | sort), error}]' "$root/serial/observations.json" > /tmp/serial-search-evidence.json
+          jq -S '[.observations[] | {source, author, page:(.page.page // null), record_ids:([.page.records[]?.source_work_id] | sort), error}]' "$root/round1/observations.json" > /tmp/round1-search-evidence.json
+          cmp /tmp/serial-search-evidence.json /tmp/round1-search-evidence.json
+
+          jq -S '.boundaries' "$root/serial/scan-report.json" > /tmp/serial-boundaries.json
+          jq -S '.boundaries' "$root/replay/scan-report.json" > /tmp/replay-boundaries.json
+          cmp /tmp/serial-boundaries.json /tmp/replay-boundaries.json
+
+          jq -S '{complete,coverage_complete,strategy_complete,catalog_records,pending,review,review_reasons,new_events,event_kinds,source_error_boundaries}' "$root/serial/scan-report.json" > /tmp/serial-summary.json
+          jq -S '{complete,coverage_complete,strategy_complete,catalog_records,pending,review,review_reasons,new_events,event_kinds,source_error_boundaries}' "$root/replay/scan-report.json" > /tmp/replay-summary.json
+          jq -S '{complete,coverage_complete,strategy_complete,catalog_records,pending,review,review_reasons,new_events,event_kinds,source_error_boundaries}' "$root/round1/scan-report.json" > /tmp/round1-summary.json
+          cmp /tmp/serial-summary.json /tmp/replay-summary.json
+          cmp /tmp/serial-summary.json /tmp/round1-summary.json
+
+          jq -e '[.requests_trace.jm[]?, .requests_trace.pica[]?] | all(.outcome == "OK" and .http_status == 200)' "$root/round1/scan-report.json"
+
+      - name: Concurrent source failure remains resumable
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          root=reports/phase3b-three-author-dual-source/failure-recovery
+          mkdir -p "$root"
+          (
+            unset PICA_TOKEN PICA_EMAIL PICA_PASSWORD
+            ./target/release/phase3b \
+              --state monitor-state \
+              --output "$root" \
+              --authors three-author.json \
+              --mode full \
+              --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+              --batch-size 3 \
+              --batch-index 0 \
+              --expected-base-sha "$base" \
+              --actual-base-sha "$base" \
+              --max-requests 400 \
+              --author-concurrency 3 \
+              --live-source
+          )
+          cp "$root/scan-report.json" "$root/partial-scan-report.json"
+          cp "$root/state-manifest.json" "$root/partial-state-manifest.json"
+          jq -e '
+            .complete == false and
+            .strategy_complete == false and
+            .author_concurrency == 3 and
+            .source_concurrency == 2 and
+            .source_error_boundaries == 3 and
+            .inactive_records == 0 and
+            .unavailable_streak_nonzero == 0 and
+            ([.boundaries | to_entries[] | select(.key | startswith("jm|")) | .value.boundary] | all(. == "COMPLETE")) and
+            ([.boundaries | to_entries[] | select(.key | startswith("pica|")) | .value.boundary] | length == 3 and all(. == "SOURCE_ERROR"))
+          ' "$root/partial-scan-report.json"
+
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output "$root" \
+            --authors three-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size 3 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --max-requests 400 \
+            --author-concurrency 3 \
+            --live-source \
+            --resume
+
+          jq -e '
+            .complete == true and
+            .coverage_complete == true and
+            .strategy_complete == true and
+            .author_concurrency == 3 and
+            .source_concurrency == 2 and
+            .source_error_boundaries == 0 and
+            .inactive_records == 0 and
+            .unavailable_streak_nonzero == 0
+          ' "$root/scan-report.json"
+
+      - name: Shared concurrent request budget fails closed
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          root=reports/phase3b-three-author-dual-source/budget-exhaustion
+          mkdir -p "$root"
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output "$root" \
+            --authors three-author.json \
+            --mode full \
+            --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+            --batch-size 3 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --max-requests 1 \
+            --author-concurrency 3 \
+            --live-source
+
+          jq -e '
+            .complete == false and
+            .strategy_complete == false and
+            .author_concurrency == 3 and
+            .source_concurrency == 2 and
+            .requests <= 1 and
+            .source_error_boundaries > 0 and
+            .inactive_records == 0 and
+            .unavailable_streak_nonzero == 0
+          ' "$root/scan-report.json"
+          jq -e '[.observations[].error] | any(. == "REQUEST_BUDGET_CHECKPOINT")' "$root/observations.json"
+
+      - name: Run two additional consecutive formal Phase3B soak rounds
+        shell: bash
+        run: |
+          base="$(git rev-parse HEAD)"
+          for round in 2 3; do
+            mkdir -p "reports/phase3b-three-author-dual-source/round${round}"
+            ./target/release/phase3b \
+              --state monitor-state \
+              --output "reports/phase3b-three-author-dual-source/round${round}" \
+              --authors three-author.json \
+              --mode full \
+              --threshold "$(jq -r '.historical_id_threshold' monitor-config.json)" \
+              --batch-size 3 \
+              --batch-index 0 \
+              --expected-base-sha "$base" \
+              --actual-base-sha "$base" \
+              --max-requests 400 \
+              --author-concurrency 3 \
+              --live-source
+          done
+
+      - name: Verify three formal runner rounds remain equivalent and clean
+        shell: bash
+        run: |
+          root=reports/phase3b-three-author-dual-source
+          expected='["2-G","3104","haruhisky"]'
+          for round in 1 2 3; do
+            report="$root/round${round}/scan-report.json"
+            jq -e --argjson expected "$expected" '
+              .complete == true and
+              .coverage_complete == true and
+              .strategy_complete == true and
+              .selected_authors == $expected and
+              .author_concurrency == 3 and
+              .source_concurrency == 2 and
+              .durable_writer_serialized == true and
+              .source_error_boundaries == 0 and
+              .inactive_records >= 0 and
+              ([.requests_trace.jm[]?, .requests_trace.pica[]?] | all(.outcome == "OK" and .http_status == 200))
+            ' "$report"
+            jq -S '[.observations[] | {source, author, page:(.page.page // null), record_ids:([.page.records[]?.source_work_id] | sort), error}]' "$root/round${round}/observations.json" > "/tmp/round${round}-search-evidence.json"
+            jq -S '{complete,coverage_complete,strategy_complete,catalog_records,pending,review,review_reasons,new_events,event_kinds,source_error_boundaries}' "$report" > "/tmp/round${round}-summary.json"
+          done
+          cmp /tmp/serial-search-evidence.json /tmp/round1-search-evidence.json
+          cmp /tmp/round1-search-evidence.json /tmp/round2-search-evidence.json
+          cmp /tmp/round1-search-evidence.json /tmp/round3-search-evidence.json
+          cmp /tmp/serial-summary.json /tmp/round1-summary.json
+          cmp /tmp/round1-summary.json /tmp/round2-summary.json
+          cmp /tmp/round1-summary.json /tmp/round3-summary.json
+
+          jq -n \
+            --argjson serial_ms "$(jq '.elapsed_ms' "$root/serial/scan-report.json")" \
+            --argjson round1_ms "$(jq '.elapsed_ms' "$root/round1/scan-report.json")" \
+            --argjson round2_ms "$(jq '.elapsed_ms' "$root/round2/scan-report.json")" \
+            --argjson round3_ms "$(jq '.elapsed_ms' "$root/round3/scan-report.json")" \
+            --argjson round1_requests "$(jq '.requests' "$root/round1/scan-report.json")" \
+            --argjson round2_requests "$(jq '.requests' "$root/round2/scan-report.json")" \
+            --argjson round3_requests "$(jq '.requests' "$root/round3/scan-report.json")" \
+            '{schema_version:1,authors:["2-G","3104","haruhisky"],author_concurrency:3,serial_wall_ms:$serial_ms,formal_runner_wall_ms:[$round1_ms,$round2_ms,$round3_ms],requests:[$round1_requests,$round2_requests,$round3_requests],rounds_clean:3,failure_resume_verified:true,budget_exhaustion_verified:true}' \
+            > "$root/stability-summary.json"
+          cat "$root/stability-summary.json"
+
+      - name: Upload sanitized three-author concurrency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3b-three-author-dual-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            three-author.json
+            reports/phase3b-three-author-dual-source/
+          retention-days: 30
+          if-no-files-found: warn

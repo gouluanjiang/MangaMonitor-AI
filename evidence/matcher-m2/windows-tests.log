@@ -1,0 +1,304 @@
+warn: could not canonicalize path C:\Users\choumodujiang
+   Compiling cloud-monitor v0.1.0 (C:\Users\choumodujiang\Documents\Codex\MangaMonitor-phase1a\crates\cloud-monitor)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.93s
+     Running unittests src\lib.rs (target\debug\deps\cloud_monitor-ce08579d7f02b289.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\cloud_monitor-b18d9615213bd5ed.exe)
+
+running 2 tests
+test tests::missing_timestamps_do_not_verify_sort ... ok
+test tests::inversions_are_detected ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\matcher-m2.rs (target\debug\deps\matcher_m2-8f2fe176711c1f83.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\phase3a.rs (target\debug\deps\phase3a-28a5328dcba36697.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\phase3b.rs (target\debug\deps\phase3b-d4ec3c7af2ca888d.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\matcher_m2.rs (target\debug\deps\matcher_m2-77d21edb11d8a0d5.exe)
+
+running 20 tests
+test human_same_and_same_site_ids_remain_authoritative ... ok
+test multiple_authorities_and_disagreement_are_review ... ok
+test same_author_different_title_is_not_new_proof ... ok
+test duplicate_exact_candidates_are_review ... ok
+test stale_scope_certificate_is_rejected ... ok
+test null_primary_cannot_hide_behind_an_exact_candidate ... ok
+test incomplete_scope_and_empty_scope_never_prove_new ... ok
+test not_same_vetoes_automatic_and_conflicting_authority ... ok
+test unknown_fandom_can_hide_a_collision_and_prevents_binding ... ok
+test complete_pinned_scope_and_disjoint_installment_can_prove_new ... ok
+test unknown_local_type_cannot_hide_a_collision ... ok
+test ignore_keeps_existing_pending_task_inactive ... ok
+test unknown_source_type_and_categories_do_not_default_to_manga ... ok
+test changed_source_metadata_invalidates_cached_identity ... ok
+test unique_existing_has_full_evidence_chain_and_keeps_unknown_version_review ... ok
+test explicit_type_conflict_and_different_type_never_auto_bind ... ok
+test unsupported_explicit_type_is_not_overridden_by_title_annotation ... ok
+test repeated_replay_is_idempotent_and_decisions_reanalyze_without_network ... ok
+test zero_spelling_range_and_extra_do_not_prove_new ... ok
+test repair_is_auditable_idempotent_and_refuses_overwrite ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\matcher_m2_cli.rs (target\debug\deps\matcher_m2_cli-792e91a95b429cc4.exe)
+
+running 2 tests
+test cli_rejects_source_flags_and_writes_into_seed ... ok
+test full_215_cli_replay_is_offline_idempotent_and_keeps_seed_unchanged ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s
+
+     Running tests\phase3a.rs (target\debug\deps\phase3a-a12de70e69ff88a5.exe)
+
+running 31 tests
+test conflicting_version_evidence_is_unknown ... ok
+test explicit_untranslated_is_false_and_conflict_is_unknown ... ok
+test distinct_content_types_do_not_auto_match ... ok
+test ambiguous_inventory_never_auto_matches ... ok
+test changed_decisions_apply_before_any_network_request ... ok
+test discovery_once_and_repeat_idempotent ... ok
+test core_title_only_removes_confirmed_metadata_brackets ... ok
+test available_after_inactive_restores_pending_once ... ok
+test confirmed_ten_station_glyph_equivalence_is_closed_and_audited ... ok
+test fingerprint_change_requires_reanalysis ... ok
+test explicit_metadata_wrappers_allow_conservative_cross_source_match ... ok
+test decisions_persist_and_override_missing_author ... ok
+test jm_unavailable_claim_is_never_accepted_as_a_certificate ... ok
+test confirmed_author_evidence_is_normalized_without_changing_raw_fields ... ok
+test repeated_page_without_progress_stops_as_partial ... ok
+test structure_is_preserved_and_unknown_coverage_never_authorizes_delete ... ok
+test search_and_direct_errors_never_count_unavailable ... ok
+test negative_mapping_prevents_automatic_merge ... ok
+test pending_upgrade_keeps_identity_and_increments_revision ... ok
+test seed_black_white_value_allows_explicit_color_upgrade ... ok
+test source_mapping_is_authoritative_without_title_author_inference ... ok
+test parenthesized_author_requires_one_unambiguous_official_token ... ok
+test success_resets_unavailable_streak ... ok
+test full_ignores_threshold_and_six_month_recovery ... ok
+test unchanged_review_reason_does_not_notify_again_after_fingerprint_change ... ok
+test incremental_five_historical_boundary_does_not_remove_unseen ... ok
+test three_explicit_checks_not_three_retries_inactivate ... ok
+test unknown_cannot_replace_known_candidate ... ok
+test unknown_and_noisy_author_go_to_review ... ok
+test newly_discovered_ids_do_not_become_historical_mid_scan ... ok
+test checkpoint_and_eight_files_round_trip ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\phase3a_cli.rs (target\debug\deps\phase3a_cli-b5774a45d73a3a87.exe)
+
+running 2 tests
+test five_author_cli_replay_is_idempotent_and_input_is_unchanged ... ok
+test cli_resume_keeps_start_snapshot_and_completes_remaining_pages ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests\phase3b.rs (target\debug\deps\phase3b-ee35b9286a74e5b0.exe)
+
+running 4 tests
+test phase3b_base_commit_mismatch_fails_before_state_load_or_requests ... ok
+test phase3b_soft_batch_monthly_and_commit_manifest_are_deterministic ... ok
+test phase3b_partial_source_failure_checkpoint_resumes_without_unavailable_inference ... ok
+test phase3b_soft_batches_keep_one_latest_event_window_for_the_cycle ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running unittests src\lib.rs (target\debug\deps\jm_adapter-40b796f5904d1863.exe)
+
+running 2 tests
+test tests::corrupt_protocol_payload_is_an_error ... ok
+test tests::identity_is_namespaced_and_checked ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\pica_adapter-df3096513af2f160.exe)
+
+running 3 tests
+test tests::only_observed_not_found_envelope_certifies_unavailable ... ok
+test tests::signature_is_deterministic_and_path_sensitive ... ok
+test tests::metadata_excludes_secrets_and_image_urls ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\rules_core-11ff67ca1310f640.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\matcher_m1.rs (target\debug\deps\matcher_m1-e8d099c044a9e401.exe)
+
+running 30 tests
+test episode ... ok
+test manga_novel ... ok
+test bonus_main ... ok
+test after_story_main ... ok
+test chapter ... ok
+test manga_artbook ... ok
+test extra_main ... ok
+test front_back ... ok
+test inline_metadata ... ok
+test low_information_same_author ... ok
+test generic_brackets ... ok
+test bracket_extra ... ok
+test manga_cg ... ok
+test manga_settings ... ok
+test missing_primary_and_unknown_types_never_become_false_or_exact ... ok
+test episode_collection ... ok
+test number_tokens_have_no_inferred_unit_or_coverage ... ok
+test number_3_4 ... ok
+test normalization_is_nfkc_casefold_only_and_metadata_is_audited ... ok
+test number_2_3 ... ok
+test range ... ok
+test part ... ok
+test unapproved_wrappers_and_glyphs_are_preserved ... ok
+test subtitle ... ok
+test unknown_type ... ok
+test upper_lower ... ok
+test unsafe_glyph ... ok
+test volume ... ok
+test real_samples_keep_hand_reviewed_identity_evidence ... ok
+test corpus_is_complete_and_fixtures_are_real_unmodified_source_titles ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\matcher_m2.rs (target\debug\deps\matcher_m2-f5f0009a22a8f093.exe)
+
+running 31 tests
+test back_closed_alias ... ok
+test lower_bracket ... ok
+test bonus_boundary ... ok
+test after_story_boundary ... ok
+test closed_wrappers_have_traceable_spans ... ok
+test collection_boundary ... ok
+test duplicate_fields_and_type_conflicts_fail_closed ... ok
+test episode_cjk ... ok
+test extra_boundary ... ok
+test front_field ... ok
+test known_fandom_is_a_field_not_discarded_text ... ok
+test malformed_and_bilingual_are_never_exact ... ok
+test creator_pair_requires_confirmed_exact_author ... ok
+test episode_english ... ok
+test chapter_english ... ok
+test all_m1_adversarial_cases_remain_nonmatches_in_m2 ... ok
+test nfkc_casefold_keep_provenance_and_leading_zero_distinction ... ok
+test part_bracket ... ok
+test no_global_glyph_or_fandom_aliases ... ok
+test range_has_explicit_unit_and_provenance ... ok
+test series_boundary ... ok
+test omitted_and_explicit_structure_never_collapse ... ok
+test series_closed_attached ... ok
+test ordinary_body_characters_do_not_create_structure ... ok
+test subtitle_preserved ... ok
+test typed_range_is_not_episode_or_collection ... ok
+test unknown_type_and_numeric_only_titles_are_review ... ok
+test upper_boundary ... ok
+test volume_boundary ... ok
+test volume_english ... ok
+test wrappers_are_never_substring_or_interior_permissions ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\phase2a.rs (target\debug\deps\phase2a-43cf72aa4cc802dd.exe)
+
+running 43 tests
+test cat_005 ... ok
+test cat_004 ... ok
+test del_003 ... ok
+test cat_001 ... ok
+test cov_006 ... ok
+test cat_002 ... ok
+test cov_002 ... ok
+test cov_003 ... ok
+test cov_004 ... ok
+test cov_005 ... ok
+test cat_003 ... ok
+test cov_007 ... ok
+test del_001 ... ok
+test cov_008 ... ok
+test del_002 ... ok
+test cov_001 ... ok
+test norm_001 ... ok
+test norm_002 ... ok
+test norm_003 ... ok
+test norm_004 ... ok
+test norm_005 ... ok
+test sel_001 ... ok
+test sel_002 ... ok
+test sel_004 ... ok
+test task_001 ... ok
+test sel_005 ... ok
+test sel_006 ... ok
+test task_requires_target_content ... ok
+test task_002 ... ok
+test sel_003 ... ok
+test task_003 ... ok
+test two_unknown_higher_attributes_do_not_allow_color_upgrade ... ok
+test unknown_collection_does_not_authorize_coverage_removal ... ok
+test up_001 ... ok
+test up_002 ... ok
+test up_004 ... ok
+test up_003 ... ok
+test up_006 ... ok
+test up_005 ... ok
+test up_007 ... ok
+test up_008 ... ok
+test up_009 ... ok
+test up_010 ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\state_model-2bc24c2272fdd0f7.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cloud_monitor
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jm_adapter
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pica_adapter
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rules_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests state_model
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

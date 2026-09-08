@@ -1,0 +1,47 @@
+[
+  {
+    "id": "CAT_001",
+    "old_id": true,
+    "fingerprint_changed": false,
+    "pending": false,
+    "serial": false,
+    "source_error": false,
+    "expected": "SKIP_HEAVY_ANALYSIS"
+  },
+  {
+    "id": "CAT_002",
+    "old_id": true,
+    "fingerprint_changed": true,
+    "pending": false,
+    "serial": false,
+    "source_error": false,
+    "expected": "FETCH_DETAILS_REANALYZE"
+  },
+  {
+    "id": "CAT_003",
+    "old_id": true,
+    "fingerprint_changed": false,
+    "pending": true,
+    "serial": false,
+    "source_error": false,
+    "expected": "REFRESH_BY_ID"
+  },
+  {
+    "id": "CAT_004",
+    "old_id": true,
+    "fingerprint_changed": false,
+    "pending": false,
+    "serial": true,
+    "source_error": false,
+    "expected": "REFRESH_BY_ID"
+  },
+  {
+    "id": "CAT_005",
+    "old_id": true,
+    "fingerprint_changed": false,
+    "pending": true,
+    "serial": false,
+    "source_error": true,
+    "expected": "DO_NOT_COUNT_UNAVAILABLE"
+  }
+]

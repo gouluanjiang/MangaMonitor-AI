@@ -1,0 +1,69 @@
+name: Matcher M3 production-path offline validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-production-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - name: Complete workspace regression suite
+        run: |
+          mkdir -p reports/m3-linux
+          set -o pipefail
+          cargo +1.98.1 test --workspace --locked 2>&1 | tee reports/m3-linux/tests.log
+          cargo +1.98.1 build --locked -p cloud-monitor --bin phase3b
+      - name: Replay old Phase 3B state through production analysis twice
+        env:
+          HTTP_PROXY: http://127.0.0.1:1
+          HTTPS_PROXY: http://127.0.0.1:1
+          ALL_PROXY: http://127.0.0.1:1
+        run: |
+          test "$(jq -r '.production_enabled' monitor-config.json)" = false
+          find fixtures/matcher-m3/phase3b-old-state -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/m3-seed-before.sha256
+          ./target/debug/phase3b \
+            --state fixtures/matcher-m3/phase3b-old-state \
+            --output reports/m3-linux/first \
+            --authors fixtures/phase3a-authors.json \
+            --mode full \
+            --replay fixtures/matcher-m2/phase3b-observations.json \
+            --repair-overlay fixtures/matcher-m2/inventory-primary-repair.json
+          jq -e '
+            .matcher_version == "matcher-m2-v1" and
+            .reanalyzed == 215 and .review == 215 and
+            .new_events == 0 and .new_review_events == 0 and
+            .review_migration.total == 215 and
+            .review_migration.reclassified == 187 and
+            .review_migration.classification_unchanged == 28 and
+            .review_migration.suppressed_new_review_notifications == 215 and
+            .review_reasons.TITLE_WITNESS_UNKNOWN_SOURCE_CONTENT_TYPE == 13 and
+            .requests == 0 and .image_requests == 0
+          ' reports/m3-linux/first/scan-report.json
+          jq -e '.events | length == 0' reports/m3-linux/first/latest.json
+          jq -e '[.records[] | select(.identity_evidence.disposition == "AUTO_EXISTING")] | length == 0' reports/m3-linux/first/catalog.json
+          jq -e '[.records[] | select(.identity_evidence.disposition == "PROVEN_NEW")] | length == 0' reports/m3-linux/first/catalog.json
+          jq -e '[.records[] | select(.identity_evidence.disposition == "REVIEW_REQUIRED")] | length == 215' reports/m3-linux/first/catalog.json
+          ./target/debug/phase3b \
+            --state reports/m3-linux/first \
+            --output reports/m3-linux/second \
+            --authors fixtures/phase3a-authors.json \
+            --mode full \
+            --replay fixtures/matcher-m2/phase3b-observations.json \
+            --repair-overlay fixtures/matcher-m2/inventory-primary-repair.json
+          jq -e '.reanalyzed == 0 and .new_events == 0 and .new_review_events == 0 and .review_migration.total == 0 and .business_state_unchanged == true and .requests == 0' reports/m3-linux/second/scan-report.json
+          jq -S '[.match_review[] | select(.status == "REVIEW_REQUIRED")]' reports/m3-linux/first/review.json > /tmp/m3-first-review.json
+          jq -S '[.match_review[] | select(.status == "REVIEW_REQUIRED")]' reports/m3-linux/second/review.json > /tmp/m3-second-review.json
+          cmp /tmp/m3-first-review.json /tmp/m3-second-review.json
+          find fixtures/matcher-m3/phase3b-old-state -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/m3-seed-after.sha256
+          cmp /tmp/m3-seed-before.sha256 /tmp/m3-seed-after.sha256
+          git diff --exit-code -- monitor-state monitor-config.json fixtures/matcher-m3/phase3b-old-state
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matcher-m3-evidence-${{ github.run_id }}
+          path: reports/m3-linux/
+          retention-days: 30

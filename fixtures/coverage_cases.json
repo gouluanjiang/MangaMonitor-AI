@@ -1,0 +1,124 @@
+[
+  {
+    "id": "COV_001",
+    "owned": {
+      "ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "parts": [],
+      "extras": []
+    },
+    "target": {
+      "episode": 3
+    },
+    "expected": true
+  },
+  {
+    "id": "COV_002",
+    "owned": {
+      "episodes": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "parts": [],
+      "extras": []
+    },
+    "target": {
+      "range": [
+        1,
+        5
+      ]
+    },
+    "expected": true
+  },
+  {
+    "id": "COV_003",
+    "owned": {
+      "episodes": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "parts": [],
+      "extras": []
+    },
+    "target": {
+      "range": [
+        1,
+        5
+      ]
+    },
+    "expected": false
+  },
+  {
+    "id": "COV_004",
+    "owned": {
+      "parts": [
+        "前篇"
+      ],
+      "extras": []
+    },
+    "target": {
+      "part": "後篇"
+    },
+    "expected": false
+  },
+  {
+    "id": "COV_005",
+    "owned": {
+      "parts": [
+        "前篇",
+        "後篇"
+      ],
+      "extras": []
+    },
+    "target": {
+      "parts": [
+        "前篇",
+        "後篇"
+      ]
+    },
+    "expected": true
+  },
+  {
+    "id": "COV_006",
+    "owned": {
+      "ranges": [],
+      "parts": [],
+      "extras": []
+    },
+    "target": {
+      "extra": "番外"
+    },
+    "expected": false
+  },
+  {
+    "id": "COV_007",
+    "owned": {
+      "extras": [
+        "番外"
+      ]
+    },
+    "target": {
+      "extra": "番外"
+    },
+    "expected": true
+  },
+  {
+    "id": "COV_008",
+    "owned": {
+      "collection_membership_unknown": true
+    },
+    "target": {
+      "episode": 1
+    },
+    "expected": false
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "initial_full_scan_complete": false,
+  "current_scan_id": null,
+  "author_source_progress": {},
+  "failures": [],
+  "last_complete_scan_at": null
+}

@@ -1,0 +1,248 @@
+name: Phase 3B production monitor
+
+on:
+  schedule:
+    - cron: '17 3 1 * *'
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Run validation, one-time durable bootstrap, or the gated production cycle
+        type: choice
+        options:
+          - validation
+          - bootstrap
+          - production
+        default: validation
+      mode:
+        description: Production cycle mode; validation/bootstrap use full scans
+        type: choice
+        options:
+          - monthly
+          - incremental
+          - full
+        default: monthly
+      evidence_run:
+        description: Optional successful Phase 3B run ID whose sanitized observations should be replayed
+        type: string
+        default: ''
+
+concurrency:
+  group: phase3b-${{ github.event_name }}-${{ inputs.scope || 'scheduled' }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      scope: ${{ steps.gate.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_SCOPE: ${{ inputs.scope }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          enabled="$(jq -r '.production_enabled' monitor-config.json)"
+          scope="$REQUESTED_SCOPE"
+          if [[ "$EVENT_NAME" == "schedule" ]]; then
+            scope=production
+            if [[ "$enabled" != "true" ]]; then
+              echo 'Scheduled production monitor is intentionally disabled after Phase 3B.'
+              echo 'run=false' >> "$GITHUB_OUTPUT"
+              echo 'scope=production' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          elif [[ "$scope" == "bootstrap" ]]; then
+            if [[ "$REF_NAME" != "main" ]]; then
+              echo 'BOOTSTRAP_REQUIRES_MAIN_REF' >&2
+              exit 69
+            fi
+            if [[ "$enabled" != "false" ]]; then
+              echo 'BOOTSTRAP_REQUIRES_PRODUCTION_DISABLED' >&2
+              exit 69
+            fi
+          elif [[ "$scope" == "production" && "$enabled" != "true" ]]; then
+            echo 'PRODUCTION_MONITOR_DISABLED' >&2
+            exit 69
+          fi
+          echo 'run=true' >> "$GITHUB_OUTPUT"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
+  monitor:
+    needs: preflight
+    if: needs.preflight.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: read
+    env:
+      PICA_TOKEN: ${{ secrets.PICA_TOKEN }}
+      PICA_EMAIL: ${{ secrets.PICA_EMAIL }}
+      PICA_PASSWORD: ${{ secrets.PICA_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require usable Pica authentication for durable bootstrap
+        if: needs.preflight.outputs.scope == 'bootstrap'
+        shell: bash
+        run: |
+          if [[ -z "${PICA_TOKEN:-}" && ( -z "${PICA_EMAIL:-}" || -z "${PICA_PASSWORD:-}" ) ]]; then
+            echo 'PICA_AUTH_REQUIRED_FOR_BOOTSTRAP' >&2
+            exit 78
+          fi
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.98.1 --profile minimal
+      - name: Preserve Phase 1A and Phase 3A tests and run Phase 3B tests
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          cargo +1.98.1 test --workspace --locked 2>&1 | tee reports/phase3b-tests-linux.log
+          cargo +1.98.1 build -p cloud-monitor --bin phase3b --release --locked
+          chmod +x scripts/commit-monitor-state.sh scripts/run-phase3b-cycle.sh scripts/run-phase3b-bootstrap.sh scripts/test-commit-monitor-state.sh scripts/test-run-phase3b-bootstrap.sh
+
+      - name: Five-author production-style read-only scan
+        if: needs.preflight.outputs.scope == 'validation' && inputs.evidence_run == ''
+        run: |
+          base="$(git rev-parse HEAD)"
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-first \
+            --authors fixtures/phase3a-authors.json \
+            --mode full \
+            --threshold 5 \
+            --batch-size 5 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --max-requests 400 \
+            --author-concurrency 3 \
+            --live-source
+          jq -e '.author_concurrency == 3 and .source_concurrency == 2 and .durable_writer_serialized == true' reports/phase3b-first/scan-report.json
+
+      - name: Retrieve previous sanitized observations
+        if: needs.preflight.outputs.scope == 'validation' && inputs.evidence_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_RUN: ${{ inputs.evidence_run }}
+        run: gh run download "$EVIDENCE_RUN" --repo "$GITHUB_REPOSITORY" --name "phase3b-evidence-$EVIDENCE_RUN" --dir reports/reference
+
+      - name: Reevaluate captured observations with the current code
+        if: needs.preflight.outputs.scope == 'validation' && inputs.evidence_run != ''
+        run: |
+          base="$(git rev-parse HEAD)"
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-first \
+            --authors fixtures/phase3a-authors.json \
+            --mode full \
+            --threshold 5 \
+            --batch-size 5 \
+            --batch-index 0 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --replay reports/reference/phase3b-first/observations.json
+
+      - name: Replay is idempotent
+        if: needs.preflight.outputs.scope == 'validation'
+        run: |
+          base="$(git rev-parse HEAD)"
+          if jq -e '.complete == true' reports/phase3b-first/scan-report.json >/dev/null; then
+            ./target/release/phase3b \
+              --state reports/phase3b-first \
+              --output reports/phase3b-second \
+              --authors fixtures/phase3a-authors.json \
+              --mode full \
+              --threshold 5 \
+              --batch-size 5 \
+              --batch-index 0 \
+              --expected-base-sha "$base" \
+              --actual-base-sha "$base" \
+              --replay reports/phase3b-first/observations.json \
+              --assert-idempotent
+            jq -e '.complete == true and .business_state_unchanged == true and .new_events == 0 and .reanalyzed == 0' reports/phase3b-second/scan-report.json
+          else
+            set +e
+            replay_output="$(./target/release/phase3b \
+              --state reports/phase3b-first \
+              --output reports/phase3b-second \
+              --authors fixtures/phase3a-authors.json \
+              --mode full \
+              --threshold 5 \
+              --batch-size 5 \
+              --batch-index 0 \
+              --expected-base-sha "$base" \
+              --actual-base-sha "$base" \
+              --replay reports/phase3b-first/observations.json \
+              --assert-idempotent 2>&1)"
+            replay_status=$?
+            set -e
+            test "$replay_status" -ne 0
+            grep -q 'INCOMPLETE_SCAN_REQUIRES_RESUME' <<< "$replay_output"
+            test ! -f reports/phase3b-second/checkpoint.json
+          fi
+
+      - name: Partial source failure commits a resumable checkpoint
+        if: needs.preflight.outputs.scope == 'validation'
+        run: |
+          base="$(git rev-parse HEAD)"
+          ./target/release/phase3b \
+            --state monitor-state \
+            --output reports/phase3b-recovery \
+            --authors fixtures/phase3a-authors.json \
+            --mode full \
+            --threshold 5 \
+            --batch-size 5 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --replay fixtures/phase3a-source-error-tape.json
+          jq -e '.complete == false and .source_error_boundaries == 1 and .inactive_records == 0 and .unavailable_streak_nonzero == 0' reports/phase3b-recovery/scan-report.json
+          cp reports/phase3b-recovery/scan-report.json reports/phase3b-recovery-partial-report.json
+          cp reports/phase3b-recovery/state-manifest.json reports/phase3b-recovery-partial-manifest.json
+          set +e
+          replay_output="$(./target/release/phase3b \
+            --state reports/phase3b-recovery \
+            --output reports/phase3b-recovery-replay \
+            --authors fixtures/phase3a-authors.json \
+            --mode full \
+            --threshold 5 \
+            --batch-size 5 \
+            --expected-base-sha "$base" \
+            --actual-base-sha "$base" \
+            --replay fixtures/phase3a-source-error-tape.json \
+            --assert-idempotent 2>&1)"
+          replay_status=$?
+          set -e
+          test "$replay_status" -ne 0
+          grep -q 'INCOMPLETE_SCAN_REQUIRES_RESUME' <<< "$replay_output"
+          test ! -f reports/phase3b-recovery-replay/checkpoint.json
+          cargo +1.98.1 test --locked -p cloud-monitor --test phase3b \
+            phase3b_partial_source_failure_checkpoint_resumes_without_unavailable_inference -- --exact
+
+      - name: Commit-aware update rejects a race and recovers from the new head
+        if: needs.preflight.outputs.scope == 'validation'
+        run: scripts/test-commit-monitor-state.sh reports/phase3b-first | tee reports/phase3b-commit-recovery.json
+
+      - name: Run one-time current-registry durable bootstrap
+        if: needs.preflight.outputs.scope == 'bootstrap'
+        run: scripts/run-phase3b-bootstrap.sh monitor-config.json reports/phase3b-bootstrap
+
+      - name: Run gated monthly production cycle in soft batches
+        if: needs.preflight.outputs.scope == 'production'
+        env:
+          REQUESTED_MODE: ${{ inputs.mode || 'monthly' }}
+        run: scripts/run-phase3b-cycle.sh monitor-config.json "$REQUESTED_MODE" reports/phase3b-production
+
+      - name: Upload state, reports, and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3b-evidence-${{ github.run_id }}
+          path: reports/
+          retention-days: 30
+          if-no-files-found: warn

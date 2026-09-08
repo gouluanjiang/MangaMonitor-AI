@@ -1,5 +1,10 @@
 //! Shared scan runner. It always writes to a separate staging directory.
-use crate::{matcher_m2::repair_primary, monitor::*, persistence::*};
+use crate::{
+    matcher_m2::repair_primary,
+    monitor::*,
+    persistence::*,
+    scope_certificates::{self, ScopeCertificateDocument, ValidatedScopeCertificates},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use state_model::{Record, RequestTrace, SearchPage};
@@ -65,6 +70,7 @@ struct StageMetadata<'a> {
     batch_index: usize,
     batch_count: usize,
     selected_authors: &'a [String],
+    authority_document: Option<&'a ScopeCertificateDocument>,
 }
 
 #[derive(Clone)]
@@ -556,14 +562,31 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
         batch_index,
         batch_count,
         selected_authors: &selected,
+        authority_document: None,
     };
     let resume = args.iter().any(|s| s == "--resume");
+    let validated_certificates: Option<ValidatedScopeCertificates> = if profile == Profile::Phase3B {
+        let current = load(&input)?;
+        let document = scope_certificates::load(&input.join(scope_certificates::CERTIFICATE_FILE))?;
+        Some(scope_certificates::validate_document(document, &current.authors, &current.inventory)?)
+    } else {
+        None
+    };
+    let authority_hash = validated_certificates
+        .as_ref()
+        .map(scope_certificates::state_authority_hash)
+        .unwrap_or_default();
     let mut s = if resume {
         // A checkpoint contains scan progress, not a replacement authority.
         // Refuse recovery when the current decisions/inventory/authors input
         // has moved; silently choosing either side could publish stale state.
-        let current = load(&input)?;
-        let checkpoint = load_checkpoint(&output)?;
+        let mut current = load(&input)?;
+        current.scan.identity_authority_hash = authority_hash.clone();
+        current.scan.scope_certificates = validated_certificates
+            .as_ref()
+            .map(|validated| validated.matcher_certificates.clone())
+            .unwrap_or_default();
+        let mut checkpoint = load_checkpoint(&output)?;
         let current_authority = current.context();
         let checkpoint_authority = checkpoint.context();
         if current_authority != checkpoint_authority {
@@ -571,10 +594,22 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
                 "RESUME_AUTHORITY_MISMATCH:current={current_authority}:checkpoint={checkpoint_authority}"
             ));
         }
+        checkpoint.scan.identity_authority_hash = authority_hash.clone();
+        checkpoint.scan.scope_certificates = current.scan.scope_certificates.clone();
         checkpoint
     } else {
-        load(&input)?
+        let mut state = load(&input)?;
+        state.scan.identity_authority_hash = authority_hash;
+        state.scan.scope_certificates = validated_certificates
+            .as_ref()
+            .map(|validated| validated.matcher_certificates.clone())
+            .unwrap_or_default();
+        state
     };
+    let mut stage_metadata = stage_metadata;
+    stage_metadata.authority_document = validated_certificates
+        .as_ref()
+        .map(|validated| &validated.document);
     let replay = opt(&args, "--replay", "");
     let author_concurrency = parse_author_concurrency(&args, profile, &replay)?;
     if profile == Profile::Phase3B && !resume && !replay.is_empty() && !s.scan.complete && !strategy_complete(&s)
@@ -796,49 +831,52 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
     }
     let new_review_events = event_kinds.get("NEW_REVIEW").copied().unwrap_or(0);
     let direct_checks_pending = s.scan.direct_failures.values().filter(|code| code.as_str() == DIRECT_CHECK_PENDING).count();
-    let report = json!({
-        "phase":if profile==Profile::Phase3A{"3A_ARTIFACT_ONLY"}else{"3B_STAGED_PRODUCTION"},
-        "git_commit":env::var("GITHUB_SHA").ok(),
-        "github_run_id":env::var("GITHUB_RUN_ID").ok(),
-        "base_commit":if expected_base.is_empty(){Value::Null}else{json!(expected_base)},
-        "requested_mode":requested_mode,
-        "effective_requested_mode":mode,
-        "batch_index":batch_index,
-        "batch_size":batch_size,
-        "batch_count":batch_count,
-        "all_author_count":all_authors.len(),
-        "author_concurrency":if replay.is_empty(){author_concurrency}else{1},
-        "source_concurrency":if replay.is_empty() && author_concurrency>1{2}else{1},
-        "durable_writer_serialized":true,
-        "requests":requests,
-        "elapsed_ms":started.elapsed().as_millis(),
-        "replay":!replay.is_empty(),
-        "selected_authors":selected,
-        "complete":s.scan.complete,
-        "coverage_complete":s.scan.complete,
-        "strategy_complete":strategy_done,
-        "catalog_records":s.catalog.len(),
-        "pending":s.pending.len(),
-        "review":s.review.values().filter(|r|r.status=="REVIEW_REQUIRED").count(),
-        "review_reasons":review_reasons,
-        "new_events":s.scan.events.len(),
-        "event_kinds":event_kinds,
-        "new_review_events":new_review_events,
-        "review_migration":s.scan.review_migration,
-        "business_state_unchanged":context_before==hash(&(&s.pending,&s.review)),
-        "reanalyzed":s.catalog.values().map(|e|e.analysis_count).sum::<u64>()-before.catalog.values().map(|e|e.analysis_count).sum::<u64>(),
-        "matcher_version":rules_core::title_m2::RULE_VERSION,
-        "inventory_repairs":s.scan.inventory_repairs,
-        "inactive_records":s.catalog.values().filter(|e|!e.active).count(),
-        "unavailable_streak_nonzero":s.catalog.values().filter(|e|e.unavailable_streak>0).count(),
-        "source_error_boundaries":s.scan.progress.values().filter(|cursor|cursor.boundary=="SOURCE_ERROR").count(),
-        "direct_source_failures":s.scan.direct_failures.len(),
-        "direct_checks_pending":direct_checks_pending,
-        "boundaries":s.scan.progress,
-        "image_requests":0,
-        "input_state_modified":false,
-        "requests_trace":traces
-    });
+    let mut report = serde_json::Map::new();
+    report.insert("phase".into(), json!(if profile==Profile::Phase3A{"3A_ARTIFACT_ONLY"}else{"3B_STAGED_PRODUCTION"}));
+    report.insert("git_commit".into(), json!(env::var("GITHUB_SHA").ok()));
+    report.insert("github_run_id".into(), json!(env::var("GITHUB_RUN_ID").ok()));
+    report.insert("base_commit".into(), if expected_base.is_empty(){Value::Null}else{json!(expected_base)});
+    report.insert("requested_mode".into(), json!(requested_mode));
+    report.insert("effective_requested_mode".into(), json!(mode));
+    report.insert("batch_index".into(), json!(batch_index));
+    report.insert("batch_size".into(), json!(batch_size));
+    report.insert("batch_count".into(), json!(batch_count));
+    report.insert("all_author_count".into(), json!(all_authors.len()));
+    report.insert("author_concurrency".into(), json!(if replay.is_empty(){author_concurrency}else{1}));
+    report.insert("source_concurrency".into(), json!(if replay.is_empty() && author_concurrency>1{2}else{1}));
+    report.insert("durable_writer_serialized".into(), json!(true));
+    report.insert("requests".into(), json!(requests));
+    report.insert("elapsed_ms".into(), json!(started.elapsed().as_millis()));
+    report.insert("replay".into(), json!(!replay.is_empty()));
+    report.insert("selected_authors".into(), json!(selected));
+    report.insert("complete".into(), json!(s.scan.complete));
+    report.insert("coverage_complete".into(), json!(s.scan.complete));
+    report.insert("scope_certificate_set_hash".into(), json!(validated_certificates.as_ref().map(|v| v.document.certificate_set_hash.clone())));
+    report.insert("scope_certificate_count".into(), json!(validated_certificates.as_ref().map(|v| v.matcher_certificates.len())));
+    report.insert("identity_authority_hash".into(), json!(s.scan.identity_authority_hash));
+    report.insert("strategy_complete".into(), json!(strategy_done));
+    report.insert("catalog_records".into(), json!(s.catalog.len()));
+    report.insert("pending".into(), json!(s.pending.len()));
+    report.insert("review".into(), json!(s.review.values().filter(|r|r.status=="REVIEW_REQUIRED").count()));
+    report.insert("review_reasons".into(), json!(review_reasons));
+    report.insert("new_events".into(), json!(s.scan.events.len()));
+    report.insert("event_kinds".into(), json!(event_kinds));
+    report.insert("new_review_events".into(), json!(new_review_events));
+    report.insert("review_migration".into(), json!(s.scan.review_migration));
+    report.insert("business_state_unchanged".into(), json!(context_before==hash(&(&s.pending,&s.review))));
+    report.insert("reanalyzed".into(), json!(s.catalog.values().map(|e|e.analysis_count).sum::<u64>()-before.catalog.values().map(|e|e.analysis_count).sum::<u64>()));
+    report.insert("matcher_version".into(), json!(rules_core::title_m2::RULE_VERSION));
+    report.insert("inventory_repairs".into(), json!(s.scan.inventory_repairs));
+    report.insert("inactive_records".into(), json!(s.catalog.values().filter(|e|!e.active).count()));
+    report.insert("unavailable_streak_nonzero".into(), json!(s.catalog.values().filter(|e|e.unavailable_streak>0).count()));
+    report.insert("source_error_boundaries".into(), json!(s.scan.progress.values().filter(|cursor|cursor.boundary=="SOURCE_ERROR").count()));
+    report.insert("direct_source_failures".into(), json!(s.scan.direct_failures.len()));
+    report.insert("direct_checks_pending".into(), json!(direct_checks_pending));
+    report.insert("boundaries".into(), json!(s.scan.progress));
+    report.insert("image_requests".into(), json!(0));
+    report.insert("input_state_modified".into(), json!(false));
+    report.insert("requests_trace".into(), json!(traces));
+    let report = Value::Object(report);
     write_json(&output.join("scan-report.json"), &report)?;
 
     let changed: Vec<_> = s.catalog.iter().filter(|(k, e)| before.catalog.get(*k).map(|old| hash(old) != hash(e)).unwrap_or(true)).map(|(k, _)| k.clone()).collect();
@@ -868,6 +906,9 @@ pub async fn run(args: Vec<String>, profile: Profile) -> Result<(), String> {
 fn stage_save(output: &Path, state: &State, profile: Profile, metadata: &StageMetadata<'_>) -> Result<(), String> {
     save(output, state)?;
     if profile == Profile::Phase3B {
+        if let Some(document) = metadata.authority_document {
+            write_json(&output.join(scope_certificates::CERTIFICATE_FILE), document)?;
+        }
         write_json(&output.join("state-manifest.json"), &json!({
             "schema_version": 1,
             "base_commit": metadata.base_commit,
@@ -880,7 +921,8 @@ fn stage_save(output: &Path, state: &State, profile: Profile, metadata: &StageMe
             "effective_requested_mode": metadata.effective_requested_mode,
             "batch_index": metadata.batch_index,
             "batch_count": metadata.batch_count,
-            "selected_authors": metadata.selected_authors
+            "selected_authors": metadata.selected_authors,
+            "identity_authority_hash": state.scan.identity_authority_hash
         }))?;
     }
     Ok(())

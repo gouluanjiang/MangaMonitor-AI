@@ -36,6 +36,9 @@ JSON
   cat > "$state/latest.json" <<'JSON'
 {"schema_version":1,"scan_id":null,"scan_status":"NOT_STARTED","last_complete_scan_at":null,"events":[]}
 JSON
+  cat > "$state/scope-certificates.json" <<'JSON'
+{"schema_version":1,"certificate_set_hash":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","certificates":[]}
+JSON
 }
 
 write_config() {

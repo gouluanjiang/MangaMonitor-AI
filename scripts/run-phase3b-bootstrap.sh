@@ -37,7 +37,7 @@ report_abs="$(realpath -m "$report_root")"
 case "$report_abs" in
   "$state_abs"|"$state_abs"/*) fail 'BOOTSTRAP_REPORT_ROOT_INSIDE_STATE' ;;
 esac
-for name in authors.json catalog.json inventory_index.json pending.json review.json decisions.json scan_state.json latest.json; do
+for name in authors.json catalog.json inventory_index.json pending.json review.json decisions.json scan_state.json latest.json scope-certificates.json; do
   [[ -f "$state_dir/$name" ]] || fail "BOOTSTRAP_STATE_FILE_MISSING:$name"
 done
 [[ ! -e "$state_dir/state-manifest.json" && ! -e "$state_dir/checkpoint.json" ]] || fail 'BOOTSTRAP_STATE_NOT_PRISTINE'
@@ -132,12 +132,13 @@ for ((batch_index=0; batch_index<batch_count; batch_index++)); do
 done
 
 [[ -n "$final_state" ]] || fail 'BOOTSTRAP_NO_FINAL_STATE'
-for name in checkpoint.json authors.json catalog.json inventory_index.json pending.json review.json decisions.json scan_state.json latest.json state-manifest.json; do
+for name in checkpoint.json authors.json catalog.json inventory_index.json pending.json review.json decisions.json scan_state.json latest.json scope-certificates.json state-manifest.json; do
   [[ -f "$final_state/$name" ]] || fail "BOOTSTRAP_FINAL_STATE_MISSING:$name" 70
 done
 
 json_equal "$state_dir/authors.json" "$final_state/authors.json" || fail 'BOOTSTRAP_AUTHORS_DRIFT' 70
 json_equal "$state_dir/inventory_index.json" "$final_state/inventory_index.json" || fail 'BOOTSTRAP_INVENTORY_DRIFT' 70
+json_equal "$state_dir/scope-certificates.json" "$final_state/scope-certificates.json" || fail 'BOOTSTRAP_SCOPE_CERTIFICATE_DRIFT' 70
 json_equal "$state_dir/decisions.json" "$final_state/decisions.json" || fail 'BOOTSTRAP_DECISIONS_DRIFT' 70
 jq -e '
   .schema_version == 3 and

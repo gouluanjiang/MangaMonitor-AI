@@ -98,6 +98,7 @@ fn sample_state() -> State {
         action: "download".into(),
         status: "pending".into(),
         old_local_item_ids: vec![],
+        binding_authority_hash: String::new(),
     };
     State {
         authors: json!({

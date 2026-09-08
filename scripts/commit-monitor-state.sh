@@ -14,7 +14,7 @@ esac
 
 required=(
   checkpoint.json authors.json catalog.json inventory_index.json pending.json
-  review.json decisions.json scan_state.json latest.json state-manifest.json
+  review.json decisions.json scan_state.json latest.json scope-certificates.json state-manifest.json
 )
 optional=(
   observations.json scan-report.json state-diff.json review-export.json

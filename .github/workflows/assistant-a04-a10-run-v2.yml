@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 16
+          fetch-depth: 20
 
       - name: Verify exact execution chain
         shell: bash
@@ -34,6 +34,28 @@ jobs:
           set -euo pipefail
           git config core.whitespace cr-at-eol
           python3 scripts/assistant-a04-a10-remediate.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/cloud-monitor/tests/a04_a10_final_regressions.rs')
+          text = path.read_text(encoding='utf-8')
+          old = '''    let mut legacy = Cursor::default();
+              legacy.next_page = 2;
+              legacy.boundary = "CHECKPOINT".into();
+              legacy.mode = "full".into();
+              legacy.observed_ids.insert("jm:one".into());
+          '''
+          new = '''    let mut legacy = Cursor {
+              next_page: 2,
+              boundary: "CHECKPOINT".into(),
+              mode: "full".into(),
+              ..Cursor::default()
+          };
+              legacy.observed_ids.insert("jm:one".into());
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('unexpected legacy cursor regression shape')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
           rustfmt --edition 2021 crates/cloud-monitor/src/monitor.rs crates/cloud-monitor/tests/a04_a10_final_regressions.rs
           git diff --check
           unexpected="$(git diff --name-only | grep -Ev '^(crates/cloud-monitor/src/monitor.rs|crates/cloud-monitor/tests/a04_a10_final_regressions.rs|monitor-state/inventory_index.json)$' || true)"

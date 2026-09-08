@@ -1415,8 +1415,14 @@ mod a03_tests {
         assert_eq!(state.pending["WORK_1"].task_revision, 1);
         state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-a".into()));
         assert_eq!(state.pending["WORK_1"].task_revision, 1);
-        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-b".into()));
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("".into()));
         assert_eq!(state.pending["WORK_1"].task_revision, 2);
+        assert!(state.pending["WORK_1"].binding_authority_hash.is_empty());
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-a".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 3);
+        assert_eq!(state.pending["WORK_1"].binding_authority_hash, "cert-a");
+        state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-b".into()));
+        assert_eq!(state.pending["WORK_1"].task_revision, 4);
         assert_eq!(state.pending["WORK_1"].binding_authority_hash, "cert-b");
         state.pending.get_mut("WORK_1").unwrap().status = "superseded_by_identity_reanalysis".into();
         state.bind_work(&k, &record, "WORK_1".into(), Some("santa".into()), Some("cert-b".into()));

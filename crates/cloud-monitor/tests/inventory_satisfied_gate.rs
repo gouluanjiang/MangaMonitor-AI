@@ -140,7 +140,7 @@ fn owned_work_without_exact_source_mapping_is_not_falsely_satisfied() {
 }
 
 #[test]
-fn mapping_on_another_work_does_not_count_as_satisfied_and_is_ambiguous_authority() {
+fn mapping_on_another_work_is_authority_conflict_and_suppresses_download() {
     let state = state_with_inventory(json!({
         "works": [
             owned_work("WORK_1", json!([])),
@@ -151,6 +151,18 @@ fn mapping_on_another_work_does_not_count_as_satisfied_and_is_ambiguous_authorit
 
     let view = task_view(&state, &ledger, "TASK_1").unwrap();
     assert_eq!(view["inventory_satisfied"], false);
-    assert_eq!(view["inventory_authority_valid"], true);
-    assert_eq!(view["download_authorized"], true);
+    assert_eq!(view["inventory_authority_valid"], false);
+    assert_eq!(view["execution_block_reason"], "INVENTORY_AUTHORITY_AMBIGUOUS");
+    assert_eq!(view["download_authorized"], false);
+    assert_eq!(queue_view(&state, &ledger, 0, 50).unwrap()["total_authorized"], 0);
+
+    let hash = target_hash(&state.pending["WORK_1"]);
+    assert_eq!(
+        plan(&state, &ledger, "recommend", "TASK_1", 1, &hash).unwrap_err(),
+        "ASSISTANT_TASK_INVENTORY_AUTHORITY_AMBIGUOUS"
+    );
+    assert_eq!(
+        plan(&state, &ledger, "approve", "TASK_1", 1, &hash).unwrap_err(),
+        "ASSISTANT_TASK_INVENTORY_AUTHORITY_AMBIGUOUS"
+    );
 }

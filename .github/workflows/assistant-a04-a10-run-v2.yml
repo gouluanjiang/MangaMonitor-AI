@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 12
+          fetch-depth: 16
 
       - name: Verify exact execution chain
         shell: bash
@@ -34,10 +34,13 @@ jobs:
           set -euo pipefail
           git config core.whitespace cr-at-eol
           python3 scripts/assistant-a04-a10-remediate.py
-          cargo fmt --all
+          rustfmt --edition 2021 crates/cloud-monitor/src/monitor.rs crates/cloud-monitor/tests/a04_a10_final_regressions.rs
           git diff --check
           unexpected="$(git diff --name-only | grep -Ev '^(crates/cloud-monitor/src/monitor.rs|crates/cloud-monitor/tests/a04_a10_final_regressions.rs|monitor-state/inventory_index.json)$' || true)"
-          test -z "$unexpected"
+          if test -n "$unexpected"; then
+            printf 'unexpected remediation diff:\n%s\n' "$unexpected"
+            exit 1
+          fi
 
       - name: Run focused final regressions
         run: cargo test --locked -p cloud-monitor --test a04_a10_final_regressions

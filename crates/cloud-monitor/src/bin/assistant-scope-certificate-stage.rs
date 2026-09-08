@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use cloud_monitor::scope_certificates::{self, ScopeCertificateDocument};
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 fn usage() -> ! {
     eprintln!("usage: assistant-scope-certificate-stage --state <monitor-state> --output <dir> --candidate-b64 <base64-json>");

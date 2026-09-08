@@ -42,7 +42,7 @@ on:
       - '.github/workflows/phase3b-three-author-dual-source.yml'
   workflow_dispatch:
 concurrency:
-  group: mangamonitor-validation-${{ github.head_ref || github.ref }}
+  group: mangamonitor-validation-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 permissions:
   contents: read

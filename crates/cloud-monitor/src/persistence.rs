@@ -154,7 +154,20 @@ pub fn save(dir: &Path, s: &State) -> Result<(), String> {
 }
 
 fn csv_cell(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
+    // Spreadsheet applications may evaluate cells beginning with one of these
+    // characters as formulas. Prefixing a single quote keeps the displayed
+    // value while making CSV exports inert when opened in a spreadsheet.
+    let formula_leading = value
+        .chars()
+        .skip_while(|ch| matches!(ch, ' ' | '\t' | '\r' | '\n'))
+        .next()
+        .is_some_and(|ch| matches!(ch, '=' | '+' | '-' | '@'));
+    let safe = if formula_leading {
+        format!("'{value}")
+    } else {
+        value.to_owned()
+    };
+    format!("\"{}\"", safe.replace('"', "\"\""))
 }
 
 pub fn review_export(s: &State) -> Value {

@@ -128,7 +128,7 @@ fn invoke(
 
 #[test]
 fn incremental_early_stop_is_strategy_complete_and_allows_next_batch_without_full_coverage_claim() {
-    let root = std::env::temp_dir().join(format!("phase3b-early-stop-flow-{}", now()));
+    let root = std::env::temp_dir().join(format!("phase3b-early-stop-flow-{}", hash(&now())));
     std::fs::create_dir_all(&root).unwrap();
     let authors = setup(&root);
 

@@ -688,7 +688,7 @@ impl State {
         let ck = Self::cursor_key(source, author);
         self.scan.progress.entry(ck.clone()).or_default().boundary = "SOURCE_ERROR".into();
         self.event(
-            format!("warning:{ck}:{code}"),
+            format!("warning:{}:{ck}:{code}", self.scan.scan_id),
             "SCAN_PARTIAL",
             json!({"source":source,"author":author,"reason":"SOURCE_ERROR","code":code}),
         );
@@ -757,7 +757,7 @@ impl State {
             Detail::SourceError(code) => {
                 self.scan.direct_failures.insert(k.into(), code.clone());
                 self.event(
-                    format!("direct-error:{k}:{code}"),
+                    format!("direct-error:{}:{k}:{code}", self.scan.scan_id),
                     "SCAN_WARNING",
                     json!({"source_key":k,"reason":"SOURCE_ERROR","code":code}),
                 );

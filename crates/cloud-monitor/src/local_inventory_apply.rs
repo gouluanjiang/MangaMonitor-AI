@@ -553,7 +553,8 @@ mod tests {
         let replacement = dir.join("replacement.tmp");
         fs::write(&target, b"pre").unwrap();
         fs::write(&replacement, b"post").unwrap();
-        open_rw(&replacement, "TEST_REPLACEMENT_OPEN")?
+        open_rw(&replacement, "TEST_REPLACEMENT_OPEN")
+            .unwrap()
             .sync_all()
             .unwrap();
         atomic_replace_file(&target, &replacement).unwrap();

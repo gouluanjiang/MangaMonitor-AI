@@ -46,6 +46,19 @@ struct ValueVersion {
     version: u64,
 }
 
+struct StoreFileLock {
+    file: File,
+}
+
+impl Drop for StoreFileLock {
+    fn drop(&mut self) {
+        // Closing alone can leave a Unix flock held by a descriptor inherited
+        // during another thread's process spawn. Release before closing so the
+        // lock ends with this operation, even while that child has not exec'd.
+        let _ = self.file.unlock();
+    }
+}
+
 /// The root is selected by the application, never by a renderer command argument.
 pub struct WorkbenchStore {
     root: PathBuf,
@@ -141,7 +154,7 @@ impl WorkbenchStore {
         })
     }
 
-    fn acquire_lock(&self) -> Result<File> {
+    fn acquire_lock(&self) -> Result<StoreFileLock> {
         check_directory_tree(&self.root)?;
         let path = self.root.join(".workbench.lock");
         check_optional_regular(&path)?;
@@ -156,10 +169,12 @@ impl WorkbenchStore {
             Err(TryLockError::WouldBlock) => return Err(StoreError::new("BUSY")),
             Err(TryLockError::Error(_)) => return Err(StoreError::new("STORE_UNAVAILABLE")),
         }
-        // This file is deliberately retained. The OS releases its lock on process exit.
+        // Guard all exits after successful acquisition, including path rechecks.
+        let guard = StoreFileLock { file };
+        // Retain the file itself; deleting it would allow two independent locks.
         check_directory_tree(&self.root)?;
         check_optional_regular(&path)?;
-        Ok(file)
+        Ok(guard)
     }
 
     fn read_unlocked<T: ValidatedDocument>(
@@ -428,4 +443,72 @@ pub(crate) fn read_regular_bounded(path: &Path, maximum: usize) -> Result<Vec<u8
     check_directory_tree(parent)?;
     check_optional_regular(path)?.ok_or(StoreError::new("STORE_READ_FAILED"))?;
     Ok(bytes)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn scope_exit_releases_lock_while_a_duplicate_descriptor_remains_open() {
+        let directory = TempDir::new().unwrap();
+        let owner = WorkbenchStore::open(directory.path()).unwrap();
+        let observer = WorkbenchStore::open(directory.path()).unwrap();
+        let guard = owner.acquire_lock().unwrap();
+        // dup and fork share the same open file description. Keep that duplicate
+        // alive to reproduce the inheritance window without timing or unsafe fork.
+        let inherited = guard.file.try_clone().unwrap();
+        assert_eq!(observer.read_booklists().unwrap_err().code, "BUSY");
+
+        drop(guard);
+        assert_eq!(
+            observer
+                .write_booklists(0, Booklists::default())
+                .unwrap()
+                .revision,
+            1
+        );
+        assert!(inherited.metadata().unwrap().is_file());
+
+        // Closing the old duplicate must not disturb a subsequent owner's lock.
+        let next_guard = observer.acquire_lock().unwrap();
+        drop(inherited);
+        assert_eq!(owner.read_booklists().unwrap_err().code, "BUSY");
+        drop(next_guard);
+        assert_eq!(owner.read_booklists().unwrap().revision, 1);
+    }
+
+    #[test]
+    fn failed_read_releases_lock_while_a_duplicate_descriptor_remains_open() {
+        let directory = TempDir::new().unwrap();
+        let owner = WorkbenchStore::open(directory.path()).unwrap();
+        let observer = WorkbenchStore::open(directory.path()).unwrap();
+        let path = directory.path().join(PRIVATE_DIRECTORY).join(BOOKLISTS);
+        let original = b"{broken";
+        fs::write(&path, original).unwrap();
+        let mut inherited = None;
+
+        let result: Result<Document<Booklists>> = (|| {
+            let guard = owner.acquire_lock()?;
+            inherited = Some(guard.file.try_clone().unwrap());
+            owner.read_unlocked(BOOKLISTS, MAX_BOOKLISTS_BYTES)
+        })();
+
+        assert_eq!(result.unwrap_err().code, "DOCUMENT_CORRUPT");
+        assert!(inherited.as_ref().unwrap().metadata().unwrap().is_file());
+        assert_eq!(
+            observer.read_booklists().unwrap_err().code,
+            "DOCUMENT_CORRUPT"
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(
+            observer
+                .write_preferences(0, WorkbenchPreferences::default())
+                .unwrap()
+                .revision,
+            1
+        );
+        drop(inherited);
+    }
 }

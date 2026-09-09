@@ -1038,7 +1038,7 @@ async fn covers_are_validated_without_reading_or_creating_app_files() {
 }
 
 #[tokio::test]
-async fn startup_cleanup_runs_once_and_failed_cleanup_does_not_block_accounts_or_covers() {
+async fn account_reads_never_cleanup_and_explicit_cleanup_is_cached_without_blocking_accounts() {
     let root = TempDir::new().unwrap();
     let store = workbench_storage::WorkbenchStore::open(root.path()).unwrap();
     let private = root.path().join(workbench_storage::PRIVATE_DIRECTORY);
@@ -1054,9 +1054,11 @@ async fn startup_cleanup_runs_once_and_failed_cleanup_does_not_block_accounts_or
     let backend = FakeBackend::default();
     let service = service(&root, backend.clone(), SharedVault::default());
     service.accounts(false).await;
-    assert!(!legacy.exists());
+    service.accounts(true).await;
+    assert!(legacy.exists());
     assert!(service.cleanup_legacy_cover_cache().await.is_ok());
-    // A later registry error does not rerun a completed startup migration.
+    assert!(!legacy.exists());
+    // A later registry error does not rerun completed explicit cleanup.
     std::fs::write(private.join("cache-registry-v1.json"), b"corrupt").unwrap();
     assert!(service.cleanup_legacy_cover_cache().await.is_ok());
     let next = AccountService::new(
@@ -1090,7 +1092,7 @@ async fn startup_cleanup_runs_once_and_failed_cleanup_does_not_block_accounts_or
 }
 
 #[tokio::test]
-async fn startup_cleanup_lock_contention_is_bounded_and_a_new_startup_can_retry() {
+async fn explicit_cleanup_lock_contention_is_bounded_and_a_new_service_can_retry() {
     let root = TempDir::new().unwrap();
     let store = workbench_storage::WorkbenchStore::open(root.path()).unwrap();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();

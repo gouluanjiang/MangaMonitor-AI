@@ -35,6 +35,12 @@ impl DesktopStore {
             return Ok(Arc::clone(store));
         }
         let store = Arc::new(WorkbenchStore::open(root)?);
+        // Keep the cache mutex until cleanup has finished, then publish this
+        // same instance to both document readers. Account startup must not race
+        // an independent cleanup instance against their first file-lock read.
+        // Failed cleanup preserves legacy data but never blocks document access
+        // or repeats automatically after this successful store initialization.
+        let _cleanup = store.cleanup_legacy_cover_cache();
         *cached = Some(Arc::clone(&store));
         Ok(store)
     }

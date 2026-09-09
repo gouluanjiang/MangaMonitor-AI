@@ -454,3 +454,110 @@ fn account_initialization_failure_keeps_window_and_old_commands_available() {
     );
     assert!(app.get_webview_window("main").is_some());
 }
+
+fn seed_legacy_startup_cover(root: &std::path::Path) -> (PathBuf, PathBuf, Vec<u8>) {
+    let private = root.join(workbench_storage::PRIVATE_DIRECTORY);
+    let key = "1".repeat(64);
+    let registry=serde_json::to_vec(&json!({"version":1,"accounts":[{"key":key,"catalogPeak":0,"coverPeak":64*1024*1024,"usedAt":1}]})).unwrap();
+    let registry_path = private.join("cache-registry-v1.json");
+    let cover_path = private.join(format!("cache-{key}-cover-000.bin"));
+    std::fs::write(&registry_path, &registry).unwrap();
+    std::fs::write(&cover_path, b"legacy-cover").unwrap();
+    (registry_path, cover_path, registry)
+}
+
+#[test]
+fn concurrent_first_document_reads_share_the_store_only_after_one_legacy_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    let seeded = WorkbenchStore::open(root.path()).unwrap();
+    let mut preferences = WorkbenchPreferences::default();
+    preferences.appearance.density = 9;
+    let expected_preferences = seeded.write_preferences(0, preferences).unwrap();
+    let expected_booklists = seeded.write_booklists(0, Booklists::default()).unwrap();
+    let private = root.path().join(workbench_storage::PRIVATE_DIRECTORY);
+    let prefs_before = std::fs::read(private.join("preferences.json")).unwrap();
+    let lists_before = std::fs::read(private.join("booklists.json")).unwrap();
+    let (registry_path, cover_path, legacy_registry) = seed_legacy_startup_cover(root.path());
+    drop(seeded);
+    let state = Arc::new(DesktopStore::new(Ok(root.path().to_owned())));
+    let ready = Arc::new(std::sync::Barrier::new(3));
+    let preferences_worker = {
+        let state = Arc::clone(&state);
+        let ready = Arc::clone(&ready);
+        let cover = cover_path.clone();
+        std::thread::spawn(move || {
+            ready.wait();
+            let store = state.open().unwrap();
+            assert!(!cover.exists());
+            let value = store.read_preferences().unwrap();
+            (store, value)
+        })
+    };
+    let booklists_worker = {
+        let state = Arc::clone(&state);
+        let ready = Arc::clone(&ready);
+        let cover = cover_path.clone();
+        std::thread::spawn(move || {
+            ready.wait();
+            let store = state.open().unwrap();
+            assert!(!cover.exists());
+            let value = store.read_booklists().unwrap();
+            (store, value)
+        })
+    };
+    ready.wait();
+    let (first, preferences) = preferences_worker.join().unwrap();
+    let (second, booklists) = booklists_worker.join().unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(preferences, expected_preferences);
+    assert_eq!(booklists, expected_booklists);
+    assert_eq!(
+        std::fs::read(private.join("preferences.json")).unwrap(),
+        prefs_before
+    );
+    assert_eq!(
+        std::fs::read(private.join("booklists.json")).unwrap(),
+        lists_before
+    );
+    let registry: Value = serde_json::from_slice(&std::fs::read(&registry_path).unwrap()).unwrap();
+    assert_eq!(registry["accounts"][0]["coverPeak"], 0);
+    // Publishing the store completes automatic initialization even if a later
+    // process writes legacy data again. There is no repeated per-command cleanup.
+    std::fs::write(registry_path, legacy_registry).unwrap();
+    std::fs::write(&cover_path, b"later-legacy-cover").unwrap();
+    assert!(Arc::ptr_eq(&first, &state.open().unwrap()));
+    assert!(cover_path.exists());
+    assert_eq!(
+        state.open().unwrap().read_preferences().unwrap(),
+        expected_preferences
+    );
+    assert_eq!(
+        state.open().unwrap().read_booklists().unwrap(),
+        expected_booklists
+    );
+}
+
+#[test]
+fn failed_startup_cleanup_still_publishes_one_readable_store_and_is_not_repeated() {
+    let root = tempfile::tempdir().unwrap();
+    let seeded = WorkbenchStore::open(root.path()).unwrap();
+    let expected_preferences = seeded
+        .write_preferences(0, WorkbenchPreferences::default())
+        .unwrap();
+    let expected_booklists = seeded.write_booklists(0, Booklists::default()).unwrap();
+    let (registry_path, cover_path, legacy_registry) = seed_legacy_startup_cover(root.path());
+    std::fs::write(&registry_path, b"corrupt-registry").unwrap();
+    drop(seeded);
+    let state = Arc::new(DesktopStore::new(Ok(root.path().to_owned())));
+    let first = state.open().unwrap();
+    assert_eq!(first.read_preferences().unwrap(), expected_preferences);
+    assert_eq!(first.read_booklists().unwrap(), expected_booklists);
+    assert_eq!(std::fs::read(&registry_path).unwrap(), b"corrupt-registry");
+    assert!(cover_path.exists());
+    std::fs::write(registry_path, legacy_registry).unwrap();
+    let second = state.open().unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert!(cover_path.exists());
+    assert_eq!(second.read_preferences().unwrap(), expected_preferences);
+    assert_eq!(second.read_booklists().unwrap(), expected_booklists);
+}

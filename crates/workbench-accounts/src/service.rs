@@ -71,7 +71,7 @@ pub struct AccountService<B: SourceBackend, V: Vault> {
     root: PathBuf,
     slots: [Mutex<Slot<B::Session>>; 2],
     cover_slots: Semaphore,
-    // Catalog writes and the one-time legacy cleanup share the fixed file lock.
+    // Catalog writes and explicitly requested cleanup share the fixed file lock.
     cache_io: Arc<Mutex<()>>,
     legacy_cover_cleanup: OnceCell<Result<()>>,
 }
@@ -92,8 +92,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         }
     }
 
-    /// Run once per service startup. Cleanup errors are retained for diagnostics
-    /// and never replace account state or prevent login/cover requests.
+    /// Explicit cleanup only; account reads never initiate filesystem migration.
+    /// The desktop owner orders automatic cleanup before publishing its shared
+    /// document store. This helper retains its result for explicit callers.
     pub async fn cleanup_legacy_cover_cache(&self) -> Result<()> {
         *self
             .legacy_cover_cleanup
@@ -199,7 +200,6 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     }
 
     pub async fn accounts(&self, refresh: bool) -> Vec<AccountSummary> {
-        let _cleanup = self.cleanup_legacy_cover_cache().await;
         async fn read<B: SourceBackend, V: Vault + 'static>(
             service: &AccountService<B, V>,
             source: Source,

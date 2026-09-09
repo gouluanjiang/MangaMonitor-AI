@@ -4,11 +4,14 @@ import { chromium, expect } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { readFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 
-if (process.platform !== "win32" || process.env.CI !== "true")
+if (
+  process.platform !== "win32" ||
+  process.env.CI !== "true" ||
+  process.env.GITHUB_ACTIONS !== "true"
+)
   throw new Error(
     "Native WebView smoke is restricted to disposable Windows CI.",
   );
@@ -25,7 +28,7 @@ await mkdir(output, { recursive: true });
 // Share one isolated WebView profile across the two process launches. The
 // application's native documents still use their actual application data path.
 const webviewProfile = await mkdtemp(
-  path.join(tmpdir(), "mangamonitor-webview-"),
+  path.join(process.env.RUNNER_TEMP, "mangamonitor-webview-"),
 );
 
 async function startupDiagnostics(child, debuggingPort, lastConnectionError) {
@@ -73,7 +76,6 @@ async function port() {
   return value;
 }
 async function launch() {
-  const debuggingPort = await port();
   const child = spawn(executable, [], {
     // This is the actual GUI under test on a disposable CI desktop. Hiding its
     // first window would change startup behavior and obscure modal failures.
@@ -175,8 +177,36 @@ async function launch() {
 }
 
 const listName = "原生重启验收 " + process.env.GITHUB_RUN_ID;
+const debuggingPort = await port();
+function configureWebview(mode) {
+  const result = spawnSync(
+    "pwsh.exe",
+    [
+      "-NoProfile",
+      "-File",
+      path.resolve("tests/native-webview-test-config.ps1"),
+      "-Mode",
+      mode,
+      "-DebuggingPort",
+      String(debuggingPort),
+      "-ProfileDirectory",
+      webviewProfile,
+    ],
+    { windowsHide: true, encoding: "utf8", timeout: 30_000 },
+  );
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error || result.status !== 0)
+    throw new Error(
+      "CI WebView configuration failed: " +
+        (result.error?.code ?? result.status),
+    );
+}
+let policyPrepared = false;
 let running;
 try {
+  configureWebview("Configure");
+  policyPrepared = true;
   running = await launch();
   const page = running.page;
   await page.getByTestId("nav-settings").click();
@@ -246,5 +276,9 @@ try {
       .catch(() => undefined);
   throw error;
 } finally {
-  if (running) await running.stop();
+  try {
+    if (running) await running.stop();
+  } finally {
+    if (policyPrepared) configureWebview("Restore");
+  }
 }

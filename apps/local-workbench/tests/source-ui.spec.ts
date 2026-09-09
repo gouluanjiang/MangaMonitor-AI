@@ -139,10 +139,9 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByTestId("source-card-" + anchor)).toBeVisible();
-  await page.getByTestId("source-grid").evaluate((element) => {
-    const main = element.closest("main")!;
-    main.scrollTop = main.scrollHeight;
-  });
+  // Real wheel input immediately after return must override pending anchor settling.
+  await page.mouse.move(1200, 700);
+  await page.mouse.wheel(0, 1000000);
   await expect(page.getByTestId("source-card-JM:2000")).toBeVisible();
   await page
     .getByTestId("source-workbench")
@@ -843,7 +842,7 @@ test("partial pagination keeps unknown totals and retained data when the next pa
   await expect(
     page.getByTestId("collection-sentinel").getByRole("alert"),
   ).toBeVisible();
-  await page.getByTestId("source-retry").click();
+  await page.getByTestId("collection-retry").click();
   await expect(page.getByTestId("source-grid").locator("article")).toHaveCount(
     2,
   );

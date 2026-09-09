@@ -77,6 +77,10 @@ function Grid<T>(
     applyAnchor(anchor);
     restoreFrame.current = requestAnimationFrame(settle);
   }
+  function cancelRestore() {
+    pending.current = null;
+    cancelAnimationFrame(restoreFrame.current);
+  }
   function applyAnchor(anchor: GridAnchor | null) {
     const main = element.current?.closest("main");
     if (!main || !anchor) return;
@@ -142,17 +146,49 @@ function Grid<T>(
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
+    const cancelForScrollKey = (event: KeyboardEvent) => {
+      if (
+        [
+          "ArrowUp",
+          "ArrowDown",
+          "PageUp",
+          "PageDown",
+          "Home",
+          "End",
+          " ",
+        ].includes(event.key)
+      )
+        cancelRestore();
+    };
     measure.current = update;
     const observer = new ResizeObserver(schedule);
     observer.observe(root);
     observer.observe(main);
     main.addEventListener("scroll", schedule, { passive: true });
+    // New user input takes precedence over the remaining layout-settling frames.
+    main.addEventListener("wheel", cancelRestore, {
+      passive: true,
+      capture: true,
+    });
+    main.addEventListener("touchstart", cancelRestore, {
+      passive: true,
+      capture: true,
+    });
+    main.addEventListener("pointerdown", cancelRestore, {
+      passive: true,
+      capture: true,
+    });
+    main.addEventListener("keydown", cancelForScrollKey, true);
     update();
     return () => {
       cancelAnimationFrame(frame);
       cancelAnimationFrame(restoreFrame.current);
       observer.disconnect();
       main.removeEventListener("scroll", schedule);
+      main.removeEventListener("wheel", cancelRestore, true);
+      main.removeEventListener("touchstart", cancelRestore, true);
+      main.removeEventListener("pointerdown", cancelRestore, true);
+      main.removeEventListener("keydown", cancelForScrollKey, true);
     };
   }, [density]);
   useLayoutEffect(() => {

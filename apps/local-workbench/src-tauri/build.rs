@@ -10,6 +10,7 @@ fn main() {
         "source_login",
         "source_logout",
         "source_query",
+        "source_catalog",
         "source_favorite",
         "source_cover",
         "source_following",

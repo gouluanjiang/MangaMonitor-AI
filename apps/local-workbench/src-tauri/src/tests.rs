@@ -306,6 +306,10 @@ fn navigation_is_limited_to_packaged_assets_and_the_development_server() {
 fn account_commands() -> Vec<(&'static str, Value)> {
     vec![
         ("source_accounts", json!({})),
+        (
+            "source_catalog",
+            json!({"source":"JM","sessionId":"stale","folderId":null,"reverse":false,"action":"read"}),
+        ),
         // Invalid login data is deliberate: these IPC tests never authenticate.
         (
             "source_login",

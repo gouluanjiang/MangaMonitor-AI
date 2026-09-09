@@ -4,6 +4,7 @@ import type {
   FollowingSnapshot,
   Source,
   SourceWork,
+  CatalogSnapshot,
 } from "../src/source-types.ts";
 import type { BooklistsDocument } from "../src/booklists.ts";
 import type { WorkbenchPreferences } from "../src/preferences.ts";
@@ -23,6 +24,8 @@ type MockOptions = {
   followConflict?: boolean;
   coverCount?: number;
   expireJM?: boolean;
+  collectionCount?: number;
+  cacheSnapshot?: CatalogSnapshot;
 };
 type Call = {
   command: string;
@@ -34,6 +37,7 @@ type Call = {
   desired?: boolean;
   expectedRevision?: number;
   query?: string;
+  reverse?: boolean;
 };
 type Hooks = {
   accounts: AccountSummary[];
@@ -56,6 +60,231 @@ test.beforeEach(async ({ page }) => {
   const collected: string[] = [];
   errors.set(page, collected);
   page.on("pageerror", (error) => collected.push(error.message));
+});
+
+test("cached 2000-work catalog uses bounded rows, full-data selection and stable density/detail anchors", async ({
+  page,
+}) => {
+  const items: SourceWork[] = Array.from({ length: 2000 }, (_, i) => ({
+    source: "JM",
+    workId: String(i + 1),
+    title: "合成验收 JM 作品 " + (i + 1) + " 账号1",
+    authors: [],
+    description: null,
+    tags: [],
+    favorite: null,
+    chapterCount: null,
+    pageCount: null,
+    coverAvailable: false,
+  }));
+  const snapshot: CatalogSnapshot = {
+    items,
+    page: 100,
+    total: 2000,
+    pages: 100,
+    hasMore: false,
+    folders: [],
+    complete: true,
+    updatedAt: 1800000000000,
+    firstPageIds: items.slice(0, 20).map((work) => work.workId),
+  };
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { collectionCount: 2000, cacheSnapshot: snapshot });
+  await openFavorites(page);
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "已读取全部收藏",
+  );
+  await expect(page.getByTestId("source-grid")).toHaveAttribute(
+    "data-total-items",
+    "2000",
+  );
+  expect(
+    await page.getByTestId("source-grid").locator("article").count(),
+  ).toBeLessThan(90);
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-all").click();
+  await expect(page.getByTestId("source-selection-bar")).toContainText(
+    "已选 2000 部",
+  );
+  await page.getByTestId("source-grid").evaluate((element) => {
+    element.closest("main")!.scrollTop = 18000;
+  });
+  const anchor = await page
+    .getByTestId("source-grid")
+    .locator("article")
+    .evaluateAll((elements) => {
+      const main = elements[0].closest("main")!;
+      return elements
+        .find(
+          (element) =>
+            element.getBoundingClientRect().top >=
+            main.getBoundingClientRect().top,
+        )!
+        .getAttribute("data-source-work-key")!;
+    });
+  // Density controls stay above the virtual rows; a direct click avoids scrolling the anchor away.
+  for (const density of [5, 9, 7]) {
+    await page
+      .getByRole("button", { name: "来源每行 " + density + " 部", exact: true })
+      .evaluate((button: HTMLButtonElement) => button.click());
+    await expect(page.getByTestId("source-card-" + anchor)).toBeVisible();
+    await expect(page.getByTestId("source-selection-bar")).toContainText(
+      "已选 2000 部",
+    );
+    expect(
+      await page.getByTestId("source-grid").locator("article").count(),
+    ).toBeLessThan(90);
+  }
+  await page.getByTestId("source-open-" + anchor).click();
+  await expect(page.getByTestId("source-detail")).toBeVisible();
+  await page.getByTestId("source-detail-back").click();
+  await expect(page.getByTestId("source-card-" + anchor)).toBeVisible();
+  await page.getByTestId("source-grid").evaluate((element) => {
+    const main = element.closest("main")!;
+    main.scrollTop = main.scrollHeight;
+  });
+  await expect(page.getByTestId("source-card-JM:2000")).toBeVisible();
+  await page
+    .getByTestId("source-workbench")
+    .locator(".source-sort select")
+    .selectOption("source-reverse");
+  await expect(page.getByTestId("source-card-JM:2000")).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("source-grid")
+        .evaluate((element) => element.closest("main")!.scrollTop),
+    )
+    .toBe(0);
+  await expect(
+    page.getByTestId("source-grid").locator("article").first(),
+  ).toHaveAttribute("data-source-work-key", "JM:2000");
+});
+
+test("Pica collection-time reversal loads the remote last end immediately and then follows the viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { collectionCount: 2000 });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-Pica:1").check();
+  await page
+    .getByTestId("source-workbench")
+    .locator(".source-sort select")
+    .selectOption("source-reverse");
+  await expect(page.getByTestId("source-card-Pica:2000")).toBeVisible();
+  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(page.getByTestId("source-workbench")).toContainText(
+    "临时选择已清空",
+  );
+  await expect(page.getByTestId("source-next-page")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls
+        .filter(
+          (call) =>
+            call.command === "source_query" &&
+            call.source === "Pica" &&
+            call.reverse,
+        )
+        .map((call) => call.page),
+    ),
+  ).toEqual([1]);
+  await page.getByTestId("collection-sentinel").scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "40 / 2000",
+  );
+  await page.getByTestId("collection-pause").click();
+  const count = await page.evaluate(
+    () =>
+      window.sourceTest.calls.filter(
+        (call) => call.command === "source_query" && call.source === "Pica",
+      ).length,
+  );
+  await page.getByTestId("collection-sentinel").scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("collection-pause")).toHaveText("继续自动读取");
+  expect(
+    await page.evaluate(
+      () =>
+        window.sourceTest.calls.filter(
+          (call) => call.command === "source_query" && call.source === "Pica",
+        ).length,
+    ),
+  ).toBe(count);
+});
+
+test("partial favorites rebind scrolling after detail and do not fetch more for an empty local filter", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { collectionCount: 2000 });
+  await openFavorites(page);
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "20 / 2000",
+  );
+  await page.getByTestId("source-search-input").fill("绝不存在的本地筛选");
+  await expect(page.getByTestId("source-empty")).toContainText("没有匹配作品");
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "清空筛选后继续",
+  );
+  // The empty grid leaves its sentinel in view for longer than the page throttle.
+  await page.waitForTimeout(700);
+  expect(await favoritePages(page)).toEqual([1]);
+  await page.getByRole("button", { name: "清空来源搜索", exact: true }).click();
+  await page.getByTestId("source-open-JM:1").click();
+  await expect(page.getByTestId("source-detail")).toBeVisible();
+  await page.getByTestId("source-detail-back").click();
+  await page.getByTestId("collection-sentinel").scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "40 / 2000",
+  );
+  expect(await favoritePages(page)).toEqual([1, 2]);
+});
+
+test("paused favorites verify their head after a settings visit before resuming; JM folder changes reset full-reverse intent", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { collectionCount: 2000 });
+  await openFavorites(page);
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "20 / 2000",
+  );
+  await page
+    .getByTestId("collection-pause")
+    .evaluate((button: HTMLButtonElement) => button.click());
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-favorites").click();
+  await expect(page.getByTestId("collection-pause")).toHaveText("继续自动读取");
+  expect(await favoritePages(page)).toEqual([1]);
+  await page
+    .getByTestId("collection-pause")
+    .evaluate((button: HTMLButtonElement) => button.click());
+  await expect.poll(() => favoritePages(page)).toEqual([1, 1]);
+  await page
+    .getByTestId("source-workbench")
+    .locator(".source-sort select")
+    .selectOption("source-reverse");
+  await expect(page.getByTestId("collection-sentinel")).toContainText(
+    "正在准备完整来源倒序",
+  );
+  await page.getByTestId("source-folder").selectOption("folder-one");
+  await expect(
+    page.getByTestId("source-workbench").locator(".source-sort select"),
+  ).toHaveValue("source");
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "20 / 2000",
+  );
+  await expect(page.getByTestId("collection-sentinel")).not.toContainText(
+    "正在准备完整来源倒序",
+  );
+  await page.waitForTimeout(700);
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "20 / 2000",
+  );
 });
 test.afterEach(async ({ page }) => {
   expect(errors.get(page) ?? [], "browser preview runtime errors").toEqual([]);
@@ -147,6 +376,13 @@ async function installMock(page: Page, options: MockOptions = {}) {
     });
     let jmHoldUsed = false;
     let expiryUsed = false;
+    const catalogs = new Map<
+      string,
+      {
+        snapshot: CatalogSnapshot | null;
+        completeSnapshot: CatalogSnapshot | null;
+      }
+    >();
     let pageFailureUsed = false;
     let favoriteFailureUsed = false;
     let followConflictUsed = false;
@@ -167,6 +403,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
             desired: raw.desired as boolean | undefined,
             expectedRevision: raw.expectedRevision as number | undefined,
             query: raw.query as string | undefined,
+            reverse: raw.reverse as boolean | undefined,
           });
           if (command === "read_preferences") return clone(hooks.preferences);
           if (command === "read_booklists") return clone(hooks.booklists);
@@ -241,6 +478,29 @@ async function installMock(page: Page, options: MockOptions = {}) {
             return clone(next);
           }
           const scope = { source, sessionId: raw.sessionId as string };
+          if (command === "source_catalog") {
+            const key =
+              source +
+              ":" +
+              scope.sessionId +
+              ":" +
+              String(raw.folderId) +
+              ":" +
+              String(raw.reverse);
+            const current = catalogs.get(key) ?? {
+              snapshot: options.cacheSnapshot ?? null,
+              completeSnapshot: options.cacheSnapshot?.complete
+                ? options.cacheSnapshot
+                : null,
+            };
+            if (raw.action === "write") {
+              current.snapshot = clone(raw.snapshot as CatalogSnapshot);
+              if (current.snapshot.complete)
+                current.completeSnapshot = current.snapshot;
+              catalogs.set(key, current);
+            }
+            return { ...scope, ...clone(current) };
+          }
           if (command === "source_query") {
             if (options.expireJM && source === "JM" && !expiryUsed) {
               expiryUsed = true;
@@ -276,7 +536,11 @@ async function installMock(page: Page, options: MockOptions = {}) {
             }
             const work = makeWork(
               source,
-              pageNumber === 2 ? "456" : "123",
+              raw.kind === "detail"
+                ? String(raw.query)
+                : pageNumber === 2
+                  ? "456"
+                  : "123",
               epoch,
             );
             if (raw.kind === "detail") work.favorite = remoteFavorite[source];
@@ -287,6 +551,30 @@ async function installMock(page: Page, options: MockOptions = {}) {
                     coverAvailable: true,
                   }))
                 : [work];
+            if (options.collectionCount && raw.kind === "favorites") {
+              const count = options.collectionCount;
+              const offset = (pageNumber - 1) * 20;
+              return {
+                ...scope,
+                items: Array.from(
+                  { length: Math.min(20, count - offset) },
+                  (_, i) =>
+                    makeWork(
+                      source,
+                      String(raw.reverse ? count - offset - i : offset + i + 1),
+                      epoch,
+                    ),
+                ),
+                page: pageNumber,
+                total: count,
+                pages: Math.ceil(count / 20),
+                hasMore: offset + 20 < count,
+                folders:
+                  source === "JM"
+                    ? [{ id: "folder-one", name: "合成收藏夹", count }]
+                    : [],
+              };
+            }
             return {
               ...scope,
               items: resultItems,
@@ -296,7 +584,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
                   ? null
                   : options.partial
                     ? 2
-                    : 1,
+                    : (options.coverCount ?? 1),
               pages: null,
               hasMore: Boolean(options.partial && pageNumber === 1),
               folders:
@@ -372,6 +660,18 @@ async function installMock(page: Page, options: MockOptions = {}) {
 async function openFavorites(page: Page) {
   await page.getByTestId("nav-favorites").click();
   await expect(page.getByTestId("source-workbench")).toBeVisible();
+}
+async function favoritePages(page: Page) {
+  return page.evaluate(() =>
+    window.sourceTest.calls
+      .filter(
+        (call) =>
+          call.command === "source_query" &&
+          call.kind === "favorites" &&
+          call.source === "JM",
+      )
+      .map((call) => call.page),
+  );
 }
 async function openAccounts(page: Page) {
   await page.getByTestId("nav-settings").click();
@@ -536,13 +836,13 @@ test("partial pagination keeps unknown totals and retained data when the next pa
     "尚未读全",
   );
   await expect(page.getByTestId("source-workbench")).toContainText("总数未知");
-  await page.getByTestId("source-next-page").click();
-  await expect(page.getByTestId("source-retry")).toBeVisible();
+  await page.getByTestId("collection-sentinel").scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("collection-retry")).toBeVisible();
   await expect(page.getByTestId("source-card-JM:123")).toBeVisible();
   await expect(page.getByTestId("source-empty")).toHaveCount(0);
-  await expect(page.getByTestId("source-completeness")).toContainText(
-    "保留上次已读结果",
-  );
+  await expect(
+    page.getByTestId("collection-sentinel").getByRole("alert"),
+  ).toBeVisible();
   await page.getByTestId("source-retry").click();
   await expect(page.getByTestId("source-grid").locator("article")).toHaveCount(
     2,

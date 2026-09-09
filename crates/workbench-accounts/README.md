@@ -1,0 +1,17 @@
+# Desktop account catalog and cover caches
+
+This crate owns authenticated account state and disposable UI metadata. It never creates library/download jobs, stores passwords, or grants authority from local cached content.
+
+`AccountService::query` keeps its existing forward-order API. `query_ordered` adds a reverse flag passed to the source adapter. Successful network queries populate an LRU work cache limited to 20,000 records and 32 MiB of serialized metadata per active source session. Entries are evicted individually. Favorite writes still require a record loaded by a network query in the current session. A cover-only detail recovery never grants that authority.
+
+`AccountService::catalog` reads and writes `CatalogSnapshot` values under the verified source/account, folder, and direction. Native-generated account and scope hashes select fixed files under the existing private app directory. The IPC accepts neither an account key nor a file path. No session ID, password, token, or cookie is persisted in these documents. Partial progress retains the last complete snapshot. Writes reject older `updatedAt` values and conflicting writes at the same timestamp; identical writes are idempotent. The caller retains its timestamp, which must be a safe integer no more than five minutes ahead of the native clock.
+
+Each account catalog is limited to 32 MiB and 16 folder/direction scopes. Each snapshot is limited to 20,000 items. Whole scopes are evicted by recent access when needed; if the requested scope and retained complete snapshot cannot fit, the write fails without replacing the old document.
+
+Cover caches accept decoded JPEG output only, with at most 256 KiB and 512 by 512 pixels per image. Each account uses 255 fixed slots and a bounded index. A work hash inside every slot prevents an interrupted index update from returning another work's image. Reads update LRU order. Missing images can be fetched again through a read-only source detail/cover operation with current-session checks between requests.
+
+The storage layer reserves a complete 64 MiB for an account's cover slots before the first write, so a slot write followed by an index failure cannot undercount disk usage. All accounts share a 256 MiB reservation budget and a 20-account limit. Whole-account eviction removes only generated cache filenames. A registry of at most 64 KiB and one temporary file of at most 32 MiB are additional bounded overhead; temporary disk peak may therefore exceed the reservation budget by that amount. Conservative high-water reservations can cause earlier eviction than the actual byte count requires.
+
+Cache transactions share the UI document file lock, reject symlinks/reparse points, and atomically replace documents using a complete, synced temporary file. A stale temporary hard link is unlinked and recreated exclusively, never truncated. Damaged or future-schema catalogs/indices/registries return fixed errors and are not replaced with defaults. `COMMIT_UNCERTAIN` means replacement succeeded but directory sync failed; reread before retrying. Cache failures do not invalidate a verified account. Invalid native image output is rejected, while an ordinary cache write failure allows the validated image to display for the current request.
+
+Tests use synthetic accounts, an in-memory credential vault, generated tiny JPEGs, and temporary directories. They do not call live services or read real credentials. Local compilation and test execution are deferred to CI for this batch.

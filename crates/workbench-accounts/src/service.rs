@@ -1,7 +1,7 @@
 use crate::{
-    AccountError, AccountState, AccountSummary, Authenticated, CoverResult, FavoriteResult,
-    FollowKind, FollowedWork, FollowingSnapshot, QueryKind, QueryResult, Result, Source,
-    SourceAccount, SourceBackend, SourcePage, SourceWork,
+    cache, AccountError, AccountState, AccountSummary, Authenticated, CatalogAction, CatalogResult,
+    CatalogSnapshot, CoverResult, FavoriteResult, FollowKind, FollowedWork, FollowingSnapshot,
+    QueryKind, QueryResult, Result, Source, SourceAccount, SourceBackend, SourcePage,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -11,7 +11,7 @@ use workbench_credentials::{StoredCredential, Vault};
 use workbench_sources::FavoritePageRequest;
 use zeroize::Zeroizing;
 
-const MAX_WORK_CACHE: usize = 1000;
+const MAX_QUERY_ITEMS: usize = 1000;
 
 struct Slot<S> {
     initialized: bool,
@@ -22,7 +22,7 @@ struct Slot<S> {
     state: AccountState,
     saved_fingerprint: Option<[u8; 32]>,
     error_code: Option<&'static str>,
-    works: BTreeMap<String, SourceWork>,
+    works: cache::WorkCache,
     uncertain_favorites: BTreeMap<String, bool>,
 }
 
@@ -37,7 +37,7 @@ impl<S> Slot<S> {
             state: AccountState::Disconnected,
             saved_fingerprint: None,
             error_code: None,
-            works: BTreeMap::new(),
+            works: cache::WorkCache::default(),
             uncertain_favorites: BTreeMap::new(),
         }
     }
@@ -291,6 +291,24 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         folder_id: Option<String>,
         page: u64,
     ) -> Result<QueryResult> {
+        self.query_ordered(source, session_id, kind, query, folder_id, page, false)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn query_ordered(
+        &self,
+        source: Source,
+        session_id: &str,
+        kind: QueryKind,
+        query: &str,
+        folder_id: Option<String>,
+        page: u64,
+        reverse: bool,
+    ) -> Result<QueryResult> {
+        if reverse && !matches!(kind, QueryKind::Favorites) {
+            return Err(AccountError::new("QUERY_INVALID"));
+        }
         if !(1..=1000).contains(&page)
             || query.len() > 2048
             || query.chars().any(char::is_control)
@@ -309,7 +327,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let result = match kind {
             QueryKind::Favorites => {
                 self.backend
-                    .favorites(session, FavoritePageRequest { page, folder_id })
+                    .favorites(
+                        session,
+                        FavoritePageRequest {
+                            page,
+                            folder_id,
+                            reverse,
+                        },
+                    )
                     .await
             }
             QueryKind::Search => self.backend.search(session, query.trim(), page).await,
@@ -327,15 +352,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 }),
         };
         let result = self.finish(&mut slot, result)?;
-        if result.items.len() > MAX_WORK_CACHE
+        if result.items.len() > MAX_QUERY_ITEMS
             || result.items.iter().any(|work| work.source != source)
         {
             return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
         }
-        if slot.works.len() + result.items.len() > MAX_WORK_CACHE {
-            slot.works.clear();
-        }
-        for work in &result.items {
+        let sizes: Vec<_> = result
+            .items
+            .iter()
+            .map(|work| cache::validate_work(source, work))
+            .collect::<Result<_>>()?;
+        for (work, bytes) in result.items.iter().zip(sizes) {
             if slot
                 .uncertain_favorites
                 .get(&work.work_id)
@@ -343,7 +370,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             {
                 slot.uncertain_favorites.remove(&work.work_id);
             }
-            slot.works.insert(work.work_id.clone(), work.clone());
+            slot.works.insert(work.clone(), bytes);
         }
         Ok(QueryResult {
             source,
@@ -390,8 +417,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             slot.uncertain_favorites.insert(work_id.into(), desired);
             return Err(AccountError::new("FAVORITE_OUTCOME_UNKNOWN"));
         }
-        if let Some(work) = slot.works.get_mut(work_id) {
+        if let Some(mut work) = slot.works.get(work_id).cloned() {
             work.favorite = Some(result.favorite);
+            let bytes = cache::validate_work(source, &work)?;
+            slot.works.insert(work, bytes);
         }
         Ok(FavoriteResult {
             source,
@@ -414,30 +443,164 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .acquire()
             .await
             .map_err(|_| AccountError::new("ACCOUNT_SERVICE_UNAVAILABLE"))?;
-        let session = {
+        let (session, account, known) = {
             let mut slot = self.slot(source).lock().await;
             self.require_scope(&mut slot, session_id)?;
-            if !slot.works.contains_key(work_id) {
-                return Err(AccountError::new("WORK_NOT_LOADED"));
+            if !cache::valid_id(work_id) {
+                return Err(AccountError::new("WORK_INPUT_INVALID"));
             }
-            Arc::clone(
-                slot.session
+            let known = slot.works.contains_key(work_id);
+            let account = account_key(
+                source,
+                &slot
+                    .account
                     .as_ref()
-                    .ok_or(AccountError::new("AUTH_REQUIRED"))?,
+                    .ok_or(AccountError::new("AUTH_REQUIRED"))?
+                    .account_id,
+            );
+            (
+                Arc::clone(
+                    slot.session
+                        .as_ref()
+                        .ok_or(AccountError::new("AUTH_REQUIRED"))?,
+                ),
+                account,
+                known,
             )
         };
-        // Thumbnail requests do not hold the account lock or postpone logout.
-        // They use a credential-free transport and cannot publish stale results.
-        let result = self.backend.cover(&session, work_id).await;
+        let cached = {
+            let root = self.root.clone();
+            let account = account.clone();
+            let work = work_id.to_owned();
+            tokio::task::spawn_blocking(move || cache::read_cover(&root, &account, &work))
+                .await
+                .ok()
+                .and_then(std::result::Result::ok)
+                .flatten()
+        };
+        {
+            let mut slot = self.slot(source).lock().await;
+            self.require_scope(&mut slot, session_id)?;
+            if let Some(data_url) = cached {
+                return Ok(CoverResult {
+                    source,
+                    session_id: session_id.into(),
+                    work_id: work_id.into(),
+                    data_url: Some(data_url),
+                });
+            }
+        }
+        // A cache/old-card request may rehydrate metadata, but never installs a
+        // work in the network-query authorization cache used by favorite/follow.
+        let result = async {
+            let mut hydrated = false;
+            if !known {
+                let work = self.backend.detail(&session, work_id).await?;
+                cache::validate_work(source, &work)?;
+                if work.work_id != work_id {
+                    return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
+                }
+                hydrated = true;
+            }
+            {
+                let mut slot = self.slot(source).lock().await;
+                self.require_scope(&mut slot, session_id)?;
+            }
+            let first = self.backend.cover(&session, work_id).await;
+            match first {
+                Err(error) if error.code == "WORK_NOT_LOADED" && !hydrated => {
+                    {
+                        let mut slot = self.slot(source).lock().await;
+                        self.require_scope(&mut slot, session_id)?;
+                    }
+                    let work = self.backend.detail(&session, work_id).await?;
+                    cache::validate_work(source, &work)?;
+                    if work.work_id != work_id {
+                        return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
+                    }
+                    {
+                        let mut slot = self.slot(source).lock().await;
+                        self.require_scope(&mut slot, session_id)?;
+                    }
+                    self.backend.cover(&session, work_id).await
+                }
+                other => other,
+            }
+        }
+        .await;
+        let data_url = {
+            let mut slot = self.slot(source).lock().await;
+            self.require_scope(&mut slot, session_id)?;
+            self.finish(&mut slot, result)?
+        };
+        if let Some(data_url) = &data_url {
+            let root = self.root.clone();
+            let account = account.clone();
+            let work = work_id.to_owned();
+            let image = data_url.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                cache::write_cover(&root, &account, &work, &image)
+            })
+            .await;
+            // Invalid native output is not forwarded as an image. Disk/cache
+            // failures merely skip persistence and leave the account connected.
+            match result {
+                Err(_) => return Err(AccountError::new("CACHE_UNAVAILABLE")),
+                Ok(Err(error)) if error.code == "SOURCE_COVER_INVALID" => return Err(error),
+                _ => {}
+            }
+        }
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
-        let data_url = self.finish(&mut slot, result)?;
         Ok(CoverResult {
             source,
             session_id: session_id.into(),
             work_id: work_id.into(),
             data_url,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn catalog(
+        &self,
+        source: Source,
+        session_id: &str,
+        folder_id: Option<String>,
+        reverse: bool,
+        action: CatalogAction,
+        snapshot: Option<CatalogSnapshot>,
+    ) -> Result<CatalogResult> {
+        // Keep this session generation ordered through the local transaction.
+        // Persisted metadata never populates the operation-authorization cache.
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
+        let account = account_key(
+            source,
+            &slot
+                .account
+                .as_ref()
+                .ok_or(AccountError::new("AUTH_REQUIRED"))?
+                .account_id,
+        );
+        let root = self.root.clone();
+        let generation = session_id.to_owned();
+        let result = tokio::task::spawn_blocking(move || {
+            cache::catalog(
+                &root,
+                &account,
+                source,
+                &generation,
+                folder_id.as_deref(),
+                reverse,
+                action,
+                snapshot,
+            )
+        })
+        .await
+        .map_err(|_| AccountError::new("CACHE_UNAVAILABLE"))?;
+        self.check_saved(&mut slot)?;
+        // Cache parsing or filesystem errors never expire a validated session.
+        result
     }
 
     pub async fn following(&self, source: Source, session_id: &str) -> Result<FollowingSnapshot> {

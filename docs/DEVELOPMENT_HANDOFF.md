@@ -2,6 +2,12 @@
 
 Updated 2026-09-09. This document separates the current continuation from historical milestone reports.
 
+## Active favorites and cover repair (2026-09-09)
+
+The user has now accepted real JM/Pica login, favorites reading/refresh, existing source ordering, title/author lookup, local following/booklist restart persistence, and remembered-session restart. These are user-reported results, independent of CI. The earlier suggestion that JM's default order was wrong was explicitly withdrawn: retain its default favorite-time order and do not reopen that diagnosis.
+
+The user authorized implementation of the assessed repair: missing covers, favorites metadata loaded one source page at a time on reaching the bottom, cached progress, continuous virtualized 5/7/9 browsing and global reverse ordering. Website favorite writes and repaired real covers still need separate user acceptance. The current development target is 0.3.1. See [the repair batch record](LOCAL_WORKBENCH_FAVORITES_FIX_2026-09-09.md); implementation, exact-head CI and installer checks must be recorded there before delivery. Existing 0.3.0 validation below is a historical baseline, not proof of this patch.
+
 ## Third batch: account acceptance entry (2026-09-09)
 
 The user requested the next development batch and will provide real accounts. Batch 3 implementation and automated verification are complete at `0bdfcda3896c4a829c5cff3a2aaa2c414a09a88f`, PR merge `36ba43f666f11d4b18d0c4f3338c1a84c8e48b0c`. See [the third-batch report](LOCAL_WORKBENCH_BATCH3_2026-09-09.md) for CI, package digest and live-acceptance boundaries. PR #19 remains a draft.

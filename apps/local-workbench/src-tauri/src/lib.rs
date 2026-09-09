@@ -154,6 +154,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             accounts::source_login,
             accounts::source_logout,
             accounts::source_query,
+            accounts::source_catalog,
             accounts::source_favorite,
             accounts::source_cover,
             accounts::source_following,

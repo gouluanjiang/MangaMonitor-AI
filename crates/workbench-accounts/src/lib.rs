@@ -1,8 +1,10 @@
 //! Desktop account state. No library, task, downloader or cloud-publication authority.
 mod backend;
+mod cache;
 mod service;
 
 pub use backend::{Authenticated, SourceBackend};
+pub use cache::{CatalogAction, CatalogResult, CatalogSnapshot};
 pub use service::AccountService;
 pub use workbench_credentials::Source;
 pub use workbench_sources::{SourceAccount, SourceFolder, SourcePage, SourceWork};

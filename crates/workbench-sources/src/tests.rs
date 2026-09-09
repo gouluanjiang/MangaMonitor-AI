@@ -515,7 +515,7 @@ async fn response_identity_mismatch_cannot_populate_cover_cache() {
         sources.detail(&session, "123").await.unwrap_err().code,
         "SOURCE_RESPONSE_ID_MISMATCH"
     );
-    assert!(session.covers.lock().unwrap().is_empty());
+    assert!(session.covers.lock().unwrap().known.is_empty());
 }
 
 #[tokio::test]
@@ -540,7 +540,7 @@ fn session_thumbnail_descriptors_are_bounded_and_separate() {
     let first = session(Source::Jm);
     let second = session(Source::Jm);
     first
-        .remember_covers((1..=1001).map(|id| {
+        .remember_covers((1..=MAX_KNOWN_WORKS + 1).map(|id| {
             (
                 id.to_string(),
                 Some(format!(
@@ -549,18 +549,17 @@ fn session_thumbnail_descriptors_are_bounded_and_separate() {
             )
         }))
         .unwrap();
-    assert_eq!(first.covers.lock().unwrap().len(), MAX_KNOWN_WORKS);
-    assert!(
-        first
-            .covers
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|url| url.is_some())
-            .count()
-            <= MAX_COVER_DESCRIPTORS
+    assert_eq!(first.covers.lock().unwrap().known.len(), MAX_KNOWN_WORKS);
+    assert!(first.covers.lock().unwrap().urls.len() <= MAX_COVER_DESCRIPTORS);
+    assert!(second.covers.lock().unwrap().known.is_empty());
+    assert_eq!(
+        first.covers.lock().unwrap().lookup("1"),
+        CoverLookup::Unknown
     );
-    assert!(second.covers.lock().unwrap().is_empty());
+    assert_eq!(
+        first.covers.lock().unwrap().lookup("2"),
+        CoverLookup::Evicted
+    );
 }
 
 #[tokio::test]
@@ -624,4 +623,398 @@ async fn known_work_without_cover_returns_none_without_network() {
     );
     assert_eq!(sources.thumbnail(&session, PICA_ID).await.unwrap(), None);
     assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+}
+
+fn tiny_cover() -> Vec<u8> {
+    let mut png = vec![];
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&[10, 20, 30], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    png
+}
+
+fn with_cover_script(
+    mut sources: WorkbenchSources,
+    responses: Vec<SourceResult<cover::CoverResponse>>,
+) -> WorkbenchSources {
+    sources.cover_script = Some(Mutex::new(responses.into()));
+    sources
+}
+
+fn known_pica_cover(url: &str) -> SourceSession {
+    let session = session(Source::Pica);
+    session
+        .remember_covers([(PICA_ID.to_owned(), Some(url.to_owned()))])
+        .unwrap();
+    session
+}
+
+#[test]
+fn metadata_accepts_pinned_pica_cdns_and_transformed_paths() {
+    for (server, path) in [
+        ("https://storage-b.picacomic.com", "fixture.jpg"),
+        ("https://img.picacomic.com", "fixture.webp"),
+        (
+            "https://s3.picacomic.com",
+            "tobeimg/signature/rs:fill:300:400:0/g:sm/Zml4dHVyZQ==.jpg",
+        ),
+    ] {
+        let (work, url) = protocol::work(
+            Source::Pica,
+            &json!({"_id":PICA_ID,"title":"T","thumb":{"fileServer":server,"path":path}}),
+            false,
+        )
+        .unwrap();
+        assert!(work.cover_available);
+        assert_eq!(url, Some(format!("{server}/static/{path}")));
+        assert!(!serde_json::to_string(&work).unwrap().contains(server));
+    }
+}
+
+#[test]
+fn redirects_reject_arbitrary_origins_credentials_and_path_escapes() {
+    let current = Url::parse("https://s3.picacomic.com/static/fixture.jpg").unwrap();
+    for target in [
+        "https://evil.test/static/a.jpg",
+        "https://s3.picacomic.com.evil.test/static/a.jpg",
+        "https://127.0.0.1/static/a.jpg",
+        "https://[::1]/static/a.jpg",
+        "http://storage-b.picacomic.com/static/a.jpg",
+        "https://user:secret@storage-b.picacomic.com/static/a.jpg",
+        "https://storage-b.picacomic.com:8443/static/a.jpg",
+        "https://storage-b.picacomic.com/static/a.jpg?token=secret",
+        "https://storage-b.picacomic.com/static/a.jpg#fragment",
+        "https://storage-b.picacomic.com/static/../secret.jpg",
+        "https://storage-b.picacomic.com/static/%2e%2e/secret.jpg",
+        "https://storage-b.picacomic.com/static/a%2fb.jpg",
+        "/static/../../secret.jpg",
+        "https://storage-b.picacomic.com/private",
+        "file:///C:/private.jpg",
+        "https://cdn-msp3.18comic.vip/media/albums/123_3x4.jpg",
+        "https://storage-b.picacomic.com/static/a.jpg\r\nCookie: x",
+    ] {
+        assert_eq!(
+            protocol::cover_redirect(Source::Pica, &current, target)
+                .unwrap_err()
+                .code,
+            "SOURCE_REDIRECT_REFUSED",
+            "{target}"
+        );
+    }
+    let image = protocol::cover_redirect(
+        Source::Pica,
+        &current,
+        "https://img.picacomic.com/signature/rs:fill:300:400:0/g:sm/Zml4dHVyZQ.jpg",
+    )
+    .unwrap();
+    assert_eq!(image.host_str(), Some("img.picacomic.com"));
+    assert_eq!(
+        protocol::cover_redirect(Source::Pica, &current, "/static/next.jpg")
+            .unwrap()
+            .path(),
+        "/static/next.jpg"
+    );
+}
+
+#[tokio::test]
+async fn every_cover_redirect_is_checked_before_a_credential_free_get() {
+    let sources = with_cover_script(
+        scripted(vec![]),
+        vec![
+            Ok(cover::CoverResponse::Redirect(
+                "https://storage-b.picacomic.com/static/fixture.jpg".into(),
+            )),
+            Ok(cover::CoverResponse::Redirect(
+                "https://img.picacomic.com/signature/rs:fill:300:400:0/g:sm/Zml4dHVyZQ.jpg".into(),
+            )),
+            Ok(cover::CoverResponse::Bytes(tiny_cover())),
+        ],
+    );
+    let session = known_pica_cover(
+        "https://s3.picacomic.com/static/tobeimg/signature/rs:fill:300:400:0/g:sm/Zml4dHVyZQ.jpg",
+    );
+    assert!(sources
+        .thumbnail(&session, PICA_ID)
+        .await
+        .unwrap()
+        .unwrap()
+        .starts_with("data:image/jpeg;base64,"));
+    let requests = sources.cover_recorded.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    for url in requests.iter() {
+        let request = sources.cover_request(url).build().unwrap();
+        assert_eq!(request.method(), Method::GET);
+        for forbidden in ["authorization", "cookie", "referer"] {
+            assert!(!request.headers().contains_key(forbidden));
+        }
+    }
+    assert!(sources.recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn unsafe_redirect_is_never_requested() {
+    let sources = with_cover_script(
+        scripted(vec![]),
+        vec![Ok(cover::CoverResponse::Redirect(
+            "https://evil.test/static/a.jpg".into(),
+        ))],
+    );
+    assert_eq!(
+        sources
+            .thumbnail(
+                &known_pica_cover("https://storage-b.picacomic.com/static/fixture.jpg"),
+                PICA_ID
+            )
+            .await
+            .unwrap_err()
+            .code,
+        "SOURCE_REDIRECT_REFUSED"
+    );
+    assert_eq!(sources.cover_recorded.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn redirect_loops_and_hop_limit_cannot_extend_request_budget() {
+    let initial = "https://storage-b.picacomic.com/static/fixture.jpg";
+    let sources = with_cover_script(
+        scripted(vec![]),
+        vec![Ok(cover::CoverResponse::Redirect(initial.into()))],
+    );
+    assert_eq!(
+        sources
+            .thumbnail(&known_pica_cover(initial), PICA_ID)
+            .await
+            .unwrap_err()
+            .code,
+        "SOURCE_REDIRECT_REFUSED"
+    );
+    assert_eq!(sources.cover_recorded.lock().unwrap().len(), 1);
+    let sources = with_cover_script(
+        scripted(vec![]),
+        (1..=4)
+            .map(|id| Ok(cover::CoverResponse::Redirect(format!("/static/{id}.jpg"))))
+            .collect(),
+    );
+    assert_eq!(
+        sources
+            .thumbnail(&known_pica_cover(initial), PICA_ID)
+            .await
+            .unwrap_err()
+            .code,
+        "SOURCE_REDIRECT_REFUSED"
+    );
+    assert_eq!(sources.cover_recorded.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn redirected_cover_preserves_original_byte_and_decode_limits() {
+    let sources = with_cover_script(
+        scripted(vec![]),
+        vec![
+            Ok(cover::CoverResponse::Redirect("/static/next.jpg".into())),
+            Ok(cover::CoverResponse::Bytes(vec![
+                0;
+                thumbnail::MAX_COVER_BYTES
+                    + 1
+            ])),
+        ],
+    );
+    assert_eq!(
+        sources
+            .thumbnail(
+                &known_pica_cover("https://storage-b.picacomic.com/static/fixture.jpg"),
+                PICA_ID
+            )
+            .await
+            .unwrap_err()
+            .code,
+        "SOURCE_RESPONSE_TOO_LARGE"
+    );
+    assert_eq!(sources.cover_recorded.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn evicted_old_cover_recovers_by_detail_once_without_favorite_authority() {
+    let sources = with_cover_script(
+        scripted(vec![Ok(
+            json!({"id":"1","name":"Old work","is_favorite":true}),
+        )]),
+        vec![
+            Ok(cover::CoverResponse::Bytes(tiny_cover())),
+            Ok(cover::CoverResponse::Bytes(tiny_cover())),
+        ],
+    );
+    let session = session(Source::Jm);
+    session
+        .remember_covers((1..=1500).map(|id| {
+            (
+                id.to_string(),
+                Some(format!(
+                    "https://cdn-msp3.18comic.vip/media/albums/{id}_3x4.jpg"
+                )),
+            )
+        }))
+        .unwrap();
+    assert_eq!(
+        session.covers.lock().unwrap().lookup("1"),
+        CoverLookup::Evicted
+    );
+    for _ in 0..2 {
+        assert!(sources.thumbnail(&session, "1").await.unwrap().is_some());
+    }
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        &[(Source::Jm, Method::GET, "/album?id=1".to_owned())]
+    );
+    assert_eq!(sources.cover_recorded.lock().unwrap().len(), 2);
+    assert_eq!(session.covers.lock().unwrap().known.len(), 1500);
+    assert_eq!(
+        session.covers.lock().unwrap().urls.len(),
+        MAX_COVER_DESCRIPTORS
+    );
+}
+
+#[tokio::test]
+async fn failed_descriptor_recovery_is_an_error_not_a_missing_cover() {
+    let sources = with_cover_script(scripted(vec![Err(error("SOURCE_TIMEOUT"))]), vec![]);
+    let session = session(Source::Jm);
+    session
+        .remember_covers((1..=129).map(|id| {
+            (
+                id.to_string(),
+                Some(format!(
+                    "https://cdn-msp3.18comic.vip/media/albums/{id}_3x4.jpg"
+                )),
+            )
+        }))
+        .unwrap();
+    assert_eq!(
+        sources.thumbnail(&session, "1").await.unwrap_err().code,
+        "SOURCE_TIMEOUT"
+    );
+    assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+    assert_eq!(
+        session.covers.lock().unwrap().lookup("1"),
+        CoverLookup::Evicted
+    );
+}
+
+#[test]
+fn reverse_defaults_and_duplicate_pagination_keys_are_unambiguous() {
+    let request: FavoritePageRequest =
+        serde_json::from_str(r#"{"page":1,"folderId":null}"#).unwrap();
+    assert!(!request.reverse);
+    for json in [
+        r#"{"page":1,"page":2}"#,
+        r#"{"page":1,"reverse":false,"reverse":true}"#,
+        r#"{"page":1,"reverse":"true"}"#,
+    ] {
+        assert!(serde_json::from_str::<FavoritePageRequest>(json).is_err());
+    }
+}
+
+#[tokio::test]
+async fn pica_reverse_uses_source_order_and_jm_default_remains_mr() {
+    let pica_page = json!({"comics":{"page":1,"pages":1,"limit":20,"total":1,"docs":[{"_id":PICA_ID,"title":"T"}]}});
+    let sources = scripted(vec![
+        Ok(pica_page.clone()),
+        Ok(pica_page),
+        Ok(json!({"total":"1","folder_list":[],"list":[{"id":"123","name":"T"}]})),
+    ]);
+    let pica = session(Source::Pica);
+    for reverse in [false, true] {
+        sources
+            .favorites(
+                &pica,
+                FavoritePageRequest {
+                    page: 1,
+                    folder_id: None,
+                    reverse,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    sources
+        .favorites(
+            &session(Source::Jm),
+            FavoritePageRequest {
+                page: 1,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        sources
+            .recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, _, route)| route.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "users/favourite?s=dd&page=1",
+            "users/favourite?s=da&page=1",
+            "/favorite?page=1&o=mr&folder_id=0"
+        ]
+    );
+    let cache = pica.covers.lock().unwrap();
+    assert_eq!(cache.known.len(), 1);
+    assert_eq!(cache.known_order.len(), 1);
+    assert!(cache.urls.is_empty());
+}
+
+#[tokio::test]
+async fn unsupported_reverse_and_invalid_pages_are_rejected_before_network() {
+    let sources = scripted(vec![]);
+    assert_eq!(
+        sources
+            .favorites(
+                &session(Source::Jm),
+                FavoritePageRequest {
+                    page: 1,
+                    folder_id: None,
+                    reverse: true
+                }
+            )
+            .await
+            .unwrap_err()
+            .code,
+        "SOURCE_REVERSE_UNSUPPORTED"
+    );
+    for page in [0, 100_001] {
+        assert_eq!(
+            sources
+                .favorites(
+                    &session(Source::Pica),
+                    FavoritePageRequest {
+                        page,
+                        folder_id: None,
+                        reverse: false
+                    }
+                )
+                .await
+                .unwrap_err()
+                .code,
+            "SOURCE_PAGE_INVALID"
+        );
+    }
+    assert!(sources.recorded.lock().unwrap().is_empty());
+}
+
+#[test]
+fn persistent_work_and_folder_dtos_reject_extra_fields() {
+    let mut folder = json!({"id":"1","name":"N","count":null});
+    assert!(serde_json::from_value::<SourceFolder>(folder.clone()).is_ok());
+    folder["url"] = json!("https://evil.test");
+    assert!(serde_json::from_value::<SourceFolder>(folder).is_err());
+    let (work, _) =
+        protocol::work(Source::Pica, &json!({"_id":PICA_ID,"title":"T"}), false).unwrap();
+    let mut work = serde_json::to_value(work).unwrap();
+    assert!(serde_json::from_value::<SourceWork>(work.clone()).is_ok());
+    work["token"] = json!("not-allowed");
+    assert!(serde_json::from_value::<SourceWork>(work).is_err());
 }

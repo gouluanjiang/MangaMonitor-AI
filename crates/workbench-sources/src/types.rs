@@ -30,8 +30,8 @@ pub struct SourceAccount {
     pub display_name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceWork {
     pub source: Source,
     pub work_id: String,
@@ -46,8 +46,8 @@ pub struct SourceWork {
     pub cover_available: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceFolder {
     pub id: String,
     pub name: String,
@@ -70,6 +70,8 @@ pub struct SourcePage {
 pub struct FavoritePageRequest {
     pub page: u64,
     pub folder_id: Option<String>,
+    #[serde(default)]
+    pub reverse: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

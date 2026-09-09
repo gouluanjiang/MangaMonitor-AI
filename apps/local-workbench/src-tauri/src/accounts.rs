@@ -4,8 +4,8 @@ use std::{
 };
 use tauri::{Runtime, State, WebviewWindow};
 use workbench_accounts::{
-    AccountError, AccountService, AccountSummary, CoverResult, FavoriteResult, FollowKind,
-    FollowingSnapshot, QueryKind, QueryResult, Source,
+    AccountError, AccountService, AccountSummary, CatalogAction, CatalogResult, CatalogSnapshot,
+    CoverResult, FavoriteResult, FollowKind, FollowingSnapshot, QueryKind, QueryResult, Source,
 };
 use workbench_sources::WorkbenchSources;
 use zeroize::Zeroizing;
@@ -163,11 +163,39 @@ pub(super) async fn source_query<R: Runtime>(
     query: String,
     folder_id: Option<String>,
     page: u64,
+    reverse: Option<bool>,
 ) -> Result<QueryResult, AccountError> {
     require_main(window.label())?;
     let service = service(Arc::clone(accounts.inner())).await?;
     service
-        .query(source, &session_id, kind, &query, folder_id, page)
+        .query_ordered(
+            source,
+            &session_id,
+            kind,
+            &query,
+            folder_id,
+            page,
+            reverse.unwrap_or(false),
+        )
+        .await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the public flat IPC argument contract.
+pub(super) async fn source_catalog<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    source: Source,
+    session_id: String,
+    folder_id: Option<String>,
+    reverse: bool,
+    action: CatalogAction,
+    snapshot: Option<CatalogSnapshot>,
+) -> Result<CatalogResult, AccountError> {
+    require_main(window.label())?;
+    let service = service(Arc::clone(accounts.inner())).await?;
+    service
+        .catalog(source, &session_id, folder_id, reverse, action, snapshot)
         .await
 }
 

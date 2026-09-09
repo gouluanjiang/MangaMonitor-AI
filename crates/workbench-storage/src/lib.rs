@@ -2,10 +2,12 @@
 //!
 //! No library paths, credentials, download commands, or media operations are exposed.
 mod background;
+mod cache;
 mod model;
 mod store;
 
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
+pub use cache::{AccountCache, CacheEntry};
 pub use model::{
     AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,
     FollowedWork, ResourcePreferences, ResourceProfile, Source, WorkIdentity, WorkbenchPreferences,

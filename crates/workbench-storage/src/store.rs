@@ -50,7 +50,7 @@ struct ValueVersion {
     version: u64,
 }
 
-struct StoreFileLock {
+pub(crate) struct StoreFileLock {
     file: File,
 }
 
@@ -65,8 +65,8 @@ impl Drop for StoreFileLock {
 
 /// The root is selected by the application, never by a renderer command argument.
 pub struct WorkbenchStore {
-    root: PathBuf,
-    local_lock: Mutex<()>,
+    pub(crate) root: PathBuf,
+    pub(crate) local_lock: Mutex<()>,
     // Windows handles keep ancestors from being renamed/replaced while the store is open.
     _directory_handles: Vec<File>,
 }
@@ -172,7 +172,7 @@ impl WorkbenchStore {
         })
     }
 
-    fn acquire_lock(&self) -> Result<StoreFileLock> {
+    pub(crate) fn acquire_lock(&self) -> Result<StoreFileLock> {
         check_directory_tree(&self.root)?;
         let path = self.root.join(".workbench.lock");
         check_optional_regular(&path)?;
@@ -292,7 +292,7 @@ fn redirected(metadata: &Metadata) -> bool {
     false
 }
 
-fn safe_options() -> OpenOptions {
+pub(crate) fn safe_options() -> OpenOptions {
     #[allow(unused_mut)]
     let mut options = OpenOptions::new();
     #[cfg(windows)]
@@ -404,7 +404,7 @@ fn hold_existing_directories(path: &Path) -> Result<Vec<File>> {
     Ok(handles)
 }
 
-fn check_directory_tree(path: &Path) -> Result<()> {
+pub(crate) fn check_directory_tree(path: &Path) -> Result<()> {
     check_path_form(path)?;
     let mut current = PathBuf::new();
     for component in path.components() {
@@ -421,7 +421,7 @@ fn check_directory_tree(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn check_optional_regular(path: &Path) -> Result<Option<Metadata>> {
+pub(crate) fn check_optional_regular(path: &Path) -> Result<Option<Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_file() && !redirected(&metadata) => Ok(Some(metadata)),
         Ok(_) => Err(StoreError::new("UNSAFE_PATH")),
@@ -430,7 +430,7 @@ fn check_optional_regular(path: &Path) -> Result<Option<Metadata>> {
     }
 }
 
-fn check_open_regular(file: &File) -> Result<Metadata> {
+pub(crate) fn check_open_regular(file: &File) -> Result<Metadata> {
     let metadata = file
         .metadata()
         .map_err(|_| StoreError::new("STORE_READ_FAILED"))?;

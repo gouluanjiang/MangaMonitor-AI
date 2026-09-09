@@ -33,6 +33,7 @@ import { AccountSettings } from "./AccountSettings.tsx";
 import { SourceWorkbench } from "./SourceWorkbench.tsx";
 import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
+import { boundSourceCache } from "./source-memory.ts";
 import { sources, sourceWorkKey } from "./source-types.ts";
 import type {
   AccountSummary,
@@ -196,9 +197,11 @@ export default function App() {
       setSourceCache((previous) => {
         const next = { ...previous };
         for (const work of incoming)
-          if (work.source === scope.source)
+          if (work.source === scope.source) {
+            delete next[sourceWorkKey(work)];
             next[sourceWorkKey(work)] = { scope, work };
-        return Object.fromEntries(Object.entries(next).slice(-1000));
+          }
+        return boundSourceCache(next);
       });
     },
     [],

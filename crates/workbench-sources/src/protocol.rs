@@ -26,7 +26,17 @@ pub(crate) const PICA_NONCE: &str = "ptxdhmjzqtnrtwndhbxcpkjamb33w837";
 // Public protocol constants, never personal account credentials.
 const PICA_DIGEST: &str = r"~d}$Q7$eIni=V)9\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn";
 const JM_COVER_HOST: &str = "cdn-msp3.18comic.vip";
-const PICA_COVER_HOSTS: &[&str] = &["storage1.picacomic.com", "s3.picacomic.com"];
+// Exact CDN identities only. storage-b is used by the pinned upstream UI:
+// lanyeeee/picacomic-downloader@77c8b62ede42b3afc074506d092313816af8092d,
+// src/AppContent.vue:109. Transformed paths and img redirects are evidenced in
+// https://github.com/tonquer/picacg-qt/discussions/48 (2024-04-22 cover log).
+// These protocol references do not grant trust to arbitrary *.picacomic.com.
+const PICA_COVER_HOSTS: &[&str] = &[
+    "storage1.picacomic.com",
+    "s3.picacomic.com",
+    "storage-b.picacomic.com",
+    "img.picacomic.com",
+];
 pub(crate) const MAX_WORK_JSON_BYTES: usize = 64 * 1024;
 const MAX_JS_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -388,22 +398,78 @@ fn cover_url(source: Source, id: &str, data: &Value) -> Option<String> {
                 return None;
             }
             let path = data["thumb"]["path"].as_str()?;
-            if path.is_empty()
-                || path.len() > 1024
-                || !path
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-_/ .".contains(&b))
-                || path.starts_with('/')
-                || path.contains(' ')
-                || path
-                    .split('/')
-                    .any(|part| part.is_empty() || part == "." || part == "..")
-            {
+            if path.starts_with('/') || path.len() > 1024 || !valid_cover_path(path) {
                 return None;
             }
-            Some(format!("https://{}/static/{path}", server.host_str()?))
+            let url = Url::parse(&format!("https://{}/static/{path}", server.host_str()?)).ok()?;
+            validate_cover_url(source, &url).ok()?;
+            Some(url.to_string())
         }
     }
+}
+
+fn valid_cover_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 2048
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_/.:=+".contains(&b))
+        && !path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+pub(crate) fn validate_cover_url(source: Source, url: &Url) -> SourceResult<()> {
+    let allowed_host = match source {
+        Source::Jm => url.host_str() == Some(JM_COVER_HOST),
+        Source::Pica => url
+            .host_str()
+            .is_some_and(|host| PICA_COVER_HOSTS.contains(&host)),
+    };
+    let path = url.path().strip_prefix('/').unwrap_or_default();
+    let allowed_path = match source {
+        Source::Jm => path
+            .strip_prefix("media/albums/")
+            .and_then(|name| name.strip_suffix("_3x4.jpg"))
+            .is_some_and(|id| valid_id(Source::Jm, id)),
+        Source::Pica => {
+            let parts: Vec<_> = path.split('/').collect();
+            path.starts_with("static/")
+                || (parts.len() == 4 && parts[1].starts_with("rs:") && parts[2].starts_with("g:"))
+        }
+    };
+    if url.scheme() != "https"
+        || !allowed_host
+        || !allowed_path
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !valid_cover_path(path)
+    {
+        return Err(error("SOURCE_REDIRECT_REFUSED"));
+    }
+    Ok(())
+}
+
+pub(crate) fn cover_redirect(source: Source, current: &Url, location: &str) -> SourceResult<Url> {
+    // Check before Url::join normalizes dot segments or backslashes. No URL
+    // escapes, credentials, new schemes, fragments, or query-token forwarding.
+    if location.is_empty()
+        || location.len() > 4096
+        || location.chars().any(char::is_control)
+        || location.contains('%')
+        || location.contains('\\')
+        || location.split('/').any(|part| part == "." || part == "..")
+    {
+        return Err(error("SOURCE_REDIRECT_REFUSED"));
+    }
+    let next = current
+        .join(location)
+        .map_err(|_| error("SOURCE_REDIRECT_REFUSED"))?;
+    validate_cover_url(source, &next)?;
+    Ok(next)
 }
 
 pub(crate) fn pica_signature(route: &str, method: &str, timestamp: u64) -> SourceResult<String> {

@@ -20,6 +20,11 @@ import {
   toWorkReference,
 } from "./source-types.ts";
 import { SourceError, sourceErrorMessage } from "./source-runtime.ts";
+import { CollectionReader } from "./source-collection.ts";
+import type { CollectionState } from "./source-collection.ts";
+import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
+import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
+import { queueCover } from "./source-cover-queue.ts";
 import "./source-workbench.css";
 
 export interface SourceWorkbenchProps {
@@ -43,8 +48,16 @@ interface SourceCoverProps {
   adapter: SourceAdapter;
   scope: SourceScope;
   work: SourceWork;
+  retryVersion?: number;
+  resolveMissing?: boolean;
 }
-function SourceCover({ adapter, scope, work }: SourceCoverProps) {
+function SourceCover({
+  adapter,
+  scope,
+  work,
+  retryVersion = 0,
+  resolveMissing = false,
+}: SourceCoverProps) {
   const container = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
@@ -52,29 +65,29 @@ function SourceCover({ adapter, scope, work }: SourceCoverProps) {
   useEffect(() => {
     let disposed = false;
     let visible = false;
-    let inFlight = false;
+    let request: ReturnType<typeof queueCover> | null = null;
     setData(null);
     setStarted(false);
     setFailed(false);
-    if (!work.coverAvailable) return;
+    if (!work.coverAvailable && !resolveMissing && retryVersion === 0) return;
     const load = () => {
       if (disposed || !visible) return;
       setStarted(true);
-      if (inFlight) return;
-      inFlight = true;
-      void adapter
-        .cover(scope, work.workId)
+      if (request) return;
+      const job = queueCover(() => adapter.cover(scope, work.workId));
+      request = job;
+      void job.promise
         .then((value) => {
-          if (!disposed && visible) {
+          if (!disposed && visible && request === job) {
             setData(value);
             setFailed(value === null);
           }
         })
         .catch(() => {
-          if (!disposed && visible) setFailed(true);
+          if (!disposed && visible && request === job) setFailed(true);
         })
         .finally(() => {
-          inFlight = false;
+          if (request === job) request = null;
         });
     };
     const updateVisibility = (next: boolean) => {
@@ -82,6 +95,7 @@ function SourceCover({ adapter, scope, work }: SourceCoverProps) {
       visible = next;
       if (visible) load();
       else {
+        if (request?.cancel()) request = null;
         setData(null);
         setStarted(false);
         setFailed(false);
@@ -101,6 +115,7 @@ function SourceCover({ adapter, scope, work }: SourceCoverProps) {
     if (!observer) setFailed(true);
     return () => {
       disposed = true;
+      request?.cancel();
       visible = false;
       observer?.disconnect();
     };
@@ -110,6 +125,8 @@ function SourceCover({ adapter, scope, work }: SourceCoverProps) {
     scope.sessionId,
     work.workId,
     work.coverAvailable,
+    retryVersion,
+    resolveMissing,
   ]);
   return (
     <div
@@ -127,7 +144,7 @@ function SourceCover({ adapter, scope, work }: SourceCoverProps) {
     </div>
   );
 }
-type Anchor = { key: string; offset: number; scroll: number };
+type Anchor = { key: string; offset: number; scroll?: number };
 const scopeKey = (scope: SourceScope | null) =>
   scope ? scope.source + ":" + scope.sessionId : "";
 export function SourceWorkbench({
@@ -152,6 +169,24 @@ export function SourceWorkbench({
   const [queryMode, setQueryMode] = useState<"search" | "detail">("search");
   const [folder, setFolder] = useState<string | null>(null);
   const [sort, setSort] = useState("source");
+  const currentSort = useRef(sort);
+  currentSort.current = sort;
+  const [coverEpoch, setCoverEpoch] = useState(0);
+  const [autoPaused, setAutoPaused] = useState(false);
+  const gridRef = useRef<SourceGridHandle>(null);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const collector = useRef<CollectionReader | null>(null);
+  const collectionNeedsVerification = useRef(false);
+  const selectedMetadata = useRef(new Map<string, SourceWork>());
+  const [collectionState, setCollectionState] = useState<CollectionState>({
+    snapshot: null,
+    displaySnapshot: null,
+    completeSnapshot: null,
+    phase: "idle",
+    freshness: "none",
+    error: null,
+    cacheWarning: "",
+  });
   const [items, setItems] = useState<SourceWork[]>([]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -223,59 +258,28 @@ export function SourceWorkbench({
     return host.current?.closest("main") ?? null;
   }
   function capture(preferred?: string): Anchor | null {
-    const scroll = main();
-    if (!scroll) return null;
-    const upper = Math.max(
-      scroll.getBoundingClientRect().top,
-      host.current?.querySelector(".source-toolbar")?.getBoundingClientRect()
-        .bottom ?? 0,
-    );
-    const cards = Array.from(
-      host.current?.querySelectorAll<HTMLElement>("[data-source-work-key]") ??
-        [],
-    );
-    const card =
-      cards.find((item) => item.dataset.sourceWorkKey === preferred) ??
-      cards.find((item) => item.getBoundingClientRect().top >= upper - 1);
-    return card
-      ? {
-          key: card.dataset.sourceWorkKey!,
-          offset:
-            card.getBoundingClientRect().top -
-            scroll.getBoundingClientRect().top,
-          scroll: scroll.scrollTop,
-        }
-      : null;
+    return gridRef.current?.capture(preferred) ?? null;
   }
   function restore(anchor: Anchor | null) {
-    const scroll = main();
-    if (!scroll || !anchor) return;
-    const card = Array.from(
-      host.current?.querySelectorAll<HTMLElement>("[data-source-work-key]") ??
-        [],
-    ).find((item) => item.dataset.sourceWorkKey === anchor.key);
-    if (card)
-      scroll.scrollTop +=
-        card.getBoundingClientRect().top -
-        scroll.getBoundingClientRect().top -
-        anchor.offset;
-    else scroll.scrollTop = anchor.scroll;
+    gridRef.current?.restore(anchor);
   }
   useLayoutEffect(() => {
     if (pendingAnchor.current && !detailRef) {
       restore(pendingAnchor.current);
       pendingAnchor.current = null;
     }
-  }, [density, detailRef]);
+  }, [density, detailRef, sort, items]);
   function clearSelection() {
     if (selection.length) setNotice("范围已改变，临时选择已清空。");
     setSelection([]);
+    selectedMetadata.current.clear();
   }
   function changeSource(next: Source) {
     if (next === source) return;
     listRequest.current += 1;
     detailRequest.current += 1;
     followingRequest.current += 1;
+    setSort("source");
     setSource(next);
     setQuery("");
     setFolder(null);
@@ -303,6 +307,7 @@ export function SourceWorkbench({
     followingRequest.current += 1;
     favoriteLock.current = false;
     followingLock.current = false;
+    selectedMetadata.current.clear();
     setItems([]);
     setRangeTruncated(false);
     setPageInfo(null);
@@ -329,7 +334,6 @@ export function SourceWorkbench({
     const context = scopeId + "|" + view + "|" + (folder ?? "");
     if (context === autoContext.current) return;
     autoContext.current = context;
-    if (view === "favorites") void readList("favorites", "", folder);
     void readFollowing();
   }, [active, scopeId, view, folder, loadingAccounts]);
   useEffect(() => {
@@ -351,6 +355,134 @@ export function SourceWorkbench({
     requestedWork?.source,
     requestedWork?.workId,
   ]);
+  const picaReverse = source === "Pica" && sort === "source-reverse";
+  useEffect(() => {
+    if (!scope || view !== "favorites" || authorSearch) return;
+    const reader = new CollectionReader(adapter, scope, folder, picaReverse);
+    collector.current = reader;
+    let lastDisplay: CollectionState["displaySnapshot"] = null;
+    const published = new Map<string, SourceWork>();
+    const unsubscribe = reader.subscribe((state) => {
+      if (!stillCurrent(scope)) return;
+      setCollectionState(state);
+      const displayed = state.displaySnapshot;
+      if (displayed && displayed !== lastDisplay) {
+        const completedReverse =
+          source === "JM" &&
+          currentSort.current === "source-reverse" &&
+          displayed.complete &&
+          !lastDisplay?.complete;
+        if (completedReverse) {
+          pendingAnchor.current = null;
+          savedAnchor.current = null;
+          main()?.scrollTo(0, 0);
+        } else if (lastDisplay) pendingAnchor.current = capture();
+        lastDisplay = displayed;
+        setItems(displayed.items);
+        setPageInfo(displayed);
+        setRangeTruncated(false);
+        const updated = displayed.items.filter(
+          (work) => published.get(work.workId) !== work,
+        );
+        for (const work of updated) published.set(work.workId, work);
+        const currentIds = new Set(displayed.items.map((work) => work.workId));
+        for (const key of published.keys())
+          if (!currentIds.has(key)) published.delete(key);
+        if (updated.length) notifyWorks.current(scope, updated);
+      }
+      if (state.error) void reconcileSessionFailure(state.error, scope);
+    });
+    setItems([]);
+    setPageInfo(null);
+    setAutoPaused(false);
+    if (active && !loadingAccounts) void reader.resume();
+    return () => {
+      reader.pause();
+      unsubscribe();
+      reader.dispose();
+      if (collector.current === reader) collector.current = null;
+    };
+  }, [adapter, scopeId, view, folder, picaReverse, authorSearch]);
+  useEffect(() => {
+    if (!collector.current || view !== "favorites" || authorSearch) return;
+    if (!active || loadingAccounts) {
+      collectionNeedsVerification.current = true;
+      collector.current.pause();
+    } else if (autoPaused) collector.current.pause();
+    else resumeCollection();
+  }, [
+    active,
+    loadingAccounts,
+    autoPaused,
+    scopeId,
+    view,
+    folder,
+    picaReverse,
+    authorSearch,
+  ]);
+  function resumeCollection() {
+    if (collectionNeedsVerification.current) {
+      collectionNeedsVerification.current = false;
+      void collector.current?.revalidate();
+    } else void collector.current?.resume();
+  }
+  useEffect(() => {
+    if (
+      !active ||
+      autoPaused ||
+      view !== "favorites" ||
+      authorSearch ||
+      detailRef ||
+      query.trim() ||
+      collectionState.phase !== "ready" ||
+      !sentinel.current
+    )
+      return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting))
+          void collector.current?.loadNext();
+      },
+      { root: main(), rootMargin: "200px" },
+    );
+    observer.observe(sentinel.current);
+    return () => observer.disconnect();
+  }, [
+    active,
+    autoPaused,
+    view,
+    authorSearch,
+    detailRef,
+    query,
+    collectionState.phase,
+    collectionState.snapshot?.page,
+    density,
+  ]);
+  function changeSort(value: string) {
+    const directionChanged =
+      view === "favorites" &&
+      (value === "source-reverse") !== (sort === "source-reverse");
+    pendingAnchor.current = directionChanged ? null : capture();
+    if (directionChanged) {
+      if (source === "Pica") clearSelection();
+      savedAnchor.current = null;
+      main()?.scrollTo(0, 0);
+    }
+    if (value !== "source-reverse" || source !== "JM")
+      collector.current?.stopReadAll();
+    setSort(value);
+    if (view === "favorites" && source === "JM" && value === "source-reverse") {
+      setAutoPaused(false);
+      void collector.current?.readAll();
+    }
+  }
+  function refreshCollection() {
+    setCoverEpoch((value) => value + 1);
+    clearSelection();
+    setAutoPaused(false);
+    collectionNeedsVerification.current = false;
+    void collector.current?.refresh();
+  }
   async function reconcileSessionFailure(
     cause: unknown,
     captured: SourceScope,
@@ -653,21 +785,45 @@ export function SourceWorkbench({
         .toLocaleLowerCase()
         .includes(query.trim().toLocaleLowerCase()),
   );
+  const completeIndex = collectionState.snapshot?.complete ?? false;
+  const reversePreparing =
+    view === "favorites" &&
+    source === "JM" &&
+    sort === "source-reverse" &&
+    !completeIndex;
   const visible =
-    sort === "title"
-      ? [...filtered].sort((a, b) => a.title.localeCompare(b.title, "zh-CN"))
-      : filtered;
-  const selectedWorks = browsingWorks.filter((work) =>
-    selection.includes(sourceWorkKey(work)),
-  );
+    sort === "title" || sort === "title-desc"
+      ? [...filtered].sort(
+          (a, b) =>
+            (a.title.localeCompare(b.title, "zh-CN") ||
+              sourceWorkKey(a).localeCompare(sourceWorkKey(b))) *
+            (sort === "title-desc" ? -1 : 1),
+        )
+      : sort === "source-reverse" &&
+          !(view === "favorites" && source === "Pica") &&
+          !reversePreparing
+        ? [...filtered].reverse()
+        : filtered;
+  const selectionKeys = new Set(selection);
+  for (const key of selectedMetadata.current.keys())
+    if (!selectionKeys.has(key)) selectedMetadata.current.delete(key);
+  for (const work of browsingWorks)
+    if (selectionKeys.has(sourceWorkKey(work)))
+      selectedMetadata.current.set(sourceWorkKey(work), work);
+  const selectedWorks = selection
+    .map((key) => selectedMetadata.current.get(key))
+    .filter((work): work is SourceWork => Boolean(work));
   const connected = Boolean(scope) && adapter.available;
   const totalKnown = pageInfo?.total !== null && pageInfo?.total !== undefined;
-  const complete = Boolean(
-    !rangeTruncated &&
-    pageInfo &&
-    pageInfo.hasMore === false &&
-    (!totalKnown || items.length >= pageInfo.total!),
-  );
+  const complete =
+    view === "favorites"
+      ? Boolean(collectionState.snapshot?.complete)
+      : Boolean(
+          !rangeTruncated &&
+          pageInfo &&
+          pageInfo.hasMore === false &&
+          (!totalKnown || items.length >= pageInfo.total!),
+        );
   const searchControl = (
     <form
       className="source-search"
@@ -774,19 +930,19 @@ export function SourceWorkbench({
   }
   function grid(works: SourceWork[]) {
     return (
-      <div
-        className="source-grid"
-        data-testid="source-grid"
-        data-density={density}
-      >
-        {works.map((work) => {
+      <VirtualSourceGrid
+        ref={gridRef}
+        items={works}
+        density={density}
+        itemKey={sourceWorkKey}
+        renderItem={(work) => {
           const key = sourceWorkKey(work);
           return (
             <article
               key={key}
               data-source-work-key={key}
               className={
-                "source-card" + (selection.includes(key) ? " is-selected" : "")
+                "source-card" + (selectionKeys.has(key) ? " is-selected" : "")
               }
               data-testid={"source-card-" + key}
             >
@@ -799,7 +955,13 @@ export function SourceWorkbench({
                   aria-label={"查看《" + work.title + "》详情"}
                 >
                   {scope && (
-                    <SourceCover adapter={adapter} scope={scope} work={work} />
+                    <SourceCover
+                      adapter={adapter}
+                      scope={scope}
+                      work={work}
+                      retryVersion={coverEpoch}
+                      resolveMissing={view === "following"}
+                    />
                   )}
                 </button>
                 {selectionMode && (
@@ -836,8 +998,8 @@ export function SourceWorkbench({
               </p>
             </article>
           );
-        })}
-      </div>
+        }}
+      />
     );
   }
   const body = detailRef ? (
@@ -868,7 +1030,12 @@ export function SourceWorkbench({
       {detail && scope && (
         <>
           <div className="source-detail-main">
-            <SourceCover adapter={adapter} scope={scope} work={detail} />
+            <SourceCover
+              adapter={adapter}
+              scope={scope}
+              work={detail}
+              retryVersion={coverEpoch}
+            />
             <div className="source-detail-info">
               <p className="source-muted">
                 {sourceLabel(source)} · 来源作品详情
@@ -987,6 +1154,14 @@ export function SourceWorkbench({
               </div>
               <p className="source-muted">
                 网站收藏、本机关注与本地书单分别保存。当前没有操作漫画文件或下载队列。
+                <button
+                  type="button"
+                  className="text-button"
+                  data-testid="source-detail-cover-retry"
+                  onClick={() => setCoverEpoch((value) => value + 1)}
+                >
+                  重试封面
+                </button>
               </p>
               {followingFeedback()}
               <section className="source-description">
@@ -1127,6 +1302,14 @@ export function SourceWorkbench({
           )}
           <div className="source-toolbar">
             <div className="source-toolbar-leading">
+              <button
+                type="button"
+                className="text-button"
+                data-testid="source-cover-retry"
+                onClick={() => setCoverEpoch((value) => value + 1)}
+              >
+                重试封面
+              </button>
               {view === "favorites" && source === "JM" && (
                 <label>
                   网站收藏夹{" "}
@@ -1135,8 +1318,13 @@ export function SourceWorkbench({
                     value={folder ?? ""}
                     disabled={loading}
                     onChange={(event) => {
+                      collector.current?.stopReadAll();
+                      setSort("source");
                       setFolder(event.target.value || null);
                       clearSelection();
+                      pendingAnchor.current = null;
+                      savedAnchor.current = null;
+                      main()?.scrollTo(0, 0);
                     }}
                   >
                     <option value="">全部收藏</option>
@@ -1176,8 +1364,7 @@ export function SourceWorkbench({
                   disabled={loading}
                   data-testid="source-refresh"
                   onClick={() => {
-                    clearSelection();
-                    void readList("favorites", "", folder);
+                    refreshCollection();
                   }}
                 >
                   刷新收藏
@@ -1320,10 +1507,24 @@ export function SourceWorkbench({
                     排序{" "}
                     <select
                       value={sort}
-                      onChange={(event) => setSort(event.target.value)}
+                      onChange={(event) => changeSort(event.target.value)}
                     >
-                      <option value="source">来源顺序</option>
-                      <option value="title">作品名称</option>
+                      <option value="source">
+                        {source === "Pica" && view === "favorites"
+                          ? "收藏时间：从新到旧"
+                          : "来源顺序"}
+                      </option>
+                      <option value="source-reverse">
+                        {source === "Pica" && view === "favorites"
+                          ? "收藏时间：从旧到新"
+                          : "来源倒序"}
+                      </option>
+                      <option value="title">
+                        作品名称：升序（已读取范围）
+                      </option>
+                      <option value="title-desc">
+                        作品名称：降序（已读取范围）
+                      </option>
                     </select>
                   </label>
                   <button
@@ -1362,6 +1563,94 @@ export function SourceWorkbench({
                 </p>
               )}
               {grid(visible)}
+              {view === "favorites" && (
+                <div
+                  ref={sentinel}
+                  data-testid="collection-sentinel"
+                  className="collection-status"
+                >
+                  <p role="status" data-testid="collection-progress">
+                    {collectionState.phase === "complete"
+                      ? "已读取全部收藏"
+                      : collectionState.phase === "restoring"
+                        ? "正在读取本机缓存…"
+                        : collectionState.phase === "verifying"
+                          ? "正在核对来源首页…"
+                          : collectionState.phase === "reading"
+                            ? "正在读取下一页…"
+                            : autoPaused
+                              ? "自动续读已暂停"
+                              : query.trim()
+                                ? "仅筛选已读取范围；清空筛选后继续自动读取"
+                                : "向下滚动继续读取"}
+                    {" · 已读取 " +
+                      (collectionState.snapshot?.items.length ?? 0) +
+                      (collectionState.snapshot?.total === null ||
+                      !collectionState.snapshot
+                        ? " · 总数未知"
+                        : " / " + collectionState.snapshot.total)}
+                  </p>
+                  {collectionState.displaySnapshot && (
+                    <p
+                      className="source-muted"
+                      data-testid="collection-freshness"
+                    >
+                      {collectionState.freshness === "cached"
+                        ? "本机缓存，尚待核对"
+                        : collectionState.freshness === "verified-cache"
+                          ? "本机缓存，首页已核对"
+                          : "本次已读取结果"}
+                      {" · " +
+                        new Date(
+                          collectionState.displaySnapshot.updatedAt,
+                        ).toLocaleString()}
+                    </p>
+                  )}
+                  {reversePreparing && (
+                    <p role="status">
+                      正在准备完整来源倒序，当前仍显示已读来源顺序。可暂停或改回来源顺序。
+                    </p>
+                  )}
+                  {collectionState.error && (
+                    <p role="alert">
+                      {sourceErrorMessage(collectionState.error)}
+                    </p>
+                  )}
+                  {collectionState.cacheWarning && (
+                    <p role="status">{collectionState.cacheWarning}</p>
+                  )}
+                  {collectionState.phase === "error" && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      data-testid="collection-retry"
+                      onClick={() => {
+                        setAutoPaused(false);
+                        resumeCollection();
+                      }}
+                    >
+                      重试读取
+                    </button>
+                  )}
+                  {!complete && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      data-testid="collection-pause"
+                      onClick={() => {
+                        if (autoPaused) {
+                          setAutoPaused(false);
+                        } else {
+                          setAutoPaused(true);
+                          collector.current?.pause();
+                        }
+                      }}
+                    >
+                      {autoPaused ? "继续自动读取" : "暂停自动读取"}
+                    </button>
+                  )}
+                </div>
+              )}
               {loading && (
                 <p role="status">正在读取第 {lastRead.current.page} 页…</p>
               )}
@@ -1383,13 +1672,13 @@ export function SourceWorkbench({
                   </p>
                 </div>
               )}
-              {items.length >= 1000 && !complete && (
+              {view !== "favorites" && items.length >= 1000 && !complete && (
                 <p role="status" className="source-notice">
                   当前最多保留 1000
                   部来源作品。请缩小关键词或收藏夹范围后继续读取。
                 </p>
               )}
-              {view !== "following" && pageInfo && !complete && !error && (
+              {view === "search" && pageInfo && !complete && !error && (
                 <button
                   type="button"
                   className="button secondary"
@@ -1482,6 +1771,7 @@ export function SourceWorkGrid({
   onOpenWork,
   onAddToBooklists,
 }: SourceWorkGridProps) {
+  const [coverEpoch] = useState(0);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const lock = useRef(false);

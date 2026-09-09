@@ -47,6 +47,15 @@ struct FakeState {
     block_cover: AtomicBool,
     cover_started: Notify,
     cover_release: Notify,
+    detail_calls: AtomicUsize,
+    cover_calls: AtomicUsize,
+    cover_missing_once: AtomicBool,
+    cover_image: Mutex<Option<String>>,
+    query_batch_size: AtomicUsize,
+    last_request: Mutex<Option<(u64, Option<String>, bool)>>,
+    block_detail: AtomicBool,
+    detail_started: Notify,
+    detail_release: Notify,
 }
 #[derive(Clone, Default)]
 struct FakeBackend(Arc<FakeState>);
@@ -128,15 +137,31 @@ impl SourceBackend for FakeBackend {
     async fn favorites(
         &self,
         session: &Self::Session,
-        _: FavoritePageRequest,
+        request: FavoritePageRequest,
     ) -> Result<SourcePage> {
         self.0.query_calls.fetch_add(1, Ordering::SeqCst);
+        *self.0.last_request.lock().unwrap() =
+            Some((request.page, request.folder_id.clone(), request.reverse));
         if let Some(code) = *self.0.query_failure.lock().unwrap() {
             return Err(AccountError::new(code));
         }
         let mut result = page(session.source, self.0.favorite.load(Ordering::SeqCst));
         if let Some(title) = self.0.work_title.lock().unwrap().clone() {
             result.items[0].title = title;
+        }
+        let count = self.0.query_batch_size.load(Ordering::SeqCst);
+        if count > 0 {
+            result.items = (0..count)
+                .map(|offset| {
+                    let mut item = work(session.source, false);
+                    item.work_id = ((request.page - 1) * count as u64 + offset as u64).to_string();
+                    item
+                })
+                .collect();
+            result.page = request.page;
+            result.total = Some(3 * count as u64);
+            result.pages = Some(3);
+            result.has_more = Some(request.page < 3);
         }
         Ok(result)
     }
@@ -146,12 +171,20 @@ impl SourceBackend for FakeBackend {
             FavoritePageRequest {
                 page: 1,
                 folder_id: None,
+                reverse: false,
             },
         )
         .await
     }
-    async fn detail(&self, session: &Self::Session, _: &str) -> Result<SourceWork> {
-        Ok(work(session.source, self.0.favorite.load(Ordering::SeqCst)))
+    async fn detail(&self, session: &Self::Session, id: &str) -> Result<SourceWork> {
+        self.0.detail_calls.fetch_add(1, Ordering::SeqCst);
+        if self.0.block_detail.load(Ordering::SeqCst) {
+            self.0.detail_started.notify_one();
+            self.0.detail_release.notified().await;
+        }
+        let mut item = work(session.source, self.0.favorite.load(Ordering::SeqCst));
+        item.work_id = id.into();
+        Ok(item)
     }
     async fn favorite(
         &self,
@@ -172,11 +205,15 @@ impl SourceBackend for FakeBackend {
         })
     }
     async fn cover(&self, _: &Self::Session, _: &str) -> Result<Option<String>> {
+        self.0.cover_calls.fetch_add(1, Ordering::SeqCst);
         if self.0.block_cover.load(Ordering::SeqCst) {
             self.0.cover_started.notify_one();
             self.0.cover_release.notified().await;
         }
-        Ok(None)
+        if self.0.cover_missing_once.swap(false, Ordering::SeqCst) {
+            return Err(AccountError::new("WORK_NOT_LOADED"));
+        }
+        Ok(self.0.cover_image.lock().unwrap().clone())
     }
 }
 
@@ -691,4 +728,254 @@ async fn concurrent_saved_login_is_not_overwritten_by_a_late_login_commit() {
         vault.load(Source::Pica).unwrap().unwrap().account_name(),
         "new-other-instance"
     );
+}
+
+fn catalog_snapshot() -> CatalogSnapshot {
+    CatalogSnapshot {
+        items: vec![work(Source::Jm, false)],
+        page: 1,
+        total: Some(1),
+        pages: Some(1),
+        has_more: Some(false),
+        folders: vec![],
+        complete: true,
+        updated_at: crate::cache::now_ms().unwrap(),
+        first_page_ids: vec!["123".into()],
+    }
+}
+fn cover_image() -> String {
+    use base64::Engine;
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(2, 2)
+        .write_to(&mut bytes, image::ImageFormat::Jpeg)
+        .unwrap();
+    format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes.into_inner())
+    )
+}
+
+#[tokio::test]
+async fn three_thousand_network_items_keep_early_work_and_cover_rehydrates_sources_eviction_once() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    backend.0.query_batch_size.store(1000, Ordering::SeqCst);
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    for page in 1..=3 {
+        service
+            .query(Source::Jm, &session, QueryKind::Favorites, "", None, page)
+            .await
+            .unwrap();
+    }
+    backend.0.cover_missing_once.store(true, Ordering::SeqCst);
+    service.cover(Source::Jm, &session, "0").await.unwrap();
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 2);
+    service
+        .favorite(Source::Jm, &session, "0", true)
+        .await
+        .unwrap();
+    service
+        .favorite(Source::Jm, &session, "2999", true)
+        .await
+        .unwrap();
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn catalog_restart_and_cover_rehydration_never_restore_favorite_authority() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let first = service(&root, backend.clone(), SharedVault::default());
+    let generation = login(&first, Source::Jm, "first", false).await;
+    first
+        .catalog(
+            Source::Jm,
+            &generation,
+            None,
+            false,
+            CatalogAction::Write,
+            Some(catalog_snapshot()),
+        )
+        .await
+        .unwrap();
+    drop(first);
+    let next = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&next, Source::Jm, "first", false).await;
+    let restored = next
+        .catalog(Source::Jm, &session, None, false, CatalogAction::Read, None)
+        .await
+        .unwrap();
+    assert!(restored.snapshot.is_some());
+    assert_eq!(restored.session_id, session);
+    assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 0);
+    let image = cover_image();
+    *backend.0.cover_image.lock().unwrap() = Some(image.clone());
+    assert_eq!(
+        next.cover(Source::Jm, &session, "123")
+            .await
+            .unwrap()
+            .data_url,
+        Some(image.clone())
+    );
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        error(next.favorite(Source::Jm, &session, "123", true).await),
+        "WORK_NOT_LOADED"
+    );
+    assert_eq!(
+        next.cover(Source::Jm, &session, "123")
+            .await
+            .unwrap()
+            .data_url,
+        Some(image)
+    );
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 1);
+    let other = login(&next, Source::Jm, "second", false).await;
+    assert!(next
+        .catalog(Source::Jm, &other, None, false, CatalogAction::Read, None)
+        .await
+        .unwrap()
+        .snapshot
+        .is_none());
+    assert_eq!(
+        error(next.cover(Source::Jm, &session, "123").await),
+        "SESSION_CHANGED"
+    );
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn catalog_requires_current_account_before_creating_cache_and_cache_errors_keep_session() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("app-data");
+    let backend = FakeBackend::default();
+    let service = AccountService::new(backend.clone(), SharedVault::default(), root.clone());
+    assert_eq!(
+        error(
+            service
+                .catalog(
+                    Source::Jm,
+                    "fabricated",
+                    None,
+                    false,
+                    CatalogAction::Write,
+                    Some(catalog_snapshot())
+                )
+                .await
+        ),
+        "SESSION_CHANGED"
+    );
+    assert!(!root.exists());
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    let store = workbench_storage::WorkbenchStore::open(&root).unwrap();
+    std::fs::write(
+        root.join(workbench_storage::PRIVATE_DIRECTORY)
+            .join("cache-registry-v1.json"),
+        b"broken",
+    )
+    .unwrap();
+    assert_eq!(
+        error(
+            service
+                .catalog(
+                    Source::Jm,
+                    &session,
+                    None,
+                    false,
+                    CatalogAction::Write,
+                    Some(catalog_snapshot())
+                )
+                .await
+        ),
+        "CACHE_CORRUPT"
+    );
+    let image = cover_image();
+    *backend.0.cover_image.lock().unwrap() = Some(image.clone());
+    assert_eq!(
+        service
+            .cover(Source::Jm, &session, "123")
+            .await
+            .unwrap()
+            .data_url,
+        Some(image)
+    );
+    assert_eq!(
+        service.accounts(false).await[0].state,
+        AccountState::Connected
+    );
+    assert_eq!(store.read_preferences().unwrap().revision, 0);
+}
+
+#[tokio::test]
+async fn ordered_query_passes_folder_and_reverse_and_legacy_query_defaults_forward() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Pica, "fixture", false).await;
+    service
+        .query_ordered(
+            Source::Pica,
+            &session,
+            QueryKind::Favorites,
+            "",
+            Some("7".into()),
+            2,
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        *backend.0.last_request.lock().unwrap(),
+        Some((2, Some("7".into()), true))
+    );
+    service
+        .query(Source::Pica, &session, QueryKind::Favorites, "", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        *backend.0.last_request.lock().unwrap(),
+        Some((1, None, false))
+    );
+}
+
+#[tokio::test]
+async fn logout_after_unknown_cover_does_not_start_a_fallback_detail_request() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    query(&service, Source::Jm, &session).await.unwrap();
+    backend.0.block_cover.store(true, Ordering::SeqCst);
+    backend.0.cover_missing_once.store(true, Ordering::SeqCst);
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move { service.cover(Source::Jm, &session, "123").await })
+    };
+    backend.0.cover_started.notified().await;
+    service.logout(Source::Jm, Some(&session)).await.unwrap();
+    backend.0.cover_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn logout_during_old_card_detail_prevents_the_next_cover_request() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move { service.cover(Source::Jm, &session, "old-card").await })
+    };
+    backend.0.detail_started.notified().await;
+    service.logout(Source::Jm, Some(&session)).await.unwrap();
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
 }

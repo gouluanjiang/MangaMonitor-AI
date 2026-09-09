@@ -37,7 +37,7 @@ to 2,000 with at most 64 entries in each array. Folder names have a 2,000-unit
 limit. These string limits use the same units as JavaScript String.length.
 
 All metadata responses are limited to 8 MiB and each request has a 30-second
-timeout. Redirects are rejected. There are no implicit retries or whole-list
+timeout. Metadata redirects are rejected. There are no implicit retries or whole-list
 pagination loops. JM requests use the pinned primary `www.cdnhth.cc`; this crate
 does not rotate a logged-in account's cookie between domains. The five existing
 cloud-domain pins are unchanged and may also identify pasted API detail links.
@@ -59,6 +59,11 @@ GET `comics/{id}` returns details. The account-only supplementary reference belo
 defines POST `comics/{id}/favourite` with no body, returning action `favourite` or
 `un_favourite`; details provide `isFavourite`.
 
+`FavoritePageRequest.reverse` defaults to false. Pica uses source-side `dd`
+(newest first) or `da` (oldest first). JM's default remains exactly `o=mr`;
+reverse=true is rejected with SOURCE_REVERSE_UNSUPPORTED before a request.
+The caller may implement a clearly scoped local reverse of a complete JM list.
+
 Favorite writes first read the current state. An already-satisfied desired state
 is a verified no-op. Otherwise exactly one toggle is sent, then one read-back
 verifies the desired state. A timeout may be reconciled by that read-back, but
@@ -68,17 +73,29 @@ The owning service must handle cancellation/session generations and pending
 uncertain actions rather than treating this error as retry permission.
 
 Known covers are indexed only from this session's validated metadata, with at
-most 1000 known work IDs, 128 cover URLs, and no byte cache. Unknown work IDs
-return WORK_NOT_LOADED. Known works without a cover, or whose URL was evicted,
-return None.
+most 20,000 known work IDs, 128 recently used cover URLs, and no byte cache.
+Unknown work IDs return WORK_NOT_LOADED. A known missing cover returns None.
+An evicted URL retains its distinct state and is restored by one read-only
+detail request under the session's metadata lock; failed recovery is an error,
+never a false claim that the work has no cover. This grants no favorite authority.
 No caller-supplied URL is accepted. A separate client carries no account headers
-or cookies. It accepts at most 1 MiB, rejects redirects, decodes at most 4 million
+or cookies. It accepts at most 1 MiB and decodes at most 4 million
 pixels/4096 per side/32 MiB allocation, and emits a static JPEG at most 512 per
 side and 256 KiB (before base64 encoding). Original animations/active formats
 are not passed to the renderer.
 JM cover IDs map to the pinned card URL host `cdn-msp3.18comic.vip`. Pica accepts
-only HTTPS `storage1.picacomic.com` or `s3.picacomic.com`, plus a restricted static
-path from the metadata thumb. Unknown hosts make `coverAvailable=false`.
+only HTTPS `storage1.picacomic.com`, `s3.picacomic.com`,
+`storage-b.picacomic.com`, and `img.picacomic.com`. Restricted static paths
+support CDN transformation components such as `rs:fill` and `g:sm`.
+Unknown hosts make `coverAvailable=false`.
+
+The cover client disables automatic redirects. It manually follows at most
+three validated redirects (four GETs total), including relative locations.
+Every hop must remain HTTPS on the exact source-specific CDN allowlist and a
+restricted image path. Credentials, query strings, fragments, nonstandard
+ports, IP destinations, encoded or literal traversal, loops, and unknown origins
+are rejected. Redirect bodies are not consumed. Recovery, all hops, and decoding
+share one 30-second timeout. No account headers or Referer are forwarded.
 
 ID parsing is local and never fetches a pasted URL. It accepts decimal JM IDs,
 24-hex Pica IDs, pinned API detail URLs, and `18comic.vip/album/{id}` (with optional
@@ -102,6 +119,8 @@ account/catalog protocol facts and thumbnail metadata, not download execution:
 - Pica original account API: [lanyeeee/picacomic-downloader 77c8b62e, pica_client.rs](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src-tauri/src/pica_client.rs#L118), sign-in/profile/search/detail L118-258, favorite page L338-373; [cover descriptor rendering L53](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src/components/ComicCard.vue#L53).
 - Supplementary Pica favorite/account-only pin: [Miuzarte/PicaComic-go 25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb](https://github.com/Miuzarte/PicaComic-go/blob/25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb/PicaComic.go#L304), POST toggle L304-308; [types.go](https://github.com/Miuzarte/PicaComic-go/blob/25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb/types.go#L115) isFavourite L115 and response action L205-206. This adds no download pin or source authority.
 - Historical Pica thumbnail host examples: [2024baibai/PicaComic-Api 382586581cac128dddbf66d95485c326036cbfc2, README.MD L198](https://github.com/2024baibai/PicaComic-Api/blob/382586581cac128dddbf66d95485c326036cbfc2/README.MD#L198), `storage1.picacomic.com` in the thumb descriptor; L519 names `s3.picacomic.com`. These examples bound the cover allowlist; they do not establish current availability.
+- The original Pica pin also uses [storage-b in AppContent.vue L109](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src/AppContent.vue#L109). Its [favorite order enum L13–14](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src-tauri/src/types/get_favorite_sort.rs#L13) establishes dd/da.
+- Historical transformed-cover and redirect evidence: [tonquer/picacg-qt discussion 48](https://github.com/tonquer/picacg-qt/discussions/48), EIKO4O4's 2024-04-22 cover log. It records s3 `/static/tobeimg/.../rs:fill:300:400:0/g:sm/...jpg` redirecting to img, and `/static/tobs/...jpg` redirecting to storage-b. This is protocol compatibility evidence, not a claim that those historical requests succeeded or that every current cover uses that shape.
 
 ## Error handling
 

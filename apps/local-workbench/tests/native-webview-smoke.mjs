@@ -216,6 +216,23 @@ try {
   );
   await expect(page.getByTestId("account-JM")).toContainText("未连接");
   await expect(page.getByTestId("account-Pica")).toContainText("未连接");
+  // The new cache command traverses the installed app's real permission and
+  // scope checks. A renderer-supplied session can neither read nor create data.
+  const cacheRejection = await page.evaluate(async () => {
+    try {
+      await window.__TAURI_INTERNALS__.invoke("source_catalog", {
+        source: "JM",
+        sessionId: "synthetic-stale-session",
+        folderId: null,
+        reverse: false,
+        action: "read",
+      });
+      return "unexpected-success";
+    } catch (error) {
+      return error?.code ?? "unexpected-error";
+    }
+  });
+  assert.equal(cacheRejection, "SESSION_CHANGED");
   // Synthetic input traverses the actual IPC controller. CI forbids live source
   // requests before any network call and never persists this rejected login.
   await page.getByTestId("account-connect-JM").click();
@@ -311,7 +328,7 @@ try {
     lists,
   );
   console.log(
-    "NATIVE_WEBVIEW_SMOKE_PASSED: actual Windows WebView, native account IPC rejection/secret clearing, disk revision and process restart; unresolved work remains blocked from download.",
+    "NATIVE_WEBVIEW_SMOKE_PASSED: actual Windows WebView, native account/cache IPC rejection/secret clearing, disk revision and process restart; unresolved work remains blocked from download.",
   );
 } catch (error) {
   await writeFile(

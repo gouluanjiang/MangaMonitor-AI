@@ -1,5 +1,6 @@
 //! Account and catalog operations only. No task authority, chapter/media routes,
 //! filesystem writes, automatic pagination, retries, or production-state access.
+mod cover;
 mod protocol;
 mod thumbnail;
 mod types;
@@ -11,7 +12,7 @@ use protocol::{error, JM_HOST, PICA_HOST, PICA_KEY, PICA_NONCE};
 use reqwest::{header::HeaderValue, Client, Method, Url};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -19,7 +20,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use workbench_credentials::{CredentialKind, StoredCredential};
 
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
-const MAX_KNOWN_WORKS: usize = 1000;
+const MAX_KNOWN_WORKS: usize = 20_000;
 const MAX_COVER_DESCRIPTORS: usize = 128;
 
 /// An opaque session. Secrets and remote cover URLs are never serialized.
@@ -27,7 +28,67 @@ pub struct SourceSession {
     source: Source,
     credential: StoredCredential,
     operation: AsyncMutex<()>,
-    covers: Mutex<HashMap<String, Option<String>>>,
+    covers: Mutex<CoverCache>,
+}
+
+#[derive(Default)]
+struct CoverCache {
+    known: HashMap<String, bool>,
+    known_order: VecDeque<String>,
+    urls: HashMap<String, String>,
+    url_order: VecDeque<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CoverLookup {
+    Unknown,
+    Missing,
+    Evicted,
+    Ready(String),
+}
+
+impl CoverCache {
+    fn remember(&mut self, work_id: String, url: Option<String>) {
+        if !self.known.contains_key(&work_id) {
+            if self.known.len() >= MAX_KNOWN_WORKS {
+                if let Some(oldest) = self.known_order.pop_front() {
+                    self.known.remove(&oldest);
+                    self.urls.remove(&oldest);
+                    self.url_order.retain(|id| id != &oldest);
+                }
+            }
+            self.known_order.push_back(work_id.clone());
+        }
+        self.known.insert(work_id.clone(), url.is_some());
+        self.url_order.retain(|id| id != &work_id);
+        if let Some(url) = url {
+            if !self.urls.contains_key(&work_id) && self.urls.len() >= MAX_COVER_DESCRIPTORS {
+                if let Some(oldest) = self.url_order.pop_front() {
+                    self.urls.remove(&oldest);
+                }
+            }
+            self.url_order.push_back(work_id.clone());
+            self.urls.insert(work_id, url);
+        } else {
+            self.urls.remove(&work_id);
+        }
+    }
+
+    fn lookup(&mut self, work_id: &str) -> CoverLookup {
+        match self.known.get(work_id) {
+            None => CoverLookup::Unknown,
+            Some(false) => CoverLookup::Missing,
+            Some(true) => match self.urls.get(work_id) {
+                Some(url) => {
+                    let url = url.clone();
+                    self.url_order.retain(|id| id != work_id);
+                    self.url_order.push_back(work_id.to_owned());
+                    CoverLookup::Ready(url)
+                }
+                None => CoverLookup::Evicted,
+            },
+        }
+    }
 }
 
 impl SourceSession {
@@ -44,21 +105,7 @@ impl SourceSession {
             .lock()
             .map_err(|_| error("SOURCE_SESSION_FAILED"))?;
         for (work_id, url) in works {
-            if cache.len() >= MAX_KNOWN_WORKS && !cache.contains_key(&work_id) {
-                // Descriptor eviction never grants a new network destination.
-                if let Some(key) = cache.keys().next().cloned() {
-                    cache.remove(&key);
-                }
-            }
-            if url.is_some()
-                && cache.get(&work_id).is_none_or(Option::is_none)
-                && cache.values().filter(|url| url.is_some()).count() >= MAX_COVER_DESCRIPTORS
-            {
-                if let Some(previous) = cache.values_mut().find(|url| url.is_some()) {
-                    *previous = None;
-                }
-            }
-            cache.insert(work_id, url);
+            cache.remember(work_id, url);
         }
         Ok(())
     }
@@ -77,6 +124,10 @@ pub struct WorkbenchSources {
     script: Option<Mutex<std::collections::VecDeque<SourceResult<Value>>>>,
     #[cfg(test)]
     recorded: Mutex<Vec<(Source, Method, String)>>,
+    #[cfg(test)]
+    cover_script: Option<Mutex<VecDeque<SourceResult<cover::CoverResponse>>>>,
+    #[cfg(test)]
+    cover_recorded: Mutex<Vec<Url>>,
 }
 
 impl WorkbenchSources {
@@ -98,6 +149,10 @@ impl WorkbenchSources {
             script: None,
             #[cfg(test)]
             recorded: Mutex::new(vec![]),
+            #[cfg(test)]
+            cover_script: None,
+            #[cfg(test)]
+            cover_recorded: Mutex::new(vec![]),
         })
     }
 
@@ -184,6 +239,9 @@ impl WorkbenchSources {
         protocol::validate_page(request.page)?;
         let route = match session.source {
             Source::Jm => {
+                if request.reverse {
+                    return Err(error("SOURCE_REVERSE_UNSUPPORTED"));
+                }
                 let folder = request.folder_id.as_deref().unwrap_or("0");
                 protocol::validate_folder(folder)?;
                 format!("/favorite?page={}&o=mr&folder_id={folder}", request.page)
@@ -192,7 +250,8 @@ impl WorkbenchSources {
                 if request.folder_id.is_some() {
                     return Err(error("SOURCE_FOLDER_UNSUPPORTED"));
                 }
-                format!("users/favourite?s=dd&page={}", request.page)
+                let order = if request.reverse { "da" } else { "dd" };
+                format!("users/favourite?s={order}&page={}", request.page)
             }
         };
         let _operation = session.operation.lock().await;
@@ -404,32 +463,9 @@ impl WorkbenchSources {
         work_id: &str,
     ) -> SourceResult<Option<String>> {
         let id = parse_work_id(session.source, work_id)?;
-        let url = session
-            .covers
-            .lock()
-            .map_err(|_| error("SOURCE_SESSION_FAILED"))?
-            .get(&id)
-            .cloned()
-            .ok_or(error("WORK_NOT_LOADED"))?;
-        let Some(url) = url else {
-            return Ok(None);
-        };
-        check_live_environment()?;
-        let response = self.covers.get(url).send().await.map_err(transport_error)?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if response.status().is_redirection() {
-            return Err(error("SOURCE_REDIRECT_REFUSED"));
-        }
-        if !response.status().is_success() {
-            return Err(error("SOURCE_COVER_UNAVAILABLE"));
-        }
-        let bytes = bounded_bytes(response, thumbnail::MAX_COVER_BYTES).await?;
-        tokio::task::spawn_blocking(move || thumbnail::data_url(&bytes))
+        tokio::time::timeout(Duration::from_secs(30), self.thumbnail_inner(session, &id))
             .await
-            .map_err(|_| error("SOURCE_COVER_INVALID"))?
-            .map(Some)
+            .map_err(|_| error("SOURCE_TIMEOUT"))?
     }
 
     async fn request(
@@ -565,7 +601,7 @@ fn new_session(source: Source, credential: StoredCredential) -> SourceSession {
         source,
         credential,
         operation: AsyncMutex::new(()),
-        covers: Mutex::new(HashMap::new()),
+        covers: Mutex::new(CoverCache::default()),
     }
 }
 

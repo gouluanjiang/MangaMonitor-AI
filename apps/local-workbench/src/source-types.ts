@@ -23,7 +23,27 @@ export interface SourcePage {
   total: number | null;
   pages: number | null;
   hasMore: boolean | null;
-  folders: { id: string; name: string; count: number | null }[];
+  folders: SourceFolder[];
+}
+export interface SourceFolder {
+  id: string;
+  name: string;
+  count: number | null;
+}
+export interface CatalogSnapshot extends SourcePage {
+  complete: boolean;
+  updatedAt: number;
+  firstPageIds: string[];
+}
+export interface CatalogResult extends SourceScope {
+  snapshot: CatalogSnapshot | null;
+  completeSnapshot: CatalogSnapshot | null;
+}
+export interface CatalogRequest {
+  folderId: string | null;
+  reverse: boolean;
+  action: "read" | "write";
+  snapshot?: CatalogSnapshot;
 }
 export interface SourceQueryResult extends SourceScope, SourcePage {}
 export interface AccountSummary {
@@ -40,6 +60,7 @@ export interface SourceQuery {
   query: string;
   folderId: string | null;
   page: number;
+  reverse?: boolean;
 }
 export interface FavoriteResult extends SourceScope {
   workId: string;
@@ -73,6 +94,7 @@ export interface SourceAdapter {
     sessionId: string | null;
   }): Promise<AccountSummary>;
   query(scope: SourceScope, query: SourceQuery): Promise<SourceQueryResult>;
+  catalog(scope: SourceScope, request: CatalogRequest): Promise<CatalogResult>;
   favorite(
     scope: SourceScope,
     workId: string,

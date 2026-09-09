@@ -5,6 +5,7 @@ import {
   SourceError,
   sourceErrorMessage,
   validateSourceWork,
+  validateCatalogSnapshot,
 } from "../src/source-runtime.ts";
 import {
   mergeSourceWorks,
@@ -13,6 +14,47 @@ import {
 } from "../src/source-types.ts";
 
 const scope = { source: "JM", sessionId: "synthetic-session" };
+
+test("catalog IPC preserves scope/reverse and rejects malformed terminal snapshots", async () => {
+  const snapshot = {
+    items: [work()],
+    page: 1,
+    total: 1,
+    pages: 1,
+    hasMore: false,
+    folders: [],
+    complete: true,
+    updatedAt: 10,
+    firstPageIds: ["123"],
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      assert.equal(command, "source_catalog");
+      assert.equal(args.reverse, true);
+      assert.equal(args.sessionId, scope.sessionId);
+      return { ...scope, snapshot, completeSnapshot: snapshot };
+    },
+  });
+  assert.equal(
+    (
+      await adapter.catalog(scope, {
+        action: "read",
+        folderId: null,
+        reverse: true,
+      })
+    ).snapshot.items.length,
+    1,
+  );
+  for (const invalid of [
+    { ...snapshot, complete: false },
+    { ...snapshot, total: null, pages: null, hasMore: null },
+    { ...snapshot, items: [], total: null, firstPageIds: [] },
+    { ...snapshot, pages: 2 },
+    { ...snapshot, firstPageIds: [] },
+  ])
+    assert.throws(() => validateCatalogSnapshot(invalid, scope), SourceError);
+});
 const work = (source = "JM", id = "123") => ({
   source,
   workId: id,
@@ -92,10 +134,10 @@ test("unknown source metadata remains null and unexpected native fields are not 
   assert.equal("password" in result, false);
 });
 
-test("page validation retains incomplete pagination and deduplicates exact identities", async () => {
+test("page validation retains incomplete pagination and rejects duplicate identities", async () => {
   const adapter = createSourceAdapter({
     native: true,
-    invoke: async () => page({ items: [work(), work()] }),
+    invoke: async () => page({ items: [work()] }),
   });
   const result = await adapter.query(scope, query);
   assert.equal(result.items.length, 1);
@@ -103,6 +145,13 @@ test("page validation retains incomplete pagination and deduplicates exact ident
   assert.equal(result.pages, null);
   assert.equal(result.hasMore, null);
   assert.equal(result.items[0].pageCount, null);
+  const duplicate = createSourceAdapter({
+    native: true,
+    invoke: async () => page({ items: [work(), work()] }),
+  });
+  await assert.rejects(duplicate.query(scope, query), {
+    code: "CATALOG_CHANGED",
+  });
 });
 
 test("query results from another source, session or page are rejected", async () => {

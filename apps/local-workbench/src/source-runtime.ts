@@ -1,6 +1,7 @@
 import { invokeDesktop, isDesktopRuntime } from "./runtime.ts";
 import type {
   AccountSummary,
+  CatalogSnapshot,
   FavoriteResult,
   FollowingSnapshot,
   Source,
@@ -10,7 +11,7 @@ import type {
   SourceScope,
   SourceWork,
 } from "./source-types.ts";
-import { mergeSourceWorks, sources } from "./source-types.ts";
+import { sources } from "./source-types.ts";
 
 export class SourceError extends Error {
   readonly code: string;
@@ -22,6 +23,10 @@ export class SourceError extends Error {
 }
 export function sourceErrorMessage(error: unknown): string {
   const code = error instanceof SourceError ? error.code : "SOURCE_UNAVAILABLE";
+  if (code === "CATALOG_CHANGED")
+    return "收藏范围在读取期间发生变化，已读内容保留。请重新读取完整收藏。";
+  if (code === "CATALOG_LIMIT")
+    return "当前收藏索引达到 20000 部、1000 页或 32 MiB 内存上限，已读内容保留。";
   if (code === "DESKTOP_REQUIRED")
     return "请在桌面应用中连接来源账号。浏览器预览不会连接真实账号。";
   if (
@@ -171,19 +176,78 @@ export function validateSourcePage(
       };
     },
   );
+  const items = value.items.map((item: unknown) =>
+    validateSourceWork(item, scope.source),
+  );
+  if (new Set(items.map((item) => item.workId)).size !== items.length)
+    throw new SourceError("CATALOG_CHANGED");
   return {
     ...scope,
-    items: mergeSourceWorks(
-      [],
-      value.items.map((item: unknown) =>
-        validateSourceWork(item, scope.source),
-      ),
-    ),
+    items,
     page: value.page as number,
     total: value.total as number | null,
     pages: value.pages as number | null,
     hasMore: value.hasMore as boolean | null,
     folders,
+  };
+}
+export function validateCatalogSnapshot(
+  value: unknown,
+  scope: SourceScope,
+): CatalogSnapshot {
+  if (
+    !object(value) ||
+    !Array.isArray(value.items) ||
+    value.items.length > 20000 ||
+    typeof value.complete !== "boolean" ||
+    !integer(value.updatedAt) ||
+    !Array.isArray(value.firstPageIds) ||
+    value.firstPageIds.length > 1000 ||
+    !value.firstPageIds.every(identity)
+  )
+    invalid();
+  const page = validateSourcePage({ ...value, ...scope }, scope);
+  if (
+    page.page > 1000 ||
+    value.firstPageIds.length > page.items.length ||
+    value.firstPageIds.some((id, index) => page.items[index]?.workId !== id) ||
+    (page.items.length > 0 && !value.firstPageIds.length) ||
+    (page.page === 1 &&
+      (value.firstPageIds.length !== page.items.length ||
+        page.items.length > 1000)) ||
+    (page.page > 1 &&
+      (page.items.length <= value.firstPageIds.length ||
+        page.items.length > page.page * 1000)) ||
+    (!page.items.length &&
+      !(page.page === 1 && page.total === 0 && value.complete)) ||
+    (!value.complete &&
+      (page.hasMore === false ||
+        (page.pages !== null && page.page === Math.max(1, page.pages)) ||
+        (page.total !== null && page.total === page.items.length))) ||
+    (value.complete &&
+      ((page.hasMore !== false &&
+        !(page.pages !== null && page.page === Math.max(1, page.pages))) ||
+        page.hasMore === true ||
+        (page.total !== null && page.total !== page.items.length))) ||
+    (page.pages !== null &&
+      (page.page > Math.max(1, page.pages) ||
+        (value.complete && page.pages > page.page) ||
+        (page.page === page.pages && page.hasMore === true) ||
+        (page.pages === 0 && page.items.length > 0))) ||
+    new TextEncoder().encode(JSON.stringify(value)).byteLength >
+      32 * 1024 * 1024
+  )
+    invalid();
+  return {
+    items: page.items,
+    page: page.page,
+    total: page.total,
+    pages: page.pages,
+    hasMore: page.hasMore,
+    folders: page.folders,
+    complete: value.complete,
+    updatedAt: value.updatedAt as number,
+    firstPageIds: [...value.firstPageIds] as string[],
   };
 }
 function validateFollowing(
@@ -314,15 +378,52 @@ export function createSourceAdapter(
         !integer(query.page) ||
         query.page < 1 ||
         !(query.folderId === null || identity(query.folderId)) ||
-        (scope.source === "Pica" && query.folderId !== null)
+        (scope.source === "Pica" && query.folderId !== null) ||
+        (query.reverse !== undefined && typeof query.reverse !== "boolean")
       )
         throw new SourceError("INVALID_INPUT");
       const result = validateSourcePage(
-        await call("source_query", { ...scope, ...query }),
+        await call("source_query", {
+          ...scope,
+          ...query,
+          reverse: query.reverse ?? false,
+        }),
         scope,
       );
-      if (result.page !== query.page) invalid();
+      if (result.page !== query.page || result.items.length > 1000) invalid();
       return result;
+    },
+    async catalog(scope, request) {
+      checkScope(scope);
+      if (
+        !["read", "write"].includes(request.action) ||
+        typeof request.reverse !== "boolean" ||
+        !(request.folderId === null || identity(request.folderId)) ||
+        (scope.source === "Pica" && request.folderId !== null)
+      )
+        throw new SourceError("INVALID_INPUT");
+      const snapshot =
+        request.action === "write"
+          ? validateCatalogSnapshot(request.snapshot, scope)
+          : undefined;
+      const result = await call("source_catalog", {
+        ...scope,
+        folderId: request.folderId,
+        reverse: request.reverse,
+        action: request.action,
+        ...(snapshot ? { snapshot } : {}),
+      });
+      scoped(result, scope);
+      const current =
+        result.snapshot === null
+          ? null
+          : validateCatalogSnapshot(result.snapshot, scope);
+      const complete =
+        result.completeSnapshot === null
+          ? null
+          : validateCatalogSnapshot(result.completeSnapshot, scope);
+      if (complete && !complete.complete) invalid();
+      return { ...scope, snapshot: current, completeSnapshot: complete };
     },
     async favorite(scope, workId, desired) {
       checkScope(scope);

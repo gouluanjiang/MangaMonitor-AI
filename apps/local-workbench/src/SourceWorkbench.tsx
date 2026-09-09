@@ -930,7 +930,7 @@ export function SourceWorkbench({
   }
   function grid(works: SourceWork[]) {
     return (
-      <VirtualSourceGrid
+      <VirtualSourceGrid<SourceWork>
         ref={gridRef}
         items={works}
         density={density}
@@ -1611,7 +1611,7 @@ export function SourceWorkbench({
                       正在准备完整来源倒序，当前仍显示已读来源顺序。可暂停或改回来源顺序。
                     </p>
                   )}
-                  {collectionState.error && (
+                  {collectionState.error !== null && (
                     <p role="alert">
                       {sourceErrorMessage(collectionState.error)}
                     </p>

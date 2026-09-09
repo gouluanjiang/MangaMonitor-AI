@@ -65,6 +65,7 @@ function fixture(total = 2000) {
     failPage = 0,
     cacheFailure = false,
     override = null,
+    onQuery = null,
     held = null;
   const makePage = (page) => ({
     ...scope,
@@ -81,6 +82,7 @@ function fixture(total = 2000) {
   const adapter = {
     query: async (_scope, query) => {
       calls.push(query.page);
+      onQuery?.(query.page);
       if (held) await held;
       if (query.page === failPage) {
         failPage = 0;
@@ -132,6 +134,9 @@ function fixture(total = 2000) {
     },
     set held(value) {
       held = value;
+    },
+    set onQuery(value) {
+      onQuery = value;
     },
   };
 }
@@ -206,6 +211,35 @@ test("pause stops new work after the outstanding page; retry retains successful 
   assert.equal(r.state.phase, "complete");
   assert.deepEqual(f.calls, [1, 2, 3, 3]);
 });
+test("revalidation waits for an outstanding page and checks the head before resuming full indexing", async () => {
+  for (const pauseAgain of [false, true]) {
+    const f = fixture(60),
+      r = reader(f);
+    await r.resume();
+    let release, pageStarted;
+    f.held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise((resolve) => {
+      pageStarted = resolve;
+    });
+    f.onQuery = (page) => {
+      if (page === 2) pageStarted();
+    };
+    const inFlight = r.readAll();
+    await started;
+    r.pause();
+    const verifying = r.revalidate();
+    if (pauseAgain) r.pause();
+    await Promise.resolve();
+    assert.deepEqual(f.calls, [1, 2]);
+    release();
+    await Promise.all([inFlight, verifying]);
+    assert.deepEqual(f.calls, pauseAgain ? [1, 2] : [1, 2, 1, 3]);
+    assert.equal(r.state.phase, pauseAgain ? "paused" : "complete");
+  }
+});
+
 test("cached restart verifies first page then resumes at next missing page", async () => {
   const f = fixture(60);
   f.saved = appendCatalog(

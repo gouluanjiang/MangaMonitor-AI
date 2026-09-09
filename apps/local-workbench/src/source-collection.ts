@@ -138,6 +138,8 @@ export class CollectionReader {
   private paused = false;
   private disposed = false;
   private task: Promise<void> | null = null;
+  private revalidation: Promise<void> | null = null;
+  private resumeAfterRevalidation = false;
   private dirty = false;
   private cacheWritable = true;
   private all = false;
@@ -176,6 +178,7 @@ export class CollectionReader {
   }
   pause() {
     this.paused = true;
+    this.resumeAfterRevalidation = false;
     if (!["complete", "error"].includes(this.state.phase))
       this.publish({ phase: "paused" });
   }
@@ -268,10 +271,27 @@ export class CollectionReader {
     this.budget = 0;
   }
   revalidate(): Promise<void> {
-    this.verified = false;
-    return this.resume();
+    this.pause();
+    this.resumeAfterRevalidation = true;
+    if (this.revalidation) return this.revalidation;
+    const previous = this.task;
+    const verification: Promise<void> = (async () => {
+      // Let an outstanding page settle while paused before starting a new head check.
+      await previous;
+      this.revalidation = null;
+      this.verified = false;
+      if (!this.disposed && this.resumeAfterRevalidation) return this.resume();
+    })().finally(() => {
+      if (this.revalidation === verification) this.revalidation = null;
+    });
+    this.revalidation = verification;
+    return verification;
   }
   resume(): Promise<void> {
+    if (this.revalidation) {
+      this.resumeAfterRevalidation = true;
+      return this.revalidation;
+    }
     this.paused = false;
     if (this.disposed) return Promise.resolve();
     if (this.task) return this.task;
@@ -329,7 +349,7 @@ export class CollectionReader {
       }
       while (!this.disposed) {
         const snapshot = this.state.snapshot;
-        if (!snapshot) changed();
+        if (!snapshot) throw new SourceError("CATALOG_CHANGED");
         if (snapshot.complete) {
           await this.checkpoint();
           this.publish({ phase: "complete" });
@@ -352,14 +372,10 @@ export class CollectionReader {
         if (!this.all && this.budget === 0) continue;
         const page = await this.page(snapshot.page + 1);
         if (this.disposed) return;
-        this.accept(appendCatalog(snapshot, page));
+        const next = appendCatalog(snapshot, page);
+        this.accept(next);
         this.budget = Math.max(0, this.budget - 1);
-        if (
-          !this.all ||
-          this.state.snapshot!.complete ||
-          this.state.snapshot!.page % 5 === 0 ||
-          this.paused
-        )
+        if (!this.all || next.complete || next.page % 5 === 0 || this.paused)
           await this.checkpoint();
       }
     } catch (error) {

@@ -2,11 +2,15 @@
 
 Updated 2026-09-09. This document separates the current continuation from historical milestone reports.
 
-## Active favorites and cover repair (2026-09-09)
+## Favorites and cover repair delivered (2026-09-09)
 
 The user has now accepted real JM/Pica login, favorites reading/refresh, existing source ordering, title/author lookup, local following/booklist restart persistence, and remembered-session restart. These are user-reported results, independent of CI. The earlier suggestion that JM's default order was wrong was explicitly withdrawn: retain its default favorite-time order and do not reopen that diagnosis.
 
-The user authorized implementation of the assessed repair: missing covers, favorites metadata loaded one source page at a time on reaching the bottom, cached progress, continuous virtualized 5/7/9 browsing and global reverse ordering. Website favorite writes and repaired real covers still need separate user acceptance. The current development target is 0.3.1. See [the repair batch record](LOCAL_WORKBENCH_FAVORITES_FIX_2026-09-09.md); implementation, exact-head CI and installer checks must be recorded there before delivery. Existing 0.3.0 validation below is a historical baseline, not proof of this patch.
+Windows 0.3.1 is implemented and verified at application head `68885c73da797e56b16263918deb070672cc1c96` (CI merge `3f4e423fc3fb26c7526501d4d9ae888360ac599f`). Favorites load one source page near the viewport bottom, with cached progress and virtualized 5/7/9 rows. Pica uses native collection-time directions; JM retains its accepted default and prepares a full index only for explicitly requested global reversal. Cover compatibility, eviction recovery, account-scoped bounded disk caching and user-scroll/resize stability are included.
+
+Validation passed: 70 Node and 58 Chromium tests; 557 Linux workspace and 63 Windows core tests; 118 Windows account/credential/source/storage tests; an explicit isolated Credential Manager parent/child roundtrip; 15 native IPC tests; Clippy, NSIS and actual Windows WebView/process-restart smoke. Root inspected the CI-built interface with synthetic data, including the 2000-work tail and decoded covers through narrow/wide resizing. The unsigned 0.3.1 installer artifact 10102381555 was downloaded and its ZIP, sole entry, version and SHA-256 verified. See [the repair batch report](LOCAL_WORKBENCH_FAVORITES_FIX_2026-09-09.md) for exact runs, hashes and boundaries.
+
+Next: the user should install 0.3.1 and retest repaired real covers, continuous large favorites and Pica's oldest-first mode, then validate a personally chosen website favorite write. Real library inventory and durable download integration are later work. Keep production disabled. The following 0.3.0 sections are historical snapshots; their earlier pending-login statements are superseded by the user acceptance above.
 
 ## Third batch: account acceptance entry (2026-09-09)
 

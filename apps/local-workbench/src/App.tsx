@@ -145,7 +145,7 @@ export default function App() {
     anchor: Anchor | null;
     detail: string | null;
   } | null>(null);
-  function captureAnchor(): Anchor | null {
+  function captureAnchor(preferredId?: string): Anchor | null {
     const container = contentRef.current;
     if (!container) return null;
     const containerTop = container.getBoundingClientRect().top;
@@ -158,7 +158,11 @@ export default function App() {
         : containerTop;
     const card = Array.from(
       container.querySelectorAll<HTMLElement>("[data-work-id]"),
-    ).find((card) => card.getBoundingClientRect().bottom > top);
+    ).find(
+      (card) =>
+        card.getBoundingClientRect().bottom > top &&
+        (!preferredId || card.dataset.workId === preferredId),
+    );
     return {
       id: card?.dataset.workId ?? "",
       grid: card?.closest(".cover-grid")?.getAttribute("data-testid") ?? "",
@@ -321,7 +325,7 @@ export default function App() {
     contentRef.current?.scrollTo(0, 0);
   };
   const openWork = (id: string) => {
-    savedListAnchor.current = captureAnchor();
+    savedListAnchor.current = captureAnchor(id);
     setDetail(id);
     setDetailTab("chapters");
     contentRef.current?.scrollTo(0, 0);

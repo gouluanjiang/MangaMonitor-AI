@@ -292,6 +292,17 @@ export function WorkbenchSettings({
               <div className="settings-background-picker">
                 <div className="settings-background-name">
                   <h3>自定义背景</h3>
+                  <span
+                    className="settings-background-thumb"
+                    aria-hidden="true"
+                    style={
+                      appearance.backgroundImage
+                        ? {
+                            backgroundImage: `url("${appearance.backgroundImage}")`,
+                          }
+                        : undefined
+                    }
+                  />
                   <p data-testid="background-filename">
                     {appearance.backgroundName ?? "使用默认背景"}
                   </p>
@@ -433,9 +444,6 @@ export function WorkbenchSettings({
               <p className="settings-copy">
                 控制同时处理的作品与图片请求，减少对电脑和网络的占用。
               </p>
-              <p className="settings-notice" role="note">
-                真实调度器尚未接入。这里目前只保存偏好，不会改变模拟队列的速度或并发数。
-              </p>
               <div
                 className="settings-segmented settings-profile-options"
                 role="group"
@@ -531,7 +539,7 @@ export function WorkbenchSettings({
                 </div>
               </dl>
               <p className="settings-help">
-                以上退出行为为桌面端约定；当前浏览器样例使用“模拟退出”演示。
+                真实调度器尚未接入，目前只保存偏好。退出与恢复为桌面端约定，浏览器样例使用“模拟退出”演示。
               </p>
             </section>
           )}

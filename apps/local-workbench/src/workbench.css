@@ -24,16 +24,16 @@
   background-position: center top;
 }
 [data-background-mode="B"] .workbench-background {
-  height: min(650px, 80vh);
+  height: min(580px, 80vh);
   background-image:
-    linear-gradient(#09090b55, #09090b55 22%, #09090b 100%),
-    var(--user-background),
+    linear-gradient(#09090b66, #09090b66 22%, #09090b 100%),
+    linear-gradient(90deg, #09090b77, #09090b00), var(--user-background),
     radial-gradient(ellipse at 72% 0%, #4b354c, #171019 80%);
 }
 .sidebar {
   width: 80px;
   padding: 28px 9px 24px;
-  background: #09090bd9;
+  background: #09090bf2;
   border-right: 1px solid #ffffff0a;
   z-index: 8;
 }

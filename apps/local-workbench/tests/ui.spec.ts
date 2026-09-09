@@ -376,7 +376,7 @@ async function openReadyFixture(page: Page) {
 }
 
 async function expectVerticalFixture(grid: Locator, columns: number) {
-  const cards = grid.locator("[data-work-id]");
+  const cards = grid.locator('[data-work-id^="fixture-"]');
   await expect(cards).toHaveCount(100);
   const positions = await cards.evaluateAll((elements) =>
     elements.map((element) => {
@@ -584,7 +584,6 @@ test("recent and full library grids each retain all 100 owned fixture records", 
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
   await page.goto("/?fixture=owned-100");
-  await page.getByTestId("search-input").fill("示例作品");
   await page.getByRole("button", { name: "每行 5 部", exact: true }).click();
   for (const id of ["recent-grid", "cover-grid"]) {
     await expectVerticalFixture(page.getByTestId(id), 5);

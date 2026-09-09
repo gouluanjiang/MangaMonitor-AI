@@ -27,6 +27,23 @@ async function openDiscovery(page: Page) {
   await page.getByRole("button", { name: "全部作品", exact: true }).click();
 }
 
+const savedSettingsFeedback = /^(?:外观)?已保存到/;
+
+async function expectSettingsSaved(page: Page) {
+  await expect(page.locator(".settings-save-message")).toContainText(
+    savedSettingsFeedback,
+  );
+  const save = page.getByTestId("save-settings-page");
+  // A disabled button alone also matches an unfinished asynchronous write.
+  await expect(save).toHaveText("保存设置");
+  await expect(save).toBeDisabled();
+}
+
+async function saveSettingsSuccessfully(page: Page) {
+  await page.getByTestId("save-settings-page").click();
+  await expectSettingsSaved(page);
+}
+
 async function selectPair(page: Page) {
   await openDiscovery(page);
   await page.getByTestId("toggle-selection").click();
@@ -246,7 +263,7 @@ test("appearance and resource page drafts save separately and redundant controls
   await expect(panel).not.toContainText("ZIP 打包");
   await expect(panel).not.toContainText("图像处理");
   await page.getByTestId("resource-profile-economy").click();
-  await page.getByTestId("save-settings-page").click();
+  await saveSettingsSuccessfully(page);
   await page.getByTestId("settings-appearance").click();
   await expect(page.getByTestId("background-mode-A")).toHaveAttribute(
     "aria-pressed",
@@ -261,7 +278,7 @@ test("appearance and resource page drafts save separately and redundant controls
   await page.getByTestId("settings-appearance").click();
   await page.getByTestId("background-mode-A").click();
   await page.getByTestId("settings-density-5").click();
-  await page.getByTestId("save-settings-page").click();
+  await saveSettingsSuccessfully(page);
   await page.reload();
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-background-mode",
@@ -297,7 +314,7 @@ test("a chosen background survives reload and invalid files preserve it", async 
   await expect(page.getByTestId("background-filename")).toContainText(
     "wallpaper.png",
   );
-  await page.getByTestId("save-settings-page").click();
+  await saveSettingsSuccessfully(page);
   await page.reload();
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-appearance").click();
@@ -549,8 +566,14 @@ for (const mode of ["A", "B"] as const) {
         await page.getByTestId("settings-appearance").click();
         await page.getByTestId("background-mode-" + mode).click();
         await page.getByTestId("settings-density-" + density).click();
-        const save = page.getByTestId("save-settings-page");
-        if (await save.isEnabled()) await save.click();
+        if (mode !== "B" || density !== 7) {
+          await saveSettingsSuccessfully(page);
+        } else {
+          await expect(page.getByTestId("save-settings-page")).toBeDisabled();
+          await expect(page.locator(".settings-save-message")).toContainText(
+            "本页设置已与保存内容一致",
+          );
+        }
         await page.getByTestId("nav-discovery").click();
         await expect(page.getByTestId("search-input")).toHaveValue("示例作品");
         await expect(page.locator(".app-shell")).toHaveAttribute(
@@ -623,7 +646,7 @@ test("density and settings changes retain a mid-list anchor, selection and filte
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-appearance").click();
   await page.getByTestId("background-mode-A").click();
-  await page.getByTestId("save-settings-page").click();
+  await saveSettingsSuccessfully(page);
   await page.getByTestId("nav-discovery").click();
   await expectFixtureAnchor(page, beforeSettings);
   await expect(page.getByTestId("search-input")).toHaveValue("示例作品");
@@ -736,7 +759,7 @@ test("appearance settings preserve an explicit favorite source and pending selec
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-appearance").click();
   await page.getByTestId("background-mode-A").click();
-  await page.getByTestId("save-settings-page").click();
+  await saveSettingsSuccessfully(page);
   await page.getByTestId("nav-favorites").click();
   await expect(page.getByLabel("来源筛选")).toHaveValue("Pica");
   await expect(page.getByTestId("search-input")).toHaveValue("雾");
@@ -772,7 +795,7 @@ test("a detail visit retains the list anchor after changing density in settings"
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-appearance").click();
   await page.getByTestId("settings-density-9").click();
-  await page.getByTestId("save-settings-page").click();
+  await saveSettingsSuccessfully(page);
   await page.getByTestId("nav-discovery").click();
   await expect(page.getByTestId("detail-page")).toBeVisible();
   await page.getByTestId("back-library").click();
@@ -804,7 +827,7 @@ test("the A background remains visible under the toolbar until it sticks", async
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-appearance").click();
   await page.getByTestId("background-mode-A").click();
-  await page.getByTestId("save-settings-page").click();
+  await saveSettingsSuccessfully(page);
   await page.getByTestId("nav-discovery").click();
   await expect(page.locator(".app-shell")).toHaveAttribute(
     "data-background-mode",
@@ -818,4 +841,90 @@ test("the A background remains visible under the toolbar until it sticks", async
     main.scrollTop = 0;
   });
   await expect(toolbar).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+});
+
+declare global {
+  interface Window {
+    settingsWriteTestHooks?: {
+      lockRequests: number;
+      releaseWrite?: () => void;
+    };
+  }
+}
+
+test("a delayed settings write stays pending until storage commits and survives reopening", async ({
+  page,
+}) => {
+  // This delays only the browser preview's preference lock, not native I/O.
+  const preferenceKey = "mangamonitor.workbench.preferences.v1";
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-appearance").click();
+  await page.getByTestId("background-mode-A").click();
+  await page.getByTestId("settings-density-9").click();
+  const save = page.getByTestId("save-settings-page");
+  await expect(save).toBeEnabled();
+  const before = await page.evaluate(
+    (key) => localStorage.getItem(key),
+    preferenceKey,
+  );
+  await page.evaluate((key) => {
+    const request = navigator.locks.request;
+    const hooks = (window.settingsWriteTestHooks = {
+      lockRequests: 0,
+    } as NonNullable<Window["settingsWriteTestHooks"]>);
+    navigator.locks.request = ((
+      ...args: Parameters<LockManager["request"]>
+    ) => {
+      const run = () =>
+        Reflect.apply(request, navigator.locks, args) as Promise<unknown>;
+      if (args[0] !== key) return run();
+      hooks.lockRequests += 1;
+      return new Promise((resolve, reject) => {
+        hooks.releaseWrite = () => {
+          delete hooks.releaseWrite;
+          void run().then(resolve, reject);
+        };
+      });
+    }) as LockManager["request"];
+  }, preferenceKey);
+
+  await save.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.settingsWriteTestHooks?.lockRequests),
+    )
+    .toBe(1);
+  await expect(save).toBeDisabled();
+  await expect(save).toHaveText("正在保存…");
+  await expect(page.locator(".settings-save-message")).not.toContainText(
+    savedSettingsFeedback,
+  );
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), preferenceKey),
+  ).toBe(before);
+
+  await page.evaluate(() => window.settingsWriteTestHooks?.releaseWrite?.());
+  await expectSettingsSaved(page);
+  const saved = await page.evaluate(
+    (key) => JSON.parse(localStorage.getItem(key)!),
+    preferenceKey,
+  );
+  expect(saved.appearance.backgroundMode).toBe("A");
+  expect(saved.appearance.density).toBe(9);
+  await page.reload();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-background-mode",
+    "A",
+  );
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-appearance").click();
+  await expect(page.getByTestId("background-mode-A")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("settings-density-9")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("save-settings-page")).toBeDisabled();
 });

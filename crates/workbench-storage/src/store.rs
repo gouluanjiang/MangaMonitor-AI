@@ -336,7 +336,7 @@ fn ensure_directory_tree(path: &Path) -> Result<Vec<File>> {
 fn open_directory_guard(path: &Path) -> Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
     let file = OpenOptions::new()
-        .access_mode(0x80) // FILE_READ_ATTRIBUTES
+        .access_mode(0x1 | 0x80) // FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
         .custom_flags(0x0220_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
         .share_mode(0x1 | 0x2)
         .open(path)

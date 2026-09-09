@@ -2,6 +2,18 @@
 
 Updated 2026-09-09. This document separates the current continuation from historical milestone reports.
 
+## Third batch: account acceptance entry (2026-09-09)
+
+The user requested the next development batch and will provide real accounts. Batch 3 implementation and automated verification are complete at `0bdfcda3896c4a829c5cff3a2aaa2c414a09a88f`, PR merge `36ba43f666f11d4b18d0c4f3338c1a84c8e48b0c`. See [the third-batch report](LOCAL_WORKBENCH_BATCH3_2026-09-09.md) for CI, package digest and live-acceptance boundaries. PR #19 remains a draft.
+
+The Windows 0.3.0 application implements JM/Pica login and optional Credential Manager server-session persistence, bounded favorites/search/details/covers, verified individual favorite changes, account-scoped local following, and real-source booklist references. Library inventory/download queues are still simulated. Real account acceptance, actual source/CDN reachability and chosen website favorite mutations have not been performed. Enter credentials only in the local app; never commit credentials, account data or personal images. On-call request errors expose fixed codes, not raw responses.
+
+Verification passed: 56 Node and 54 Chromium tests; 526 Linux workspace and 63 Windows core tests; 88 Windows account/credential/source/storage tests; an explicit isolated Windows Credential Manager parent/child-process roundtrip; 15 native IPC tests; Clippy; the NSIS installer and actual Windows WebView/process-restart smoke. Account implementation started at `12dbe5e`; native smoke/artifact fixes and the final source-page layout fix are included in the verified head. Root visual review used the CI-built UI with explicitly synthetic IPC, including right-aligned search, approved detail proportions, account settings, name-only author rows and 100-work selection. Real credentials and local native installation remain unverified. The report includes the verified installer under artifact 10097535446/run 34335090095. The package is downloaded locally, unsigned and not installed on the user machine.
+
+Continue with user login via Settings → accounts, bounded read-only favorites/search/details, user-selected favorite action, optional saved-session restart, and a per-source acceptance record. Source network calls are hard-disabled in GitHub Actions; synthetic protocol/browser evidence is not live-account acceptance. Real library/inventory is the next implementation batch after this acceptance boundary. Keep production disabled and the original download/import authority gates intact.
+
+The paragraphs below preserve earlier milestones; references to accounts being unimplemented describe those earlier batches.
+
 ## Current continuation
 
 The new development session has taken over the existing checkout and retained the prior uncommitted implementation. See [the current acceptance record](LOCAL_WORKBENCH_ACCEPTANCE_2026-09-09.md). The mandatory external UI baseline is in the parent workspace, MANGAMONITOR_UI_BASELINE_2026-09-09.md; its specified PNGs and text corrections take priority over historical proposals and the old browser sample.

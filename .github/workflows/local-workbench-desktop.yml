@@ -89,11 +89,20 @@ jobs:
       - name: Build development NSIS installer
         working-directory: apps/local-workbench
         run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+      - name: Select the current version installer
+        id: current-installer
+        shell: pwsh
+        run: |
+          $appConfig = Get-Content -LiteralPath 'apps/local-workbench/src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json
+          $installerName = '{0}_{1}_x64-setup.exe' -f $appConfig.productName, $appConfig.version
+          $installerPath = Join-Path 'apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis' $installerName
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) { throw 'Current version installer is missing' }
+          "installer=$installerPath" >> $env:GITHUB_OUTPUT
       - name: Upload development installer for review
         uses: actions/upload-artifact@v4
         with:
           name: mangamonitor-dev-windows-nsis-${{ github.sha }}
-          path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          path: ${{ steps.current-installer.outputs.installer }}
           retention-days: 7
           if-no-files-found: error
       - name: Save verified native build before WebView smoke

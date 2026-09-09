@@ -246,12 +246,25 @@ try {
   ).toBeVisible();
   await page.getByTestId("nav-library").click();
   await page.getByRole("button", { name: "全部作品", exact: true }).click();
-  await page.getByTestId("open-echo").click();
+  await page.getByTestId("open-summer").click();
   await page.getByTestId("detail-booklist").click();
   await page.getByTestId("booklist-picker-create").click();
   await page.getByTestId("booklist-picker-name").fill(listName);
   await page.getByTestId("booklist-picker-save").click();
   await expect(page.getByTestId("booklist-picker")).toHaveCount(0);
+  // Exercise an unresolved reference through the actual scoped document IPC.
+  // It is synthetic, does not request source metadata and belongs to this CI run.
+  await page.evaluate(async (name) => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    const current = await invoke("read_booklists");
+    const list = current.value.lists.find((entry) => entry.name === name);
+    list.members.push({ source: "JM", workId: "unresolved-native-ci" });
+    list.updatedAt = Date.now();
+    await invoke("write_booklists", {
+      expectedRevision: current.revision,
+      value: current.value,
+    });
+  }, listName);
   const prefs = JSON.parse(
     await readFile(path.join(documents, "preferences.json"), "utf8"),
   );
@@ -264,7 +277,7 @@ try {
   assert.equal(prefs.value.appearance.backgroundMode, "A");
   assert.equal(
     lists.value.lists.find((list) => list.name === listName).members[0].workId,
-    "echo",
+    "summer",
   );
   await running.stop();
   running = await launch();
@@ -280,10 +293,18 @@ try {
     .click();
   await running.page
     .getByTestId("booklist-select")
-    .selectOption({ label: listName + " · 1 部" });
-  await expect(running.page.getByTestId("card-echo")).toBeVisible();
+    .selectOption({ label: listName + " · 2 部" });
+  await expect(running.page.getByTestId("card-summer")).toBeVisible();
+  await expect(running.page.getByTestId("unavailable-members")).toContainText(
+    "unresolved-native-ci",
+  );
+  await expect(
+    running.page
+      .getByTestId("unavailable-members")
+      .getByRole("button", { name: "下载并入库", exact: true }),
+  ).toHaveCount(0);
   await running.page.getByTestId("toggle-selection").click();
-  await running.page.getByTestId("select-echo").check();
+  await running.page.getByTestId("select-summer").check();
   await expect(running.page.getByTestId("batch-download")).toBeDisabled();
   assert.deepEqual(
     JSON.parse(await readFile(path.join(documents, "booklists.json"), "utf8")),

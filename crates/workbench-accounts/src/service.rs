@@ -6,7 +6,7 @@ use crate::{
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, OnceCell, Semaphore};
 use workbench_credentials::{StoredCredential, Vault};
 use workbench_sources::FavoritePageRequest;
 use zeroize::Zeroizing;
@@ -71,9 +71,9 @@ pub struct AccountService<B: SourceBackend, V: Vault> {
     root: PathBuf,
     slots: [Mutex<Slot<B::Session>>; 2],
     cover_slots: Semaphore,
-    // Cache workers share one fixed file lock. Serialize them locally so two
-    // covers from this service do not turn each other's cache access into BUSY.
+    // Catalog writes and the one-time legacy cleanup share the fixed file lock.
     cache_io: Arc<Mutex<()>>,
+    legacy_cover_cleanup: OnceCell<Result<()>>,
 }
 
 impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
@@ -84,11 +84,39 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             root: app_data_root,
             cover_slots: Semaphore::new(2),
             cache_io: Arc::new(Mutex::new(())),
+            legacy_cover_cleanup: OnceCell::new(),
             slots: [
                 Mutex::new(Slot::new(Source::Jm)),
                 Mutex::new(Slot::new(Source::Pica)),
             ],
         }
+    }
+
+    /// Run once per service startup. Cleanup errors are retained for diagnostics
+    /// and never replace account state or prevent login/cover requests.
+    pub async fn cleanup_legacy_cover_cache(&self) -> Result<()> {
+        *self
+            .legacy_cover_cleanup
+            .get_or_init(|| async {
+                for attempt in 0..3 {
+                    let root = self.root.clone();
+                    let cache_io = Arc::clone(&self.cache_io).lock_owned().await;
+                    let result = tokio::task::spawn_blocking(move || {
+                        let _cache_io = cache_io;
+                        workbench_storage::WorkbenchStore::open(root)?.cleanup_legacy_cover_cache()
+                    })
+                    .await
+                    .map_err(|_| AccountError::new("CACHE_UNAVAILABLE"))?
+                    .map_err(|error| AccountError::new(error.code));
+                    if result.as_ref().is_err_and(|error| error.code == "BUSY") && attempt < 2 {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        continue;
+                    }
+                    return result;
+                }
+                Err(AccountError::new("BUSY"))
+            })
+            .await
     }
 
     fn slot(&self, source: Source) -> &Mutex<Slot<B::Session>> {
@@ -171,6 +199,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     }
 
     pub async fn accounts(&self, refresh: bool) -> Vec<AccountSummary> {
+        let _cleanup = self.cleanup_legacy_cover_cache().await;
         async fn read<B: SourceBackend, V: Vault + 'static>(
             service: &AccountService<B, V>,
             source: Source,
@@ -442,62 +471,23 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         session_id: &str,
         work_id: &str,
     ) -> Result<CoverResult> {
-        let (session, account, known) = {
+        let (session, known) = {
             let mut slot = self.slot(source).lock().await;
             self.require_scope(&mut slot, session_id)?;
             if !cache::valid_id(work_id) {
                 return Err(AccountError::new("WORK_INPUT_INVALID"));
             }
             let known = slot.works.contains_key(work_id);
-            let account = account_key(
-                source,
-                &slot
-                    .account
-                    .as_ref()
-                    .ok_or(AccountError::new("AUTH_REQUIRED"))?
-                    .account_id,
-            );
             (
                 Arc::clone(
                     slot.session
                         .as_ref()
                         .ok_or(AccountError::new("AUTH_REQUIRED"))?,
                 ),
-                account,
                 known,
             )
         };
-        let cached = {
-            // Never acquire an account slot while holding cache_io. Catalog
-            // keeps the existing slot -> cache_io order during its transaction.
-            let cache_io = Arc::clone(&self.cache_io).lock_owned().await;
-            let root = self.root.clone();
-            let account = account.clone();
-            let work = work_id.to_owned();
-            tokio::task::spawn_blocking(move || {
-                // Keep serialization until the worker exits, even if the IPC
-                // future is cancelled while spawn_blocking is still running.
-                let _cache_io = cache_io;
-                cache::read_cover(&root, &account, &work)
-            })
-            .await
-            .ok()
-            .and_then(std::result::Result::ok)
-            .flatten()
-        };
-        {
-            let mut slot = self.slot(source).lock().await;
-            self.require_scope(&mut slot, session_id)?;
-            if let Some(data_url) = cached {
-                return Ok(CoverResult {
-                    source,
-                    session_id: session_id.into(),
-                    work_id: work_id.into(),
-                    data_url: Some(data_url),
-                });
-            }
-        }
-        // Only cache misses consume network concurrency.
+        // Cover bytes live only for this request; the renderer owns run-scoped reuse.
         let _permit = self
             .cover_slots
             .acquire()
@@ -551,25 +541,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             self.finish(&mut slot, result)?
         };
         if let Some(data_url) = &data_url {
-            let root = self.root.clone();
-            let account = account.clone();
-            let work = work_id.to_owned();
             let image = data_url.clone();
-            let result = {
-                let cache_io = Arc::clone(&self.cache_io).lock_owned().await;
-                tokio::task::spawn_blocking(move || {
-                    let _cache_io = cache_io;
-                    cache::write_cover(&root, &account, &work, &image)
-                })
+            tokio::task::spawn_blocking(move || cache::validate_cover(&image))
                 .await
-            };
-            // Invalid native output is not forwarded as an image. Disk/cache
-            // failures merely skip persistence and leave the account connected.
-            match result {
-                Err(_) => return Err(AccountError::new("CACHE_UNAVAILABLE")),
-                Ok(Err(error)) if error.code == "SOURCE_COVER_INVALID" => return Err(error),
-                _ => {}
-            }
+                .map_err(|_| AccountError::new("SOURCE_COVER_INVALID"))??;
         }
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;

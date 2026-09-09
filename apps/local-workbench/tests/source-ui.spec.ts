@@ -115,19 +115,27 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   await page.getByTestId("source-grid").evaluate((element) => {
     element.closest("main")!.scrollTop = 18000;
   });
-  const anchor = await page
-    .getByTestId("source-grid")
-    .locator("article")
-    .evaluateAll((elements) => {
-      const main = elements[0].closest("main")!;
-      return elements
-        .find(
-          (element) =>
-            element.getBoundingClientRect().top >=
-            main.getBoundingClientRect().top,
-        )!
-        .getAttribute("data-source-work-key")!;
-    });
+  let anchor: string | null = null;
+  // Scrolling replaces virtual rows on the next animation frame. Resolve the
+  // attached rows inside the same DOM read instead of holding detached handles.
+  await expect
+    .poll(async () => {
+      anchor = await page.getByTestId("source-grid").evaluate((grid) => {
+        const main = grid.closest("main");
+        if (!main) return null;
+        const bounds = main.getBoundingClientRect();
+        return (
+          [...grid.querySelectorAll("article")]
+            .find((element) => {
+              const row = element.getBoundingClientRect();
+              return row.top >= bounds.top && row.top < bounds.bottom;
+            })
+            ?.getAttribute("data-source-work-key") ?? null
+        );
+      });
+      return anchor;
+    })
+    .toMatch(/^JM:\d+$/);
   // Density controls stay above the virtual rows; a direct click avoids scrolling the anchor away.
   for (const density of [5, 9, 7]) {
     await page

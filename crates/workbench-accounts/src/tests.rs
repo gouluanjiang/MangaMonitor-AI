@@ -831,7 +831,7 @@ async fn catalog_restart_and_cover_rehydration_never_restore_favorite_authority(
             .data_url,
         Some(image)
     );
-    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 2);
     let other = login(&next, Source::Jm, "second", false).await;
     assert!(next
         .catalog(Source::Jm, &other, None, false, CatalogAction::Read, None)
@@ -981,27 +981,35 @@ async fn logout_during_old_card_detail_prevents_the_next_cover_request() {
 }
 
 #[tokio::test]
-async fn validated_cover_hit_survives_corrupt_touch_without_network_retry() {
-    let root = TempDir::new().unwrap();
+async fn covers_are_validated_without_reading_or_creating_app_files() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("unused-app-data");
     let backend = FakeBackend::default();
-    let service = service(&root, backend.clone(), SharedVault::default());
+    let service = AccountService::new(backend.clone(), SharedVault::default(), root.clone());
     let session = login(&service, Source::Jm, "fixture", false).await;
     let image = cover_image();
     *backend.0.cover_image.lock().unwrap() = Some(image.clone());
+    for _ in 0..2 {
+        assert_eq!(
+            service
+                .cover(Source::Jm, &session, "123")
+                .await
+                .unwrap()
+                .data_url,
+            Some(image.clone())
+        );
+    }
+    assert!(!root.exists());
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 2);
+    *backend.0.cover_image.lock().unwrap() = Some("data:image/jpeg;base64,AA==".into());
     assert_eq!(
-        service
-            .cover(Source::Jm, &session, "123")
-            .await
-            .unwrap()
-            .data_url,
-        Some(image.clone())
+        error(service.cover(Source::Jm, &session, "123").await),
+        "SOURCE_COVER_INVALID"
     );
-    let registry = root
-        .path()
-        .join(workbench_storage::PRIVATE_DIRECTORY)
-        .join("cache-registry-v1.json");
-    std::fs::write(&registry, b"damaged-touch-registry").unwrap();
-    *backend.0.cover_image.lock().unwrap() = None;
+    assert!(!root.exists());
+    // Even an unusable app-data path is irrelevant to the pure cover operation.
+    std::fs::write(&root, b"not-a-directory").unwrap();
+    *backend.0.cover_image.lock().unwrap() = Some(image.clone());
     assert_eq!(
         service
             .cover(Source::Jm, &session, "123")
@@ -1010,61 +1018,100 @@ async fn validated_cover_hit_survives_corrupt_touch_without_network_retry() {
             .data_url,
         Some(image)
     );
-    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(std::fs::read(registry).unwrap(), b"damaged-touch-registry");
+    assert_eq!(std::fs::read(&root).unwrap(), b"not-a-directory");
+    let previous_calls = backend.0.cover_calls.load(Ordering::SeqCst);
+    drop(service);
+    let restarted = AccountService::new(backend.clone(), SharedVault::default(), root.clone());
+    let next_session = login(&restarted, Source::Jm, "fixture", false).await;
+    assert_ne!(next_session, session);
+    assert!(restarted
+        .cover(Source::Jm, &next_session, "123")
+        .await
+        .unwrap()
+        .data_url
+        .is_some());
     assert_eq!(
-        service.accounts(false).await[0].state,
-        AccountState::Connected
+        backend.0.cover_calls.load(Ordering::SeqCst),
+        previous_calls + 1
     );
+    assert_eq!(std::fs::read(root).unwrap(), b"not-a-directory");
 }
 
 #[tokio::test]
-async fn two_slow_network_covers_do_not_block_another_sources_disk_hit() {
+async fn startup_cleanup_runs_once_and_failed_cleanup_does_not_block_accounts_or_covers() {
     let root = TempDir::new().unwrap();
+    let store = workbench_storage::WorkbenchStore::open(root.path()).unwrap();
+    let private = root.path().join(workbench_storage::PRIVATE_DIRECTORY);
+    let key = "1".repeat(64);
+    let registry = serde_json::json!({"version":1,"accounts":[{"key":key,"catalogPeak":0,"coverPeak":64*1024*1024,"usedAt":1}]});
+    std::fs::write(
+        private.join("cache-registry-v1.json"),
+        serde_json::to_vec(&registry).unwrap(),
+    )
+    .unwrap();
+    let legacy = private.join(format!("cache-{key}-cover-000.bin"));
+    std::fs::write(&legacy, b"retired").unwrap();
     let backend = FakeBackend::default();
-    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
-    let jm = login(&service, Source::Jm, "fixture-jm", false).await;
-    let pica = login(&service, Source::Pica, "fixture-pica", false).await;
-    let image = cover_image();
-    *backend.0.cover_image.lock().unwrap() = Some(image.clone());
-    service.cover(Source::Pica, &pica, "123").await.unwrap();
-    backend.0.block_cover.store(true, Ordering::SeqCst);
-    let first = {
-        let service = Arc::clone(&service);
-        let session = jm.clone();
-        tokio::spawn(async move { service.cover(Source::Jm, &session, "slow-a").await })
-    };
-    tokio::time::timeout(
+    let service = service(&root, backend.clone(), SharedVault::default());
+    service.accounts(false).await;
+    assert!(!legacy.exists());
+    assert!(service.cleanup_legacy_cover_cache().await.is_ok());
+    // A later registry error does not rerun a completed startup migration.
+    std::fs::write(private.join("cache-registry-v1.json"), b"corrupt").unwrap();
+    assert!(service.cleanup_legacy_cover_cache().await.is_ok());
+    let next = AccountService::new(
+        backend.clone(),
+        SharedVault::default(),
+        root.path().to_path_buf(),
+    );
+    assert!(next
+        .accounts(false)
+        .await
+        .iter()
+        .all(|a| a.state == AccountState::Disconnected));
+    assert_eq!(
+        error(next.cleanup_legacy_cover_cache().await),
+        "CACHE_CORRUPT"
+    );
+    let session = login(&next, Source::Jm, "fixture", false).await;
+    *backend.0.cover_image.lock().unwrap() = Some(cover_image());
+    assert!(next
+        .cover(Source::Jm, &session, "123")
+        .await
+        .unwrap()
+        .data_url
+        .is_some());
+    assert_eq!(next.accounts(false).await[0].state, AccountState::Connected);
+    assert_eq!(
+        std::fs::read(private.join("cache-registry-v1.json")).unwrap(),
+        b"corrupt"
+    );
+    assert_eq!(store.read_preferences().unwrap().revision, 0);
+}
+
+#[tokio::test]
+async fn startup_cleanup_lock_contention_is_bounded_and_a_new_startup_can_retry() {
+    let root = TempDir::new().unwrap();
+    let store = workbench_storage::WorkbenchStore::open(root.path()).unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let held = std::thread::spawn(move || {
+        store.with_account_cache(&"1".repeat(64), |_| {
+            ready_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+    });
+    ready_rx.recv().unwrap();
+    let first = service(&root, FakeBackend::default(), SharedVault::default());
+    let attempted = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        backend.0.cover_started.notified(),
-    )
-    .await
-    .unwrap();
-    let second = {
-        let service = Arc::clone(&service);
-        let session = jm.clone();
-        tokio::spawn(async move { service.cover(Source::Jm, &session, "slow-b").await })
-    };
-    tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        backend.0.cover_started.notified(),
-    )
-    .await
-    .unwrap();
-    let cached = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        service.cover(Source::Pica, &pica, "123"),
+        first.cleanup_legacy_cover_cache(),
     )
     .await;
-    let network_calls = backend.0.cover_calls.load(Ordering::SeqCst);
-    backend.0.cover_release.notify_waiters();
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        first.await.unwrap().unwrap();
-        second.await.unwrap().unwrap();
-    })
-    .await
-    .unwrap();
-    assert_eq!(cached.unwrap().unwrap().data_url, Some(image));
-    assert_eq!(network_calls, 3);
+    release_tx.send(()).unwrap();
+    held.join().unwrap().unwrap();
+    assert_eq!(error(attempted.unwrap()), "BUSY");
+    let next = service(&root, FakeBackend::default(), SharedVault::default());
+    assert!(next.cleanup_legacy_cover_cache().await.is_ok());
 }

@@ -9,15 +9,12 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
-use workbench_storage::{AccountCache, CacheEntry, StoreError, WorkbenchStore, MAX_SAFE_INTEGER};
+use workbench_storage::{CacheEntry, StoreError, WorkbenchStore, MAX_SAFE_INTEGER};
 
 pub(crate) const MAX_ITEMS: usize = 20_000;
 pub(crate) const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SCOPES: usize = 16;
 const MAX_JPEG_BYTES: usize = 256 * 1024;
-// Reserve every fixed slot up front: an interrupted index write must not hide
-// newly written JPEG bytes from the global high-water budget.
-const COVER_RESERVATION: u64 = 64 * 1024 * 1024;
 
 struct WorkEntry {
     work: SourceWork,
@@ -439,7 +436,7 @@ pub(crate) fn catalog(
                     })?;
                 document.entries.remove(oldest);
             };
-            cache.reserve(bytes.len() as u64, 0)?;
+            cache.reserve(bytes.len() as u64)?;
             cache.write(CacheEntry::Catalog, &bytes)?;
             let entry = document
                 .entries
@@ -458,64 +455,7 @@ pub(crate) fn catalog(
         .map_err(account_error)
 }
 
-#[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CoverIndex {
-    version: u32,
-    sequence: u64,
-    entries: Vec<CoverRecord>,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CoverRecord {
-    slot: u8,
-    key: String,
-    used_at: u64,
-    bytes: u64,
-}
-
-fn decode_cover_index(cache: &AccountCache<'_>) -> Result<CoverIndex> {
-    let index = match cache.read(CacheEntry::CoverIndex).map_err(account_error)? {
-        None => CoverIndex {
-            version: 1,
-            sequence: 0,
-            entries: vec![],
-        },
-        Some(bytes) => {
-            serde_json::from_slice::<CoverIndex>(&bytes).map_err(|_| err("CACHE_CORRUPT"))?
-        }
-    };
-    let mut slots = HashSet::new();
-    let mut keys = HashSet::new();
-    if index.version != 1
-        || index.sequence > MAX_SAFE_INTEGER
-        || index.entries.len() > 255
-        || index.entries.iter().any(|entry| {
-            entry.slot == 255
-                || !valid_key(&entry.key)
-                || !slots.insert(entry.slot)
-                || !keys.insert(&entry.key)
-                || entry.bytes > MAX_JPEG_BYTES as u64 + 32
-                || entry.bytes <= 32
-                || entry.used_at > index.sequence
-        })
-    {
-        return Err(err("CACHE_CORRUPT"));
-    }
-    Ok(index)
-}
-fn tick(index: &mut CoverIndex) -> u64 {
-    if index.sequence == MAX_SAFE_INTEGER {
-        index.entries.sort_by_key(|entry| entry.used_at);
-        for (order, entry) in index.entries.iter_mut().enumerate() {
-            entry.used_at = order as u64;
-        }
-        index.sequence = index.entries.len() as u64;
-    }
-    index.sequence += 1;
-    index.sequence
-}
-fn jpeg_bytes(data_url: &str) -> Result<Vec<u8>> {
+pub(crate) fn validate_cover(data_url: &str) -> Result<()> {
     let encoded = data_url
         .strip_prefix("data:image/jpeg;base64,")
         .ok_or(err("SOURCE_COVER_INVALID"))?;
@@ -526,7 +466,7 @@ fn jpeg_bytes(data_url: &str) -> Result<Vec<u8>> {
         .decode(encoded)
         .map_err(|_| err("SOURCE_COVER_INVALID"))?;
     validate_jpeg(&bytes)?;
-    Ok(bytes)
+    Ok(())
 }
 fn validate_jpeg(bytes: &[u8]) -> Result<()> {
     if bytes.is_empty()
@@ -550,95 +490,6 @@ fn validate_jpeg(bytes: &[u8]) -> Result<()> {
     }
     image::DynamicImage::from_decoder(decoder).map_err(|_| err("SOURCE_COVER_INVALID"))?;
     Ok(())
-}
-
-pub(crate) fn read_cover(root: &Path, account: &str, work_id: &str) -> Result<Option<String>> {
-    let key = digest(work_id);
-    let raw_key = Sha256::digest(work_id.as_bytes());
-    WorkbenchStore::open(root)
-        .map_err(account_error)?
-        .with_account_cache(account, |cache| {
-            let mut index = decode_cover_index(cache).map_err(store_error)?;
-            let Some(position) = index.entries.iter().position(|entry| entry.key == key) else {
-                return Ok(None);
-            };
-            let Some(bytes) = cache.read(CacheEntry::Cover(index.entries[position].slot))? else {
-                return Ok(None);
-            };
-            if bytes.len() != index.entries[position].bytes as usize
-                || bytes.get(..32) != Some(&raw_key[..])
-            {
-                return Ok(None);
-            }
-            validate_jpeg(&bytes[32..]).map_err(store_error)?;
-            let used_at = tick(&mut index);
-            index.entries[position].used_at = used_at;
-            // A validated image remains usable if bookkeeping cannot be saved.
-            // Reservation is still mandatory before any attempted index write.
-            let _touch = (|| {
-                cache.reserve(0, COVER_RESERVATION)?;
-                cache.write(
-                    CacheEntry::CoverIndex,
-                    &serde_json::to_vec(&index).map_err(|_| StoreError {
-                        code: "CACHE_UNAVAILABLE",
-                    })?,
-                )
-            })();
-            Ok(Some(format!(
-                "data:image/jpeg;base64,{}",
-                STANDARD.encode(&bytes[32..])
-            )))
-        })
-        .map_err(account_error)
-}
-
-pub(crate) fn write_cover(root: &Path, account: &str, work_id: &str, data_url: &str) -> Result<()> {
-    let jpeg = jpeg_bytes(data_url)?;
-    let key = digest(work_id);
-    let mut bytes = Sha256::digest(work_id.as_bytes()).to_vec();
-    bytes.extend_from_slice(&jpeg);
-    WorkbenchStore::open(root)
-        .map_err(account_error)?
-        .with_account_cache(account, |cache| {
-            let mut index = decode_cover_index(cache).map_err(store_error)?;
-            let position = index.entries.iter().position(|entry| entry.key == key);
-            let slot = if let Some(position) = position {
-                index.entries.remove(position).slot
-            } else if index.entries.len() == 255 {
-                let oldest = index
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, entry)| entry.used_at)
-                    .map(|(i, _)| i)
-                    .ok_or(StoreError {
-                        code: "CACHE_UNAVAILABLE",
-                    })?;
-                index.entries.remove(oldest).slot
-            } else {
-                (0..255)
-                    .find(|slot| !index.entries.iter().any(|entry| entry.slot == *slot))
-                    .ok_or(StoreError {
-                        code: "CACHE_UNAVAILABLE",
-                    })?
-            };
-            let used_at = tick(&mut index);
-            index.entries.push(CoverRecord {
-                slot,
-                key,
-                used_at,
-                bytes: bytes.len() as u64,
-            });
-            cache.reserve(0, COVER_RESERVATION)?;
-            cache.write(CacheEntry::Cover(slot), &bytes)?;
-            cache.write(
-                CacheEntry::CoverIndex,
-                &serde_json::to_vec(&index).map_err(|_| StoreError {
-                    code: "CACHE_UNAVAILABLE",
-                })?,
-            )
-        })
-        .map_err(account_error)
 }
 
 #[cfg(test)]
@@ -782,7 +633,7 @@ mod tests {
         let corrupt = b"{broken-catalog";
         store
             .with_account_cache(&key(1), |cache| {
-                cache.reserve(corrupt.len() as u64, 0)?;
+                cache.reserve(corrupt.len() as u64)?;
                 cache.write(CacheEntry::Catalog, corrupt)
             })
             .unwrap();
@@ -930,113 +781,24 @@ mod tests {
     }
 
     #[test]
-    fn jpeg_cover_survives_reopen_but_wrong_account_invalid_type_and_reused_slot_do_not() {
-        let temp = TempDir::new().unwrap();
-        let image = jpeg();
-        write_cover(temp.path(), &key(1), "old-work", &image).unwrap();
-        assert_eq!(
-            read_cover(temp.path(), &key(1), "old-work").unwrap(),
-            Some(image.clone())
+    fn pure_cover_validation_keeps_raster_size_type_and_dimension_limits() {
+        assert!(validate_cover(&jpeg()).is_ok());
+        for value in ["data:image/png;base64,AA==", "data:image/jpeg;base64,AA=="] {
+            assert_eq!(code(validate_cover(value)), "SOURCE_COVER_INVALID");
+        }
+        let oversized = format!(
+            "data:image/jpeg;base64,{}",
+            STANDARD.encode(vec![0; MAX_JPEG_BYTES + 1])
         );
-        assert!(read_cover(temp.path(), &key(2), "old-work")
-            .unwrap()
-            .is_none());
-        assert_eq!(
-            code(write_cover(
-                temp.path(),
-                &key(1),
-                "bad",
-                "data:image/png;base64,AA=="
-            )),
-            "SOURCE_COVER_INVALID"
-        );
-        assert_eq!(
-            code(write_cover(
-                temp.path(),
-                &key(1),
-                "bad",
-                "data:image/jpeg;base64,AA=="
-            )),
-            "SOURCE_COVER_INVALID"
-        );
-        let store = WorkbenchStore::open(temp.path()).unwrap();
-        store
-            .with_account_cache(&key(1), |cache| {
-                cache.reserve(0, 1)?;
-                cache.write(CacheEntry::Cover(0), &vec![0; 256])
-            })
+        assert_eq!(code(validate_cover(&oversized)), "SOURCE_COVER_INVALID");
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(513, 1)
+            .write_to(&mut bytes, ImageFormat::Jpeg)
             .unwrap();
-        assert!(read_cover(temp.path(), &key(1), "old-work")
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
-    fn cover_lru_reuses_one_fixed_slot_and_read_touch_keeps_recent_image() {
-        let temp = TempDir::new().unwrap();
-        let image = jpeg();
-        write_cover(temp.path(), &key(1), "0", &image).unwrap();
-        let store = WorkbenchStore::open(temp.path()).unwrap();
-        store
-            .with_account_cache(&key(1), |cache| {
-                let old = decode_cover_index(cache).map_err(store_error)?;
-                let bytes = old.entries[0].bytes;
-                let index = CoverIndex {
-                    version: 1,
-                    sequence: 255,
-                    entries: (0..255u8)
-                        .map(|slot| CoverRecord {
-                            slot,
-                            key: digest(&slot.to_string()),
-                            used_at: slot as u64 + 1,
-                            bytes,
-                        })
-                        .collect(),
-                };
-                cache.reserve(0, 1)?;
-                cache.write(CacheEntry::CoverIndex, &serde_json::to_vec(&index).unwrap())
-            })
-            .unwrap();
-        assert_eq!(
-            read_cover(temp.path(), &key(1), "0").unwrap(),
-            Some(image.clone())
+        let too_wide = format!(
+            "data:image/jpeg;base64,{}",
+            STANDARD.encode(bytes.into_inner())
         );
-        write_cover(temp.path(), &key(1), "new", &image).unwrap();
-        store
-            .with_account_cache(&key(1), |cache| {
-                let index = decode_cover_index(cache).map_err(store_error)?;
-                assert_eq!(index.entries.len(), 255);
-                assert!(index.entries.iter().any(|entry| entry.key == digest("0")));
-                assert!(!index.entries.iter().any(|entry| entry.key == digest("1")));
-                assert_eq!(
-                    index
-                        .entries
-                        .iter()
-                        .find(|entry| entry.key == digest("new"))
-                        .unwrap()
-                        .slot,
-                    1
-                );
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn validated_hit_survives_unwritable_touch_without_changing_unsafe_scratch() {
-        let temp = TempDir::new().unwrap();
-        let image = jpeg();
-        write_cover(temp.path(), &key(1), "cached", &image).unwrap();
-        let root = temp.path().join(workbench_storage::PRIVATE_DIRECTORY);
-        let index = root.join(format!("cache-{}-covers.json", key(1)));
-        let original = std::fs::read(&index).unwrap();
-        let scratch = root.join(".cache-transaction.tmp");
-        std::fs::create_dir(&scratch).unwrap();
-        assert_eq!(
-            read_cover(temp.path(), &key(1), "cached").unwrap(),
-            Some(image)
-        );
-        assert!(scratch.is_dir());
-        assert_eq!(std::fs::read(index).unwrap(), original);
+        assert_eq!(code(validate_cover(&too_wide)), "SOURCE_COVER_INVALID");
     }
 }

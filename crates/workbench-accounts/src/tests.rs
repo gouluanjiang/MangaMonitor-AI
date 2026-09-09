@@ -979,3 +979,92 @@ async fn logout_during_old_card_detail_prevents_the_next_cover_request() {
     assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
     assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn validated_cover_hit_survives_corrupt_touch_without_network_retry() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    let image = cover_image();
+    *backend.0.cover_image.lock().unwrap() = Some(image.clone());
+    assert_eq!(
+        service
+            .cover(Source::Jm, &session, "123")
+            .await
+            .unwrap()
+            .data_url,
+        Some(image.clone())
+    );
+    let registry = root
+        .path()
+        .join(workbench_storage::PRIVATE_DIRECTORY)
+        .join("cache-registry-v1.json");
+    std::fs::write(&registry, b"damaged-touch-registry").unwrap();
+    *backend.0.cover_image.lock().unwrap() = None;
+    assert_eq!(
+        service
+            .cover(Source::Jm, &session, "123")
+            .await
+            .unwrap()
+            .data_url,
+        Some(image)
+    );
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read(registry).unwrap(), b"damaged-touch-registry");
+    assert_eq!(
+        service.accounts(false).await[0].state,
+        AccountState::Connected
+    );
+}
+
+#[tokio::test]
+async fn two_slow_network_covers_do_not_block_another_sources_disk_hit() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let jm = login(&service, Source::Jm, "fixture-jm", false).await;
+    let pica = login(&service, Source::Pica, "fixture-pica", false).await;
+    let image = cover_image();
+    *backend.0.cover_image.lock().unwrap() = Some(image.clone());
+    service.cover(Source::Pica, &pica, "123").await.unwrap();
+    backend.0.block_cover.store(true, Ordering::SeqCst);
+    let first = {
+        let service = Arc::clone(&service);
+        let session = jm.clone();
+        tokio::spawn(async move { service.cover(Source::Jm, &session, "slow-a").await })
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        backend.0.cover_started.notified(),
+    )
+    .await
+    .unwrap();
+    let second = {
+        let service = Arc::clone(&service);
+        let session = jm.clone();
+        tokio::spawn(async move { service.cover(Source::Jm, &session, "slow-b").await })
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        backend.0.cover_started.notified(),
+    )
+    .await
+    .unwrap();
+    let cached = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.cover(Source::Pica, &pica, "123"),
+    )
+    .await;
+    let network_calls = backend.0.cover_calls.load(Ordering::SeqCst);
+    backend.0.cover_release.notify_waiters();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+    assert_eq!(cached.unwrap().unwrap().data_url, Some(image));
+    assert_eq!(network_calls, 3);
+}

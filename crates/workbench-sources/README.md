@@ -83,14 +83,26 @@ or cookies. It accepts at most 1 MiB and decodes at most 4 million
 pixels/4096 per side/32 MiB allocation, and emits a static JPEG at most 512 per
 side and 256 KiB (before base64 encoding). Original animations/active formats
 are not passed to the renderer.
-JM cover IDs map to the pinned card URL host `cdn-msp3.18comic.vip`. Pica accepts
+JM cover IDs map to `/media/albums/{id}_3x4.jpg` on exactly three pinned CDN
+candidates: `cdn-msp.jmapiproxy1.cc`, `cdn-msp.jmapiproxy2.cc`, then the legacy
+card host `cdn-msp3.18comic.vip`. The first two come from the already-pinned
+Python client's cover generator and image-domain list. Each JM GET has a
+10-second timeout inside the existing 30-second whole-operation timeout.
+Only connection failures, timeouts, HTTP 404 or 502-504 may advance to the next
+fixed candidate. HTTP 401/403/429, unsafe redirects, oversized data and decoding
+failures stop immediately. A candidate is never retried in the same operation,
+and JM redirects must preserve the exact work ID and `_3x4.jpg` path.
+JM sends a fixed public browser User-Agent from that pin and advertises only
+JPEG/PNG/WebP/GIF, which this crate decodes. It does not forward credentials or
+Referer. Pica's headers and per-request timeout are unchanged. Pica accepts
 only HTTPS `storage1.picacomic.com`, `s3.picacomic.com`,
 `storage-b.picacomic.com`, and `img.picacomic.com`. Restricted static paths
 support CDN transformation components such as `rs:fill` and `g:sm`.
 Unknown hosts make `coverAvailable=false`.
 
-The cover client disables automatic redirects. It manually follows at most
-three validated redirects (four GETs total), including relative locations.
+The cover client disables automatic redirects. Redirects and fixed candidate
+failover share at most four GETs total, including relative locations; no mirror
+receives a fresh redirect budget. This also bounds redirects to at most three.
 Every hop must remain HTTPS on the exact source-specific CDN allowlist and a
 restricted image path. Credentials, query strings, fragments, nonstandard
 ports, IP destinations, encoded or literal traversal, loops, and unknown origins
@@ -116,6 +128,8 @@ account/catalog protocol facts and thumbnail metadata, not download execution:
 - JM original account API: [lanyeeee/jmcomic-downloader f0cdd724, jm_client.rs](https://github.com/lanyeeee/jmcomic-downloader/blob/f0cdd724af6892002f2fb7be883b88832cebe7e9/src-tauri/src/jm_client.rs#L162), login/profile L162-241, search/detail L249-328, favorites L400-440/L520-555.
 - JM cookie and API-folder limitation: [JMComic-Crawler-Python 9fddb049, jm_client_impl.py](https://github.com/hect0x7/JMComic-Crawler-Python/blob/9fddb0494caf0cdc812ac6cbfc1c62f4f845b058/src/jmcomic/jm_client_impl.py#L867), AVS L899-901 and API folder limitation L962-978.
 - JM covers: [same fixed ComicCard.vue L54](https://github.com/lanyeeee/jmcomic-downloader/blob/f0cdd724af6892002f2fb7be883b88832cebe7e9/src/components/ComicCard.vue#L54).
+- JM cover-only fixed alternatives: [Python `jm_config.py` L184-192](https://github.com/hect0x7/JMComic-Crawler-Python/blob/9fddb0494caf0cdc812ac6cbfc1c62f4f845b058/src/jmcomic/jm_config.py#L184) lists the exact mobile CDN names; [the same pin's `jm_toolkit.py` L404-421](https://github.com/hect0x7/JMComic-Crawler-Python/blob/9fddb0494caf0cdc812ac6cbfc1c62f4f845b058/src/jmcomic/jm_toolkit.py#L404) generates `/media/albums/{id}{size}.jpg` using those domains. The User-Agent comes from `jm_config.py` L211-215; image credentials/Referer and dynamically discovered domains are not adopted.
+- Legacy CDN failure evidence, not diagnosis of this user's connection: [upstream issue 232](https://github.com/lanyeeee/jmcomic-downloader/issues/232) reports connection error 10060 in August/September 2026; [issue 204 and maintainer discussion](https://github.com/lanyeeee/jmcomic-downloader/issues/204#issuecomment-4241004614) describe an HTML challenge dependent on proxy routing. No challenge handling or certificate bypass is implemented. These reports justify bounded alternate endpoints, but do not establish that this user's failure has the same cause or that any candidate is currently reachable.
 - Pica original account API: [lanyeeee/picacomic-downloader 77c8b62e, pica_client.rs](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src-tauri/src/pica_client.rs#L118), sign-in/profile/search/detail L118-258, favorite page L338-373; [cover descriptor rendering L53](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src/components/ComicCard.vue#L53).
 - Supplementary Pica favorite/account-only pin: [Miuzarte/PicaComic-go 25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb](https://github.com/Miuzarte/PicaComic-go/blob/25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb/PicaComic.go#L304), POST toggle L304-308; [types.go](https://github.com/Miuzarte/PicaComic-go/blob/25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb/types.go#L115) isFavourite L115 and response action L205-206. This adds no download pin or source authority.
 - Historical Pica thumbnail host examples: [2024baibai/PicaComic-Api 382586581cac128dddbf66d95485c326036cbfc2, README.MD L198](https://github.com/2024baibai/PicaComic-Api/blob/382586581cac128dddbf66d95485c326036cbfc2/README.MD#L198), `storage1.picacomic.com` in the thumb descriptor; L519 names `s3.picacomic.com`. These examples bound the cover allowlist; they do not establish current availability.
@@ -130,6 +144,13 @@ Only explicit HTTP/API 401 is `SESSION_EXPIRED`. Login HTTP 400/401 is
 are `AUTH_REQUIRED`; invalid credential shape is `SOURCE_CREDENTIAL_INVALID`.
 Network, timeout, schema, pagination and cover errors remain distinct stable
 codes. Errors contain no response body, URL, email, secret or credential payload.
+Cover HTTP failures are `SOURCE_COVER_ACCESS_DENIED` (401/403),
+`SOURCE_COVER_RATE_LIMITED` (429), `SOURCE_COVER_SERVER_ERROR` (5xx), and
+`SOURCE_COVER_NOT_FOUND` when all attempted candidates return 404. If a timeout
+or connection/server failure is mixed with 404s, the earlier non-404 failure is
+retained instead. Pica has one candidate apart from validated redirects.
+These codes concern a cover only and never expire a session or prove that a
+work is unavailable. Null means validated metadata provides no cover descriptor.
 
 Offline unit tests use private scripted metadata responses under cfg(test).
 Every unscripted test request, including a cover request, is refused before

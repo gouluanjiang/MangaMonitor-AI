@@ -573,13 +573,17 @@ pub(crate) fn read_cover(root: &Path, account: &str, work_id: &str) -> Result<Op
             validate_jpeg(&bytes[32..]).map_err(store_error)?;
             let used_at = tick(&mut index);
             index.entries[position].used_at = used_at;
-            cache.reserve(0, COVER_RESERVATION)?;
-            cache.write(
-                CacheEntry::CoverIndex,
-                &serde_json::to_vec(&index).map_err(|_| StoreError {
-                    code: "CACHE_UNAVAILABLE",
-                })?,
-            )?;
+            // A validated image remains usable if bookkeeping cannot be saved.
+            // Reservation is still mandatory before any attempted index write.
+            let _touch = (|| {
+                cache.reserve(0, COVER_RESERVATION)?;
+                cache.write(
+                    CacheEntry::CoverIndex,
+                    &serde_json::to_vec(&index).map_err(|_| StoreError {
+                        code: "CACHE_UNAVAILABLE",
+                    })?,
+                )
+            })();
             Ok(Some(format!(
                 "data:image/jpeg;base64,{}",
                 STANDARD.encode(&bytes[32..])
@@ -1016,5 +1020,23 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn validated_hit_survives_unwritable_touch_without_changing_unsafe_scratch() {
+        let temp = TempDir::new().unwrap();
+        let image = jpeg();
+        write_cover(temp.path(), &key(1), "cached", &image).unwrap();
+        let root = temp.path().join(workbench_storage::PRIVATE_DIRECTORY);
+        let index = root.join(format!("cache-{}-covers.json", key(1)));
+        let original = std::fs::read(&index).unwrap();
+        let scratch = root.join(".cache-transaction.tmp");
+        std::fs::create_dir(&scratch).unwrap();
+        assert_eq!(
+            read_cover(temp.path(), &key(1), "cached").unwrap(),
+            Some(image)
+        );
+        assert!(scratch.is_dir());
+        assert_eq!(std::fs::read(index).unwrap(), original);
     }
 }

@@ -649,6 +649,209 @@ fn known_pica_cover(url: &str) -> SourceSession {
     session
 }
 
+fn known_jm_cover() -> SourceSession {
+    let session = session(Source::Jm);
+    session
+        .remember_covers([(
+            "123".to_owned(),
+            Some("https://cdn-msp3.18comic.vip/media/albums/123_3x4.jpg".to_owned()),
+        )])
+        .unwrap();
+    session
+}
+
+#[test]
+fn jm_cover_candidates_are_pinned_credential_free_and_use_a_per_attempt_timeout() {
+    let original = Url::parse("https://cdn-msp3.18comic.vip/media/albums/123_3x4.jpg").unwrap();
+    let candidates = protocol::cover_candidates(Source::Jm, &original).unwrap();
+    assert_eq!(candidates.len(), 3);
+    let sources = scripted(vec![]);
+    for (candidate, host) in candidates.iter().zip(protocol::JM_COVER_HOSTS) {
+        assert_eq!(candidate.host_str(), Some(*host));
+        assert_eq!(candidate.path(), "/media/albums/123_3x4.jpg");
+        let request = sources.cover_request(candidate).build().unwrap();
+        assert_eq!(request.timeout(), Some(&std::time::Duration::from_secs(10)));
+        assert!(request.headers().contains_key("user-agent"));
+        assert_eq!(
+            request.headers()["accept"],
+            "image/jpeg,image/png,image/webp,image/gif"
+        );
+        for forbidden in ["authorization", "cookie", "referer", "token", "tokenparam"] {
+            assert!(!request.headers().contains_key(forbidden));
+        }
+    }
+    for url in [
+        "https://cdn-msp.jmapiproxy1.cc.evil.test/media/albums/123_3x4.jpg",
+        "https://127.0.0.1/media/albums/123_3x4.jpg",
+        "https://user:secret@cdn-msp.jmapiproxy1.cc/media/albums/123_3x4.jpg",
+        "https://cdn-msp.jmapiproxy1.cc/media/photos/123/00001.jpg",
+        "https://cdn-msp.jmapiproxy1.cc/media/albums/123_3x4.jpg?token=secret",
+    ] {
+        assert!(protocol::cover_candidates(Source::Jm, &Url::parse(url).unwrap()).is_err());
+    }
+    assert!(protocol::cover_redirect(
+        Source::Jm,
+        &original,
+        "https://cdn-msp.jmapiproxy1.cc/media/albums/456_3x4.jpg"
+    )
+    .is_err());
+    let pica = Url::parse("https://storage-b.picacomic.com/static/fixture.jpg").unwrap();
+    let request = sources.cover_request(&pica).build().unwrap();
+    assert_eq!(request.timeout(), None);
+    assert!(!request.headers().contains_key("user-agent"));
+}
+
+#[tokio::test]
+async fn jm_cover_uses_fixed_fallback_for_connection_and_transient_server_failure() {
+    let sources = with_cover_script(
+        scripted(vec![]),
+        vec![
+            Err(error("SOURCE_CONNECTION_FAILED")),
+            Ok(cover::CoverResponse::HttpFailure(503)),
+            Ok(cover::CoverResponse::Bytes(tiny_cover())),
+        ],
+    );
+    assert!(sources
+        .thumbnail(&known_jm_cover(), "123")
+        .await
+        .unwrap()
+        .is_some());
+    let urls = sources.cover_recorded.lock().unwrap();
+    assert_eq!(
+        urls.iter().filter_map(Url::host_str).collect::<Vec<_>>(),
+        protocol::JM_COVER_HOSTS
+    );
+    assert!(urls
+        .iter()
+        .all(|url| url.path() == "/media/albums/123_3x4.jpg"));
+    assert!(sources.recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn all_jm_404s_are_distinct_from_a_mixed_timeout_and_404_failure() {
+    for (first, expected) in [
+        (Ok(cover::CoverResponse::Missing), "SOURCE_COVER_NOT_FOUND"),
+        (Err(error("SOURCE_TIMEOUT")), "SOURCE_TIMEOUT"),
+    ] {
+        let sources = with_cover_script(
+            scripted(vec![]),
+            vec![
+                first,
+                Ok(cover::CoverResponse::Missing),
+                Ok(cover::CoverResponse::Missing),
+            ],
+        );
+        assert_eq!(
+            sources
+                .thumbnail(&known_jm_cover(), "123")
+                .await
+                .unwrap_err()
+                .code,
+            expected
+        );
+        assert_eq!(sources.cover_recorded.lock().unwrap().len(), 3);
+    }
+}
+
+#[tokio::test]
+async fn cover_rejection_rate_limits_and_invalid_data_never_trigger_mirror_retry() {
+    for (response, expected) in [
+        (
+            Ok(cover::CoverResponse::HttpFailure(401)),
+            "SOURCE_COVER_ACCESS_DENIED",
+        ),
+        (
+            Ok(cover::CoverResponse::HttpFailure(403)),
+            "SOURCE_COVER_ACCESS_DENIED",
+        ),
+        (
+            Ok(cover::CoverResponse::HttpFailure(429)),
+            "SOURCE_COVER_RATE_LIMITED",
+        ),
+        (
+            Ok(cover::CoverResponse::HttpFailure(500)),
+            "SOURCE_COVER_SERVER_ERROR",
+        ),
+        (
+            Ok(cover::CoverResponse::Bytes(b"not a raster".to_vec())),
+            "SOURCE_COVER_INVALID",
+        ),
+        (
+            Ok(cover::CoverResponse::Bytes(vec![
+                0;
+                thumbnail::MAX_COVER_BYTES
+                    + 1
+            ])),
+            "SOURCE_RESPONSE_TOO_LARGE",
+        ),
+        (
+            Ok(cover::CoverResponse::Redirect(
+                "https://evil.test/media/albums/123_3x4.jpg".into(),
+            )),
+            "SOURCE_REDIRECT_REFUSED",
+        ),
+        (
+            Err(error("SOURCE_LIVE_REQUESTS_DISABLED")),
+            "SOURCE_LIVE_REQUESTS_DISABLED",
+        ),
+    ] {
+        let sources = with_cover_script(scripted(vec![]), vec![response]);
+        assert_eq!(
+            sources
+                .thumbnail(&known_jm_cover(), "123")
+                .await
+                .unwrap_err()
+                .code,
+            expected
+        );
+        assert_eq!(sources.cover_recorded.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn jm_redirects_consume_the_same_candidates_and_do_not_retry_visited_mirrors() {
+    let sources = with_cover_script(
+        scripted(vec![]),
+        vec![
+            Ok(cover::CoverResponse::Redirect(
+                "https://cdn-msp.jmapiproxy2.cc/media/albums/123_3x4.jpg".into(),
+            )),
+            Ok(cover::CoverResponse::HttpFailure(502)),
+            Ok(cover::CoverResponse::Bytes(tiny_cover())),
+        ],
+    );
+    assert!(sources
+        .thumbnail(&known_jm_cover(), "123")
+        .await
+        .unwrap()
+        .is_some());
+    let urls = sources.cover_recorded.lock().unwrap();
+    assert_eq!(urls.len(), 3);
+    assert_eq!(
+        urls.iter().filter_map(Url::host_str).collect::<Vec<_>>(),
+        protocol::JM_COVER_HOSTS
+    );
+}
+
+#[tokio::test]
+async fn pica_keeps_one_candidate_and_reports_cover_only_http_failures() {
+    for (response, expected) in [
+        (Ok(cover::CoverResponse::Missing), "SOURCE_COVER_NOT_FOUND"),
+        (
+            Ok(cover::CoverResponse::HttpFailure(503)),
+            "SOURCE_COVER_SERVER_ERROR",
+        ),
+    ] {
+        let sources = with_cover_script(scripted(vec![]), vec![response]);
+        let session = known_pica_cover("https://storage-b.picacomic.com/static/fixture.jpg");
+        assert_eq!(
+            sources.thumbnail(&session, PICA_ID).await.unwrap_err().code,
+            expected
+        );
+        assert_eq!(sources.cover_recorded.lock().unwrap().len(), 1);
+    }
+}
+
 #[test]
 fn metadata_accepts_pinned_pica_cdns_and_transformed_paths() {
     for (server, path) in [

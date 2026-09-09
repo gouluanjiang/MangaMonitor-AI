@@ -24,7 +24,8 @@ import { CollectionReader } from "./source-collection.ts";
 import type { CollectionState } from "./source-collection.ts";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
-import { queueCover } from "./source-cover-queue.ts";
+import { getCoverCache, coverErrorMessage } from "./source-cover-cache.ts";
+import type { CoverLease, CoverResult } from "./source-cover-cache.ts";
 import "./source-workbench.css";
 
 export interface SourceWorkbenchProps {
@@ -59,35 +60,77 @@ function SourceCover({
   resolveMissing = false,
 }: SourceCoverProps) {
   const container = useRef<HTMLDivElement>(null);
-  const [data, setData] = useState<string | null>(null);
-  const [started, setStarted] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const cache = getCoverCache(adapter);
+  const identity = JSON.stringify([scope.source, scope.sessionId, work.workId]);
+  const [state, setState] = useState<{
+    identity: string;
+    result: CoverResult | undefined;
+    shown: boolean;
+    loading: boolean;
+  }>(() => ({
+    identity,
+    result: cache.peek(scope, work.workId),
+    shown: true,
+    loading: false,
+  }));
+  const current =
+    state.identity === identity
+      ? state
+      : {
+          identity,
+          result: cache.peek(scope, work.workId),
+          shown: true,
+          loading: false,
+        };
   useEffect(() => {
     let disposed = false;
-    let visible = false;
-    let request: ReturnType<typeof queueCover> | null = null;
-    setData(null);
-    setStarted(false);
-    setFailed(false);
-    if (!work.coverAvailable && !resolveMissing && retryVersion === 0) return;
+    let visible: boolean | null = null;
+    let request: CoverLease | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    setState({
+      identity,
+      result: cache.peek(scope, work.workId),
+      shown: true,
+      loading: false,
+    });
     const load = () => {
       if (disposed || !visible) return;
-      setStarted(true);
       if (request) return;
-      const job = queueCover(() => adapter.cover(scope, work.workId));
+      const cached = cache.peek(scope, work.workId);
+      if (
+        !cached &&
+        !work.coverAvailable &&
+        !resolveMissing &&
+        retryVersion === 0
+      ) {
+        setState({ identity, result: undefined, shown: true, loading: false });
+        return;
+      }
+      setState({ identity, result: cached, shown: true, loading: !cached });
+      const job = cache.acquire(scope, work.workId, () =>
+        adapter.cover(scope, work.workId),
+      );
       request = job;
       void job.promise
         .then((value) => {
           if (!disposed && visible && request === job) {
-            setData(value);
-            setFailed(value === null);
+            setState({ identity, result: value, shown: true, loading: false });
+            // Queue pressure is temporary, not a permanently failed cover.
+            if (value.status === "deferred" && value.reason === "busy")
+              retryTimer = setTimeout(load, 500);
           }
         })
-        .catch(() => {
-          if (!disposed && visible && request === job) setFailed(true);
-        })
         .finally(() => {
+          // Keep successful URLs pinned until the image leaves the viewport.
+          if (
+            !disposed &&
+            visible &&
+            request === job &&
+            cache.peek(scope, work.workId)?.status === "ready"
+          )
+            return;
           if (request === job) request = null;
+          job.release();
         });
     };
     const updateVisibility = (next: boolean) => {
@@ -95,10 +138,10 @@ function SourceCover({
       visible = next;
       if (visible) load();
       else {
-        if (request?.cancel()) request = null;
-        setData(null);
-        setStarted(false);
-        setFailed(false);
+        request?.release();
+        request = null;
+        clearTimeout(retryTimer);
+        setState((previous) => ({ ...previous, shown: false, loading: false }));
       }
     };
     const observer =
@@ -112,10 +155,17 @@ function SourceCover({
         : null;
     if (container.current) observer?.observe(container.current);
     // Without visibility observation, avoid fetching every mounted cover.
-    if (!observer) setFailed(true);
+    if (!observer)
+      setState({
+        identity,
+        result: { status: "error", code: "SOURCE_UNAVAILABLE" },
+        shown: false,
+        loading: false,
+      });
     return () => {
       disposed = true;
-      request?.cancel();
+      request?.release();
+      clearTimeout(retryTimer);
       visible = false;
       observer?.disconnect();
     };
@@ -134,11 +184,41 @@ function SourceCover({
       className="source-cover"
       data-testid={"source-cover-" + sourceWorkKey(work)}
     >
-      {data && !failed ? (
-        <img loading="lazy" src={data} alt="" onError={() => setFailed(true)} />
+      {current.shown && current.result?.status === "ready" ? (
+        <img
+          loading="lazy"
+          src={current.result.url}
+          alt=""
+          onError={() => {
+            const result = current.result;
+            if (result?.status !== "ready") return;
+            cache.decodeFailed(scope, work.workId, result.url);
+            setState({
+              identity,
+              result: cache.peek(scope, work.workId),
+              shown: true,
+              loading: false,
+            });
+          }}
+        />
       ) : (
-        <span>
-          {failed ? "封面暂不可用" : started ? "正在读取封面…" : "封面未读取"}
+        <span
+          style={{ overflowWrap: "anywhere" }}
+          data-error-code={
+            current.result?.status === "error" ? current.result.code : undefined
+          }
+        >
+          {current.result?.status === "error"
+            ? coverErrorMessage(current.result.code) +
+              "（" +
+              current.result.code +
+              "）"
+            : current.result?.status === "deferred" &&
+                current.result.reason === "busy"
+              ? "封面正在等待空闲请求…"
+              : current.loading
+                ? "正在读取封面…"
+                : "封面未读取"}
         </span>
       )}
     </div>
@@ -164,6 +244,14 @@ export function SourceWorkbench({
   loadingAccounts = false,
   searchHost,
 }: SourceWorkbenchProps) {
+  useEffect(() => {
+    getCoverCache(adapter).retainScopes(
+      accounts.flatMap((account) => {
+        const scope = accountScope(account);
+        return scope ? [scope] : [];
+      }),
+    );
+  }, [adapter, accounts]);
   const [source, setSource] = useState<Source>(requestedSource ?? "JM");
   const [query, setQuery] = useState("");
   const [queryMode, setQueryMode] = useState<"search" | "detail">("search");
@@ -476,8 +564,12 @@ export function SourceWorkbench({
       void collector.current?.readAll();
     }
   }
-  function refreshCollection() {
+  function retryCovers() {
+    if (scope) getCoverCache(adapter).retryFailures(scope);
     setCoverEpoch((value) => value + 1);
+  }
+  function refreshCollection() {
+    retryCovers();
     clearSelection();
     setAutoPaused(false);
     collectionNeedsVerification.current = false;
@@ -1158,7 +1250,7 @@ export function SourceWorkbench({
                   type="button"
                   className="text-button"
                   data-testid="source-detail-cover-retry"
-                  onClick={() => setCoverEpoch((value) => value + 1)}
+                  onClick={retryCovers}
                 >
                   重试封面
                 </button>
@@ -1306,7 +1398,7 @@ export function SourceWorkbench({
                 type="button"
                 className="text-button"
                 data-testid="source-cover-retry"
-                onClick={() => setCoverEpoch((value) => value + 1)}
+                onClick={retryCovers}
               >
                 重试封面
               </button>

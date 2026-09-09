@@ -25,7 +25,16 @@ pub(crate) const PICA_KEY: &str = "C69BAF41DA5ABD1FFEDC6D2FEA56B";
 pub(crate) const PICA_NONCE: &str = "ptxdhmjzqtnrtwndhbxcpkjamb33w837";
 // Public protocol constants, never personal account credentials.
 const PICA_DIGEST: &str = r"~d}$Q7$eIni=V)9\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn";
-const JM_COVER_HOST: &str = "cdn-msp3.18comic.vip";
+// Cover-only static mirrors from the existing Python pin, not dynamic trust:
+// hect0x7/JMComic-Crawler-Python@9fddb0494caf0cdc812ac6cbfc1c62f4f845b058
+// src/jmcomic/jm_config.py:184-192 and jm_toolkit.py:404-421. The legacy
+// lanyeeee ComicCard.vue:54 endpoint remains the final candidate. API hosts,
+// account headers, and the separate real-download adapters are unchanged.
+pub(crate) const JM_COVER_HOSTS: &[&str] = &[
+    "cdn-msp.jmapiproxy1.cc",
+    "cdn-msp.jmapiproxy2.cc",
+    "cdn-msp3.18comic.vip",
+];
 // Exact CDN identities only. storage-b is used by the pinned upstream UI:
 // lanyeeee/picacomic-downloader@77c8b62ede42b3afc074506d092313816af8092d,
 // src/AppContent.vue:109. Transformed paths and img redirects are evidenced in
@@ -383,7 +392,10 @@ pub(crate) fn validate_folder(folder: &str) -> SourceResult<()> {
 
 fn cover_url(source: Source, id: &str, data: &Value) -> Option<String> {
     match source {
-        Source::Jm => Some(format!("https://{JM_COVER_HOST}/media/albums/{id}_3x4.jpg")),
+        Source::Jm => Some(format!(
+            "https://{}/media/albums/{id}_3x4.jpg",
+            JM_COVER_HOSTS[0]
+        )),
         Source::Pica => {
             let server = Url::parse(data["thumb"]["fileServer"].as_str()?).ok()?;
             if server.scheme() != "https"
@@ -421,7 +433,9 @@ fn valid_cover_path(path: &str) -> bool {
 
 pub(crate) fn validate_cover_url(source: Source, url: &Url) -> SourceResult<()> {
     let allowed_host = match source {
-        Source::Jm => url.host_str() == Some(JM_COVER_HOST),
+        Source::Jm => url
+            .host_str()
+            .is_some_and(|host| JM_COVER_HOSTS.contains(&host)),
         Source::Pica => url
             .host_str()
             .is_some_and(|host| PICA_COVER_HOSTS.contains(&host)),
@@ -469,7 +483,28 @@ pub(crate) fn cover_redirect(source: Source, current: &Url, location: &str) -> S
         .join(location)
         .map_err(|_| error("SOURCE_REDIRECT_REFUSED"))?;
     validate_cover_url(source, &next)?;
+    if source == Source::Jm && next.path() != current.path() {
+        return Err(error("SOURCE_REDIRECT_REFUSED"));
+    }
     Ok(next)
+}
+
+pub(crate) fn cover_candidates(source: Source, original: &Url) -> SourceResult<Vec<Url>> {
+    validate_cover_url(source, original)?;
+    if source == Source::Pica {
+        return Ok(vec![original.clone()]);
+    }
+    JM_COVER_HOSTS
+        .iter()
+        .map(|host| {
+            let mut candidate = original.clone();
+            candidate
+                .set_host(Some(host))
+                .map_err(|_| error("SOURCE_COVER_INVALID"))?;
+            validate_cover_url(source, &candidate)?;
+            Ok(candidate)
+        })
+        .collect()
 }
 
 pub(crate) fn pica_signature(route: &str, method: &str, timestamp: u64) -> SourceResult<String> {

@@ -26,6 +26,7 @@ type MockOptions = {
   expireJM?: boolean;
   collectionCount?: number;
   collectionCover?: boolean;
+  coverFailureOnce?: boolean;
   cacheSnapshot?: CatalogSnapshot;
 };
 type Call = {
@@ -361,6 +362,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
   await page.addInitScript((options: MockOptions) => {
     const sources: Source[] = ["JM", "Pica"];
     const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    let coverFailureUsed = false;
     const makeAccount = (source: Source, epoch = 1): AccountSummary => ({
       source,
       sessionId: "synthetic-" + source + "-" + epoch,
@@ -660,7 +662,19 @@ async function installMock(page: Page, options: MockOptions = {}) {
                   : [],
             };
           }
-          if (command === "source_cover")
+          if (command === "source_cover") {
+            if (
+              options.coverFailureOnce &&
+              source === "Pica" &&
+              raw.workId === "100" &&
+              !coverFailureUsed
+            ) {
+              coverFailureUsed = true;
+              throw {
+                code: "SOURCE_COVER_ACCESS_DENIED",
+                message: "SECRET URL TOKEN",
+              };
+            }
             return {
               ...scope,
               workId: raw.workId,
@@ -669,6 +683,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
                   ? "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
                   : null,
             };
+          }
           if (command === "source_favorite") {
             remoteFavorite[source] = Boolean(raw.desired);
             if (options.unknownFavorite && !favoriteFailureUsed) {
@@ -1073,7 +1088,7 @@ test("following conflict reload keeps the requested action for explicit retry an
   );
 });
 
-test("source covers are released outside the viewport and while account settings hide the source page", async ({
+test("source covers release offscreen images but reuse successful session thumbnails after scrolling, settings and detail", async ({
   page,
 }) => {
   await installMock(page, { coverCount: 120 });
@@ -1112,7 +1127,74 @@ test("source covers are released outside the viewport and while account settings
             call.workId === "100",
         ).length,
     ),
-  ).toBeGreaterThanOrEqual(2);
+  ).toBe(1);
+  await page.getByTestId("source-open-JM:100").click();
+  await expect(page.getByTestId("source-detail")).toBeVisible();
+  await expect(
+    page.getByTestId("source-cover-JM:100").locator("img"),
+  ).toBeVisible();
+  await page.getByTestId("source-detail-back").click();
+  await expect(
+    page.getByTestId("source-cover-JM:100").locator("img"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        window.sourceTest.calls.filter(
+          (call) =>
+            call.command === "source_cover" &&
+            call.source === "JM" &&
+            call.workId === "100",
+        ).length,
+    ),
+  ).toBe(1);
+  await openAccounts(page);
+  await page.getByTestId("account-logout-JM").click();
+  await expect(page.getByTestId("account-connect-JM")).toBeVisible();
+  await connectJM(page);
+  await expect(page.getByTestId("account-JM")).toContainText("已连接");
+  await page.getByTestId("account-favorites-JM").click();
+  await expect(
+    page.getByTestId("source-cover-JM:100").locator("img"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        window.sourceTest.calls.filter(
+          (call) =>
+            call.command === "source_cover" &&
+            call.source === "JM" &&
+            call.workId === "100",
+        ).length,
+    ),
+  ).toBe(2);
+});
+
+test("Pica cover failure shows a fixed diagnostic and explicit retry succeeds without exposing native text", async ({
+  page,
+}) => {
+  await installMock(page, { coverCount: 120, coverFailureOnce: true });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  const cover = page.getByTestId("source-cover-Pica:100");
+  await expect(cover).toContainText("SOURCE_COVER_ACCESS_DENIED");
+  await expect(cover).toContainText("401/403");
+  await expect(page.getByTestId("source-workbench")).not.toContainText(
+    "SECRET",
+  );
+  await page.getByTestId("source-cover-retry").click();
+  await expect(cover.locator("img")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        window.sourceTest.calls.filter(
+          (call) =>
+            call.command === "source_cover" &&
+            call.source === "Pica" &&
+            call.workId === "100",
+        ).length,
+    ),
+  ).toBe(2);
 });
 
 test("an explicit expired session refreshes account state and removes the connected source view", async ({

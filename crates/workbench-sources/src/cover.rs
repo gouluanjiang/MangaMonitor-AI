@@ -2,18 +2,42 @@
 //! after each destination passes the source-specific origin/path allowlist.
 use crate::{
     bounded_bytes, check_live_environment, protocol, thumbnail, transport_error, CoverLookup,
-    SourceResult, SourceSession, WorkbenchSources,
+    Source, SourceError, SourceResult, SourceSession, WorkbenchSources,
 };
 use protocol::error;
-use reqwest::{header::LOCATION, Url};
-use std::collections::HashSet;
+use reqwest::{
+    header::{ACCEPT, LOCATION, USER_AGENT},
+    Url,
+};
+use std::{collections::HashSet, time::Duration};
 
-const MAX_REDIRECTS: usize = 3;
+// One shared budget for redirects and fixed mirror failover, never four GETs
+// per mirror. The public thumbnail entry point also enforces 30 seconds total.
+const MAX_COVER_REQUESTS: usize = 4;
+const JM_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+// Public browser identity from the same Python pin's jm_config.py:211-215.
+// No account identity, app Referer, or cookie is sent to any cover origin.
+const JM_COVER_USER_AGENT: &str = "Mozilla/5.0 (Linux; Android 9; V1938CT Build/PQ3A.190705.11211812; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/91.0.4472.114 Safari/537.36";
+const COVER_ACCEPT: &str = "image/jpeg,image/png,image/webp,image/gif";
 
 pub(super) enum CoverResponse {
     Redirect(String),
     Missing,
+    HttpFailure(u16),
     Bytes(Vec<u8>),
+}
+
+fn http_error(status: u16) -> SourceError {
+    error(match status {
+        401 | 403 => "SOURCE_COVER_ACCESS_DENIED",
+        429 => "SOURCE_COVER_RATE_LIMITED",
+        500..=599 => "SOURCE_COVER_SERVER_ERROR",
+        _ => "SOURCE_COVER_UNAVAILABLE",
+    })
+}
+
+fn retryable_transport(cause: &SourceError) -> bool {
+    matches!(cause.code, "SOURCE_CONNECTION_FAILED" | "SOURCE_TIMEOUT")
 }
 
 fn lookup(session: &SourceSession, id: &str) -> SourceResult<CoverLookup> {
@@ -61,22 +85,36 @@ impl WorkbenchSources {
         let Some(url) = self.cover_descriptor(session, id).await? else {
             return Ok(None);
         };
-        let mut url = Url::parse(&url).map_err(|_| error("SOURCE_COVER_INVALID"))?;
+        let original = Url::parse(&url).map_err(|_| error("SOURCE_COVER_INVALID"))?;
+        let candidates = protocol::cover_candidates(session.source, &original)?;
+        let mut url = candidates[0].clone();
         let mut visited = HashSet::new();
-        for hop in 0..=MAX_REDIRECTS {
+        let mut last_error = None;
+        for attempt in 0..MAX_COVER_REQUESTS {
             protocol::validate_cover_url(session.source, &url)?;
             if !visited.insert(url.to_string()) {
                 return Err(error("SOURCE_REDIRECT_REFUSED"));
             }
-            match self.send_cover_request(&url).await? {
-                CoverResponse::Missing => return Ok(None),
-                CoverResponse::Redirect(location) => {
-                    if hop == MAX_REDIRECTS {
+            match self.send_cover_request(&url).await {
+                Err(cause) if session.source == Source::Jm && retryable_transport(&cause) => {
+                    last_error = Some(cause);
+                }
+                Err(cause) => return Err(cause),
+                Ok(CoverResponse::Missing) => (),
+                Ok(CoverResponse::HttpFailure(status))
+                    if session.source == Source::Jm && matches!(status, 502..=504) =>
+                {
+                    last_error = Some(http_error(status));
+                }
+                Ok(CoverResponse::HttpFailure(status)) => return Err(http_error(status)),
+                Ok(CoverResponse::Redirect(location)) => {
+                    if attempt + 1 == MAX_COVER_REQUESTS {
                         return Err(error("SOURCE_REDIRECT_REFUSED"));
                     }
                     url = protocol::cover_redirect(session.source, &url, &location)?;
+                    continue;
                 }
-                CoverResponse::Bytes(bytes) => {
+                Ok(CoverResponse::Bytes(bytes)) => {
                     if bytes.len() > thumbnail::MAX_COVER_BYTES {
                         return Err(error("SOURCE_RESPONSE_TOO_LARGE"));
                     }
@@ -86,14 +124,36 @@ impl WorkbenchSources {
                         .map(Some);
                 }
             }
+            // A rejected/absent image does not broaden URL trust. Only transport
+            // failures, 502-504, or 404 reach another fixed JM candidate; 403,
+            // 429, invalid redirects, oversized responses and decoding errors
+            // return immediately. Pica has one metadata-supplied candidate.
+            let Some(next) = candidates
+                .iter()
+                .find(|candidate| !visited.contains(candidate.as_str()))
+            else {
+                return Err(last_error.unwrap_or(error("SOURCE_COVER_NOT_FOUND")));
+            };
+            url = next.clone();
         }
-        Err(error("SOURCE_REDIRECT_REFUSED"))
+        Err(last_error.unwrap_or(error("SOURCE_COVER_UNAVAILABLE")))
     }
 
     pub(super) fn cover_request(&self, url: &Url) -> reqwest::RequestBuilder {
         // No SourceSession argument, cookie jar, Authorization, Referer, or
         // forwarded headers; each hop is a fresh GET on this separate client.
-        self.covers.get(url.clone())
+        let request = self.covers.get(url.clone());
+        if url
+            .host_str()
+            .is_some_and(|host| protocol::JM_COVER_HOSTS.contains(&host))
+        {
+            request
+                .timeout(JM_REQUEST_TIMEOUT)
+                .header(USER_AGENT, JM_COVER_USER_AGENT)
+                .header(ACCEPT, COVER_ACCEPT)
+        } else {
+            request
+        }
     }
 
     async fn send_cover_request(&self, url: &Url) -> SourceResult<CoverResponse> {
@@ -127,7 +187,7 @@ impl WorkbenchSources {
             return Err(error("SOURCE_REDIRECT_REFUSED"));
         }
         if !response.status().is_success() {
-            return Err(error("SOURCE_COVER_UNAVAILABLE"));
+            return Ok(CoverResponse::HttpFailure(response.status().as_u16()));
         }
         Ok(CoverResponse::Bytes(
             bounded_bytes(response, thumbnail::MAX_COVER_BYTES).await?,

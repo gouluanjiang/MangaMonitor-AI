@@ -35,6 +35,11 @@ Each serialized work is limited to 64 KiB, including JSON escaping. Titles are
 limited to 2,000 UTF-16 code units, descriptions to 10,000, and each author/tag
 to 2,000 with at most 64 entries in each array. Folder names have a 2,000-unit
 limit. These string limits use the same units as JavaScript String.length.
+JM author/tag arrays may contain blank string placeholders. They are omitted
+only after checking the original array's 64-entry limit and every entry's string
+type and 2,000-unit limit. Nonblank entries retain their order and exact content.
+This compatibility rule does not apply to Pica or relax IDs, titles, favorite
+state, counts, the whole-work budget, or cover transport validation.
 
 All metadata responses are limited to 8 MiB and each request has a 30-second
 timeout. Metadata redirects are rejected. There are no implicit retries or whole-list

@@ -32,6 +32,18 @@ fn detail_value(source: Source, favorite: Option<bool>) -> Value {
     }
 }
 
+fn jm_detail_with_blank_metadata() -> Value {
+    json!({
+        "id":"123",
+        "name":"Fixture",
+        "author":["", " Author ", "\u{3000}", "Second", " Author "],
+        "tags":["Tag", "", " \t", " Another tag "],
+        "description":"Fixture description",
+        "is_favorite":false,
+        "total_photos":"5"
+    })
+}
+
 #[test]
 fn ids_and_links_do_not_accept_arbitrary_destinations() {
     assert_eq!(
@@ -85,6 +97,121 @@ fn unknown_metadata_is_not_invented_as_false_or_zero() {
         false
     )
     .is_err());
+}
+
+#[test]
+fn jm_optional_arrays_omit_only_blank_strings_without_reordering_content() {
+    let (work, _) = protocol::work(Source::Jm, &jm_detail_with_blank_metadata(), false).unwrap();
+    assert_eq!(work.authors, [" Author ", "Second", " Author "]);
+    assert_eq!(work.tags, ["Tag", " Another tag "]);
+    assert_eq!(work.favorite, Some(false));
+    assert_eq!(work.page_count, Some(5));
+    assert_eq!(work.description.as_deref(), Some("Fixture description"));
+    let mut blank = jm_detail_with_blank_metadata();
+    blank["author"] = json!(["", " \t", "\u{3000}"]);
+    blank["tags"] = json!(["", " \n"]);
+    let (work, _) = protocol::work(Source::Jm, &blank, false).unwrap();
+    assert!(work.authors.is_empty());
+    assert!(work.tags.is_empty());
+}
+
+#[test]
+fn jm_optional_array_bounds_apply_before_blank_entries_are_filtered() {
+    for field in ["author", "tags"] {
+        for entries in [
+            json!(vec![""; 64]),
+            json!([" ".repeat(2000)]),
+            json!(["", "𠮷".repeat(1000)]),
+        ] {
+            let mut data = jm_detail_with_blank_metadata();
+            data[field] = entries;
+            assert!(protocol::work(Source::Jm, &data, false).is_ok(), "{field}");
+        }
+        for entries in [
+            json!(vec![""; 65]),
+            json!([" ".repeat(2001)]),
+            json!(["", "𠮷".repeat(1001)]),
+        ] {
+            let mut data = jm_detail_with_blank_metadata();
+            data[field] = entries;
+            assert_eq!(
+                protocol::work(Source::Jm, &data, false).unwrap_err().code,
+                "SOURCE_RESPONSE_INVALID",
+                "{field}"
+            );
+        }
+    }
+}
+
+#[test]
+fn jm_blank_metadata_compatibility_rejects_nontext_items_and_leaves_pica_strict() {
+    for field in ["author", "tags"] {
+        for invalid in [
+            json!({}),
+            json!([null]),
+            json!([false]),
+            json!([12]),
+            json!([{}]),
+            json!([[]]),
+        ] {
+            let mut data = jm_detail_with_blank_metadata();
+            data[field] = invalid;
+            assert_eq!(
+                protocol::work(Source::Jm, &data, false).unwrap_err().code,
+                "SOURCE_RESPONSE_INVALID",
+                "{field}"
+            );
+        }
+        let mut pica = json!({"_id":PICA_ID,"title":"Fixture"});
+        pica[field] = json!(["", "Text"]);
+        assert_eq!(
+            protocol::work(Source::Pica, &pica, false).unwrap_err().code,
+            "SOURCE_RESPONSE_INVALID",
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn jm_blank_optional_entries_do_not_relax_other_fields_or_whole_work_budget() {
+    for (field, invalid) in [
+        ("id", json!("0")),
+        ("name", json!(" ")),
+        ("name", json!("n".repeat(2001))),
+        ("is_favorite", json!("false")),
+        ("total_photos", json!(-1)),
+        ("total_photos", json!(9_007_199_254_740_992_u64)),
+        ("description", json!("d".repeat(10_001))),
+        ("author", json!(vec!["界".repeat(1000); 32])),
+    ] {
+        let mut data = jm_detail_with_blank_metadata();
+        data[field] = invalid;
+        assert_eq!(
+            protocol::work(Source::Jm, &data, false).unwrap_err().code,
+            "SOURCE_RESPONSE_INVALID",
+            "{field}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn jm_detail_with_blank_optional_entries_registers_a_cover_descriptor() {
+    let sources = scripted(vec![Ok(jm_detail_with_blank_metadata())]);
+    let session = session(Source::Jm);
+    let work = sources.detail(&session, "123").await.unwrap();
+    assert_eq!(work.work_id, "123");
+    assert_eq!(work.authors, [" Author ", "Second", " Author "]);
+    assert_eq!(work.tags, ["Tag", " Another tag "]);
+    assert!(work.cover_available);
+    assert!(matches!(
+        session.covers.lock().unwrap().lookup("123"),
+        CoverLookup::Ready(_)
+    ));
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        &[(Source::Jm, Method::GET, "/album?id=123".to_owned())]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -1037,11 +1164,11 @@ async fn redirected_cover_preserves_original_byte_and_decode_limits() {
 }
 
 #[tokio::test]
-async fn evicted_old_cover_recovers_by_detail_once_without_favorite_authority() {
+async fn evicted_cover_recovers_once_from_jm_detail_with_blank_optional_entries() {
+    let mut detail = jm_detail_with_blank_metadata();
+    detail["id"] = json!("1");
     let sources = with_cover_script(
-        scripted(vec![Ok(
-            json!({"id":"1","name":"Old work","is_favorite":true}),
-        )]),
+        scripted(vec![Ok(detail)]),
         vec![
             Ok(cover::CoverResponse::Bytes(tiny_cover())),
             Ok(cover::CoverResponse::Bytes(tiny_cover())),

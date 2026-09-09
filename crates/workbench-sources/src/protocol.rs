@@ -100,7 +100,7 @@ pub(crate) fn count(value: &Value) -> SourceResult<Option<u64>> {
         .ok_or(error("SOURCE_RESPONSE_INVALID"))
 }
 
-fn strings(value: &Value) -> SourceResult<Vec<String>> {
+fn strings(source: Source, value: &Value) -> SourceResult<Vec<String>> {
     if value.is_null() {
         return Ok(vec![]);
     }
@@ -114,6 +114,22 @@ fn strings(value: &Value) -> SourceResult<Vec<String>> {
     let values = value.as_array().ok_or(error("SOURCE_RESPONSE_INVALID"))?;
     if values.len() > 64 {
         return Err(error("SOURCE_RESPONSE_INVALID"));
+    }
+    if source == Source::Jm {
+        // JM detail metadata can contain blank author/tag placeholders. Check
+        // the raw array and every string before omitting only those placeholders;
+        // filtering must not bypass the input bounds or coerce unknown shapes.
+        let mut retained = Vec::with_capacity(values.len());
+        for value in values {
+            let text = value.as_str().ok_or(error("SOURCE_RESPONSE_INVALID"))?;
+            if !within_text_limit(text, 2000) {
+                return Err(error("SOURCE_RESPONSE_INVALID"));
+            }
+            if !text.trim().is_empty() {
+                retained.push(text.to_owned());
+            }
+        }
+        return Ok(retained);
     }
     values
         .iter()
@@ -264,7 +280,7 @@ pub(crate) fn work(
         source,
         work_id,
         title,
-        authors: strings(&data["author"])?,
+        authors: strings(source, &data["author"])?,
         description: if data["description"].is_null() {
             None
         } else {
@@ -276,7 +292,7 @@ pub(crate) fn work(
             }
             Some(text.to_owned())
         },
-        tags: strings(&data["tags"])?,
+        tags: strings(source, &data["tags"])?,
         favorite,
         chapter_count,
         page_count,

@@ -35,6 +35,7 @@ function Grid<T>(
     scroll: 0,
     viewport: 800,
     gap: 26,
+    width: 0,
   });
   const [layout, setLayout] = useState(metrics.current);
   const current = useRef({ items, itemKey });
@@ -44,22 +45,25 @@ function Grid<T>(
   const measure = useRef<() => void>(() => {});
   function capture(preferred?: string): GridAnchor | null {
     const main = element.current?.closest("main");
-    if (!main || !element.current || !items.length) return null;
+    const data = current.current;
+    if (!main || !element.current || !data.items.length) return null;
     const value = metrics.current;
     const relative = main.scrollTop - value.offset;
     const preferredIndex = preferred
-      ? items.findIndex((item) => itemKey(item) === preferred)
+      ? data.items.findIndex((item) => data.itemKey(item) === preferred)
       : -1;
-    const row =
+    const row = Math.min(
+      Math.floor((data.items.length - 1) / value.columns),
       preferredIndex >= 0
         ? Math.floor(preferredIndex / value.columns)
-        : Math.max(0, Math.floor(Math.max(0, relative) / value.rowHeight));
-    const index = Math.min(items.length - 1, row * value.columns);
+        : Math.max(0, Math.floor(Math.max(0, relative) / value.rowHeight)),
+    );
+    const index = Math.min(data.items.length - 1, row * value.columns);
     return {
       key:
         preferredIndex >= 0
-          ? itemKey(items[preferredIndex])
-          : itemKey(items[index]),
+          ? data.itemKey(data.items[preferredIndex])
+          : data.itemKey(data.items[index]),
       offset: value.offset + row * value.rowHeight - main.scrollTop,
     };
   }
@@ -104,8 +108,10 @@ function Grid<T>(
     const main = root?.closest("main");
     if (!root || !main) return;
     let frame = 0;
+    let observedRow: HTMLDivElement | null = null;
     const update = () => {
       frame = 0;
+      if (root.clientWidth === 0 || main.clientHeight === 0) return;
       const css = getComputedStyle(root);
       const columns = Math.max(
         1,
@@ -114,11 +120,30 @@ function Grid<T>(
       const gap = parseFloat(css.rowGap) || 26;
       const columnGap = parseFloat(css.columnGap) || 16;
       const width = (root.clientWidth - columnGap * (columns - 1)) / columns;
-      const measured = firstRow.current?.getBoundingClientRect().height;
+      const row = firstRow.current;
+      if (observedRow !== row) {
+        if (observedRow) observer.unobserve(observedRow);
+        if (row) observer.observe(row);
+        observedRow = row;
+      }
+      // A resize can commit the outer CSS columns before React commits each row.
+      const measured =
+        row?.dataset.columns === String(columns)
+          ? row.getBoundingClientRect().height
+          : undefined;
+      const geometryChanged =
+        columns !== metrics.current.columns ||
+        Math.abs(width - metrics.current.width) > 0.5;
+      const resizeAnchor =
+        geometryChanged && metrics.current.width > 0 && !pending.current
+          ? capture()
+          : null;
       const rowHeight =
-        columns === metrics.current.columns && measured && measured > 50
+        measured && measured > 50
           ? measured + gap
-          : (width * 7) / 5 + 90 + gap;
+          : geometryChanged
+            ? (width * 7) / 5 + 90 + gap
+            : metrics.current.rowHeight;
       const offset =
         main.scrollTop +
         root.getBoundingClientRect().top -
@@ -130,6 +155,7 @@ function Grid<T>(
         offset,
         scroll: main.scrollTop,
         viewport: main.clientHeight,
+        width,
       };
       metrics.current = next;
       setLayout((old) =>
@@ -142,6 +168,7 @@ function Grid<T>(
           ? next
           : old,
       );
+      if (resizeAnchor) restore(resizeAnchor);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
@@ -160,7 +187,8 @@ function Grid<T>(
       )
         cancelRestore();
     };
-    measure.current = update;
+    // Every DOM measurement is coalesced into a frame, never a synchronous layout-effect loop.
+    measure.current = schedule;
     const observer = new ResizeObserver(schedule);
     observer.observe(root);
     observer.observe(main);
@@ -179,10 +207,11 @@ function Grid<T>(
       capture: true,
     });
     main.addEventListener("keydown", cancelForScrollKey, true);
-    update();
+    schedule();
     return () => {
       cancelAnimationFrame(frame);
       cancelAnimationFrame(restoreFrame.current);
+      measure.current = () => {};
       observer.disconnect();
       main.removeEventListener("scroll", schedule);
       main.removeEventListener("wheel", cancelRestore, true);
@@ -194,14 +223,7 @@ function Grid<T>(
   useLayoutEffect(() => {
     measure.current();
     if (pending.current) applyAnchor(pending.current);
-  }, [items, density, layout.rowHeight]);
-  useLayoutEffect(() => {
-    if (firstRow.current) {
-      const observer = new ResizeObserver(() => measure.current());
-      observer.observe(firstRow.current);
-      return () => observer.disconnect();
-    }
-  }, [layout.columns, items.length]);
+  }, [items, density]);
   const range = gridWindow(
     items.length,
     layout.columns,
@@ -225,6 +247,7 @@ function Grid<T>(
           key={row}
           ref={index === 0 ? firstRow : undefined}
           className="source-virtual-row"
+          data-columns={layout.columns}
           style={{
             position: "absolute",
             top: row * layout.rowHeight,

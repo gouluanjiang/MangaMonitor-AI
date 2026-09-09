@@ -25,6 +25,7 @@ type MockOptions = {
   coverCount?: number;
   expireJM?: boolean;
   collectionCount?: number;
+  collectionCover?: boolean;
   cacheSnapshot?: CatalogSnapshot;
 };
 type Call = {
@@ -69,13 +70,13 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
     source: "JM",
     workId: String(i + 1),
     title: "合成验收 JM 作品 " + (i + 1) + " 账号1",
-    authors: [],
+    authors: ["合成验收作者"],
     description: null,
     tags: [],
     favorite: null,
     chapterCount: null,
     pageCount: null,
-    coverAvailable: false,
+    coverAvailable: true,
   }));
   const snapshot: CatalogSnapshot = {
     items,
@@ -89,7 +90,11 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
     firstPageIds: items.slice(0, 20).map((work) => work.workId),
   };
   await page.setViewportSize({ width: 1672, height: 941 });
-  await installMock(page, { collectionCount: 2000, cacheSnapshot: snapshot });
+  await installMock(page, {
+    collectionCount: 2000,
+    collectionCover: true,
+    cacheSnapshot: snapshot,
+  });
   await openFavorites(page);
   await expect(page.getByTestId("collection-progress")).toContainText(
     "已读取全部收藏",
@@ -158,6 +163,69 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   await expect(
     page.getByTestId("source-grid").locator("article").first(),
   ).toHaveAttribute("data-source-work-key", "JM:2000");
+  await expect(
+    page.getByTestId("source-cover-JM:2000").locator("img"),
+  ).toBeVisible();
+  await page.getByTestId("source-open-JM:2000").click();
+  await expect(page.getByTestId("source-detail")).toBeVisible();
+  await page.getByTestId("source-detail-back").click();
+  await page.mouse.move(1200, 700);
+  await page.mouse.wheel(0, 1000000);
+  await expect(page.getByTestId("source-card-JM:1")).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("source-cover-JM:1")
+        .locator("img")
+        .evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+    )
+    .toBe(true);
+  for (const viewport of [
+    { width: 390, height: 844, columns: 2 },
+    { width: 1672, height: 941, columns: 7 },
+    { width: 390, height: 844, columns: 2 },
+  ]) {
+    await page.setViewportSize({
+      width: viewport.width,
+      height: viewport.height,
+    });
+    await expect(page.getByTestId("source-workbench")).toBeVisible();
+    await expect(
+      page.getByTestId("source-grid").locator(".source-virtual-row").first(),
+    ).toHaveAttribute("data-columns", String(viewport.columns));
+    await expect(page.getByTestId("source-selection-bar")).toContainText(
+      "已选 2000 部",
+    );
+    const heights = await page.getByTestId("source-grid").evaluate(
+      (element) =>
+        new Promise<string[]>((resolve) => {
+          const values: string[] = [];
+          const sample = () => {
+            values.push((element as HTMLElement).style.height);
+            if (values.length === 16) resolve(values.slice(-8));
+            else requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+    expect(
+      new Set(heights).size,
+      "row geometry must settle instead of oscillating between estimated and measured heights",
+    ).toBe(1);
+    expect(
+      await page.getByTestId("source-grid").locator("article").count(),
+    ).toBeLessThan(90);
+    // The final selected work and its decoded synthetic cover remain reachable after reflow.
+    await page.mouse.move(viewport.width - 40, viewport.height / 2);
+    await page.mouse.wheel(0, 1000000);
+    await expect(page.getByTestId("source-select-JM:1")).toBeChecked();
+    await expect(page.getByTestId("source-card-JM:1")).toBeVisible();
+    await expect(
+      page.getByTestId("source-cover-JM:1").locator("img"),
+    ).toBeVisible();
+  }
 });
 
 test("Pica collection-time reversal loads the remote last end immediately and then follows the viewport", async ({
@@ -310,13 +378,13 @@ async function installMock(page: Page, options: MockOptions = {}) {
       source,
       workId,
       title: "合成验收 " + source + " 作品 " + workId + " 账号" + epoch,
-      authors: [],
+      authors: options.collectionCover ? ["合成验收作者"] : [],
       description: null,
       tags: [],
       favorite: null,
       chapterCount: null,
       pageCount: null,
-      coverAvailable: false,
+      coverAvailable: Boolean(options.collectionCover),
     });
     const accounts = sources.map((source) =>
       options.disconnected || options.expired
@@ -596,9 +664,10 @@ async function installMock(page: Page, options: MockOptions = {}) {
             return {
               ...scope,
               workId: raw.workId,
-              dataUrl: options.coverCount
-                ? "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-                : null,
+              dataUrl:
+                options.coverCount || options.collectionCover
+                  ? "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                  : null,
             };
           if (command === "source_favorite") {
             remoteFavorite[source] = Boolean(raw.desired);

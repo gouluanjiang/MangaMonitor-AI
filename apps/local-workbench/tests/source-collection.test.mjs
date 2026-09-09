@@ -383,8 +383,17 @@ test("virtual windows stay bounded at beginning middle and end without hiding fu
       const range = gridWindow(2000, columns, 300, scroll, 900);
       assert.ok((range.last - range.first) * columns <= columns * 8);
       assert.equal(range.height, Math.ceil(2000 / columns) * 300);
+      assert.ok(
+        range.last > range.first,
+        "the tail keeps a measurable row even below the grid",
+      );
     }
   }
+  assert.deepEqual(gridWindow(0, 7, 300, 1000000, 900), {
+    first: 0,
+    last: 0,
+    height: 0,
+  });
 });
 test("cover queue cancels waiting work and recovers from synchronous failures", async () => {
   let a, b;

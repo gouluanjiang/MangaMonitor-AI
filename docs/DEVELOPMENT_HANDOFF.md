@@ -2,6 +2,10 @@
 
 Updated 2026-09-09. This document separates the current continuation from historical milestone reports.
 
+## Current execution preference: resource-aware local/cloud work
+
+The user now authorizes part of development and verification locally when resources permit, while requiring a responsive desktop. Follow the current resource gates in `AGENTS.md`: local edits/formatting/targeted tests first, a single small incremental build only with measured headroom, full suites/cross-platform/release packaging in CI. Do not infer available RAM from low CPU usage, expand download authority, or repeat the same heavy pipeline locally and remotely without a specific validation need. The 0.3.2 application/installer evidence below remains unchanged; this updates future execution preferences only.
+
 ## Current: session-only covers, Windows 0.3.2 (2026-09-09)
 
 Application head `af35f96904b0d59cba04591a303933e3a3b0b3ca` (CI merge `60d549e61ba1e935ecac3045346f2c83a329aa52`) is verified. The user's final requirement supersedes the older 0.3.1 disk-cover policy: retain successful covers only for the running application, reuse through virtual-card unmount/scroll/detail/settings visits, release on exit and reload next launch. No native cover command persists image bytes. Catalog metadata/read progress, following, preferences, booklists and remembered sessions remain persistent. Fixed registered legacy covers are retired once during DesktopStore initialization before document readers receive the shared store; cleanup failure does not block opening documents. This ordering fixes the actual WebView startup BUSY race found during validation.

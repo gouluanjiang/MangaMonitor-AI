@@ -32,13 +32,17 @@ async function startupDiagnostics(child, debuggingPort, lastConnectionError) {
   // Only inspect this owned CI application and its descendants, never unrelated
   // runner command lines or environment variables that could contain secrets.
   const processes = spawnSync(
-    "powershell.exe",
+    "pwsh.exe",
     [
       "-NoProfile",
-      "-Command",
-      `$all = @(Get-CimInstance Win32_Process); $owned = @(${Number(child.pid) || 0}); do { $before = $owned.Count; $owned += @($all | Where-Object { $_.ParentProcessId -in $owned -and $_.ProcessId -notin $owned } | ForEach-Object { $_.ProcessId }) } while ($owned.Count -gt $before); @($all | Where-Object { $_.ProcessId -in $owned } | Select-Object Name, ProcessId, ParentProcessId, @{Name='HasRemoteDebuggingPort';Expression={$_.CommandLine -match '--remote-debugging-port='}}) | ConvertTo-Json -Compress`,
+      "-File",
+      path.resolve("tests/native-startup-diagnostics.ps1"),
+      "-AppProcessId",
+      String(child.pid ?? 0),
+      "-OutputDirectory",
+      output,
     ],
-    { windowsHide: true, encoding: "utf8", timeout: 10_000 },
+    { windowsHide: true, encoding: "utf8", timeout: 30_000 },
   );
   const diagnostic = {
     pid: child.pid,
@@ -47,6 +51,8 @@ async function startupDiagnostics(child, debuggingPort, lastConnectionError) {
     lastConnectionError,
     processes: processes.stdout?.trim(),
     processInspectionStatus: processes.status,
+    processInspectionError: processes.error?.code,
+    processInspectionStderr: processes.stderr?.trim(),
   };
   await writeFile(
     path.join(output, "startup-diagnostics.json"),
@@ -69,7 +75,9 @@ async function port() {
 async function launch() {
   const debuggingPort = await port();
   const child = spawn(executable, [], {
-    windowsHide: true,
+    // This is the actual GUI under test on a disposable CI desktop. Hiding its
+    // first window would change startup behavior and obscure modal failures.
+    windowsHide: false,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,

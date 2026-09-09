@@ -274,7 +274,16 @@ pub(crate) fn work(
     };
     let (chapter_count, page_count) = match source {
         Source::Jm => (None, count(&data["total_photos"])?),
-        Source::Pica => (count(&data["epsCount"])?, count(&data["pagesCount"])?),
+        Source::Pica => (
+            count(&data["epsCount"])?,
+            // Pica can report a negative page count even in a readable favorite.
+            // Keep the work with an unknown count; never invent zero or abs(count).
+            if data["pagesCount"].as_i64().is_some_and(|count| count < 0) {
+                None
+            } else {
+                count(&data["pagesCount"])?
+            },
+        ),
     };
     let work = SourceWork {
         source,
@@ -355,10 +364,15 @@ pub(crate) fn page(
     };
     let mut items = Vec::with_capacity(records.len());
     let mut covers = Vec::new();
-    let mut ids = std::collections::HashSet::new();
+    let mut ids = std::collections::HashMap::new();
     for record in records {
         let (item, cover) = work(source, record, favorites)?;
-        if !ids.insert(item.work_id.clone()) {
+        // Preserve identical Pica favorite entries for pagination accounting.
+        // Conflicting records, search results and JM remain strict.
+        if ids
+            .insert(item.work_id.clone(), record)
+            .is_some_and(|previous| source != Source::Pica || !favorites || previous != record)
+        {
             return Err(error("SOURCE_PAGINATION_INVALID"));
         }
         if let Some(cover) = cover {

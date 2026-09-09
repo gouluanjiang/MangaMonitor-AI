@@ -6,6 +6,8 @@
 
 账号/收藏、书单及后续扩展功能的最新确认见 [LOCAL_WORKBENCH_FEATURE_SCOPE.md](LOCAL_WORKBENCH_FEATURE_SCOPE.md)。功能及 UI 已完成共同讨论；2026-09-09 用户接受其余页面并要求删除作者头像、ZIP/图像处理调节项后继续实施。正式前端恢复开发，后续修改不再生成预览图。最新视觉决定见 [LOCAL_WORKBENCH_UI_STRUCTURE.md](LOCAL_WORKBENCH_UI_STRUCTURE.md)。
 
+最新范围修正（2026-09-09）：用户取消 PDF/CBZ 导出，新增作品只需 ZIP 下载到本地漫画库。既有 CBZ 识别保留。用户确认保留错误可见并可手动重试、未完成不标完成、保留完成 ZIP 避免重复下载覆盖、正常退出保存队列/完成状态这四项最小可靠性；复杂离线/长时自动重连不扩张为新必做项。本轮未改动执行代码。
+
 ## 已确认的范围
 
 | 项目 | 决定 |

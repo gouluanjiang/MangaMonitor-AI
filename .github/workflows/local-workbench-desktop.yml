@@ -26,6 +26,12 @@ on:
       - 'rust-toolchain.toml'
       - '.github/workflows/local-workbench-desktop.yml'
   workflow_dispatch:
+    inputs:
+      package_installer:
+        description: Build and upload a development installer for a planned delivery
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -86,10 +92,16 @@ jobs:
         run: cargo +1.98.1 test --manifest-path apps/local-workbench/src-tauri/Cargo.toml --lib --locked -- --test-threads=2
       - name: Lint desktop commands and tests
         run: cargo +1.98.1 clippy --manifest-path apps/local-workbench/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Build desktop executable for validation
+        if: github.event_name != 'workflow_dispatch' || !inputs.package_installer
+        working-directory: apps/local-workbench
+        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle -- --locked
       - name: Build development NSIS installer
+        if: github.event_name == 'workflow_dispatch' && inputs.package_installer
         working-directory: apps/local-workbench
         run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
       - name: Select the current version installer
+        if: github.event_name == 'workflow_dispatch' && inputs.package_installer
         id: current-installer
         shell: pwsh
         run: |
@@ -99,6 +111,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) { throw 'Current version installer is missing' }
           "installer=$installerPath" >> $env:GITHUB_OUTPUT
       - name: Upload development installer for review
+        if: github.event_name == 'workflow_dispatch' && inputs.package_installer
         uses: actions/upload-artifact@v4
         with:
           name: mangamonitor-dev-windows-nsis-${{ github.sha }}

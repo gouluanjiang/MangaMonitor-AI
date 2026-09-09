@@ -372,3 +372,142 @@ test("remembered invalid sessions can be forgotten without inventing a usable se
     { code: "LOGIN_REQUIRED" },
   );
 });
+
+test("Pica favorite duplicate entries survive IPC and catalog restore; search and conflicting metadata reject", async () => {
+  const picaScope = { source: "Pica", sessionId: "synthetic-pica-entries" };
+  const item = work("Pica", "0123456789abcdef01234567");
+  const page = {
+    ...picaScope,
+    items: [item, { ...item }],
+    page: 1,
+    total: 2,
+    pages: 1,
+    hasMore: false,
+    folders: [],
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async () => page,
+  });
+  const query = {
+    kind: "favorites",
+    query: "",
+    folderId: null,
+    page: 1,
+    reverse: false,
+  };
+  assert.equal((await adapter.query(picaScope, query)).items.length, 2);
+  await assert.rejects(
+    adapter.query(picaScope, { ...query, kind: "search", query: "T" }),
+    SourceError,
+  );
+  const snapshot = {
+    ...page,
+    complete: true,
+    updatedAt: 1,
+    firstPageIds: [item.workId, item.workId],
+    pageEnds: [2],
+  };
+  assert.equal(validateCatalogSnapshot(snapshot, picaScope).items.length, 2);
+  page.items[1] = { ...item, title: "Different" };
+  await assert.rejects(adapter.query(picaScope, query), SourceError);
+  assert.throws(
+    () =>
+      validateCatalogSnapshot({ ...snapshot, items: page.items }, picaScope),
+    SourceError,
+  );
+});
+
+test("catalog page boundaries reject cross-page duplicates and malformed provenance at IPC restore", async () => {
+  const picaScope = { source: "Pica", sessionId: "synthetic-page-ends" };
+  const a = work("Pica", "a");
+  const b = work("Pica", "b");
+  const c = work("Pica", "c");
+  const valid = {
+    items: [a, { ...a }, b, c],
+    page: 2,
+    total: 4,
+    pages: 2,
+    hasMore: false,
+    folders: [],
+    complete: true,
+    updatedAt: 1,
+    firstPageIds: ["a", "a"],
+    pageEnds: [2, 4],
+  };
+  assert.deepEqual(validateCatalogSnapshot(valid, picaScope).pageEnds, [2, 4]);
+  const crossPage = {
+    ...valid,
+    items: [a, b, { ...a }, c],
+    firstPageIds: ["a", "b"],
+  };
+  for (const value of [
+    crossPage,
+    { ...crossPage, pageEnds: undefined },
+    { ...valid, pageEnds: undefined },
+    { ...valid, pageEnds: null },
+    ...[
+      [],
+      [4],
+      [2, 3],
+      [2, 2],
+      [3, 4],
+      [0, 4],
+      [2, 4, 4],
+      [2, 4.5],
+      [2, "4"],
+    ].map((pageEnds) => ({ ...valid, pageEnds })),
+  ]) {
+    assert.throws(() => validateCatalogSnapshot(value, picaScope), SourceError);
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => ({
+        ...picaScope,
+        snapshot: value,
+        completeSnapshot: value,
+      }),
+    });
+    await assert.rejects(
+      adapter.catalog(picaScope, {
+        action: "read",
+        folderId: null,
+        reverse: false,
+      }),
+      SourceError,
+    );
+  }
+  const legacy = {
+    ...valid,
+    items: [a, b, c, work("Pica", "d")],
+    firstPageIds: ["a", "b"],
+  };
+  delete legacy.pageEnds;
+  assert.equal(validateCatalogSnapshot(legacy, picaScope).pageEnds, undefined);
+  const oversizedPage = {
+    ...legacy,
+    items: Array.from({ length: 1003 }, (_, index) =>
+      work("Pica", String(index)),
+    ),
+    firstPageIds: ["0", "1"],
+    total: 1003,
+    pageEnds: [2, 1003],
+  };
+  assert.throws(
+    () => validateCatalogSnapshot(oversizedPage, picaScope),
+    SourceError,
+  );
+  const empty = {
+    ...valid,
+    items: [],
+    page: 1,
+    total: 0,
+    pages: 0,
+    firstPageIds: [],
+    pageEnds: [0],
+  };
+  assert.deepEqual(validateCatalogSnapshot(empty, picaScope).pageEnds, [0]);
+  assert.throws(
+    () => validateCatalogSnapshot({ ...empty, pageEnds: [0, 0] }, picaScope),
+    SourceError,
+  );
+});

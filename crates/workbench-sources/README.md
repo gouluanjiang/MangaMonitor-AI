@@ -30,6 +30,7 @@ restoration only succeeds after a profile request verifies the session.
 The account DTO contains only source, account ID and display name. Work DTOs never
 contain raw source JSON, cover URLs, user profiles, cookies, tokens or execution
 authority. Optional booleans/counts retain unknown values as null.
+A negative integer Pica `pagesCount` is unknown (`null`), not zero or its absolute value. Other malformed counts, negative chapter counts and JM count validation remain strict. Completely identical raw records on one Pica favorites page retain their entry count; conflicting duplicates, search duplicates and JM duplicates remain invalid. Cross-page overlap is rejected by the caller.
 Counts above JavaScript's maximum safe integer (9,007,199,254,740,991) are rejected.
 Each serialized work is limited to 64 KiB, including JSON escaping. Titles are
 limited to 2,000 UTF-16 code units, descriptions to 10,000, and each author/tag
@@ -67,7 +68,7 @@ defines POST `comics/{id}/favourite` with no body, returning action `favourite` 
 `FavoritePageRequest.reverse` defaults to false. Pica uses source-side `dd`
 (newest first) or `da` (oldest first). JM's default remains exactly `o=mr`;
 reverse=true is rejected with SOURCE_REVERSE_UNSUPPORTED before a request.
-The caller may implement a clearly scoped local reverse of a complete JM list.
+The workbench now requests only newest-first favorites for both sources and reverses the completed shared catalog locally. The lower-level Pica API still supports both native directions.
 
 Favorite writes first read the current state. An already-satisfied desired state
 is a verified no-op. Otherwise exactly one toggle is sent, then one read-back

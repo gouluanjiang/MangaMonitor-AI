@@ -12,6 +12,7 @@ import type {
   SourceWork,
 } from "./source-types.ts";
 import { sources } from "./source-types.ts";
+import { sameSourceWork } from "./source-memory.ts";
 
 export class SourceError extends Error {
   readonly code: string;
@@ -148,6 +149,7 @@ export function validateAccount(value: unknown): AccountSummary {
 export function validateSourcePage(
   value: unknown,
   scope: SourceScope,
+  favoriteEntries = false,
 ): SourceQueryResult {
   scoped(value, scope);
   if (
@@ -179,8 +181,18 @@ export function validateSourcePage(
   const items = value.items.map((item: unknown) =>
     validateSourceWork(item, scope.source),
   );
-  if (new Set(items.map((item) => item.workId)).size !== items.length)
-    throw new SourceError("CATALOG_CHANGED");
+  const seen = new Map<string, SourceWork>();
+  for (const item of items) {
+    const previous = seen.get(item.workId);
+    if (
+      previous &&
+      (!favoriteEntries ||
+        scope.source !== "Pica" ||
+        !sameSourceWork(previous, item))
+    )
+      throw new SourceError("CATALOG_CHANGED");
+    seen.set(item.workId, item);
+  }
   return {
     ...scope,
     items,
@@ -206,7 +218,40 @@ export function validateCatalogSnapshot(
     !value.firstPageIds.every(identity)
   )
     invalid();
-  const page = validateSourcePage({ ...value, ...scope }, scope);
+  const page = validateSourcePage({ ...value, ...scope }, scope, true);
+  let pageEnds: number[] | undefined;
+  if (value.pageEnds !== undefined && value.pageEnds !== null) {
+    if (
+      !Array.isArray(value.pageEnds) ||
+      value.pageEnds.length !== page.page ||
+      !value.pageEnds.every(integer)
+    )
+      invalid();
+    pageEnds = [...value.pageEnds] as number[];
+    if (
+      pageEnds[0] !== value.firstPageIds.length ||
+      pageEnds[pageEnds.length - 1] !== page.items.length ||
+      pageEnds.some((end, index) => {
+        const start = index === 0 ? 0 : pageEnds![index - 1];
+        const emptyFirst =
+          page.page === 1 && page.items.length === 0 && end === 0;
+        return !emptyFirst && (end <= start || end - start > 1000);
+      })
+    )
+      invalid();
+  }
+  const seenPages = new Map<string, number>();
+  let pageIndex = 0;
+  for (const [index, item] of page.items.entries()) {
+    if (pageEnds && index >= pageEnds[pageIndex]) pageIndex++;
+    const previousPage = seenPages.get(item.workId);
+    if (
+      previousPage !== undefined &&
+      (pageEnds === undefined || previousPage !== pageIndex)
+    )
+      invalid();
+    seenPages.set(item.workId, pageIndex);
+  }
   if (
     page.page > 1000 ||
     value.firstPageIds.length > page.items.length ||
@@ -248,6 +293,7 @@ export function validateCatalogSnapshot(
     complete: value.complete,
     updatedAt: value.updatedAt as number,
     firstPageIds: [...value.firstPageIds] as string[],
+    ...(pageEnds ? { pageEnds } : {}),
   };
 }
 function validateFollowing(
@@ -389,6 +435,7 @@ export function createSourceAdapter(
           reverse: query.reverse ?? false,
         }),
         scope,
+        query.kind === "favorites",
       );
       if (result.page !== query.page || result.items.length > 1000) invalid();
       return result;

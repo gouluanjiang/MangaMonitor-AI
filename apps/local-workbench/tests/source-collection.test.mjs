@@ -431,3 +431,200 @@ test("cover queue cancels waiting work and recovers from synchronous failures", 
   }).promise;
   assert.deepEqual(started, [1, 2, 4]);
 });
+
+test("1877 Pica favorite entries read all 94 pages, retain same-page duplicates and cache raw counts", async () => {
+  const data = fixture(1877);
+  const picaScope = { source: "Pica", sessionId: "synthetic-pica" };
+  data.override = (page, result) => {
+    const items = result.items.map((item) => ({ ...item, source: "Pica" }));
+    if (page === 33) items[11] = { ...items[10] };
+    return { ...result, ...picaScope, items };
+  };
+  const collector = new CollectionReader(
+    data.adapter,
+    picaScope,
+    null,
+    false,
+    0,
+  );
+  await collector.readAll();
+  assert.equal(collector.state.phase, "complete");
+  assert.equal(data.calls.length, 94);
+  assert.equal(data.saved.items.length, 1877);
+  assert.equal(new Set(data.saved.items.map((item) => item.workId)).size, 1876);
+  assert.equal(data.saved.items.at(-1).workId, "1877");
+  assert.deepEqual(
+    data.saved.pageEnds,
+    Array.from({ length: 94 }, (_, index) => Math.min((index + 1) * 20, 1877)),
+  );
+  collector.dispose();
+  const restored = new CollectionReader(
+    data.adapter,
+    picaScope,
+    null,
+    false,
+    0,
+  );
+  await restored.readAll();
+  assert.equal(restored.state.phase, "complete");
+  assert.deepEqual(data.calls.slice(94), [1]);
+  assert.equal(restored.state.snapshot.items.length, 1877);
+  assert.deepEqual(restored.state.snapshot.pageEnds, data.saved.pageEnds);
+  restored.dispose();
+});
+
+test("legacy Pica partial caches restart from the verified head and build page boundaries", async () => {
+  const data = fixture(60);
+  const picaScope = { source: "Pica", sessionId: "synthetic-pica-legacy" };
+  data.override = (_page, result) => ({
+    ...result,
+    ...picaScope,
+    items: result.items.map((item) => ({ ...item, source: "Pica" })),
+  });
+  const picaPage = (page) => ({
+    ...data.makePage(page),
+    items: data
+      .makePage(page)
+      .items.map((item) => ({ ...item, source: "Pica" })),
+  });
+  data.saved = appendCatalog(
+    appendCatalog(null, picaPage(1), 1),
+    picaPage(2),
+    2,
+  );
+  delete data.saved.pageEnds;
+  const restored = new CollectionReader(
+    data.adapter,
+    picaScope,
+    null,
+    false,
+    0,
+  );
+  await restored.resume();
+  assert.deepEqual(data.calls, [1]);
+  assert.equal(restored.state.snapshot.items.length, 20);
+  assert.deepEqual(restored.state.snapshot.pageEnds, [20]);
+  await restored.readAll();
+  assert.deepEqual(data.calls, [1, 2, 3]);
+  assert.equal(restored.state.phase, "complete");
+  assert.deepEqual(data.saved.pageEnds, [20, 40, 60]);
+  restored.dispose();
+});
+
+test("legacy duplicate-free complete Pica caches still reuse their complete contents", async () => {
+  const data = fixture(40);
+  const picaScope = { source: "Pica", sessionId: "synthetic-pica-legacy" };
+  data.override = (_page, result) => ({
+    ...result,
+    ...picaScope,
+    items: result.items.map((item) => ({ ...item, source: "Pica" })),
+  });
+  let snapshot = null;
+  for (let page = 1; page <= 2; page++) {
+    const result = data.makePage(page);
+    snapshot = appendCatalog(snapshot, {
+      ...result,
+      items: result.items.map((item) => ({ ...item, source: "Pica" })),
+    });
+  }
+  delete snapshot.pageEnds;
+  data.saved = data.complete = snapshot;
+  const restored = new CollectionReader(
+    data.adapter,
+    picaScope,
+    null,
+    false,
+    0,
+  );
+  await restored.readAll();
+  assert.deepEqual(data.calls, [1]);
+  assert.equal(restored.state.phase, "complete");
+  assert.equal(restored.state.snapshot.items.length, 40);
+  assert.equal(restored.state.snapshot.pageEnds, undefined);
+  restored.dispose();
+});
+
+test("legacy JM partial progress stays reusable and cannot grow unproven duplicate entries", () => {
+  const data = fixture(40);
+  const old = appendCatalog(null, data.makePage(1), 1);
+  delete old.pageEnds;
+  const next = appendCatalog(old, data.makePage(2), 2);
+  assert.equal(next.complete, true);
+  assert.equal(next.pageEnds, undefined);
+  const picaOld = {
+    ...old,
+    items: old.items.map((item) => ({ ...item, source: "Pica" })),
+  };
+  const duplicate = { ...work(21), source: "Pica" };
+  const items = data
+    .makePage(2)
+    .items.map((item) => ({ ...item, source: "Pica" }));
+  items[0] = duplicate;
+  items[1] = { ...duplicate };
+  assert.throws(() => appendCatalog(picaOld, { ...data.makePage(2), items }), {
+    code: "CATALOG_CHANGED",
+  });
+  assert.deepEqual(
+    appendCatalog(null, {
+      items: [],
+      page: 1,
+      total: 0,
+      pages: 0,
+      hasMore: false,
+      folders: [],
+    }).pageEnds,
+    [0],
+  );
+});
+
+test("Pica conflicting same-page records and cross-page overlap cannot claim complete", () => {
+  const pica = (id) => ({ ...work(id), source: "Pica" });
+  const firstPage = {
+    items: [pica(1), pica(2)],
+    page: 1,
+    total: 4,
+    pages: 2,
+    hasMore: true,
+    folders: [],
+  };
+  const previous = appendCatalog(null, firstPage, 1);
+  for (const items of [
+    [pica(1), pica(3)],
+    [pica(3), { ...pica(3), title: "Conflict" }],
+  ]) {
+    assert.throws(
+      () =>
+        appendCatalog(
+          previous,
+          { ...firstPage, page: 2, hasMore: false, items },
+          2,
+        ),
+      { code: "CATALOG_CHANGED" },
+    );
+  }
+});
+
+test("explicit retry after full-read cancellation retries one failed page, while a failed head stays first-page only", async () => {
+  const data = fixture(80);
+  data.failPage = 3;
+  const collector = reader(data);
+  await collector.readAll();
+  assert.equal(collector.state.phase, "error");
+  collector.stopReadAll();
+  await collector.retry();
+  assert.deepEqual(data.calls, [1, 2, 3, 3]);
+  assert.equal(collector.state.snapshot.items.length, 60);
+  assert.equal(collector.state.phase, "ready");
+  collector.dispose();
+
+  const head = fixture(80);
+  head.failPage = 1;
+  const first = reader(head);
+  await first.resume();
+  assert.equal(first.state.phase, "error");
+  await first.retry();
+  assert.deepEqual(head.calls, [1, 1]);
+  assert.equal(first.state.snapshot.items.length, 20);
+  assert.equal(first.state.phase, "ready");
+  first.dispose();
+});

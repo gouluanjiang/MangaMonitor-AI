@@ -105,6 +105,8 @@ pub struct CatalogSnapshot {
     pub complete: bool,
     pub updated_at: u64,
     pub first_page_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_ends: Option<Vec<u64>>,
 }
 fn required_option<'de, D, T>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
 where
@@ -237,10 +239,42 @@ fn validate_snapshot(source: Source, snapshot: &CatalogSnapshot, now: u64) -> Re
     {
         return Err(invalid());
     }
-    let mut ids = HashSet::new();
-    for work in &snapshot.items {
+    if let Some(ends) = &snapshot.page_ends {
+        if ends.len() as u64 != snapshot.page
+            || ends.first().copied() != Some(snapshot.first_page_ids.len() as u64)
+            || ends.last().copied() != Some(snapshot.items.len() as u64)
+        {
+            return Err(invalid());
+        }
+        let mut start = 0;
+        for &end in ends {
+            let empty_first = snapshot.page == 1 && snapshot.items.is_empty() && end == 0;
+            if !empty_first && (end <= start || end - start > 1000) {
+                return Err(invalid());
+            }
+            start = end;
+        }
+    }
+    let mut ids = BTreeMap::new();
+    let mut page_index = 0;
+    for (index, work) in snapshot.items.iter().enumerate() {
         validate_work(source, work).map_err(|_| invalid())?;
-        if !ids.insert(&work.work_id) {
+        if snapshot
+            .page_ends
+            .as_ref()
+            .is_some_and(|ends| index as u64 >= ends[page_index])
+        {
+            page_index += 1;
+        }
+        if ids
+            .insert(&work.work_id, (work, page_index))
+            .is_some_and(|(previous, previous_page)| {
+                source != Source::Pica
+                    || previous != work
+                    || snapshot.page_ends.is_none()
+                    || previous_page != page_index
+            })
+        {
             return Err(invalid());
         }
     }
@@ -518,6 +552,7 @@ mod tests {
         let items: Vec<_> = (0..count).map(work).collect();
         CatalogSnapshot {
             first_page_ids: items.iter().take(1000).map(|w| w.work_id.clone()).collect(),
+            page_ends: None,
             items,
             page: count.max(1).div_ceil(1000) as u64,
             total: Some(count as u64),
@@ -704,6 +739,117 @@ mod tests {
             );
         }
         assert!(validate_snapshot(Source::Jm, &snapshot(0, now), now).is_ok());
+    }
+
+    #[test]
+    fn pica_catalog_keeps_identical_entry_counts_across_disk_roundtrip() {
+        let temp = TempDir::new().unwrap();
+        let now = now_ms().unwrap();
+        let mut value = snapshot(2, now);
+        value.items[0].source = Source::Pica;
+        value.items[1] = value.items[0].clone();
+        value.first_page_ids = value.items.iter().map(|w| w.work_id.clone()).collect();
+        value.page_ends = Some(vec![2]);
+        let write_result = catalog(
+            temp.path(), &key(1), Source::Pica, "s", None, false,
+            CatalogAction::Write, Some(value.clone()),
+        ).unwrap();
+        assert_eq!(write_result.snapshot.as_ref().unwrap().items.len(), 2);
+        let read_result = catalog(
+            temp.path(), &key(1), Source::Pica, "s", None, false,
+            CatalogAction::Read, None,
+        ).unwrap();
+        let restored = read_result.snapshot.unwrap();
+        assert_eq!(restored.total, Some(2));
+        assert_eq!(restored.items[0], restored.items[1]);
+        assert_eq!(restored.page_ends, Some(vec![2]));
+        assert!(restored.complete);
+        value.items[1].title = "Conflicting title".into();
+        assert!(validate_snapshot(Source::Pica, &value, now).is_err());
+        value.items[1] = value.items[0].clone();
+        value.total = Some(1);
+        assert!(validate_snapshot(Source::Pica, &value, now).is_err());
+    }
+
+    #[test]
+    fn catalog_page_boundaries_reject_cross_page_and_unproven_duplicate_entries() {
+        let now = now_ms().unwrap();
+        let mut valid = snapshot(4, now);
+        for item in &mut valid.items {
+            item.source = Source::Pica;
+        }
+        valid.items[1] = valid.items[0].clone();
+        valid.page = 2;
+        valid.pages = Some(2);
+        valid.first_page_ids = valid.items[..2].iter().map(|w| w.work_id.clone()).collect();
+        valid.page_ends = Some(vec![2, 4]);
+        assert!(validate_snapshot(Source::Pica, &valid, now).is_ok());
+
+        let mut cross_page = valid.clone();
+        cross_page.items.swap(1, 2);
+        cross_page.first_page_ids = cross_page.items[..2]
+            .iter()
+            .map(|w| w.work_id.clone())
+            .collect();
+        assert!(validate_snapshot(Source::Pica, &cross_page, now).is_err());
+        let temp = TempDir::new().unwrap();
+        assert_eq!(
+            code(catalog(
+                temp.path(),
+                &key(1),
+                Source::Pica,
+                "s",
+                None,
+                false,
+                CatalogAction::Write,
+                Some(cross_page.clone()),
+            )),
+            "CATALOG_CACHE_INVALID"
+        );
+        cross_page.page_ends = None;
+        assert!(validate_snapshot(Source::Pica, &cross_page, now).is_err());
+        let mut unproven = valid.clone();
+        unproven.page_ends = None;
+        assert!(validate_snapshot(Source::Pica, &unproven, now).is_err());
+        for ends in [
+            vec![],
+            vec![4],
+            vec![2, 3],
+            vec![2, 2],
+            vec![3, 4],
+            vec![0, 4],
+            vec![2, 4, 4],
+            vec![2, u64::MAX],
+        ] {
+            let mut malformed = valid.clone();
+            malformed.page_ends = Some(ends);
+            assert!(validate_snapshot(Source::Pica, &malformed, now).is_err());
+        }
+
+        let mut large = snapshot(1003, now);
+        large.first_page_ids.truncate(2);
+        large.page_ends = Some(vec![2, 1003]);
+        assert!(validate_snapshot(Source::Jm, &large, now).is_err());
+        let mut empty = snapshot(0, now);
+        empty.page_ends = Some(vec![0]);
+        assert!(validate_snapshot(Source::Jm, &empty, now).is_ok());
+        empty.page_ends = Some(vec![0, 0]);
+        assert!(validate_snapshot(Source::Jm, &empty, now).is_err());
+    }
+
+    #[test]
+    fn legacy_unique_catalog_snapshots_roundtrip_without_new_fields() {
+        let now = now_ms().unwrap();
+        let mut legacy = snapshot(2, now);
+        for item in &mut legacy.items {
+            item.source = Source::Pica;
+        }
+        assert!(validate_snapshot(Source::Pica, &legacy, now).is_ok());
+        let json = serde_json::to_value(&legacy).unwrap();
+        assert!(json.get("pageEnds").is_none());
+        let restored: CatalogSnapshot = serde_json::from_value(json).unwrap();
+        assert_eq!(restored, legacy);
+        assert_eq!(restored.page_ends, None);
     }
 
     #[test]

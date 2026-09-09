@@ -8,6 +8,7 @@ import { SourceError } from "./source-runtime.ts";
 import {
   compactWork,
   catalogBytes,
+  sameSourceWork,
   SOURCE_MEMORY_BYTES,
 } from "./source-memory.ts";
 
@@ -24,13 +25,25 @@ export function appendCatalog(
 ): CatalogSnapshot {
   if (
     page.page !== (previous?.page ?? 0) + 1 ||
-    page.page > MAX_COLLECTION_PAGES
+    page.page > MAX_COLLECTION_PAGES ||
+    page.items.length > 1000
   )
     changed();
-  const keys = new Set(previous?.items.map((work) => work.workId) ?? []);
+  const previousKeys = new Set(
+    previous?.items.map((work) => work.workId) ?? [],
+  );
+  const pageWorks = new Map<string, (typeof page.items)[number]>();
   for (const work of page.items) {
-    if (keys.has(work.workId)) changed();
-    keys.add(work.workId);
+    if (previousKeys.has(work.workId)) changed();
+    const samePage = pageWorks.get(work.workId);
+    if (
+      samePage &&
+      (work.source !== "Pica" ||
+        !sameSourceWork(samePage, work) ||
+        (previous !== null && previous.pageEnds === undefined))
+    )
+      changed();
+    pageWorks.set(work.workId, work);
   }
   if (
     !page.items.length &&
@@ -91,6 +104,11 @@ export function appendCatalog(
     updatedAt: now,
     firstPageIds:
       previous?.firstPageIds ?? page.items.map((work) => work.workId),
+    ...(!previous
+      ? { pageEnds: [items.length] }
+      : previous.pageEnds
+        ? { pageEnds: [...previous.pageEnds, items.length] }
+        : {}),
   };
   if (catalogBytes(snapshot) > maxBytes) throw new SourceError("CATALOG_LIMIT");
   return snapshot;
@@ -266,6 +284,13 @@ export class CollectionReader {
     this.all = true;
     return this.resume();
   }
+  retry(): Promise<void> {
+    // A user retry must reattempt the failed continuation even if a later sort
+    // change cleared full-reading mode. A failed head still retries only page 1.
+    if (this.state.phase === "error" && this.verified && !this.all)
+      this.budget = Math.max(1, this.budget);
+    return this.resume();
+  }
   stopReadAll() {
     this.all = false;
     this.budget = 0;
@@ -341,7 +366,15 @@ export class CollectionReader {
         if (this.disposed) return;
         const freshHead = appendCatalog(null, first);
         const cached = this.state.snapshot;
-        if (cached && firstPageMatches(cached, first))
+        if (
+          cached &&
+          firstPageMatches(cached, first) &&
+          !(
+            this.scope.source === "Pica" &&
+            !cached.complete &&
+            cached.pageEnds === undefined
+          )
+        )
           this.publish({ freshness: "verified-cache" });
         else this.accept(freshHead);
         this.verified = true;

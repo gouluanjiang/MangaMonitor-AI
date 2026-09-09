@@ -91,12 +91,11 @@ fn unknown_metadata_is_not_invented_as_false_or_zero() {
     assert!(item.authors.is_empty());
     assert!(!item.cover_available);
     assert!(protocol::work(Source::Pica, &json!({"_id":PICA_ID}), false).is_err());
-    assert!(protocol::work(
+    assert_eq!(protocol::work(
         Source::Pica,
         &json!({"_id":PICA_ID,"title":"T","pagesCount":-1}),
         false
-    )
-    .is_err());
+    ).unwrap().0.page_count, None);
 }
 
 #[test]
@@ -1347,4 +1346,101 @@ fn persistent_work_and_folder_dtos_reject_extra_fields() {
     assert!(serde_json::from_value::<SourceWork>(work.clone()).is_ok());
     work["token"] = json!("not-allowed");
     assert!(serde_json::from_value::<SourceWork>(work).is_err());
+}
+
+#[test]
+fn pica_negative_page_count_is_unknown_without_relaxing_other_counts() {
+    for value in [-1, -7, i64::MIN] {
+        let (work, _) = protocol::work(
+            Source::Pica,
+            &json!({"_id":PICA_ID,"title":"T","pagesCount":value,"epsCount":3}),
+            true,
+        )
+        .unwrap();
+        assert_eq!(work.page_count, None);
+        assert_eq!(work.chapter_count, Some(3));
+        assert_eq!(work.favorite, Some(true));
+    }
+    for value in [json!(0), json!(17), json!("17")] {
+        let (work, _) = protocol::work(
+            Source::Pica,
+            &json!({"_id":PICA_ID,"title":"T","pagesCount":value}),
+            false,
+        )
+        .unwrap();
+        assert!(work.page_count.is_some());
+    }
+    for value in [
+        json!("-7"),
+        json!(-1.5),
+        json!(false),
+        json!({}),
+        json!(9_007_199_254_740_992_u64),
+    ] {
+        assert!(protocol::work(
+            Source::Pica,
+            &json!({"_id":PICA_ID,"title":"T","pagesCount":value}),
+            true,
+        )
+        .is_err());
+    }
+    assert!(protocol::work(
+        Source::Pica,
+        &json!({"_id":PICA_ID,"title":"T","epsCount":-7}),
+        true,
+    )
+    .is_err());
+    assert!(protocol::work(
+        Source::Jm,
+        &json!({"id":"123","name":"T","total_photos":-7}),
+        true,
+    )
+    .is_err());
+}
+
+#[test]
+fn identical_pica_favorite_records_keep_source_entry_count_but_conflicts_stay_invalid() {
+    let record = json!({"_id":PICA_ID,"title":"T","pagesCount":-7});
+    let page = json!({"comics":{"page":1,"pages":1,"limit":20,"total":2,"docs":[record.clone(),record]}});
+    let (accepted, _) = protocol::page(Source::Pica, &page, 1, true).unwrap();
+    assert_eq!(accepted.items.len(), 2);
+    assert_eq!(accepted.total, Some(2));
+    assert_eq!(accepted.has_more, Some(false));
+    assert_eq!(accepted.items[0], accepted.items[1]);
+    assert!(protocol::page(Source::Pica, &page, 1, false).is_err());
+    let mut changed = page.clone();
+    changed["comics"]["docs"][1]["title"] = json!("Different");
+    assert!(protocol::page(Source::Pica, &changed, 1, true).is_err());
+    changed = page;
+    changed["comics"]["total"] = json!(1);
+    assert!(protocol::page(Source::Pica, &changed, 1, true).is_err());
+    let jm = json!({"total":"2","folder_list":[],"list":[{"id":"123","name":"T"},{"id":"123","name":"T"}]});
+    assert!(protocol::page(Source::Jm, &jm, 1, true).is_err());
+}
+
+#[tokio::test]
+async fn pica_favorites_register_negative_count_and_identical_duplicates_without_more_requests() {
+    let record = json!({"_id":PICA_ID,"title":"T","pagesCount":-7,"thumb":{"fileServer":"https://storage1.picacomic.com","path":"cover/test.jpg"}});
+    let sources = scripted(vec![Ok(json!({"comics":{"page":1,"pages":1,"limit":20,"total":2,"docs":[record.clone(),record]}}))]);
+    let session = session(Source::Pica);
+    let page = sources
+        .favorites(
+            &session,
+            FavoritePageRequest {
+                page: 1,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.items[0].page_count, None);
+    assert!(page.items[0].cover_available);
+    assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+    assert!(matches!(
+        session.covers.lock().unwrap().lookup(PICA_ID),
+        CoverLookup::Ready(_)
+    ));
 }

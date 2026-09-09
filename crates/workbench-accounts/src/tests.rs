@@ -741,6 +741,7 @@ fn catalog_snapshot() -> CatalogSnapshot {
         complete: true,
         updated_at: crate::cache::now_ms().unwrap(),
         first_page_ids: vec!["123".into()],
+        page_ends: None,
     }
 }
 fn cover_image() -> String {

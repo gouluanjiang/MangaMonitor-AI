@@ -37,3 +37,21 @@ export function boundSourceCache<T extends object>(
   }
   return Object.fromEntries(kept.reverse());
 }
+
+/** Normalized immutable metadata DTOs, including unknown values represented as null. */
+export function sameSourceWork(a: SourceWork, b: SourceWork): boolean {
+  return (
+    a.source === b.source &&
+    a.workId === b.workId &&
+    a.title === b.title &&
+    a.description === b.description &&
+    a.favorite === b.favorite &&
+    a.chapterCount === b.chapterCount &&
+    a.pageCount === b.pageCount &&
+    a.coverAvailable === b.coverAvailable &&
+    a.authors.length === b.authors.length &&
+    a.authors.every((author, i) => author === b.authors[i]) &&
+    a.tags.length === b.tags.length &&
+    a.tags.every((tag, i) => tag === b.tags[i])
+  );
+}

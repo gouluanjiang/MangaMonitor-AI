@@ -34,6 +34,8 @@ export interface CatalogSnapshot extends SourcePage {
   complete: boolean;
   updatedAt: number;
   firstPageIds: string[];
+  /** Cumulative entry counts after each source page; absent in legacy caches. */
+  pageEnds?: number[];
 }
 export interface CatalogResult extends SourceScope {
   snapshot: CatalogSnapshot | null;

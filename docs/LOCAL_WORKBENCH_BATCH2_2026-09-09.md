@@ -2,7 +2,7 @@
 
 日期：2026-09-09。项目：MangaMonitor-AI。开发分支：`codex/local-workbench-preview`。沿用[草稿 PR #19](https://github.com/gouluanjiang/MangaMonitor-AI/pull/19)。
 
-本批桌面基础、本地设置和书单管理已完成实现及本批验收，Windows 实际程序保存、关闭进程和重启读取通过，开发安装包已交付。作品、账号和队列继续使用界面明确标识的模拟数据，原生设置及书单保存是真实的应用数据文件操作。本批没有进行真实账号操作、漫画下载、漫画入库或生产启用。
+本批桌面基础、本地设置和书单管理已完成实现及技术验证，Windows 实际程序保存、关闭进程和重启读取通过，开发安装包已交付。作品、账号和队列继续使用界面明确标识的模拟数据，原生设置及书单保存是真实的应用数据文件操作。本批没有进行真实账号操作、漫画下载、漫画入库或生产启用。
 
 ## 本批交付功能
 
@@ -37,16 +37,16 @@ Windows 文件位置为：
 
 ## 验证结果
 
-完整验证的代码提交为 `b3a700412988b3b0a366dc0d3aa9e7d5a7934aa4`；GitHub 测试了它与 main `69fcf1dd24526b5920406c9b97bb3e8b8909c6c6` 的合并提交 `6fc69e76277e61e6ec864b12b17d5b3e67e4a323`。下列计数均由该检查点的完成日志核实。后续提交发现 Linux 子进程句柄继承期间的偶发 BUSY，现已加入显式解锁及两项确定性回归，修复后的完整 CI 正在验证；下列工件暂为修复前检查点。
+完整验证的代码提交为 `8183f6f2a8a6398f7e7556422bc56b136e171c5e`；GitHub 测试了它与 main `69fcf1dd24526b5920406c9b97bb3e8b8909c6c6` 的合并提交 `a1ee3c87aad5876490cfe124ce8f53500a4e587e`。下列计数均由该提交的完成日志核实，包含最后的 Unix 文件锁释放修复；后续报告提交不改变应用代码。
 
 | 检查 | 结果 | 证据 |
 | --- | --- | --- |
-| Node 数据与状态回归 | 45 项通过 | [UI 工作流](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34322865993) |
-| Chromium 浏览器回归 | 43 项通过，含 13 项书单场景及异步设置保存用例 | [UI 工作流](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34322865993) |
+| Node 数据与状态回归 | 45 项通过 | [UI 工作流](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34324580535) |
+| Chromium 浏览器回归 | 43 项通过，含 13 项书单场景及异步设置保存用例 | [UI 工作流](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34324580535) |
 | 前端格式、TypeScript、Vite 构建 | 通过 | 同上 |
-| Linux 工作区回归 | 459 项通过，含原生存储 24 项；Clippy 和执行约束检查通过 | [基线工作流](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34322865999) |
+| Linux 工作区回归 | 461 项通过，含原生存储 26 项（24 项集成回归及 2 项 Unix 锁释放回归）；Clippy 和执行约束检查通过 | [基线工作流](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34324580569) |
 | Windows 既有核心回归 | 63 项通过，7 个 CLI 构建通过 | 同上 |
-| Windows 原生文档存储 | 23 项通过，包括目录改名防护、并发冲突、重读及图片验证 | [桌面工作流检查点](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34322866007) |
+| Windows 原生文档存储 | 23 项通过，包括目录改名防护、并发冲突、重读及图片验证 | [桌面工作流检查点](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34324580601) |
 | 原生 IPC 权限及恢复测试 | 10 项通过，桌面 Clippy 通过 | 同上 |
 | Windows 实际 WebView 与进程重启 | 通过：真实 WebView、IPC、磁盘文档和关闭进程后重读；待复核作品仍不可下载 | 桌面工作流记录 `NATIVE_WEBVIEW_SMOKE_PASSED` |
 | NSIS 开发安装包 | 构建、实际应用 smoke 和工件下载校验通过 | Windows x64 开发版，未签名 |
@@ -59,15 +59,15 @@ Windows 文件位置为：
 
 ## Windows 开发安装包
 
-[下载已验证 CI 工件](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34322866007/artifacts/10092649322)。文件为 `MangaMonitor Dev_0.2.0_x64-setup.exe`，大小 2,322,814 字节，Windows x64、按当前用户安装。GitHub 工件保留 7 天，当前到期时间为 2026-09-16；另已提供本地交付副本。
+[下载已验证 CI 工件](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34324580601/artifacts/10093318892)。文件为 `MangaMonitor Dev_0.2.0_x64-setup.exe`，大小 2,325,704 字节，Windows x64、按当前用户安装。GitHub 工件保留 7 天，当前到期时间为 2026-09-16；另已提供本地交付副本。
 
 安装程序 SHA-256：
 
-`D72EE1C62767F905A296BA661BD9DCF7F95E291F03F737FB34AFD2A6BEA037BC`
+`83B16DE893ED8D9FBBF71C07D00B008207EEBD854474DB2F524B4B6C5DB78526`
 
 工件 ZIP SHA-256（下载后已与 Actions 摘要一致）：
 
-`ed438b0043e2592cdb7954a750a5e031496b4a987afbe8444255c3bd9980fde3`
+`ea37a9a0bc74f64650e85c003aafa773b6547df8770c5a434955f6612e4ff891`
 
 签名检查为 `NotSigned`。未在用户电脑执行安装器；CI 直接运行与安装包同次构建的应用 exe，验证原生保存和进程重启，没有宣称人工完成安装向导或系统文件选择器验收。
 
@@ -76,6 +76,7 @@ Windows 文件位置为：
 - 把设置从同步浏览器写入接到异步适配层，保存反馈等待真正完成；相应回归也等待成功后才刷新。
 - 将同一文档的读取/保存互斥，避免旧读取响应回退刚保存的新状态。
 - 在书单弹窗内提供重新读取，冲突恢复不再要求关闭弹窗丢弃草稿。
+- 为原生文件锁增加显式解锁，避免 Unix 子进程复制的描述符继续持锁；新增确定性测试覆盖复制句柄存活时的正常返回、损坏文档早退，以及旧句柄关闭不干扰下一持有者。真实跨进程 BUSY 和版本冲突保护保持启用。
 - 修正 Windows 目录句柄的共享访问行为，目录改名防护回归保持启用并已通过。
 - 将桌面格式检查限定到 GUI 包，避免无关地改写已有核心工作区。
 - 为 Windows 原生测试和应用统一嵌入 Common-Controls 组件清单，修复测试程序启动错误。

@@ -66,7 +66,8 @@ jobs:
         working-directory: apps/local-workbench
         run: pnpm install --frozen-lockfile
       - name: Check desktop Rust formatting
-        run: cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --all -- --check
+        # --all follows path dependencies into the separate headless workspace.
+        run: cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --package mangamonitor-workbench-preview -- --check
       - name: Test offline native document storage
         run: cargo +1.98.1 test --locked -p workbench-storage -- --test-threads=2
       - name: Build frontend assets for native context tests

@@ -51,8 +51,9 @@ jobs:
           run_install: false
       - name: Set up Rust and the MSVC target
         run: rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
-      - name: Cache native build dependencies
-        uses: actions/cache@v4
+      - name: Restore native build dependencies
+        id: native-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -80,6 +81,77 @@ jobs:
       - name: Build development NSIS installer
         working-directory: apps/local-workbench
         run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+      - name: Upload development installer for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-dev-windows-nsis-${{ github.sha }}
+          path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          retention-days: 7
+          if-no-files-found: error
+      - name: Save verified native build before WebView smoke
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            apps/local-workbench/src-tauri/target
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Ensure WebView2 Runtime for the CI application
+        working-directory: apps/local-workbench
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          # Microsoft documents pv > 0.0.0.0 in either location as installed:
+          # https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
+          function Get-WebView2RuntimeVersion {
+            $registryKeys = @(
+              'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+              'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+            )
+            foreach ($registryKey in $registryKeys) {
+              $pv = Get-ItemPropertyValue -LiteralPath $registryKey -Name 'pv' -ErrorAction SilentlyContinue
+              [version]$parsedVersion = $null
+              if ([version]::TryParse([string]$pv, [ref]$parsedVersion) -and $parsedVersion -gt [version]'0.0.0.0') {
+                return $parsedVersion.ToString()
+              }
+            }
+            return $null
+          }
+
+          $evidenceDirectory = Join-Path $PWD 'native-smoke-results'
+          [System.IO.Directory]::CreateDirectory($evidenceDirectory) | Out-Null
+          $runtimeEvidence = [ordered]@{
+            versionBefore = $null
+            installAttempted = $false
+            installerExitCode = $null
+            versionAfter = $null
+            error = $null
+          }
+          try {
+            $runtimeVersion = Get-WebView2RuntimeVersion
+            $runtimeEvidence.versionBefore = $runtimeVersion
+            if (-not $runtimeVersion) {
+              $runtimeEvidence.installAttempted = $true
+              $bootstrapperPath = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+              Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapperPath
+              $installer = Start-Process -FilePath $bootstrapperPath -ArgumentList '/silent', '/install' -WindowStyle Hidden -Wait -PassThru
+              $runtimeEvidence.installerExitCode = $installer.ExitCode
+            }
+            $runtimeVersion = Get-WebView2RuntimeVersion
+            $runtimeEvidence.versionAfter = $runtimeVersion
+            if (-not $runtimeVersion) {
+              throw "WebView2 Runtime is still missing after CI setup. Bootstrapper exit code: $($runtimeEvidence.installerExitCode)"
+            }
+            Write-Output "WebView2 Runtime ready: $runtimeVersion"
+          } catch {
+            $runtimeEvidence.error = $_.Exception.Message
+            throw
+          } finally {
+            $runtimeEvidence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'webview2-runtime.json') -Encoding utf8
+          }
       - name: Verify the actual Windows WebView and restart persistence
         working-directory: apps/local-workbench
         timeout-minutes: 5
@@ -92,10 +164,3 @@ jobs:
           path: apps/local-workbench/native-smoke-results/
           retention-days: 7
           if-no-files-found: ignore
-      - name: Upload development installer for review
-        uses: actions/upload-artifact@v4
-        with:
-          name: mangamonitor-dev-windows-nsis-${{ github.sha }}
-          path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-          retention-days: 7
-          if-no-files-found: error

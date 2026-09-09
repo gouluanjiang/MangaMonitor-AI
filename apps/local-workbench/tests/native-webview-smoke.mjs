@@ -3,7 +3,8 @@
 import { chromium, expect } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 
@@ -21,6 +22,38 @@ const documents = path.join(
 );
 const output = path.resolve("native-smoke-results");
 await mkdir(output, { recursive: true });
+// Share one isolated WebView profile across the two process launches. The
+// application's native documents still use their actual application data path.
+const webviewProfile = await mkdtemp(
+  path.join(tmpdir(), "mangamonitor-webview-"),
+);
+
+async function startupDiagnostics(child, debuggingPort, lastConnectionError) {
+  // Only inspect this owned CI application and its descendants, never unrelated
+  // runner command lines or environment variables that could contain secrets.
+  const processes = spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-Command",
+      `$all = @(Get-CimInstance Win32_Process); $owned = @(${Number(child.pid) || 0}); do { $before = $owned.Count; $owned += @($all | Where-Object { $_.ParentProcessId -in $owned -and $_.ProcessId -notin $owned } | ForEach-Object { $_.ProcessId }) } while ($owned.Count -gt $before); @($all | Where-Object { $_.ProcessId -in $owned } | Select-Object Name, ProcessId, ParentProcessId, @{Name='HasRemoteDebuggingPort';Expression={$_.CommandLine -match '--remote-debugging-port='}}) | ConvertTo-Json -Compress`,
+    ],
+    { windowsHide: true, encoding: "utf8", timeout: 10_000 },
+  );
+  const diagnostic = {
+    pid: child.pid,
+    exitCode: child.exitCode,
+    debuggingPort,
+    lastConnectionError,
+    processes: processes.stdout?.trim(),
+    processInspectionStatus: processes.status,
+  };
+  await writeFile(
+    path.join(output, "startup-diagnostics.json"),
+    JSON.stringify(diagnostic, null, 2),
+  );
+  console.error("NATIVE_STARTUP_DIAGNOSTICS", diagnostic);
+}
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function port() {
@@ -42,6 +75,7 @@ async function launch() {
       ...process.env,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
         "--remote-debugging-port=" + debuggingPort,
+      WEBVIEW2_USER_DATA_FOLDER: webviewProfile,
     },
   });
   let processError = null;
@@ -52,6 +86,7 @@ async function launch() {
   child.stderr.on("data", (data) => process.stderr.write(data));
   let browser;
   let page;
+  let lastConnectionError;
   async function stop() {
     if (browser) await browser.close().catch(() => undefined);
     if (child.pid && child.exitCode === null)
@@ -79,8 +114,8 @@ async function launch() {
         const details = await response.json();
         endpoint = details.webSocketDebuggerUrl;
         if (endpoint) break;
-      } catch {
-        /* The real WebView may still be starting. */
+      } catch (error) {
+        lastConnectionError = error.cause?.code ?? error.name;
       }
       await delay(250);
     }
@@ -118,6 +153,10 @@ async function launch() {
       .toBe(true);
     return { page, stop };
   } catch (error) {
+    await startupDiagnostics(child, debuggingPort, lastConnectionError).catch(
+      (diagnosticError) =>
+        console.error("Startup inspection failed:", diagnosticError.message),
+    );
     if (page)
       await page
         .screenshot({ path: path.join(output, "startup-failure.png") })
@@ -189,6 +228,10 @@ try {
     "NATIVE_WEBVIEW_SMOKE_PASSED: actual Windows WebView, native IPC, disk revision and process restart; unresolved work remains blocked from download.",
   );
 } catch (error) {
+  await writeFile(
+    path.join(output, "failure.txt"),
+    String(error.stack ?? error),
+  );
   if (running?.page)
     await running.page
       .screenshot({ path: path.join(output, "native-webview-failure.png") })

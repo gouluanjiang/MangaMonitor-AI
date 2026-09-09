@@ -246,7 +246,7 @@ try {
   ).toBeVisible();
   await page.getByTestId("nav-library").click();
   await page.getByRole("button", { name: "全部作品", exact: true }).click();
-  await page.getByTestId("open-summer").click();
+  await page.getByTestId("cover-grid").getByTestId("open-summer").click();
   await page.getByTestId("detail-booklist").click();
   await page.getByTestId("booklist-picker-create").click();
   await page.getByTestId("booklist-picker-name").fill(listName);

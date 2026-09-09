@@ -1796,7 +1796,11 @@ export default function App() {
               </>
             )}
           </div>
-          <div ref={setSourceSearchHost} hidden={!sourceActive} />
+          <div
+            className="source-search-host"
+            ref={setSourceSearchHost}
+            hidden={!sourceActive}
+          />
           {!sourceActive && (
             <label className="search-box">
               <Icon name="search" size={17} />

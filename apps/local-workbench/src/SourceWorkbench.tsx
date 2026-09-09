@@ -282,7 +282,7 @@ export function SourceWorkbench({
     setAuthorSearch(false);
     setSelection([]);
     setSelectionMode(false);
-    setNotice("来源已改变，临时选择已清空。");
+    setNotice(selection.length ? "来源已改变，临时选择已清空。" : "");
   }
   useEffect(() => {
     currentScope.current = scope;
@@ -988,33 +988,33 @@ export function SourceWorkbench({
               <p className="source-muted">
                 网站收藏、本机关注与本地书单分别保存。当前没有操作漫画文件或下载队列。
               </p>
+              {followingFeedback()}
+              <section className="source-description">
+                <h2>简介</h2>
+                <p className={expanded ? "" : "is-collapsed"}>
+                  {detail.description ?? "来源未提供简介。"}
+                </p>
+                {detail.description && detail.description.length > 180 && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setExpanded(!expanded)}
+                  >
+                    {expanded ? "收起简介" : "展开简介"}
+                  </button>
+                )}
+              </section>
+              <section>
+                <h2>来源信息</h2>
+                <p>
+                  {sourceLabel(source)} · {detail.workId}
+                </p>
+                <p className="source-muted">
+                  当前仅取得作品元数据，章节目录与本地文件尚未接入。
+                </p>
+              </section>
             </div>
           </div>
-          {followingFeedback()}
-          <section className="source-description">
-            <h2>简介</h2>
-            <p className={expanded ? "" : "is-collapsed"}>
-              {detail.description ?? "来源未提供简介。"}
-            </p>
-            {detail.description && detail.description.length > 180 && (
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setExpanded(!expanded)}
-              >
-                {expanded ? "收起简介" : "展开简介"}
-              </button>
-            )}
-          </section>
-          <section>
-            <h2>来源信息</h2>
-            <p>
-              {sourceLabel(source)} · {detail.workId}
-            </p>
-            <p className="source-muted">
-              当前仅取得作品元数据，章节目录与本地文件尚未接入。
-            </p>
-          </section>
         </>
       )}
     </div>
@@ -1031,11 +1031,6 @@ export function SourceWorkbench({
                   ? "关注"
                   : "来源搜索"}
           </h1>
-          <p>
-            {view === "following"
-              ? "本机作者与作品关注；手动查看来源，不代表后台监控。"
-              : "按来源与账号分别读取，作品可加入本地书单。"}
-          </p>
           <p className="source-muted">
             {sourceLabel(source)} ·{" "}
             {loadingAccounts
@@ -1444,6 +1439,11 @@ export function SourceWorkbench({
             </>
           )}
         </>
+      )}
+      {view === "following" && followingTab === "works" && !authorSearch && (
+        <p className="source-muted">
+          这里的作品关注保存在本机当前账号下，仅手动查看来源，尚未启用自动监控。
+        </p>
       )}
     </>
   );

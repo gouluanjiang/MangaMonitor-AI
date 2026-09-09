@@ -772,3 +772,80 @@ test("an explicit expired session refreshes account state and removes the connec
     ),
   ).toBe(1);
 });
+
+test("source search stays right-aligned at baseline width and fits a narrow window", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page);
+  await openFavorites(page);
+  await expect(page.getByTestId("source-card-JM:123")).toBeVisible();
+  const search = page.getByTestId("source-search-control");
+  const geometry = () =>
+    search.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const header = element.closest("header")!;
+      const bounds = header.getBoundingClientRect();
+      const style = getComputedStyle(header);
+      return {
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        availableRight: bounds.right - parseFloat(style.paddingRight),
+        overflow: Math.max(
+          document.documentElement.scrollWidth -
+            document.documentElement.clientWidth,
+          header.scrollWidth - header.clientWidth,
+        ),
+      };
+    });
+  for (const navigation of ["nav-favorites", "nav-discovery", "nav-authors"]) {
+    await page.getByTestId(navigation).click();
+    await expect(search).toBeVisible();
+    await expect
+      .poll(async () => (await geometry()).width)
+      .toBeGreaterThanOrEqual(478);
+    expect((await geometry()).width).toBeLessThanOrEqual(482);
+    expect(
+      Math.abs((await geometry()).right - (await geometry()).availableRight),
+    ).toBeLessThanOrEqual(2);
+    expect((await geometry()).left).toBeGreaterThan(1672 / 2);
+  }
+  await page.getByTestId("nav-favorites").click();
+  await page.getByTestId("source-open-JM:123").click();
+  await expect(page.getByTestId("source-detail").locator("h1")).toBeVisible();
+  const detailLayout = await page
+    .getByTestId("source-detail")
+    .evaluate((element) => {
+      const cover = element
+        .querySelector(".source-detail-main > .source-cover")!
+        .getBoundingClientRect();
+      const info = element.querySelector(".source-detail-info")!;
+      const description = info
+        .querySelector(".source-description")!
+        .getBoundingClientRect();
+      return {
+        coverWidth: cover.width,
+        coverHeight: cover.height,
+        coverRight: cover.right,
+        descriptionLeft: description.left,
+      };
+    });
+  expect(detailLayout.coverWidth).toBeGreaterThanOrEqual(420);
+  expect(detailLayout.coverWidth).toBeLessThanOrEqual(440);
+  expect(detailLayout.coverHeight).toBeGreaterThanOrEqual(620);
+  expect(
+    detailLayout.descriptionLeft - detailLayout.coverRight,
+  ).toBeGreaterThanOrEqual(48);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("source-search-input").fill("合成验收来源查询");
+  await expect(page.getByTestId("source-search-submit")).toBeVisible();
+  await expect
+    .poll(async () => (await geometry()).overflow)
+    .toBeLessThanOrEqual(1);
+  const narrow = await geometry();
+  expect(narrow.left).toBeGreaterThanOrEqual(0);
+  expect(narrow.right).toBeLessThanOrEqual(390);
+  expect(narrow.width).toBeGreaterThan(250);
+});

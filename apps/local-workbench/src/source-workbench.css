@@ -9,7 +9,8 @@
 .source-workbench.has-source-selection {
   padding-bottom: 150px;
 }
-.source-heading {
+.page-heading.source-heading {
+  margin-bottom: 24px;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -36,6 +37,13 @@
 }
 .source-notice p {
   margin: 0 0 8px;
+}
+.source-search-host {
+  margin-left: auto;
+  flex: 0 1 480px;
+  width: 480px;
+  max-width: 100%;
+  min-width: 0;
 }
 .source-search {
   display: flex;
@@ -74,7 +82,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 22px;
+  margin-bottom: 16px;
 }
 .source-tabs > button {
   color: var(--muted);
@@ -112,8 +120,8 @@
   gap: 20px;
   flex-wrap: wrap;
   border-bottom: 1px solid var(--line);
-  padding: 12px 0 16px;
-  margin-bottom: 18px;
+  padding: 8px 0 12px;
+  margin-bottom: 14px;
 }
 .source-toolbar-leading,
 .source-actions {
@@ -296,11 +304,12 @@
 }
 .source-detail-main {
   display: grid;
-  grid-template-columns: minmax(180px, 300px) minmax(0, 1fr);
-  gap: 38px;
+  grid-template-columns: min(30%, 435px) minmax(0, 1fr);
+  gap: 50px;
   margin: 16px 0 36px;
 }
 .source-detail-main > .source-cover {
+  aspect-ratio: 29/43;
   align-self: start;
 }
 .source-detail-info h1 {
@@ -460,6 +469,9 @@
   }
 }
 @media (max-width: 900px) {
+  .source-detail-main > .source-cover {
+    aspect-ratio: 5/7;
+  }
   .source-grid,
   .source-grid[data-density="5"],
   .source-grid[data-density="9"] {
@@ -481,6 +493,13 @@
   }
   .source-author-row > .source-actions {
     grid-column: 1/-1;
+  }
+}
+@media (max-width: 750px) {
+  .source-search-host {
+    margin-left: 0;
+    flex: 1 1 0;
+    width: auto;
   }
 }
 @media (max-width: 600px) {

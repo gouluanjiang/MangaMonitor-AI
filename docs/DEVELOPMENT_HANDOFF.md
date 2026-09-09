@@ -2,6 +2,16 @@
 
 Updated 2026-09-09. This document separates the current continuation from historical milestone reports.
 
+## Current: session-only covers, Windows 0.3.2 (2026-09-09)
+
+Application head `af35f96904b0d59cba04591a303933e3a3b0b3ca` (CI merge `60d549e61ba1e935ecac3045346f2c83a329aa52`) is verified. The user's final requirement supersedes the older 0.3.1 disk-cover policy: retain successful covers only for the running application, reuse through virtual-card unmount/scroll/detail/settings visits, release on exit and reload next launch. No native cover command persists image bytes. Catalog metadata/read progress, following, preferences, booklists and remembered sessions remain persistent. Fixed registered legacy covers are retired once during DesktopStore initialization before document readers receive the shared store; cleanup failure does not block opening documents. This ordering fixes the actual WebView startup BUSY race found during validation.
+
+Verification: 79 Node, 59 Chromium, 129 Windows account/credential/source/storage, 17 native IPC/startup, 568 Linux workspace and 63 Windows core tests pass, plus isolated Credential Manager parent/child, Clippy, NSIS and actual Windows WebView/process restart. Root reviewed the bounded changes and the CI-built synthetic interface, and verified the final installer archive, version and hashes. See [the 0.3.2 report](LOCAL_WORKBENCH_COVER_SESSION_2026-09-09.md) for exact runs/artifact/digests and limits. PR #19 stays draft.
+
+User says JM reversal is now correct: do not reopen or change it. Pica's initial transient example recovered; remaining cover/detail failures also occur on its website according to user comparison. Do not infer work deletion or put real example IDs into fixtures. Fixed JM fallback origins have offline/pinned-source evidence only; installed real JM covers and run-scoped retention still need user retest. Website favorite write remains unverified. Real inventory/download integration comes later; keep production disabled and existing authority gates intact.
+
+The 0.3.1 and earlier sections below are historical snapshots; their cover disk-cache policy and next-install instruction are superseded by this section.
+
 ## Favorites and cover repair delivered (2026-09-09)
 
 The user has now accepted real JM/Pica login, favorites reading/refresh, existing source ordering, title/author lookup, local following/booklist restart persistence, and remembered-session restart. These are user-reported results, independent of CI. The earlier suggestion that JM's default order was wrong was explicitly withdrawn: retain its default favorite-time order and do not reopen that diagnosis.

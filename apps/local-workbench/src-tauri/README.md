@@ -36,8 +36,16 @@ Use Node 24, pnpm 11.19.0, Rust 1.98.1 and the Windows MSVC toolchain. From
 frozen dependency install. Keep this crate outside the root Cargo workspace:
 headless Linux checks do not need GTK/WebKit. Both Cargo lockfiles must be
 committed. The dedicated Windows workflow runs storage tests, mock-runtime IPC
-tests using the real capabilities, Clippy, and an NSIS build with `--locked`.
-It uploads an unsigned development installer artifact; it does not create a release.
+tests using the real capabilities, Clippy, an NSIS build with `--locked`, and a
+mandatory smoke test of the actual built application. The smoke uses the CI
+runner's WebView2 Runtime, an isolated WebView profile and real IPC to save
+preferences/booklists, then terminates and reopens the process to check persistence.
+It runs only in disposable Windows GitHub CI, never against a user's application data.
+For elevated runners, the smoke uses supported per-application HKLM WebView2
+overrides because current runtimes ignore environment overrides at high integrity.
+It refuses pre-existing values and removes its own values after the test.
+The workflow retains its unsigned installer before smoke for diagnosis; artifact
+existence alone is not a passed desktop check. It does not create a release.
 The installer uses per-user installation and may download the WebView2 bootstrapper
 when the runtime is absent.
 

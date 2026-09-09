@@ -26,6 +26,9 @@ type MockOptions = {
   expireJM?: boolean;
   collectionCount?: number;
   collectionCover?: boolean;
+  collectionAuthors?: boolean;
+  holdPicaReversePage?: number;
+  picaPageFailureOnce?: number;
   coverFailureOnce?: boolean;
   cacheSnapshot?: CatalogSnapshot;
 };
@@ -49,8 +52,10 @@ type Hooks = {
   following: Record<Source, FollowingSnapshot>;
   loginStarted: boolean;
   jmHeld: boolean;
+  picaReverseHeld: boolean;
   releaseLogin?: (success: boolean) => void;
   releaseJM?: () => void;
+  releasePicaReverse?: () => void;
 };
 declare global {
   interface Window {
@@ -237,60 +242,200 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   }
 });
 
-test("Pica collection-time reversal loads the remote last end immediately and then follows the viewport", async ({
+test("explicit Pica time switches read the complete native order and reuse complete directions for title and author filtering", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
-  await installMock(page, { collectionCount: 2000 });
+  await installMock(page, { collectionCount: 65, collectionAuthors: true });
   await openFavorites(page);
   await page.getByTestId("source-tab-Pica").click();
   await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  await page.waitForTimeout(700);
+  expect(await picaFavoritePages(page, false)).toEqual([1]);
   await page.getByTestId("source-toggle-selection").click();
   await page.getByTestId("source-select-Pica:1").check();
   await page
     .getByTestId("source-workbench")
     .locator(".source-sort select")
     .selectOption("source-reverse");
-  await expect(page.getByTestId("source-card-Pica:2000")).toBeVisible();
+  await expect(page.getByTestId("source-card-Pica:65")).toBeVisible();
   await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
   await expect(page.getByTestId("source-workbench")).toContainText(
     "临时选择已清空",
   );
   await expect(page.getByTestId("source-next-page")).toHaveCount(0);
-  expect(
-    await page.evaluate(() =>
-      window.sourceTest.calls
-        .filter(
-          (call) =>
-            call.command === "source_query" &&
-            call.source === "Pica" &&
-            call.reverse,
-        )
-        .map((call) => call.page),
-    ),
-  ).toEqual([1]);
-  await page.getByTestId("collection-sentinel").scrollIntoViewIfNeeded();
   await expect(page.getByTestId("collection-progress")).toContainText(
-    "40 / 2000",
+    "已读取全部收藏 · 已读取 65 / 65",
   );
-  await page.getByTestId("collection-pause").click();
-  const count = await page.evaluate(
-    () =>
-      window.sourceTest.calls.filter(
-        (call) => call.command === "source_query" && call.source === "Pica",
-      ).length,
+  expect(await picaFavoritePages(page, true)).toEqual([1, 2, 3, 4]);
+  await expect(page.getByTestId("source-search-input")).toHaveAttribute(
+    "placeholder",
+    "搜索全部收藏的作品或作者…",
   );
-  await page.getByTestId("collection-sentinel").scrollIntoViewIfNeeded();
-  await expect(page.getByTestId("collection-pause")).toHaveText("继续自动读取");
-  expect(
-    await page.evaluate(
-      () =>
-        window.sourceTest.calls.filter(
-          (call) => call.command === "source_query" && call.source === "Pica",
-        ).length,
-    ),
-  ).toBe(count);
+  for (const query of ["作品 1 账号", "目录作者:1:"]) {
+    await page.getByTestId("source-search-input").fill(query);
+    await expect(page.getByTestId("source-grid")).toHaveAttribute(
+      "data-total-items",
+      "1",
+    );
+    await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  }
+  await page.getByTestId("source-search-input").fill("");
+  const sort = page
+    .getByTestId("source-workbench")
+    .locator(".source-sort select");
+  await sort.selectOption("source");
+  await expect
+    .poll(() => picaFavoritePages(page, false))
+    .toEqual([1, 1, 2, 3, 4]);
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "已读取全部收藏 · 已读取 65 / 65",
+  );
+  await expect(
+    page.getByTestId("source-grid").locator("article").first(),
+  ).toHaveAttribute("data-source-work-key", "Pica:1");
+  expect(await picaFavoritePages(page, false)).toEqual([1, 1, 2, 3, 4]);
+  await sort.selectOption("source-reverse");
+  await expect
+    .poll(() => picaFavoritePages(page, true))
+    .toEqual([1, 2, 3, 4, 1]);
+  await expect(
+    page.getByTestId("source-grid").locator("article").first(),
+  ).toHaveAttribute("data-source-work-key", "Pica:65");
+  await page.waitForTimeout(700);
+  expect(await picaFavoritePages(page, true)).toEqual([1, 2, 3, 4, 1]);
 });
+
+test("Pica complete reading stays paused across settings and verifies before resuming its retained direction", async ({
+  page,
+}) => {
+  await installMock(page, { collectionCount: 65, holdPicaReversePage: 2 });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  await page
+    .getByTestId("source-workbench")
+    .locator(".source-sort select")
+    .selectOption("source-reverse");
+  await expect
+    .poll(() => page.evaluate(() => window.sourceTest.picaReverseHeld))
+    .toBe(true);
+  await page
+    .getByTestId("collection-pause")
+    .evaluate((button: HTMLButtonElement) => button.click());
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-favorites").click();
+  await expect(page.getByTestId("collection-pause")).toHaveText("继续自动读取");
+  await page.evaluate(() => window.sourceTest.releasePicaReverse?.());
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "40 / 65",
+  );
+  await page.waitForTimeout(700);
+  expect(await picaFavoritePages(page, true)).toEqual([1, 2]);
+  await page
+    .getByTestId("collection-pause")
+    .evaluate((button: HTMLButtonElement) => button.click());
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "已读取全部收藏 · 已读取 65 / 65",
+  );
+  expect(await picaFavoritePages(page, true)).toEqual([1, 2, 1, 3, 4]);
+});
+
+test("a late Pica reverse page cannot overwrite the new complete forward direction", async ({
+  page,
+}) => {
+  await installMock(page, { collectionCount: 65, holdPicaReversePage: 2 });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  const sort = page
+    .getByTestId("source-workbench")
+    .locator(".source-sort select");
+  await sort.selectOption("source-reverse");
+  await expect
+    .poll(() => page.evaluate(() => window.sourceTest.picaReverseHeld))
+    .toBe(true);
+  await sort.selectOption("source");
+  await expect
+    .poll(() => picaFavoritePages(page, false))
+    .toEqual([1, 1, 2, 3, 4]);
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "已读取全部收藏 · 已读取 65 / 65",
+  );
+  await page.evaluate(() => window.sourceTest.releasePicaReverse?.());
+  await page.waitForTimeout(700);
+  await expect(
+    page.getByTestId("source-grid").locator("article").first(),
+  ).toHaveAttribute("data-source-work-key", "Pica:1");
+  await expect(page.getByTestId("source-grid")).toHaveAttribute(
+    "data-total-items",
+    "65",
+  );
+  expect(await picaFavoritePages(page, true)).toEqual([1, 2]);
+  expect(await picaFavoritePages(page, false)).toEqual([1, 1, 2, 3, 4]);
+});
+
+test("Pica rate limiting stops complete reading until explicit retry resumes the failed page", async ({
+  page,
+}) => {
+  await installMock(page, { collectionCount: 65, picaPageFailureOnce: 2 });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  await page
+    .getByTestId("source-workbench")
+    .locator(".source-sort select")
+    .selectOption("source-reverse");
+  await expect(page.getByTestId("collection-retry")).toHaveCount(1);
+  await expect(page.getByTestId("source-card-Pica:65")).toBeVisible();
+  await page.waitForTimeout(700);
+  expect(await picaFavoritePages(page, true)).toEqual([1, 2]);
+  await page
+    .getByTestId("collection-retry")
+    .evaluate((button: HTMLButtonElement) => button.click());
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "已读取全部收藏 · 已读取 65 / 65",
+  );
+  expect(await picaFavoritePages(page, true)).toEqual([1, 2, 2, 3, 4]);
+});
+
+for (const action of ["title", "refresh", "source"] as const) {
+  test(`Pica complete reading stops on ${action} without authorizing another full scan`, async ({
+    page,
+  }) => {
+    await installMock(page, { collectionCount: 65, holdPicaReversePage: 2 });
+    await openFavorites(page);
+    await page.getByTestId("source-tab-Pica").click();
+    await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+    const sort = page
+      .getByTestId("source-workbench")
+      .locator(".source-sort select");
+    await sort.selectOption("source-reverse");
+    await expect
+      .poll(() => page.evaluate(() => window.sourceTest.picaReverseHeld))
+      .toBe(true);
+    if (action === "title") await sort.selectOption("title");
+    else if (action === "refresh")
+      await page.getByTestId("source-refresh").click();
+    else await page.getByTestId("source-tab-JM").click();
+    await page.evaluate(() => window.sourceTest.releasePicaReverse?.());
+    if (action === "source") {
+      await expect(page.getByTestId("source-card-JM:1")).toBeVisible();
+      await page.getByTestId("source-tab-Pica").click();
+      await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+    }
+    await expect(page.getByTestId("collection-progress")).toContainText(
+      "20 / 65",
+    );
+    await page.waitForTimeout(700);
+    expect(await picaFavoritePages(page, true)).toEqual(
+      action === "refresh" ? [1, 2, 1] : [1, 2],
+    );
+    expect(await picaFavoritePages(page, false)).toEqual(
+      action === "refresh" ? [1] : [1, 1],
+    );
+  });
+}
 
 test("partial favorites rebind scrolling after detail and do not fetch more for an empty local filter", async ({
   page,
@@ -388,7 +533,11 @@ async function installMock(page: Page, options: MockOptions = {}) {
       source,
       workId,
       title: "合成验收 " + source + " 作品 " + workId + " 账号" + epoch,
-      authors: options.collectionCover ? ["合成验收作者"] : [],
+      authors: options.collectionAuthors
+        ? ["目录作者:" + workId + ":"]
+        : options.collectionCover
+          ? ["合成验收作者"]
+          : [],
       description: null,
       tags: [],
       favorite: null,
@@ -416,6 +565,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
       calls: [],
       loginStarted: false,
       jmHeld: false,
+      picaReverseHeld: false,
       booklists: { revision: 0, value: { version: 1, lists: [] } },
       preferences: {
         revision: 0,
@@ -452,6 +602,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
       },
     });
     let jmHoldUsed = false;
+    let picaHoldUsed = false;
     let expiryUsed = false;
     const catalogs = new Map<
       string,
@@ -611,6 +762,22 @@ async function installMock(page: Page, options: MockOptions = {}) {
               pageFailureUsed = true;
               throw { code: "SOURCE_TIMEOUT" };
             }
+            if (source === "Pica" && raw.kind === "favorites" && raw.reverse) {
+              if (pageNumber === options.holdPicaReversePage && !picaHoldUsed) {
+                picaHoldUsed = true;
+                hooks.picaReverseHeld = true;
+                await new Promise<void>((resolve) => {
+                  hooks.releasePicaReverse = resolve;
+                });
+              }
+              if (
+                pageNumber === options.picaPageFailureOnce &&
+                !pageFailureUsed
+              ) {
+                pageFailureUsed = true;
+                throw { code: "SOURCE_RATE_LIMITED" };
+              }
+            }
             const work = makeWork(
               source,
               raw.kind === "detail"
@@ -762,6 +929,21 @@ async function favoritePages(page: Page) {
           call.source === "JM",
       )
       .map((call) => call.page),
+  );
+}
+async function picaFavoritePages(page: Page, reverse: boolean) {
+  return page.evaluate(
+    (direction) =>
+      window.sourceTest.calls
+        .filter(
+          (call) =>
+            call.command === "source_query" &&
+            call.kind === "favorites" &&
+            call.source === "Pica" &&
+            Boolean(call.reverse) === direction,
+        )
+        .map((call) => call.page),
+    reverse,
   );
 }
 async function openAccounts(page: Page) {

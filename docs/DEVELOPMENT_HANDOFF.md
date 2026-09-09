@@ -4,9 +4,35 @@ Updated 2026-09-09. This document separates the current continuation from histor
 
 ## Current execution preference: resource-aware local/cloud work
 
-The user requires a responsive desktop and no duplicate local/cloud execution of the same task. Assign each check or suite for the same code revision and target to one location before running, accounting for automatic CI. Use local work only with measured headroom and a clear reduction in turnaround or repeated diagnosis; if CI will run a check, do not run it locally too. Keep full suites/cross-platform/release packaging in CI and use local work for distinct diagnostics, reproductions or checks not repeated there. Follow the resource gates in `AGENTS.md`, retain required validation and download authority boundaries, and batch documentation-only pushes to avoid unchanged rebuilds. The verified 0.3.2 application and installer are unchanged.
+The user requires a responsive desktop and no duplicate local/cloud execution of the same task. Assign each check or suite for the same code revision and target to one location before running, accounting for automatic CI. Use local work only with measured headroom and a clear reduction in turnaround or repeated diagnosis; if CI will run a check, do not run it locally too. Keep full suites/cross-platform/release packaging in CI and use local work for distinct diagnostics, reproductions or checks not repeated there. Follow the resource gates in `AGENTS.md`, retain required validation and download authority boundaries, and batch documentation-only pushes to avoid unchanged rebuilds. The latest verified and user-accepted application is 0.3.3; the explicit Pica collection-reading change below is being validated.
 
-## Current: session-only covers, Windows 0.3.2 (2026-09-09)
+## Current: explicit Pica full-catalog reading, Windows 0.3.4 (2026-09-09)
+
+The user selected the existing JM-style manual direction-switch trigger after discussing background indexing. Only an explicit switch between the two Pica favorite-time directions starts sequential complete metadata reading. Ordinary entry stays viewport-driven, and Pica retains native newest/oldest ordering. This does not authorize startup background full scans, larger request concurrency, updater work or real library/download integration.
+
+Implementation is being validated. The one-shot request is bound to source/session/folder/direction and consumed by its matching reader; pause and later resumes do not create a new full-read request. In-flight old-direction results cannot replace the current reader. Title sorting, ordinary Pica refresh and source/account changes stop or clear full-read intent. Completed direction caches can be reused after a first-page check; that check does not prove every remote entry is unchanged. Search remains local title/author matching and explicitly labels complete scope once all pages are read.
+
+Root owns UI/version/docs and exact-head CI/artifact delivery; an independent read-only agent reviews state and tests. Local work is source editing/review (including formatter write, not test/check execution) and artifact verification. Formal tests, formatting checks and all builds remain in CI only. See [the batch report](LOCAL_WORKBENCH_PICA_FULL_READ_2026-09-09.md). The user's JM500-work20-30second report is a rough observation, not an instrumented benchmark or a Pica timing promise.
+
+The next section records the accepted0.3.3 baseline. Application updating remains frozen until formal V1 completion and later user discussion.
+
+## JM blank metadata compatibility, Windows 0.3.3 (2026-09-09)
+
+The user reported two JM works whose website details/images worked while the application rejected their details and cover recovery. Two bounded unauthenticated public metadata GETs returned HTTP/API 200 and matching IDs; each tag array contained one blank string. Root retained only sanitized field-shape summaries outside the repository. This is a project parser compatibility defect. It is not evidence of unavailable source content, and neither the user nor the agent audited all favorites.
+
+Application head `5d21c7466d51bfd0f0ade081de31d82c16b3e818` (CI merge `1d381263996cdb673323a44e5e29eb2a9404e9de`) omits blank JM author/tag array placeholders after validating raw array count and each string length/type. Valid content/order/duplicates survive; required fields, the whole-work budget, Pica behavior and cover transport remain strict. Five new synthetic tests and the extended evicted-cover-descriptor recovery test pass. Recovery grants no favorite/download authority.
+
+Verification: 79 Node, 59 Chromium, 134 Windows account/credential/source/storage (49 source), 17 native IPC/startup, 573 Linux workspace and 63 Windows core tests pass, plus isolated Credential Manager parent/child, Clippy, NSIS and actual Windows WebView/process restart. All 13 static files match the previously accepted 0.3.2 artifact. Root verified installer artifact 10107763023/run 34360339640, sole EXE entry, version 0.3.3 and SHA-256. Formal tests/builds ran only in CI; local work was distinct live metadata diagnosis, review and artifact verification. See [the 0.3.3 report](LOCAL_WORKBENCH_JM_METADATA_FIX_2026-09-09.md).
+
+The user explicitly accepted the 0.3.3 fix; its sample retest is complete. Preserve this and the historical 0.3.2 acceptance below without claiming exhaustive work coverage. JM sorting remains accepted, covers remain run-scoped without disk image persistence, PR #19 stays draft and production stays disabled.
+
+The user explicitly froze startup prompts and in-app updating until after formal V1 completion, when the idea may be discussed again. Only read-only investigation occurred; no updater code, dependencies, signing keys or release feed were configured. Do not resume that work before the user revisits it. Continue the actual V1 project after closing this narrow repair acceptance.
+
+The 0.3.3 report and acceptance updates are included with the necessary Pica collection change, avoiding a separate documentation-only CI rebuild.
+
+The following 0.3.2 and earlier sections are historical milestones.
+
+## Session-only covers, Windows 0.3.2 (2026-09-09)
 
 Application head `af35f96904b0d59cba04591a303933e3a3b0b3ca` (CI merge `60d549e61ba1e935ecac3045346f2c83a329aa52`) is verified. The user's final requirement supersedes the older 0.3.1 disk-cover policy: retain successful covers only for the running application, reuse through virtual-card unmount/scroll/detail/settings visits, release on exit and reload next launch. No native cover command persists image bytes. Catalog metadata/read progress, following, preferences, booklists and remembered sessions remain persistent. Fixed registered legacy covers are retired once during DesktopStore initialization before document readers receive the shared store; cleanup failure does not block opening documents. This ordering fixes the actual WebView startup BUSY race found during validation.
 

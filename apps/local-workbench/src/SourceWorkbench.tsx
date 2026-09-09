@@ -264,6 +264,11 @@ export function SourceWorkbench({
   const gridRef = useRef<SourceGridHandle>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const collector = useRef<CollectionReader | null>(null);
+  const pendingPicaReadAll = useRef<{
+    scopeId: string;
+    folderId: string | null;
+    reverse: boolean;
+  } | null>(null);
   const collectionNeedsVerification = useRef(false);
   const selectedMetadata = useRef(new Map<string, SourceWork>());
   const [collectionState, setCollectionState] = useState<CollectionState>({
@@ -364,6 +369,7 @@ export function SourceWorkbench({
   }
   function changeSource(next: Source) {
     if (next === source) return;
+    pendingPicaReadAll.current = null;
     listRequest.current += 1;
     detailRequest.current += 1;
     followingRequest.current += 1;
@@ -393,6 +399,7 @@ export function SourceWorkbench({
     listRequest.current += 1;
     detailRequest.current += 1;
     followingRequest.current += 1;
+    pendingPicaReadAll.current = null;
     favoriteLock.current = false;
     followingLock.current = false;
     selectedMetadata.current.clear();
@@ -451,7 +458,7 @@ export function SourceWorkbench({
     let lastDisplay: CollectionState["displaySnapshot"] = null;
     const published = new Map<string, SourceWork>();
     const unsubscribe = reader.subscribe((state) => {
-      if (!stillCurrent(scope)) return;
+      if (collector.current !== reader || !stillCurrent(scope)) return;
       setCollectionState(state);
       const displayed = state.displaySnapshot;
       if (displayed && displayed !== lastDisplay) {
@@ -483,7 +490,7 @@ export function SourceWorkbench({
     setItems([]);
     setPageInfo(null);
     setAutoPaused(false);
-    if (active && !loadingAccounts) void reader.resume();
+    if (active && !loadingAccounts) resumeCollection();
     return () => {
       reader.pause();
       unsubscribe();
@@ -509,10 +516,27 @@ export function SourceWorkbench({
     authorSearch,
   ]);
   function resumeCollection() {
-    if (collectionNeedsVerification.current) {
+    const reader = collector.current;
+    if (!reader) return;
+    const request = pendingPicaReadAll.current;
+    const readAll =
+      source === "Pica" &&
+      view === "favorites" &&
+      !authorSearch &&
+      request !== null &&
+      request.scopeId === scopeId &&
+      request.folderId === folder &&
+      request.reverse === picaReverse;
+    pendingPicaReadAll.current = null;
+    const verify = collectionNeedsVerification.current;
+    if (verify) {
       collectionNeedsVerification.current = false;
-      void collector.current?.revalidate();
-    } else void collector.current?.resume();
+      void reader.revalidate();
+    }
+    // Consume an explicit switch once, on its matching reader. Later resumes
+    // keep the reader's mode without turning a user pause into a new request.
+    if (readAll) void reader.readAll();
+    else if (!verify) void reader.resume();
   }
   useEffect(() => {
     if (
@@ -547,18 +571,31 @@ export function SourceWorkbench({
     density,
   ]);
   function changeSort(value: string) {
+    const picaTimeSwitch =
+      source === "Pica" &&
+      view === "favorites" &&
+      value !== sort &&
+      ["source", "source-reverse"].includes(value) &&
+      ["source", "source-reverse"].includes(sort);
+    pendingPicaReadAll.current = picaTimeSwitch
+      ? { scopeId, folderId: folder, reverse: value === "source-reverse" }
+      : null;
     const directionChanged =
       view === "favorites" &&
       (value === "source-reverse") !== (sort === "source-reverse");
     pendingAnchor.current = directionChanged ? null : capture();
     if (directionChanged) {
-      if (source === "Pica") clearSelection();
+      if (source === "Pica") {
+        collector.current?.pause();
+        clearSelection();
+      }
       savedAnchor.current = null;
       main()?.scrollTo(0, 0);
     }
     if (value !== "source-reverse" || source !== "JM")
       collector.current?.stopReadAll();
     setSort(value);
+    if (picaTimeSwitch) setAutoPaused(false);
     if (view === "favorites" && source === "JM" && value === "source-reverse") {
       setAutoPaused(false);
       void collector.current?.readAll();
@@ -569,6 +606,8 @@ export function SourceWorkbench({
     setCoverEpoch((value) => value + 1);
   }
   function refreshCollection() {
+    pendingPicaReadAll.current = null;
+    if (source === "Pica") collector.current?.stopReadAll();
     retryCovers();
     clearSelection();
     setAutoPaused(false);
@@ -936,10 +975,16 @@ export function SourceWorkbench({
         aria-label={
           searching
             ? "搜索当前来源作品或输入单个编号链接"
-            : "筛选当前已读取范围"
+            : view === "favorites" && completeIndex
+              ? "搜索全部收藏的作品或作者"
+              : "筛选当前已读取范围"
         }
         placeholder={
-          searching ? "搜索作品、作者或输入编号…" : "筛选已读取的作品或作者…"
+          searching
+            ? "搜索作品、作者或输入编号…"
+            : view === "favorites" && completeIndex
+              ? "搜索全部收藏的作品或作者…"
+              : "筛选已读取的作品或作者…"
         }
       />
       {query && (
@@ -1410,6 +1455,7 @@ export function SourceWorkbench({
                     value={folder ?? ""}
                     disabled={loading}
                     onChange={(event) => {
+                      pendingPicaReadAll.current = null;
                       collector.current?.stopReadAll();
                       setSort("source");
                       setFolder(event.target.value || null);

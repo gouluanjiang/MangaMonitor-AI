@@ -209,8 +209,8 @@ h1 {
   position: sticky;
   top: -20px;
   z-index: 5;
-  background: #09090beb;
-  backdrop-filter: blur(12px);
+  background: transparent;
+  backdrop-filter: none;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
@@ -336,6 +336,7 @@ h1 {
 }
 .card-author {
   margin-top: 3px;
+  margin-bottom: 0;
   font-size: 13px;
   color: #b6b1bf;
   overflow: hidden;
@@ -698,5 +699,15 @@ h1 {
   .button {
     padding: 10px 14px;
     font-size: 12px;
+  }
+}
+
+.library-toolbar.is-stuck {
+  background: #09090beb;
+  backdrop-filter: blur(12px);
+}
+@media (min-width: 1101px) {
+  .cover-grid[data-density="5"] .cover-wrap {
+    aspect-ratio: 0.76;
   }
 }

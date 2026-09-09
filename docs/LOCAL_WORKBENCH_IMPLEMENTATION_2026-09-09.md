@@ -32,4 +32,4 @@
 
 ## 验证记录
 
-实现及独立审查进行中；最终提交和 GitHub Actions 结果在检查完成后补入。
+接手后的实现、主 Agent 目视检查、独立审查及已通过的 GitHub Actions 证据见 [本批验收记录](LOCAL_WORKBENCH_ACCEPTANCE_2026-09-09.md)。最终提交的检查结果以 [PR #19](https://github.com/gouluanjiang/MangaMonitor-AI/pull/19) 为准。

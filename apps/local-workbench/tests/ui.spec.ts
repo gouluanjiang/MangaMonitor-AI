@@ -790,3 +790,27 @@ test("settings search uses its own query without changing the source selection",
   await expect(page.getByTestId("search-input")).toHaveValue("雨");
   await expect(page.getByTestId("select-rain")).toBeChecked();
 });
+
+test("the A background remains visible under the toolbar until it sticks", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await openReadyFixture(page);
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-appearance").click();
+  await page.getByTestId("background-mode-A").click();
+  await page.getByTestId("save-settings-page").click();
+  await page.getByTestId("nav-discovery").click();
+  await expect(page.locator(".app-shell")).toHaveAttribute(
+    "data-background-mode",
+    "A",
+  );
+  const toolbar = page.locator(".library-toolbar");
+  await expect(toolbar).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await positionFixtureAnchor(page);
+  await expect(toolbar).toHaveCSS("backdrop-filter", "blur(12px)");
+  await page.locator("main").evaluate((main) => {
+    main.scrollTop = 0;
+  });
+  await expect(toolbar).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+});

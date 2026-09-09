@@ -121,6 +121,7 @@ export default function App() {
   const [selection, setSelection] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [libraryTab, setLibraryTab] = useState("all");
+  const [toolbarStuck, setToolbarStuck] = useState(false);
   const [confirmation, setConfirmation] = useState<string[] | null>(null);
   const [queueFilter, setQueueFilter] = useState("all");
   const [notice, setNotice] = useState("");
@@ -145,6 +146,29 @@ export default function App() {
     anchor: Anchor | null;
     detail: string | null;
   } | null>(null);
+  function updateToolbarSurface() {
+    const container = contentRef.current;
+    const toolbar = container?.querySelector(".library-toolbar");
+    setToolbarStuck(
+      Boolean(
+        container &&
+        toolbar &&
+        toolbar.getBoundingClientRect().top <=
+          container.getBoundingClientRect().top + 1,
+      ),
+    );
+  }
+  useEffect(() => {
+    updateToolbarSurface();
+    const container = contentRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(updateToolbarSurface);
+    observer.observe(container);
+    container
+      .querySelectorAll(".recent-section, .page-heading, .library-toolbar")
+      .forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [page, detail, query, source, filter, libraryTab, appearance.density]);
   function captureAnchor(preferredId?: string): Anchor | null {
     const container = contentRef.current;
     if (!container) return null;
@@ -517,7 +541,7 @@ export default function App() {
               )}
             </section>
           )}
-        <div className="library-toolbar">
+        <div className={`library-toolbar${toolbarStuck ? " is-stuck" : ""}`}>
           {page === "library" ? (
             <div className="tabs" aria-label="漫画库范围">
               <button
@@ -1347,6 +1371,7 @@ export default function App() {
         <main
           className={`content ${chosen.length > 0 && !detail && page !== "settings" ? "has-selection" : ""}`}
           ref={contentRef}
+          onScroll={updateToolbarSurface}
           tabIndex={-1}
         >
           {failedBackground &&

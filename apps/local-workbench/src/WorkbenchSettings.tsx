@@ -7,6 +7,7 @@ import {
   restoreDefaultBackground,
 } from "./preferences.ts";
 import type {
+  BackgroundSelection,
   AppearancePreferences,
   CoverDensity,
   ResourcePreferences,
@@ -43,7 +44,10 @@ function sameResources(a: ResourcePreferences, b: ResourcePreferences) {
 
 export interface WorkbenchSettingsProps {
   preferences: WorkbenchPreferences;
-  onSave(next: WorkbenchPreferences): boolean;
+  onSave(next: WorkbenchPreferences): Promise<boolean>;
+  storageLabel: string;
+  saveDisabled: boolean;
+  onNativeChooseBackground?: () => Promise<BackgroundSelection | null>;
   onPreview(appearance: AppearancePreferences | null): void;
   onResetDemo(): void;
   storageFailed: boolean;
@@ -54,6 +58,9 @@ export interface WorkbenchSettingsProps {
 export function WorkbenchSettings({
   preferences,
   onSave,
+  storageLabel,
+  saveDisabled,
+  onNativeChooseBackground,
   onPreview,
   onResetDemo,
   storageFailed,
@@ -64,6 +71,8 @@ export function WorkbenchSettings({
   const [appearance, setAppearance] = useState(preferences.appearance);
   const [resources, setResources] = useState(preferences.resources);
   const [readingImage, setReadingImage] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [saveError, setSaveError] = useState(false);
@@ -143,6 +152,27 @@ export function WorkbenchSettings({
     }
   }
 
+  async function chooseNativeBackground() {
+    if (!onNativeChooseBackground || readingImage || savingRef.current) return;
+    const request = ++imageRequest.current;
+    setReadingImage(true);
+    setImageError(null);
+    clearFeedback();
+    try {
+      const selected = await onNativeChooseBackground();
+      if (request !== imageRequest.current || selected === null) return;
+      setAppearance((draft) => ({ ...draft, ...selected }));
+      onBackgroundValidated(selected.backgroundImage);
+    } catch {
+      if (request === imageRequest.current)
+        setImageError(
+          "图片无法读取或解码，原背景已保留。请选择不超过 8 MiB 的 PNG、JPEG 或 WebP 图片。",
+        );
+    } finally {
+      if (request === imageRequest.current) setReadingImage(false);
+    }
+  }
+
   function restorePage() {
     clearFeedback();
     if (page === "appearance") {
@@ -154,25 +184,34 @@ export function WorkbenchSettings({
     setFeedback("已恢复本页默认草稿，保存后记住这些设置。");
   }
 
-  function savePage() {
-    if (!editablePage || (page === "appearance" && readingImage)) return;
+  async function savePage() {
+    if (
+      !editablePage ||
+      savingRef.current ||
+      (page === "appearance" && readingImage)
+    )
+      return;
+    savingRef.current = true;
+    setSaving(true);
     const next: WorkbenchPreferences = {
       ...preferences,
       ...(page === "appearance" ? { appearance } : { resources }),
     };
     let saved = false;
     try {
-      saved = onSave(next);
+      saved = await onSave(next);
     } catch {
       // The form keeps its draft if browser storage or a host callback fails.
     }
+    savingRef.current = false;
+    setSaving(false);
     setSaveError(!saved);
     setFeedback(
       saved
         ? page === "resources"
-          ? "已保存到当前浏览器。资源限制尚未连接真实调度器。"
-          : "外观已保存到当前浏览器。"
-        : "保存失败，草稿已保留。可缩小背景图片或检查浏览器存储后重试。",
+          ? `已保存到${storageLabel}。资源限制尚未连接真实调度器。`
+          : `外观已保存到${storageLabel}。`
+        : "保存失败，草稿已保留。请检查本机存储或重新读取后重试。",
     );
   }
 
@@ -197,6 +236,7 @@ export function WorkbenchSettings({
                 <button
                   key={item.id}
                   type="button"
+                  disabled={saving}
                   aria-label={item.label}
                   aria-current={page === item.id ? "page" : undefined}
                   data-testid={`settings-${item.id}`}
@@ -215,7 +255,11 @@ export function WorkbenchSettings({
               );
             })}
         </nav>
-        <div className="settings-panel">
+        <fieldset
+          className="settings-panel"
+          disabled={saving}
+          aria-busy={saving}
+        >
           {searchQuery.trim() &&
             !pages.some((item) => item.label.includes(searchQuery.trim())) && (
               <p role="status" className="settings-notice">
@@ -224,7 +268,7 @@ export function WorkbenchSettings({
             )}
           {storageFailed && (
             <p className="settings-notice warning" role="status">
-              浏览器存储当前不可用。修改会保留在本页草稿中，保存成功后才能在刷新时恢复。
+              本机存储当前不可用。修改会保留在本页草稿中，保存成功后才能在重开时恢复。
             </p>
           )}
           {page === "accounts" && (
@@ -308,17 +352,29 @@ export function WorkbenchSettings({
                   </p>
                 </div>
                 <div className="settings-inline-actions">
-                  <label className="button secondary settings-file-picker">
-                    选择背景图片
-                    <input
-                      ref={fileInput}
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      aria-label="选择背景图片"
-                      data-testid="background-file"
-                      onChange={chooseBackground}
-                    />
-                  </label>
+                  {onNativeChooseBackground ? (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      data-testid="native-background-file"
+                      onClick={chooseNativeBackground}
+                      disabled={readingImage}
+                    >
+                      选择背景图片
+                    </button>
+                  ) : (
+                    <label className="button secondary settings-file-picker">
+                      选择背景图片
+                      <input
+                        ref={fileInput}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        aria-label="选择背景图片"
+                        data-testid="background-file"
+                        onChange={chooseBackground}
+                      />
+                    </label>
+                  )}
                   <button
                     type="button"
                     className="text-button"
@@ -337,8 +393,11 @@ export function WorkbenchSettings({
                 </div>
               </div>
               <p className="settings-help">
-                支持 PNG、JPEG、WebP，最大 2 MiB、单边 8192 像素、总计 2400
-                万像素。图片仅保存在当前浏览器，不会上传。
+                支持 PNG、JPEG、WebP，最大{" "}
+                {onNativeChooseBackground ? "8" : "2"} MiB、单边 8192 像素、总计
+                2400 万像素。图片仅保存在{storageLabel}，不会上传。
+                {onNativeChooseBackground &&
+                  "保存后使用本机缓存，原图片移动不影响已保存背景。"}
               </p>
               {readingImage && (
                 <p className="settings-help" role="status">
@@ -571,7 +630,8 @@ export function WorkbenchSettings({
               <section className="settings-card" aria-labelledby="demo-title">
                 <h2 id="demo-title">关于这个样例</h2>
                 <p className="settings-copy">
-                  作品、封面和队列状态均为演示内容。外观与资源偏好单独保存在当前浏览器，不会影响真实漫画库或线上账号。
+                  作品、封面和队列状态均为演示内容。外观与资源偏好单独保存在
+                  {storageLabel}，不会影响真实漫画库或线上账号。
                 </p>
                 <div className="settings-reset-row">
                   <div>
@@ -616,17 +676,19 @@ export function WorkbenchSettings({
                   type="button"
                   className="button primary"
                   disabled={
-                    !currentDirty || (page === "appearance" && readingImage)
+                    saveDisabled ||
+                    !currentDirty ||
+                    (page === "appearance" && readingImage)
                   }
                   onClick={savePage}
                   data-testid="save-settings-page"
                 >
-                  保存设置
+                  {saving ? "正在保存…" : "保存设置"}
                 </button>
               </div>
             </div>
           )}
-        </div>
+        </fieldset>
       </div>
     </div>
   );

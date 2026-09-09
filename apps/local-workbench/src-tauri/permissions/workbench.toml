@@ -1,0 +1,10 @@
+[[permission]]
+identifier = "workbench-documents"
+description = "Read and update workbench documents, or choose one background with the native picker."
+commands.allow = [
+  "read_preferences",
+  "write_preferences",
+  "read_booklists",
+  "write_booklists",
+  "choose_background",
+]

@@ -350,3 +350,52 @@ test("valid selection waits for decoding and normalizes its display name", async
     backgroundName: "背景.png",
   });
 });
+
+test("new background names strip Unicode controls and separators with JavaScript trim", async () => {
+  const selected = await readBackgroundFile(
+    imageFile({ name: " \uFEFF a/\u0085b\\c.png \uFEFF " }),
+    async () => true,
+  );
+  assert.equal(selected.backgroundName, "abc.png");
+  const innerBom = await readBackgroundFile(
+    imageFile({ name: " \uFEFFa\uFEFFb.png\uFEFF " }),
+    async () => true,
+  );
+  assert.equal(innerBom.backgroundName, "a\uFEFFb.png");
+  const blank = await readBackgroundFile(
+    imageFile({ name: " \uFEFF/\\\u0085 " }),
+    async () => true,
+  );
+  assert.equal(blank.backgroundName, "自定义背景");
+});
+
+test("new background names respect UTF-16 limits without splitting a character", async () => {
+  for (const prefix of [178, 179]) {
+    const selected = await readBackgroundFile(
+      imageFile({ name: "x".repeat(prefix) + "😀.png" }),
+      async () => true,
+    );
+    const expected = "x".repeat(prefix) + (prefix === 178 ? "😀" : "");
+    assert.equal(selected.backgroundName, expected);
+    assert.ok(selected.backgroundName.length <= 180);
+    const preferences = withBackground();
+    preferences.appearance.backgroundName = selected.backgroundName;
+    assert.equal(isWorkbenchPreferences(preferences), true);
+  }
+});
+
+test("legacy slash and C1 background names remain readable and are never silently rewritten", async () => {
+  const preferences = withBackground();
+  preferences.appearance.backgroundName = "folder/legacy\\old\u0085name.png";
+  const original = JSON.stringify(preferences);
+  const storage = storageWith(original);
+  assert.equal(isWorkbenchPreferences(preferences), true);
+  const loaded = await readPreferences(storage, async () => true);
+  assert.deepEqual(loaded.preferences, preferences);
+  assert.equal(loaded.backgroundFailed, false);
+  assert.equal(storage.getItem(PREFERENCES_STORAGE_KEY), original);
+  const next = { ...loaded.preferences, resources: resourcePreset("economy") };
+  assert.equal(savePreferences(next, storage), true);
+  const reloaded = await readPreferences(storage, async () => true);
+  assert.deepEqual(reloaded.preferences.appearance, preferences.appearance);
+});

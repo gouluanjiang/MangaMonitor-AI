@@ -711,3 +711,30 @@ h1 {
     aspect-ratio: 0.76;
   }
 }
+
+.storage-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.detail-booklist {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+}
+.unavailable-members {
+  margin: 22px 0;
+  padding-top: 18px;
+  border-top: 1px solid #ffffff1c;
+  color: #b6b1bf;
+}
+.unavailable-members > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  overflow-wrap: anywhere;
+  padding: 10px 0;
+}

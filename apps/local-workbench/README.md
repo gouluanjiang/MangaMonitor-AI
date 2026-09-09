@@ -1,21 +1,24 @@
-# Local workbench interaction preview
+# Local workbench development app
 
 This is the React/TypeScript frontend implementation for the [confirmed V1 design](../../docs/LOCAL_WORKBENCH_V1_DESIGN.md), currently using eight original fictional works and SVG covers, with explicit 100-record acceptance fixtures. The accepted design is being implemented in stages; the [2026-09-09 implementation record](../../docs/LOCAL_WORKBENCH_IMPLEMENTATION_2026-09-09.md) separates working UI from unfinished native and account integration.
 
 ## Try the flow
 
-- The homepage shows only simulated local inventory, in recent-import and all-works sections. The local-booklist tab is a placeholder pending storage integration. Browse or search the cover library. Click a cover to open a separate detail page; return preserves search, filters and list scroll position.
+- The homepage shows only simulated local inventory, in recent-import and all-works sections. The local-booklist tab supports creating, renaming, archiving/restoring and organizing mixed JM/Pica references. A work can belong to multiple lists; removing membership leaves inventory and queue state intact. Browse or search the cover library. Click a cover to open a separate detail page; return preserves search, filters and list scroll position.
 - The narrow icon rail links the library, source-filtered favorites demonstration, discovery, queue, name-only author following, and settings. Cover density switches between 5/7/9; covers wrap into vertical rows and reduce columns in narrow windows.
-- **设置 → 外观** supports A full-window dark background and B top fade (initial default), separate cover density, and a locally selected PNG/JPEG/WebP (up to 2 MiB). Save commits only the current page; a failed write keeps the draft. Resetting the background preserves density.
+- **设置 → 外观** supports A full-window dark background and B top fade (initial default), separate cover density, and a locally selected PNG/JPEG/WebP (browser: up to 2 MiB; desktop native picker: up to 8 MiB). Save commits only the current page; a failed write keeps the draft. Resetting the background preserves density.
 - **设置 → 下载与资源** stores a resource profile with only simultaneous works and global image requests. These preferences are not connected to the simulated or real scheduler yet; there are no ZIP packaging or image-processing controls.
+- In library, discovery or source favorites, selection can organize any work into booklists. Download eligibility remains separately checked; review/owned/queued items cannot become new download tasks through booklist selection.
 - In discovery or source favorites, enter multi-selection (or select the full current eligible scope), then choose **下载并入库**. One dialog shows every selected work and proposed ZIP destination. One confirmation adds the works to the automatic simulated queue.
 - Open **下载队列** to pause the queue or individual tasks, retry the failed example and simulate cloud disconnection. An imported item waiting for sync does not go through download/import again.
 - **演示安全退出** freezes the simulated queue and opens a reopen screen. Reopen and browser refresh preserve the mock tasks and explicit pause choices when browser storage is available.
 - **设置 → 网络与诊断 → 重置样例** restores the original queue examples without clearing appearance preferences. Unknown/corrupt stored demo data also falls back to these examples.
 
-All simulated activity is visibly labeled. Queue state is saved under `mangamonitor.workbench.demo.v1`; validated appearance/resource preferences use the separate `mangamonitor.workbench.preferences.v1` browser key. The app only reads a background file explicitly selected by the user. It never reads credentials, contacts JM/Pica/GitHub, calls Rust/native commands, or reads/writes a real manga library. Authors and source labels are fictional display examples, not real monitoring results. No images or fonts are fetched from external services; selected backgrounds are never uploaded.
+All works, accounts and queue activity remain visibly labeled synthetic data. The browser uses separate keys for demo state, preferences and booklists; fixture keys are isolated. Desktop preferences/booklists use only native IPC and never fall back to browser storage after a native failure. The demo queue remains an independent simulation in both runtimes. Backgrounds are never uploaded. No credentials, source requests or real manga-library operations are implemented in this batch.
 
-There is no native Tauri shell or reader yet. Real ZIP packaging/verification, task authority, import, safe native shutdown/recovery and cloud publication still need implementation and acceptance. Browser persistence is only a demonstration, not the native durability contract. The settings page records product choices; it does not change computer settings.
+The Windows Tauri 2 shell stores two versioned documents under `%APPDATA%`/com.mangamonitor.workbench.preview/workbench-preview-v1 (preferences.json and booklists.json). Writes check revisions, lock across processes, sync a temporary file and atomically replace the document. Corrupt/unsupported documents are retained and rejected; an error does not authorize overwriting them. Re-reading after an external edit is explicit. Only five scoped commands are exposed to the main window; JavaScript cannot supply arbitrary filesystem paths. The native picker validates PNG/JPEG/WebP content and embeds the selected image bytes in the preferences document, so moving the original image does not break a saved background.
+
+This is a development shell, with native UI persistence implemented. A reader, real accounts, ZIP packaging/verification, task authority, import, safe native task shutdown/recovery and cloud publication remain unfinished. Resource preferences are not yet connected to a real scheduler.
 
 ## Development
 
@@ -33,11 +36,13 @@ pnpm build
 pnpm preview --port 4173 --strictPort
 ```
 
+For the Windows development app (MSVC build tools and WebView2 required), run `pnpm desktop:dev`. CI uses `pnpm desktop:build` to create an unsigned NSIS development installer. The independent `src-tauri/Cargo.lock` pins the GUI dependencies; the root workspace stays headless. Prefer the CI artifact to local native compilation on a memory-constrained computer.
+
 Both servers bind only to `127.0.0.1`. Do not open `index.html` using `file://`; assets and module routing require HTTP. This preview does not require any secrets, environment file or native backend.
 
 ## Validation
 
-The `Local workbench UI` GitHub workflow installs the lockfile, runs Node state-machine and preference tests, type-checks/builds the frontend, and runs Chromium UI acceptance with one worker. It uploads the built `local-workbench-preview` artifact for lightweight local display and browser evidence on failure. Routine successful-screen captures and design image regeneration have been removed at the user's request. Existing Rust CI remains unchanged.
+The `Local workbench UI` GitHub workflow installs the lockfile, runs Node state-machine and preference tests, type-checks/builds the frontend, and runs Chromium UI acceptance with one worker. It uploads the built `local-workbench-preview` artifact for lightweight local display and browser evidence on failure. Routine successful-screen captures and design image regeneration have been removed at the user's request. The baseline Rust workflow also tests the new storage crate. `Local workbench desktop` runs Windows document tests, native IPC/capability tests, Clippy, an NSIS build, and an actual WebView/process-restart smoke against the built executable. Browser tests and mock-runtime IPC tests are reported separately from the actual native smoke.
 
 ```sh
 pnpm test
@@ -50,6 +55,6 @@ Prefer GitHub Actions for these checks. Local builds and browser testing must fo
 
 ## Explicit long-list acceptance fixtures
 
-Open `/?fixture=ready-100` and search discovery for “示例作品” to exercise 100 distinct eligible records, including records outside the viewport. Open `/?fixture=owned-100` for long local/recent grids. These are labeled synthetic datasets; their demo queue storage is isolated from the normal eight-record sample. All cover images remain browser-lazy-loaded. Row virtualization and real paginated source adapters are still pending.
+Open `/?fixture=ready-100` and search discovery for “示例作品” to exercise 100 distinct eligible records, including records outside the viewport. Open `/?fixture=owned-100` for long local/recent grids. Native runtime ignores fixture URL injection. These browser fixtures are labeled synthetic datasets; their demo queue storage is isolated from the normal eight-record sample. All cover images remain browser-lazy-loaded. Row virtualization and real paginated source adapters are still pending.
 
-See [the active acceptance record](../../docs/LOCAL_WORKBENCH_ACCEPTANCE_2026-09-09.md) for verification status and remaining work. Successful CI alone is not visual acceptance against the external approved PNGs.
+See [the second-batch report](../../docs/LOCAL_WORKBENCH_BATCH2_2026-09-09.md) and [the first-batch acceptance record](../../docs/LOCAL_WORKBENCH_ACCEPTANCE_2026-09-09.md) for verification status and remaining work. Successful CI alone is not visual acceptance against the external approved PNGs.

@@ -66,8 +66,12 @@ function exactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   );
 }
 
-function hasImageSignature(bytes: Uint8Array, type: string): boolean {
-  if (bytes.length < 12 || bytes.length > MAX_BACKGROUND_BYTES) return false;
+function hasImageSignature(
+  bytes: Uint8Array,
+  type: string,
+  maxBytes = MAX_BACKGROUND_BYTES,
+): boolean {
+  if (bytes.length < 12 || bytes.length > maxBytes) return false;
   if (type === "image/png") {
     return [137, 80, 78, 71, 13, 10, 26, 10].every(
       (byte, index) => bytes[index] === byte,
@@ -85,8 +89,14 @@ function hasImageSignature(bytes: Uint8Array, type: string): boolean {
 
 // A data URL is never accepted on its MIME declaration alone. Browser decoding
 // is a separate asynchronous requirement when selecting or restoring an image.
-export function isBackgroundDataUrl(value: unknown): value is string {
-  if (typeof value !== "string" || value.length > maxEncodedLength + 32)
+export function isBackgroundDataUrl(
+  value: unknown,
+  maxBytes = MAX_BACKGROUND_BYTES,
+): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length > Math.ceil(maxBytes / 3) * 4 + 32
+  )
     return false;
   const match =
     /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(
@@ -95,16 +105,18 @@ export function isBackgroundDataUrl(value: unknown): value is string {
   if (!match || match[2].length % 4 !== 0) return false;
   try {
     const decoded = atob(match[2]);
-    if (decoded.length > MAX_BACKGROUND_BYTES) return false;
+    if (decoded.length > maxBytes) return false;
     const bytes = Uint8Array.from(decoded, (character) =>
       character.charCodeAt(0),
     );
-    return hasImageSignature(bytes, match[1]);
+    return hasImageSignature(bytes, match[1], maxBytes);
   } catch {
     return false;
   }
 }
 
+// Preserve readable legacy browser names, including slash and C1 characters.
+// New selections are normalized below; native writes enforce their own rules.
 function validName(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -115,7 +127,10 @@ function validName(value: unknown): value is string {
   );
 }
 
-function validAppearance(value: unknown): value is AppearancePreferences {
+function validAppearance(
+  value: unknown,
+  maxBytes = MAX_BACKGROUND_BYTES,
+): value is AppearancePreferences {
   if (
     !isObject(value) ||
     !exactKeys(value, [
@@ -130,7 +145,7 @@ function validAppearance(value: unknown): value is AppearancePreferences {
     return false;
   return value.backgroundImage === null
     ? value.backgroundName === null
-    : isBackgroundDataUrl(value.backgroundImage) &&
+    : isBackgroundDataUrl(value.backgroundImage, maxBytes) &&
         validName(value.backgroundName);
 }
 
@@ -159,12 +174,13 @@ function validResources(value: unknown): value is ResourcePreferences {
 
 export function isWorkbenchPreferences(
   value: unknown,
+  maxBytes = MAX_BACKGROUND_BYTES,
 ): value is WorkbenchPreferences {
   return (
     isObject(value) &&
     exactKeys(value, ["version", "appearance", "resources"]) &&
     value.version === 1 &&
-    validAppearance(value.appearance) &&
+    validAppearance(value.appearance, maxBytes) &&
     validResources(value.resources)
   );
 }
@@ -182,8 +198,11 @@ export function restorePreferences(raw: string | null): WorkbenchPreferences {
 
 export type BackgroundDecoder = (dataUrl: string) => Promise<boolean>;
 
-export async function decodeBackgroundImage(dataUrl: string): Promise<boolean> {
-  if (!isBackgroundDataUrl(dataUrl)) return false;
+export async function decodeBackgroundImage(
+  dataUrl: string,
+  maxBytes = MAX_BACKGROUND_BYTES,
+): Promise<boolean> {
+  if (!isBackgroundDataUrl(dataUrl, maxBytes)) return false;
   const image = new Image();
   try {
     image.src = dataUrl;
@@ -294,11 +313,14 @@ export async function readBackgroundFile(
     throw new Error(
       "这张图片无法解码，或尺寸超过 8192 像素／2400 万像素。原背景已保留。",
     );
-  const name = file.name
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim()
-    .slice(0, 180)
-    .trim();
+  const cleanedName = file.name.replace(/[\p{Cc}/\\]/gu, "").trim();
+  let name = "";
+  // Count UTF-16 units without splitting a surrogate pair at the length limit.
+  for (const character of cleanedName) {
+    if (name.length + character.length > 180) break;
+    name += character;
+  }
+  name = name.trim();
   return {
     backgroundImage: dataUrl,
     backgroundName: name || "自定义背景",

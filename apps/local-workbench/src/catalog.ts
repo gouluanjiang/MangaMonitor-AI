@@ -1,3 +1,4 @@
+import { isDesktopRuntime } from "./runtime.ts";
 import type { Work } from "./types.ts";
 
 // Original fictional works for the local frontend sample. Source labels are
@@ -151,7 +152,7 @@ const sampleWorks: Work[] = [
 
 // Explicit synthetic acceptance datasets. No source requests or real inventory.
 export const fixtureName =
-  typeof window === "undefined"
+  typeof window === "undefined" || isDesktopRuntime()
     ? null
     : new URLSearchParams(window.location.search).get("fixture");
 export const activeFixture = ["ready-100", "owned-100"].includes(

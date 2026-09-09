@@ -1,0 +1,100 @@
+name: Local workbench desktop
+
+on:
+  push:
+    branches: [main, 'assistant-*', 'codex/**']
+    paths:
+      - 'apps/local-workbench/**'
+      - 'crates/workbench-storage/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/local-workbench-desktop.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/local-workbench/**'
+      - 'crates/workbench-storage/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/local-workbench-desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-workbench-desktop-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Set up pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.19.0'
+          run_install: false
+      - name: Set up Rust and the MSVC target
+        run: rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
+      - name: Cache native build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            apps/local-workbench/src-tauri/target
+          key: desktop-windows-rust-1.98.1-${{ hashFiles('Cargo.lock', 'apps/local-workbench/src-tauri/Cargo.lock') }}
+          restore-keys: desktop-windows-rust-1.98.1-
+      - name: Install locked frontend dependencies
+        working-directory: apps/local-workbench
+        run: pnpm install --frozen-lockfile
+      - name: Check desktop Rust formatting
+        run: cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --all -- --check
+      - name: Test offline native document storage
+        run: cargo +1.98.1 test --locked -p workbench-storage -- --test-threads=2
+      - name: Build frontend assets for native context tests
+        working-directory: apps/local-workbench
+        run: pnpm build
+      - name: Test native IPC and window permissions
+        run: cargo +1.98.1 test --manifest-path apps/local-workbench/src-tauri/Cargo.toml --lib --locked -- --test-threads=2
+      - name: Lint desktop commands and tests
+        run: cargo +1.98.1 clippy --manifest-path apps/local-workbench/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Build development NSIS installer
+        working-directory: apps/local-workbench
+        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+      - name: Verify the actual Windows WebView and restart persistence
+        working-directory: apps/local-workbench
+        timeout-minutes: 5
+        run: node tests/native-webview-smoke.mjs
+      - name: Upload native smoke failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-webview-failure
+          path: apps/local-workbench/native-smoke-results/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload development installer for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-dev-windows-nsis-${{ github.sha }}
+          path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          retention-days: 7
+          if-no-files-found: error

@@ -16,12 +16,26 @@ import {
 import type { DemoTask, TaskStage, Work } from "./types.ts";
 import { Icon } from "./icons.tsx";
 import { WorkbenchSettings } from "./WorkbenchSettings.tsx";
-import {
-  initialPreferences,
-  readPreferences,
-  savePreferences,
-} from "./preferences.ts";
+import { initialPreferences, decodeBackgroundImage } from "./preferences.ts";
 import type { WorkbenchPreferences } from "./preferences.ts";
+
+import { BooklistControls, BooklistPicker } from "./BooklistControls.tsx";
+import { initialBooklists, removeBooklistMembers } from "./booklists.ts";
+import type { BooklistsDocument, WorkReference } from "./booklists.ts";
+import {
+  createWorkbenchPersistence,
+  NATIVE_BACKGROUND_BYTES,
+  persistenceErrorMessage,
+} from "./persistence.ts";
+import type { DocumentSnapshot } from "./persistence.ts";
+import "./booklists.css";
+const persistence = createWorkbenchPersistence({ fixture: activeFixture });
+const workReference = (work: Work): WorkReference => ({
+  source: work.source,
+  workId: work.id,
+});
+const referenceMatches = (reference: WorkReference, work: Work) =>
+  reference.source === work.source && reference.workId === work.id;
 
 const STORAGE_KEY =
   "mangamonitor.workbench.demo.v1" + (activeFixture ? "." + activeFixture : "");
@@ -129,6 +143,45 @@ export default function App() {
   const [preferences, setPreferences] = useState(initialPreferences);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [preferencesFailed, setPreferencesFailed] = useState(false);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesError, setPreferencesError] = useState("");
+  const preferencesSnapshot =
+    useRef<DocumentSnapshot<WorkbenchPreferences> | null>(null);
+  const preferencesBusy = useRef(false);
+  const preferencesRead = useRef(0);
+  const [booklists, setBooklists] = useState(initialBooklists);
+  const [booklistsReady, setBooklistsReady] = useState(false);
+  const [booklistsSaving, setBooklistsSaving] = useState(false);
+  const [booklistsError, setBooklistsError] = useState("");
+  const [selectedBooklistId, setSelectedBooklistId] = useState<string | null>(
+    null,
+  );
+  const [booklistPickerMembers, setBooklistPickerMembers] = useState<
+    WorkReference[] | null
+  >(null);
+  const booklistsSnapshot = useRef<DocumentSnapshot<BooklistsDocument> | null>(
+    null,
+  );
+  const booklistsBusy = useRef(false);
+  const booklistsRead = useRef(0);
+  const viewIdentity = useRef("");
+  viewIdentity.current = JSON.stringify([
+    page,
+    detail,
+    libraryTab,
+    selectedBooklistId,
+    query,
+    source,
+    filter,
+  ]);
+  const currentBooklist = booklists.lists.find(
+    (list) => list.id === selectedBooklistId && !list.archived,
+  );
+  const booklistView = page === "library" && libraryTab === "booklists";
+  const unavailableMembers =
+    currentBooklist?.members.filter(
+      (member) => !works.some((work) => referenceMatches(member, work)),
+    ) ?? [];
   const [appearanceDraft, setAppearanceDraft] = useState<
     WorkbenchPreferences["appearance"] | null
   >(null);
@@ -219,48 +272,139 @@ export default function App() {
     setSelection([]);
   }
 
-  useEffect(() => {
-    let active = true;
-    void readPreferences().then((result) => {
-      if (!active) return;
-      setPreferences(result.preferences);
-      setFailedBackground(
-        result.backgroundFailed
-          ? result.preferences.appearance.backgroundImage
-          : null,
-      );
-      setPreferencesFailed(result.storageFailed);
+  async function loadPreferences() {
+    if (preferencesBusy.current) return;
+    preferencesBusy.current = true;
+    setPreferencesSaving(true);
+    const request = ++preferencesRead.current;
+    try {
+      const loaded = await persistence.preferences.read();
+      const dataUrl = loaded.value.appearance.backgroundImage;
+      const decoded =
+        dataUrl === null ||
+        (await decodeBackgroundImage(
+          dataUrl,
+          persistence.native ? NATIVE_BACKGROUND_BYTES : undefined,
+        ));
+      if (request !== preferencesRead.current) return;
+      preferencesSnapshot.current = loaded;
+      setPreferences(loaded.value);
+      setFailedBackground(decoded ? null : dataUrl);
+      setPreferencesFailed(false);
+      setPreferencesError("");
       setPreferencesReady(true);
-    });
+    } catch (error) {
+      if (request !== preferencesRead.current) return;
+      preferencesSnapshot.current = null;
+      setPreferencesFailed(true);
+      setPreferencesError(persistenceErrorMessage(error));
+    } finally {
+      if (request === preferencesRead.current) {
+        preferencesBusy.current = false;
+        setPreferencesSaving(false);
+      }
+    }
+  }
+  async function loadBooklists() {
+    if (booklistsBusy.current) return;
+    booklistsBusy.current = true;
+    setBooklistsSaving(true);
+    const request = ++booklistsRead.current;
+    try {
+      const loaded = await persistence.booklists.read();
+      if (request !== booklistsRead.current) return;
+      booklistsSnapshot.current = loaded;
+      setBooklists(loaded.value);
+      setBooklistsReady(true);
+      setBooklistsError("");
+      setSelectedBooklistId((previous) =>
+        loaded.value.lists.some(
+          (list) => !list.archived && list.id === previous,
+        )
+          ? previous
+          : (loaded.value.lists.find((list) => !list.archived)?.id ?? null),
+      );
+    } catch (error) {
+      if (request !== booklistsRead.current) return;
+      booklistsSnapshot.current = null;
+      setBooklistsReady(false);
+      setBooklistsError(persistenceErrorMessage(error));
+    } finally {
+      if (request === booklistsRead.current) {
+        booklistsBusy.current = false;
+        setBooklistsSaving(false);
+      }
+    }
+  }
+  useEffect(() => {
+    void loadPreferences();
+    void loadBooklists();
     return () => {
-      active = false;
+      preferencesRead.current += 1;
+      booklistsRead.current += 1;
+      // StrictMode starts a fresh read after invalidating the first effect.
+      preferencesBusy.current = false;
+      booklistsBusy.current = false;
     };
   }, []);
 
-  const commitPreferences = (next: WorkbenchPreferences) => {
-    if (!preferencesReady) return false;
-    const saved = savePreferences(next);
-    setPreferencesFailed(!saved);
-    if (saved) {
-      setPreferences(next);
-      if (next.appearance.backgroundImage !== failedBackground)
+  async function commitPreferences(
+    next: WorkbenchPreferences,
+  ): Promise<boolean> {
+    const previous = preferencesSnapshot.current;
+    if (!previous || preferencesBusy.current) return false;
+    preferencesBusy.current = true;
+    setPreferencesSaving(true);
+    try {
+      const saved = await persistence.preferences.write(previous, next);
+      preferencesSnapshot.current = saved;
+      setPreferences(saved.value);
+      setPreferencesFailed(false);
+      setPreferencesError("");
+      if (saved.value.appearance.backgroundImage !== failedBackground)
         setFailedBackground(null);
+      return true;
+    } catch (error) {
+      setPreferencesFailed(true);
+      setPreferencesError(persistenceErrorMessage(error));
+      return false;
+    } finally {
+      preferencesBusy.current = false;
+      setPreferencesSaving(false);
     }
-    return saved;
-  };
-
-  const changeDensity = (density: 5 | 7 | 9) => {
+  }
+  async function commitBooklists(next: BooklistsDocument): Promise<boolean> {
+    const previous = booklistsSnapshot.current;
+    if (!previous || booklistsBusy.current) return false;
+    booklistsBusy.current = true;
+    setBooklistsSaving(true);
+    try {
+      const saved = await persistence.booklists.write(previous, next);
+      booklistsSnapshot.current = saved;
+      setBooklists(saved.value);
+      setBooklistsError("");
+      return true;
+    } catch (error) {
+      setBooklistsError(persistenceErrorMessage(error));
+      return false;
+    } finally {
+      booklistsBusy.current = false;
+      setBooklistsSaving(false);
+    }
+  }
+  const changeDensity = async (density: 5 | 7 | 9) => {
     const anchor = captureAnchor();
+    const before = viewIdentity.current;
     if (
-      !commitPreferences({
+      !(await commitPreferences({
         ...preferences,
         appearance: { ...preferences.appearance, density },
-      })
+      }))
     ) {
       setNotice("封面密度未能保存，请稍后重试");
       return;
     }
-    restoreAnchor(anchor);
+    if (viewIdentity.current === before) restoreAnchor(anchor);
   };
 
   useEffect(() => {
@@ -390,7 +534,12 @@ export default function App() {
       return (
         match &&
         filtered &&
-        (page !== "library" || isOwned(work)) &&
+        (page !== "library" ||
+          (booklistView
+            ? currentBooklist?.members.some((member) =>
+                referenceMatches(member, work),
+              )
+            : isOwned(work))) &&
         (source === "all" || work.source === source)
       );
     })
@@ -399,7 +548,8 @@ export default function App() {
         ? a.title.localeCompare(b.title, "zh-CN")
         : b.updated.localeCompare(a.updated),
     );
-  const chosen = selection.map(lookup).filter(canSelect);
+  const selectedWorks = selection.map(lookup).filter(Boolean);
+  const chosen = selectedWorks.filter(canSelect);
   const currentWork = detail ? lookup(detail) : null;
   const queueTasks = state.tasks.filter(
     (task) =>
@@ -421,7 +571,7 @@ export default function App() {
           const badge = workBadge(work);
           return (
             <article
-              className={`work-card ${selection.includes(work.id) ? "selected" : ""}`}
+              className={`work-card ${gridId !== "recent-grid" && selection.includes(work.id) ? "selected" : ""}`}
               key={work.id}
               data-work-id={work.id}
               data-testid={
@@ -453,32 +603,23 @@ export default function App() {
                   </span>
                 </button>
                 <span className="source-badge">{work.source}</span>
-                {selectionMode &&
-                  page !== "library" &&
-                  work.status !== "review" && (
-                    <label
-                      className="card-select"
-                      title={
-                        canSelect(work)
-                          ? "选择作品"
-                          : isOwned(work)
-                            ? "已入库"
-                            : "已在队列中"
-                      }
-                    >
-                      <input
-                        type="checkbox"
-                        aria-label={`选择《${work.title}》`}
-                        data-testid={`select-${work.id}`}
-                        checked={selection.includes(work.id)}
-                        disabled={!canSelect(work)}
-                        onChange={() => toggleSelection(work.id)}
-                      />
-                      <span>
-                        <Icon name="check" size={13} />
-                      </span>
-                    </label>
-                  )}
+                {selectionMode && gridId !== "recent-grid" && (
+                  <label
+                    className="card-select"
+                    title="选择作品；下载资格单独核对"
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`选择《${work.title}》`}
+                      data-testid={`select-${work.id}`}
+                      checked={selection.includes(work.id)}
+                      onChange={() => toggleSelection(work.id)}
+                    />
+                    <span>
+                      <Icon name="check" size={13} />
+                    </span>
+                  </label>
+                )}
               </div>
               <div className="card-meta">
                 <button
@@ -547,14 +688,22 @@ export default function App() {
               <button
                 className={libraryTab === "all" ? "active" : ""}
                 aria-pressed={libraryTab === "all"}
-                onClick={() => setLibraryTab("all")}
+                onClick={() => {
+                  setLibraryTab("all");
+                  clearScopeSelection();
+                  setFilter("all");
+                }}
               >
                 全部作品
               </button>
               <button
                 className={libraryTab === "booklists" ? "active" : ""}
                 aria-pressed={libraryTab === "booklists"}
-                onClick={() => setLibraryTab("booklists")}
+                onClick={() => {
+                  setLibraryTab("booklists");
+                  clearScopeSelection();
+                  setFilter("all");
+                }}
               >
                 本地书单
               </button>
@@ -620,7 +769,11 @@ export default function App() {
                   key={density}
                   aria-label={`每行 ${density} 部`}
                   aria-pressed={appearance.density === density}
-                  disabled={!preferencesReady}
+                  disabled={
+                    !preferencesReady ||
+                    !preferencesSnapshot.current ||
+                    preferencesSaving
+                  }
                   onClick={() => changeDensity(density)}
                 >
                   {density}
@@ -629,11 +782,29 @@ export default function App() {
             </div>
           </div>
         </div>
+        {booklistView && (
+          <BooklistControls
+            document={booklists}
+            selectedId={selectedBooklistId}
+            disabled={!booklistsReady || booklistsSaving}
+            onChange={commitBooklists}
+            onReload={loadBooklists}
+            reloadDisabled={booklistsSaving}
+            onSelect={(id) => {
+              setSelectedBooklistId(id);
+              clearScopeSelection();
+            }}
+          />
+        )}
         <div className="results-heading">
           <span>
-            共 {visibleWorks.length} 部作品{query && ` · 搜索“${query}”`}
+            共 {visibleWorks.length} 部作品
+            {booklistView &&
+              currentBooklist &&
+              ` · 书单关联 ${currentBooklist.members.length} 部`}
+            {query && ` · 搜索“${query}”`}
           </span>
-          {page !== "library" && (
+          {(!booklistView || currentBooklist) && (
             <div className="selection-controls">
               <button
                 className="text-button"
@@ -646,6 +817,18 @@ export default function App() {
               >
                 {selectionMode ? "退出多选" : "多选"}
               </button>
+              {selectionMode && (
+                <button
+                  className="text-button"
+                  data-testid="select-all-works"
+                  disabled={!visibleWorks.length}
+                  onClick={() =>
+                    setSelection(visibleWorks.map((work) => work.id))
+                  }
+                >
+                  全选作品（当前筛选）
+                </button>
+              )}
               <button
                 className="text-button"
                 onClick={() => {
@@ -661,19 +844,29 @@ export default function App() {
             </div>
           )}
         </div>
-        {page === "library" && libraryTab === "booklists" ? (
-          <div className="empty-state">
-            <Icon name="book" size={32} />
-            <h2>本地书单</h2>
-            <p>跨来源书单管理将在本地存储接入后提供。</p>
-          </div>
-        ) : visibleWorks.length ? (
+        {booklistView && !currentBooklist ? null : visibleWorks.length ? (
           renderGrid(visibleWorks, "cover-grid")
         ) : (
           <div className="empty-state">
             <Icon name="search" size={32} />
-            <h2>没有找到这部作品</h2>
-            <p>试试作品名、作者，或换一个筛选条件。</p>
+            <h2>
+              {booklistView && !currentBooklist?.members.length
+                ? "这份书单还没有作品"
+                : "没有找到这部作品"}
+            </h2>
+            <p>
+              {booklistView && !currentBooklist?.members.length
+                ? "从作品详情或多选栏加入作品，已入库与未下载的作品都能整理。"
+                : "试试作品名、作者，或换一个筛选条件。"}
+            </p>
+            {booklistView && !currentBooklist?.members.length && (
+              <button
+                className="button secondary"
+                onClick={() => navigate("discovery")}
+              >
+                前往发现选书
+              </button>
+            )}
             <button
               className="button secondary"
               onClick={() => {
@@ -687,13 +880,45 @@ export default function App() {
             </button>
           </div>
         )}
+        {booklistView && currentBooklist && unavailableMembers.length > 0 && (
+          <section
+            className="unavailable-members"
+            data-testid="unavailable-members"
+          >
+            <h3>部分作品资料暂不可用（{unavailableMembers.length}）</h3>
+            <p>书单关联已保留，重新取得来源资料后可继续显示。</p>
+            {unavailableMembers.map((member) => (
+              <div key={member.source + ":" + member.workId}>
+                <span>
+                  {member.source} · {member.workId}
+                </span>
+                <button
+                  className="text-button"
+                  disabled={!booklistsReady || booklistsSaving}
+                  onClick={async () => {
+                    await commitBooklists(
+                      removeBooklistMembers(
+                        booklists,
+                        currentBooklist.id,
+                        [member],
+                        Date.now(),
+                      ),
+                    );
+                  }}
+                >
+                  移出书单
+                </button>
+              </div>
+            ))}
+          </section>
+        )}
         <div className="library-footnote">
           <span>所有封面与作品均为原创示意内容</span>
           <span>按行排列 · 向下浏览更多</span>
         </div>
-        {chosen.length > 0 && (
+        {selectedWorks.length > 0 && (
           <div className="selection-bar">
-            <span className="selected-count">{chosen.length}</span>
+            <span className="selected-count">{selectedWorks.length}</span>
             <div>
               <strong>部作品已选择</strong>
               <small>包含当前筛选中未进入视口的所选作品</small>
@@ -702,12 +927,48 @@ export default function App() {
               取消选择
             </button>
             <button
+              className="button secondary"
+              data-testid="batch-booklist"
+              disabled={!booklistsReady || booklistsSaving}
+              onClick={() =>
+                setBooklistPickerMembers(selectedWorks.map(workReference))
+              }
+            >
+              加入书单
+            </button>
+            {booklistView && currentBooklist && (
+              <button
+                className="text-button"
+                data-testid="remove-booklist-members"
+                disabled={!booklistsReady || booklistsSaving}
+                onClick={async () => {
+                  if (
+                    await commitBooklists(
+                      removeBooklistMembers(
+                        booklists,
+                        currentBooklist.id,
+                        selectedWorks.map(workReference),
+                        Date.now(),
+                      ),
+                    )
+                  ) {
+                    setSelection([]);
+                    setNotice("已移出书单，作品文件和队列未改变");
+                  }
+                }}
+              >
+                移出当前书单
+              </button>
+            )}
+            <button
               className="button primary"
+              disabled={!chosen.length}
               data-testid="batch-download"
               onClick={() => setConfirmation(chosen.map((work) => work.id))}
             >
               <Icon name="download" size={17} />
               下载并入库
+              {chosen.length !== selectedWorks.length && `（${chosen.length}）`}
             </button>
           </div>
         )}
@@ -838,6 +1099,15 @@ export default function App() {
                 {badge.text}
               </span>
             </div>
+            <button
+              className="text-button detail-booklist"
+              data-testid="detail-booklist"
+              disabled={!booklistsReady || booklistsSaving}
+              onClick={() => setBooklistPickerMembers([workReference(work)])}
+            >
+              <Icon name="book" size={16} />
+              加入书单
+            </button>
             <p className="detail-note">
               一部作品一个 ZIP · 按章节整理 · {work.updated} 更新
             </p>
@@ -1231,6 +1501,11 @@ export default function App() {
       <WorkbenchSettings
         preferences={preferences}
         onSave={commitPreferences}
+        saveDisabled={!preferencesSnapshot.current || preferencesSaving}
+        storageLabel={persistence.native ? "本机应用数据" : "当前浏览器"}
+        onNativeChooseBackground={
+          persistence.native ? persistence.chooseBackground : undefined
+        }
         onPreview={setAppearanceDraft}
         searchQuery={settingsQuery}
         onBackgroundValidated={(dataUrl) => {
@@ -1244,7 +1519,11 @@ export default function App() {
         }}
       />
     ) : (
-      <p role="status">正在读取设置…</p>
+      <p role="status">
+        {preferencesError
+          ? "设置尚未读入，请使用上方的重新读取按钮。"
+          : "正在读取设置…"}
+      </p>
     );
   }
   return (
@@ -1365,11 +1644,14 @@ export default function App() {
           </label>
           <div className="demo-label" data-testid="demo-label">
             <span />
-            交互样例 · 模拟数据{activeFixture && " · 100 条验收数据"}
+            {persistence.native
+              ? "桌面开发版 · 模拟数据"
+              : "交互样例 · 模拟数据"}
+            {activeFixture && " · 100 条验收数据"}
           </div>
         </header>
         <main
-          className={`content ${chosen.length > 0 && !detail && page !== "settings" ? "has-selection" : ""}`}
+          className={`content ${selectedWorks.length > 0 && !detail && page !== "settings" ? "has-selection" : ""}`}
           ref={contentRef}
           onScroll={updateToolbarSurface}
           tabIndex={-1}
@@ -1380,6 +1662,40 @@ export default function App() {
                 已保存的背景图片暂时无法显示，原设置已保留；请在外观中重新选择图片。
               </p>
             )}
+          {preferencesError && (
+            <div
+              className="storage-warning"
+              role="alert"
+              data-testid="preferences-error"
+            >
+              <span>{preferencesError}</span>
+              <button
+                className="text-button"
+                disabled={preferencesSaving}
+                data-testid="reload-preferences"
+                onClick={() => void loadPreferences()}
+              >
+                重新读取设置
+              </button>
+            </div>
+          )}
+          {booklistsError && (
+            <div
+              className="storage-warning"
+              role="alert"
+              data-testid="booklists-error"
+            >
+              <span>{booklistsError}</span>
+              <button
+                className="text-button"
+                disabled={booklistsSaving}
+                data-testid="reload-booklists"
+                onClick={() => void loadBooklists()}
+              >
+                重新读取书单
+              </button>
+            </div>
+          )}
           {storageFailed && (
             <div role="status" className="storage-warning">
               浏览器存储不可用，模拟进度只在本次会话中保留。
@@ -1460,6 +1776,17 @@ export default function App() {
             </button>
           </div>
         </Dialog>
+      )}
+      {booklistPickerMembers && (
+        <BooklistPicker
+          document={booklists}
+          members={booklistPickerMembers}
+          disabled={!booklistsReady || booklistsSaving}
+          onChange={commitBooklists}
+          onReload={loadBooklists}
+          reloadDisabled={booklistsSaving}
+          onClose={() => setBooklistPickerMembers(null)}
+        />
       )}
       {state.closed && (
         <Dialog

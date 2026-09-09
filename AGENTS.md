@@ -13,6 +13,8 @@ These instructions apply to future automated or human development work in this r
 
 ## Test execution and desktop resource policy
 
+- On 2026-09-09 the user accepted the remaining UI direction with two corrections: author following uses names without avatars/initials, and download settings do not expose ZIP packaging or image-processing controls. Proceed with frontend implementation from the accepted design. Do not generate or regenerate design preview images for this or future changes unless the user later explicitly requests them. Necessary source image restoration, archive validation and execution gates are not removed by this UI simplification.
+
 - The user requested GitHub Actions as the preferred place for compilation, full test suites and cross-platform validation. Avoid repeating those workloads locally when CI provides the required evidence.
 - When local verification is necessary, use a small targeted check and only one build/test pipeline at a time across agents. The normal starting budget is `CARGO_BUILD_JOBS=2` and `--test-threads=2`; these are concurrency controls, not hard CPU or memory caps.
 - Check available resources first. Start local compilation only with at least 4 GiB available RAM. An otherwise idle desktop with at least 6 GiB available RAM may use at most 4 build jobs and 4 test threads. With less headroom, prefer existing-binary lightweight checks or GitHub Actions. Full workspace tests, clean/release builds and long soak runs belong in CI by default.

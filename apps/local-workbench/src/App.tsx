@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import { works } from "./catalog.ts";
+import type { CSSProperties, ReactNode } from "react";
+import { works, activeFixture } from "./catalog.ts";
 import {
   closeDemo,
   enqueueWorks,
@@ -15,25 +15,35 @@ import {
 } from "./demo-store.ts";
 import type { DemoTask, TaskStage, Work } from "./types.ts";
 import { Icon } from "./icons.tsx";
+import { WorkbenchSettings } from "./WorkbenchSettings.tsx";
+import {
+  initialPreferences,
+  readPreferences,
+  savePreferences,
+} from "./preferences.ts";
+import type { WorkbenchPreferences } from "./preferences.ts";
 
-const STORAGE_KEY = "mangamonitor.workbench.demo.v1";
+const STORAGE_KEY =
+  "mangamonitor.workbench.demo.v1" + (activeFixture ? "." + activeFixture : "");
 const labels: Record<TaskStage, string> = {
   queued: "等待下载",
   downloading: "正在下载",
   verifying: "校验图片",
-  packing: "生成 ZIP",
+  packing: "保存作品",
   importing: "校验 ZIP 并入库",
   sync_pending: "已入库，等待同步",
   completed: "已完成",
   error: "需要处理",
 };
-type Page = "library" | "discovery" | "queue" | "authors" | "settings";
+type Page =
+  "library" | "favorites" | "discovery" | "queue" | "authors" | "settings";
 type Filter = "all" | "owned" | "ready" | "review";
 const pageNames: Record<Page, string> = {
   library: "漫画库",
-  discovery: "发现与复核",
+  favorites: "在线收藏",
+  discovery: "发现",
   queue: "下载队列",
-  authors: "作者与监控",
+  authors: "关注",
   settings: "设置",
 };
 const localStages: TaskStage[] = [
@@ -105,15 +115,125 @@ export default function App() {
   const [detailTab, setDetailTab] = useState("chapters");
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
+  const [settingsQuery, setSettingsQuery] = useState("");
   const [source, setSource] = useState("all");
   const [sort, setSort] = useState("updated");
   const [selection, setSelection] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [libraryTab, setLibraryTab] = useState("all");
   const [confirmation, setConfirmation] = useState<string[] | null>(null);
   const [queueFilter, setQueueFilter] = useState("all");
   const [notice, setNotice] = useState("");
   const [storageFailed, setStorageFailed] = useState(false);
+  const [preferences, setPreferences] = useState(initialPreferences);
+  const [preferencesReady, setPreferencesReady] = useState(false);
+  const [preferencesFailed, setPreferencesFailed] = useState(false);
+  const [appearanceDraft, setAppearanceDraft] = useState<
+    WorkbenchPreferences["appearance"] | null
+  >(null);
+  const [failedBackground, setFailedBackground] = useState<string | null>(null);
+  const appearance = appearanceDraft ?? preferences.appearance;
+  const displayBackground =
+    appearance.backgroundImage === failedBackground
+      ? null
+      : appearance.backgroundImage;
   const contentRef = useRef<HTMLElement>(null);
-  const savedScroll = useRef(0);
+  const savedListAnchor = useRef<Anchor | null>(null);
+  type Anchor = { id: string; grid: string; offset: number; scroll: number };
+  const settingsOrigin = useRef<{
+    page: Page;
+    anchor: Anchor | null;
+    detail: string | null;
+  } | null>(null);
+  function captureAnchor(): Anchor | null {
+    const container = contentRef.current;
+    if (!container) return null;
+    const containerTop = container.getBoundingClientRect().top;
+    const toolbar = container
+      .querySelector(".library-toolbar")
+      ?.getBoundingClientRect();
+    const top =
+      toolbar && toolbar.top <= containerTop + 1
+        ? toolbar.bottom
+        : containerTop;
+    const card = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-work-id]"),
+    ).find((card) => card.getBoundingClientRect().bottom > top);
+    return {
+      id: card?.dataset.workId ?? "",
+      grid: card?.closest(".cover-grid")?.getAttribute("data-testid") ?? "",
+      offset: card ? card.getBoundingClientRect().top - containerTop : 0,
+      scroll: container.scrollTop,
+    };
+  }
+  function restoreAnchor(anchor: Anchor | null) {
+    window.requestAnimationFrame(() => {
+      const container = contentRef.current;
+      if (!container || !anchor) return;
+      const card = Array.from(
+        container.querySelectorAll<HTMLElement>("[data-work-id]"),
+      ).find(
+        (card) =>
+          card.dataset.workId === anchor.id &&
+          card.closest(".cover-grid")?.getAttribute("data-testid") ===
+            anchor.grid,
+      );
+      if (card)
+        container.scrollTop +=
+          card.getBoundingClientRect().top -
+          container.getBoundingClientRect().top -
+          anchor.offset;
+      else container.scrollTop = anchor.scroll;
+    });
+  }
+  function clearScopeSelection() {
+    if (selection.length) setNotice("选择范围已改变，已清空临时选择");
+    setSelection([]);
+  }
+
+  useEffect(() => {
+    let active = true;
+    void readPreferences().then((result) => {
+      if (!active) return;
+      setPreferences(result.preferences);
+      setFailedBackground(
+        result.backgroundFailed
+          ? result.preferences.appearance.backgroundImage
+          : null,
+      );
+      setPreferencesFailed(result.storageFailed);
+      setPreferencesReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const commitPreferences = (next: WorkbenchPreferences) => {
+    if (!preferencesReady) return false;
+    const saved = savePreferences(next);
+    setPreferencesFailed(!saved);
+    if (saved) {
+      setPreferences(next);
+      if (next.appearance.backgroundImage !== failedBackground)
+        setFailedBackground(null);
+    }
+    return saved;
+  };
+
+  const changeDensity = (density: 5 | 7 | 9) => {
+    const anchor = captureAnchor();
+    if (
+      !commitPreferences({
+        ...preferences,
+        appearance: { ...preferences.appearance, density },
+      })
+    ) {
+      setNotice("封面密度未能保存，请稍后重试");
+      return;
+    }
+    restoreAnchor(anchor);
+  };
 
   useEffect(() => {
     try {
@@ -174,25 +294,41 @@ export default function App() {
     return { text: "可下载", tone: "muted" };
   };
   const navigate = (next: Page) => {
+    if (next === page && !detail) return;
+    if (next === "settings") {
+      settingsOrigin.current = { page, anchor: captureAnchor(), detail };
+      setPage(next);
+      setDetail(null);
+      contentRef.current?.scrollTo(0, 0);
+      return;
+    }
+    if (page === "settings" && settingsOrigin.current?.page === next) {
+      const origin = settingsOrigin.current;
+      setPage(next);
+      setDetail(origin.detail);
+      restoreAnchor(origin.anchor);
+      settingsOrigin.current = null;
+      return;
+    }
+    settingsOrigin.current = null;
     setPage(next);
     setDetail(null);
     setSelection([]);
+    setSelectionMode(false);
     setQuery("");
-    setSource("all");
+    setSource(next === "favorites" ? "JM" : "all");
     setFilter(next === "discovery" ? "ready" : "all");
     contentRef.current?.scrollTo(0, 0);
   };
   const openWork = (id: string) => {
-    savedScroll.current = contentRef.current?.scrollTop ?? 0;
+    savedListAnchor.current = captureAnchor();
     setDetail(id);
     setDetailTab("chapters");
     contentRef.current?.scrollTo(0, 0);
   };
   const backToList = () => {
     setDetail(null);
-    window.requestAnimationFrame(() =>
-      contentRef.current?.scrollTo(0, savedScroll.current),
-    );
+    restoreAnchor(savedListAnchor.current);
   };
   const toggleSelection = (id: string) =>
     setSelection((previous) =>
@@ -223,7 +359,12 @@ export default function App() {
         (filter === "owned" && isOwned(work)) ||
         (filter === "ready" && work.status === "ready" && !isOwned(work)) ||
         (filter === "review" && work.status === "review");
-      return match && filtered && (source === "all" || work.source === source);
+      return (
+        match &&
+        filtered &&
+        (page !== "library" || isOwned(work)) &&
+        (source === "all" || work.source === source)
+      );
     })
     .sort((a, b) =>
       sort === "title"
@@ -241,56 +382,180 @@ export default function App() {
         ["sync_pending", "completed"].includes(task.stage)),
   );
 
+  function renderGrid(items: Work[], gridId: string) {
+    return (
+      <div
+        className="cover-grid"
+        data-density={appearance.density}
+        data-testid={gridId}
+      >
+        {items.map((work) => {
+          const badge = workBadge(work);
+          return (
+            <article
+              className={`work-card ${selection.includes(work.id) ? "selected" : ""}`}
+              key={work.id}
+              data-work-id={work.id}
+              data-testid={
+                gridId === "recent-grid"
+                  ? `recent-card-${work.id}`
+                  : `card-${work.id}`
+              }
+            >
+              <div className="cover-wrap">
+                <button
+                  className="cover-button"
+                  onClick={() => openWork(work.id)}
+                  data-testid={
+                    gridId === "recent-grid"
+                      ? `recent-open-${work.id}`
+                      : `open-${work.id}`
+                  }
+                  aria-label={`查看《${work.title}》详情`}
+                >
+                  <img
+                    src={work.cover}
+                    alt={`${work.title}原创示意封面`}
+                    width="400"
+                    height="560"
+                    loading="lazy"
+                  />
+                  <span className="cover-open">
+                    查看作品 <Icon name="arrow" size={15} />
+                  </span>
+                </button>
+                <span className="source-badge">{work.source}</span>
+                {selectionMode &&
+                  page !== "library" &&
+                  work.status !== "review" && (
+                    <label
+                      className="card-select"
+                      title={
+                        canSelect(work)
+                          ? "选择作品"
+                          : isOwned(work)
+                            ? "已入库"
+                            : "已在队列中"
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        aria-label={`选择《${work.title}》`}
+                        data-testid={`select-${work.id}`}
+                        checked={selection.includes(work.id)}
+                        disabled={!canSelect(work)}
+                        onChange={() => toggleSelection(work.id)}
+                      />
+                      <span>
+                        <Icon name="check" size={13} />
+                      </span>
+                    </label>
+                  )}
+              </div>
+              <div className="card-meta">
+                <button
+                  className="title-button"
+                  onClick={() => openWork(work.id)}
+                >
+                  {work.title}
+                </button>
+                <span className="chapter-count">{work.chapters} 章</span>
+              </div>
+              <p className="card-author">
+                {work.author}
+                <span>·</span>
+                {work.tags[0]}
+              </p>
+              <div className="card-footer">
+                <span className={`status ${badge.tone}`}>
+                  <i />
+                  {badge.text}
+                </span>
+                <span>{work.pages} 页</span>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    );
+  }
   function renderLibrary() {
     return (
       <>
-        <div className="page-heading">
+        <div
+          className={
+            "page-heading " + (page === "library" ? "library-heading" : "")
+          }
+        >
           <div>
-            <div className="eyebrow">YOUR PERSONAL COLLECTION</div>
+            <div className="product-name">MangaMonitor</div>
             <h1>{pageNames[page]}</h1>
-            <p>好故事，慢慢收藏。让每一部作品都有自己的位置。</p>
-          </div>
-          <div className="collection-count">
-            <strong>{String(works.length).padStart(2, "0")}</strong>
-            <span>部作品 · {ownedCount} 部已入库</span>
+            {page !== "library" && (
+              <p>
+                {page === "favorites"
+                  ? "收藏与本地库存对照 · 示例账号尚未连接"
+                  : "新发现汇总，选择后一次确认下载"}
+              </p>
+            )}
           </div>
         </div>
-        <div className="library-summary">
-          <div>
-            <span className="summary-line" />
-            <span>你的漫画角落</span>
-            <span className="quiet">／</span>
-            <span className="quiet">ZIP 收藏 · 按作品整理</span>
-          </div>
-          <button className="text-button" onClick={() => navigate("queue")}>
-            查看下载队列 <span className="small-count">{unfinished}</span>
-            <Icon name="arrow" size={16} />
-          </button>
-        </div>
+        {page === "library" &&
+          !query &&
+          source === "all" &&
+          libraryTab === "all" && (
+            <section className="recent-section" aria-label="最近入库">
+              <h2>最近入库</h2>
+              {renderGrid(
+                works
+                  .filter(isOwned)
+                  .sort((a, b) => b.updated.localeCompare(a.updated)),
+                "recent-grid",
+              )}
+            </section>
+          )}
         <div className="library-toolbar">
-          <div className="tabs" aria-label="作品范围">
-            {(
-              [
-                ["all", "全部作品"],
-                ["owned", "已入库"],
-                ["ready", "待下载"],
-                ["review", "待复核"],
-              ] as const
-            ).map(([value, text]) => (
+          {page === "library" ? (
+            <div className="tabs" aria-label="漫画库范围">
               <button
-                key={value}
-                className={filter === value ? "active" : ""}
-                onClick={() => {
-                  setFilter(value);
-                  setSelection([]);
-                }}
-                aria-pressed={filter === value}
+                className={libraryTab === "all" ? "active" : ""}
+                aria-pressed={libraryTab === "all"}
+                onClick={() => setLibraryTab("all")}
               >
-                {text}
-                {value === "review" && <span className="tab-dot" />}
+                全部作品
               </button>
-            ))}
-          </div>
+              <button
+                className={libraryTab === "booklists" ? "active" : ""}
+                aria-pressed={libraryTab === "booklists"}
+                onClick={() => setLibraryTab("booklists")}
+              >
+                本地书单
+              </button>
+            </div>
+          ) : (
+            <div className="tabs" aria-label="作品范围">
+              {(
+                [
+                  ["all", "全部作品"],
+                  ["owned", "已入库"],
+                  ["ready", "待下载"],
+                  ["review", "待复核"],
+                ] as const
+              ).map(([value, text]) => (
+                <button
+                  key={value}
+                  className={filter === value ? "active" : ""}
+                  onClick={() => {
+                    setFilter(value);
+                    clearScopeSelection();
+                  }}
+                  aria-pressed={filter === value}
+                >
+                  {text}
+                  {value === "review" && <span className="tab-dot" />}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="toolbar-selects">
             <label className="sr-only" htmlFor="source-filter">
               来源筛选
@@ -298,9 +563,12 @@ export default function App() {
             <select
               id="source-filter"
               value={source}
-              onChange={(event) => setSource(event.target.value)}
+              onChange={(event) => {
+                setSource(event.target.value);
+                clearScopeSelection();
+              }}
             >
-              <option value="all">全部来源</option>
+              {page !== "favorites" && <option value="all">全部来源</option>}
               <option>JM</option>
               <option>Pica</option>
             </select>
@@ -312,109 +580,67 @@ export default function App() {
               value={sort}
               onChange={(event) => setSort(event.target.value)}
             >
-              <option value="updated">最近更新</option>
+              <option value="updated">
+                {page === "library" ? "最近入库" : "最近更新"}
+              </option>
               <option value="title">作品名称</option>
             </select>
-            <span className="view-icon">
-              <Icon name="grid" size={17} />
-            </span>
+            <div className="density-control" role="group" aria-label="封面密度">
+              <span>封面密度</span>
+              {([5, 7, 9] as const).map((density) => (
+                <button
+                  key={density}
+                  aria-label={`每行 ${density} 部`}
+                  aria-pressed={appearance.density === density}
+                  disabled={!preferencesReady}
+                  onClick={() => changeDensity(density)}
+                >
+                  {density}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="results-heading">
           <span>
             共 {visibleWorks.length} 部作品{query && ` · 搜索“${query}”`}
           </span>
-          <button
-            className="text-button quiet"
-            onClick={() =>
-              setSelection(
-                visibleWorks.filter(canSelect).map((work) => work.id),
-              )
-            }
-            disabled={!visibleWorks.some(canSelect)}
-          >
-            选择可下载作品
-          </button>
+          {page !== "library" && (
+            <div className="selection-controls">
+              <button
+                className="text-button"
+                data-testid="toggle-selection"
+                aria-pressed={selectionMode}
+                onClick={() => {
+                  setSelectionMode(!selectionMode);
+                  setSelection([]);
+                }}
+              >
+                {selectionMode ? "退出多选" : "多选"}
+              </button>
+              <button
+                className="text-button"
+                onClick={() => {
+                  setSelectionMode(true);
+                  setSelection(
+                    visibleWorks.filter(canSelect).map((work) => work.id),
+                  );
+                }}
+                disabled={!visibleWorks.some(canSelect)}
+              >
+                全选待下载（当前筛选）
+              </button>
+            </div>
+          )}
         </div>
-        {visibleWorks.length ? (
-          <div className="cover-grid">
-            {visibleWorks.map((work) => {
-              const badge = workBadge(work);
-              return (
-                <article
-                  className={`work-card ${selection.includes(work.id) ? "selected" : ""}`}
-                  key={work.id}
-                  data-testid={`card-${work.id}`}
-                >
-                  <div className="cover-wrap">
-                    <button
-                      className="cover-button"
-                      onClick={() => openWork(work.id)}
-                      data-testid={`open-${work.id}`}
-                      aria-label={`查看《${work.title}》详情`}
-                    >
-                      <img
-                        src={work.cover}
-                        alt={`${work.title}原创示意封面`}
-                        width="400"
-                        height="560"
-                        loading="lazy"
-                      />
-                      <span className="cover-open">
-                        查看作品 <Icon name="arrow" size={15} />
-                      </span>
-                    </button>
-                    <span className="source-badge">{work.source}</span>
-                    {work.status !== "review" && (
-                      <label
-                        className="card-select"
-                        title={
-                          canSelect(work)
-                            ? "选择作品"
-                            : isOwned(work)
-                              ? "已入库"
-                              : "已在队列中"
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          aria-label={`选择《${work.title}》`}
-                          data-testid={`select-${work.id}`}
-                          checked={selection.includes(work.id)}
-                          disabled={!canSelect(work)}
-                          onChange={() => toggleSelection(work.id)}
-                        />
-                        <span>
-                          <Icon name="check" size={13} />
-                        </span>
-                      </label>
-                    )}
-                  </div>
-                  <div className="card-meta">
-                    <button
-                      className="title-button"
-                      onClick={() => openWork(work.id)}
-                    >
-                      {work.title}
-                    </button>
-                    <span className="chapter-count">{work.chapters} 章</span>
-                  </div>
-                  <p className="card-author">
-                    {work.author}
-                    <span>·</span>
-                    {work.tags[0]}
-                  </p>
-                  <div className="card-footer">
-                    <span className={`status ${badge.tone}`}>
-                      <i />
-                      {badge.text}
-                    </span>
-                    <span>{work.finished ? "已完结" : "连载中"}</span>
-                  </div>
-                </article>
-              );
-            })}
+        {page === "library" && libraryTab === "booklists" ? (
+          <div className="empty-state">
+            <Icon name="book" size={32} />
+            <h2>本地书单</h2>
+            <p>跨来源书单管理将在本地存储接入后提供。</p>
           </div>
+        ) : visibleWorks.length ? (
+          renderGrid(visibleWorks, "cover-grid")
         ) : (
           <div className="empty-state">
             <Icon name="search" size={32} />
@@ -425,7 +651,8 @@ export default function App() {
               onClick={() => {
                 setQuery("");
                 setFilter("all");
-                setSource("all");
+                if (page !== "favorites") setSource("all");
+                setSelection([]);
               }}
             >
               清空筛选
@@ -434,14 +661,14 @@ export default function App() {
         )}
         <div className="library-footnote">
           <span>所有封面与作品均为原创示意内容</span>
-          <span>8 部作品，8 个小小的世界</span>
+          <span>按行排列 · 向下浏览更多</span>
         </div>
         {chosen.length > 0 && (
           <div className="selection-bar">
             <span className="selected-count">{chosen.length}</span>
             <div>
               <strong>部作品已选择</strong>
-              <small>一次确认，自动下载并整理入库</small>
+              <small>包含当前筛选中未进入视口的所选作品</small>
             </div>
             <button className="text-button" onClick={() => setSelection([])}>
               取消选择
@@ -490,7 +717,9 @@ export default function App() {
             <button
               className="author-link"
               onClick={() => {
-                navigate("library");
+                navigate("discovery");
+                setFilter("all");
+                setSource(work.source);
                 setQuery(work.author);
               }}
             >
@@ -501,7 +730,6 @@ export default function App() {
               {work.tags.map((tag) => (
                 <span key={tag}>{tag}</span>
               ))}
-              <span>{work.finished ? "已完结" : "连载中"}</span>
             </div>
             <p className="description">{work.description}</p>
             <div className="detail-numbers">
@@ -882,7 +1110,7 @@ export default function App() {
               <ol className="flow-list">
                 <li>下载图片</li>
                 <li>校验内容</li>
-                <li>生成并验证 ZIP</li>
+                <li>保存并验证作品文件</li>
                 <li>安全入库</li>
                 <li>同步完成状态</li>
               </ol>
@@ -934,7 +1162,7 @@ export default function App() {
         <div className="page-heading">
           <div>
             <div className="eyebrow">FOLLOW THE STORYTELLERS</div>
-            <h1>作者与监控</h1>
+            <h1>关注</h1>
             <p>关注喜欢的创作者，让新故事来到你的漫画库。</p>
           </div>
         </div>
@@ -943,31 +1171,25 @@ export default function App() {
           <p>这里展示示例作者及其作品。真实关注与云端监控将在后续接入。</p>
         </div>
         <div className="authors-list">
-          {works.map((work, index) => (
+          {works.map((work) => (
             <button
               key={work.id}
               className="author-row"
               onClick={() => {
-                setPage("library");
+                setPage("discovery");
                 setFilter("all");
                 setQuery(work.author);
+                setSource(work.source);
+                setSelection([]);
               }}
             >
-              <span
-                className="author-avatar"
-                style={{ background: work.accent }}
-              >
-                {work.author.slice(0, 1)}
-              </span>
               <div>
                 <strong>{work.author}</strong>
                 <span>
                   {work.source} · {work.title}
                 </span>
               </div>
-              <span className="author-index">
-                {String(index + 1).padStart(2, "0")}
-              </span>
+              <span className="author-check">尚未检查</span>
               <Icon name="arrow" size={18} />
             </button>
           ))}
@@ -977,71 +1199,39 @@ export default function App() {
   }
 
   function renderSettings() {
-    return (
-      <>
-        <div className="page-heading">
-          <div>
-            <div className="eyebrow">MAKE ROOM FOR YOUR COLLECTION</div>
-            <h1>设置</h1>
-            <p>先把习惯确定下来，再接上真实的漫画库。</p>
-          </div>
-        </div>
-        <section className="settings-section">
-          <h2>已确认的收藏方式</h2>
-          {[
-            ["新增作品格式", "ZIP 压缩包"],
-            ["打包方式", "一部作品一个文件，包内按章节分目录"],
-            ["保存位置", "漫画库／作品名.zip"],
-            ["确认下载之后", "有空闲名额时自动执行"],
-            ["关闭应用窗口", "安全暂停并退出，下次打开恢复"],
-            ["阅读功能", "首版不内置阅读器"],
-          ].map(([key, value]) => (
-            <div className="setting-row" key={key}>
-              <span>{key}</span>
-              <strong>{value}</strong>
-            </div>
-          ))}
-        </section>
-        <section className="settings-section">
-          <h2>关于这个样例</h2>
-          <p className="settings-description">
-            这是本地工作台的前端交互样例。作品、封面、文件路径和任务状态均为示意内容。队列仅保存在当前浏览器中，还没有连接
-            GitHub、Rust 下载器或你的本地漫画库。
-          </p>
-          <div className="setting-row">
-            <span>模拟数据保存</span>
-            <strong className={storageFailed ? "warning" : "success"}>
-              {storageFailed
-                ? "浏览器存储不可用，仅本次会话有效"
-                : "当前浏览器 · 可刷新恢复"}
-            </strong>
-          </div>
-          <div className="setting-row">
-            <div>
-              <span>重新体验</span>
-              <p className="fine-print">
-                重置模拟队列和页面选择，保留所有真实文件。
-              </p>
-            </div>
-            <button
-              className="button secondary"
-              onClick={() => {
-                setState(initialDemoState());
-                setSelection([]);
-                setNotice("样例已重置");
-              }}
-            >
-              <Icon name="refresh" size={16} />
-              重置样例
-            </button>
-          </div>
-        </section>
-      </>
+    return preferencesReady ? (
+      <WorkbenchSettings
+        preferences={preferences}
+        onSave={commitPreferences}
+        onPreview={setAppearanceDraft}
+        searchQuery={settingsQuery}
+        onBackgroundValidated={(dataUrl) => {
+          if (dataUrl === failedBackground) setFailedBackground(null);
+        }}
+        storageFailed={preferencesFailed || storageFailed}
+        onResetDemo={() => {
+          setState(initialDemoState());
+          setSelection([]);
+          setNotice("样例已重置");
+        }}
+      />
+    ) : (
+      <p role="status">正在读取设置…</p>
     );
   }
-
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-background-mode={appearance.backgroundMode}
+      style={
+        {
+          "--user-background": displayBackground
+            ? `url("${displayBackground}")`
+            : "none",
+        } as CSSProperties
+      }
+    >
+      <div className="workbench-background" aria-hidden="true" />
       <aside className="sidebar">
         <button
           className="brand"
@@ -1051,17 +1241,12 @@ export default function App() {
           <span className="brand-mark">
             M<span />
           </span>
-          <span>
-            MangaMonitor<small>你的私人漫画工作台</small>
-          </span>
         </button>
-        <div className="workspace-label">
-          个人工作台<span>V1</span>
-        </div>
         <nav aria-label="主要导航">
           {(
             [
               ["library", "library"],
+              ["favorites", "heart"],
               ["discovery", "discover"],
               ["queue", "download"],
               ["authors", "people"],
@@ -1072,10 +1257,12 @@ export default function App() {
               data-testid={`nav-${value}`}
               className={`nav-item ${page === value ? "active" : ""}`}
               aria-current={page === value ? "page" : undefined}
+              aria-label={pageNames[value]}
+              title={pageNames[value]}
               onClick={() => navigate(value)}
             >
               <Icon name={icon} size={19} />
-              <span>{pageNames[value]}</span>
+              <span className="nav-tooltip">{pageNames[value]}</span>
               {value === "queue" && unfinished > 0 && (
                 <span className="nav-count">{unfinished}</span>
               )}
@@ -1083,38 +1270,18 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-note">
-          <span className="tiny-kicker">A SHELF OF STORIES</span>
-          <p>
-            留一点空间，
-            <br />
-            给下一个好故事。
-          </p>
-          <div className="little-shelf">
-            <i />
-            <i />
-            <i />
-            <i />
-            <i />
-          </div>
-        </div>
         <div className="sidebar-bottom">
           <button
             className={`nav-item ${page === "settings" ? "active" : ""}`}
             data-testid="nav-settings"
+            aria-label="设置"
+            title="设置"
+            aria-current={page === "settings" ? "page" : undefined}
             onClick={() => navigate("settings")}
           >
             <Icon name="settings" size={19} />
-            <span>设置</span>
+            <span className="nav-tooltip">设置</span>
           </button>
-          <div className="profile">
-            <span className="profile-avatar">私</span>
-            <div>
-              <strong>我的漫画库</strong>
-              <span>本地收藏 · 工作台预览</span>
-            </div>
-            <span className="profile-dot" />
-          </div>
         </div>
       </aside>
       <div className="main-shell">
@@ -1132,23 +1299,37 @@ export default function App() {
             <Icon name="search" size={17} />
             <input
               data-testid="search-input"
-              aria-label="搜索作品或作者"
-              placeholder="搜索作品、作者…"
-              value={query}
+              aria-label={page === "settings" ? "搜索设置" : "搜索作品或作者"}
+              placeholder={
+                page === "settings" ? "搜索设置…" : "搜索作品、作者…"
+              }
+              value={page === "settings" ? settingsQuery : query}
               onChange={(event) => {
+                if (page === "settings") {
+                  setSettingsQuery(event.target.value);
+                  return;
+                }
                 setQuery(event.target.value);
-                if (detail || !["library", "discovery"].includes(page)) {
-                  setDetail(null);
-                  setPage("library");
+                clearScopeSelection();
+                setDetail(null);
+                if (!["library", "favorites", "discovery"].includes(page)) {
+                  setPage("discovery");
                   setFilter("all");
+                  setSource("all");
                 }
               }}
             />
-            {query && (
+            {(page === "settings" ? settingsQuery : query) && (
               <button
                 className="icon-button"
                 aria-label="清空搜索"
-                onClick={() => setQuery("")}
+                onClick={() => {
+                  if (page === "settings") setSettingsQuery("");
+                  else {
+                    setQuery("");
+                    clearScopeSelection();
+                  }
+                }}
               >
                 <Icon name="close" size={14} />
               </button>
@@ -1156,10 +1337,20 @@ export default function App() {
           </label>
           <div className="demo-label" data-testid="demo-label">
             <span />
-            交互样例 · 模拟数据
+            交互样例 · 模拟数据{activeFixture && " · 100 条验收数据"}
           </div>
         </header>
-        <main className="content" ref={contentRef} tabIndex={-1}>
+        <main
+          className={`content ${chosen.length > 0 && !detail && page !== "settings" ? "has-selection" : ""}`}
+          ref={contentRef}
+          tabIndex={-1}
+        >
+          {failedBackground &&
+            appearance.backgroundImage === failedBackground && (
+              <p role="status" className="storage-warning">
+                已保存的背景图片暂时无法显示，原设置已保留；请在外观中重新选择图片。
+              </p>
+            )}
           {storageFailed && (
             <div role="status" className="storage-warning">
               浏览器存储不可用，模拟进度只在本次会话中保留。
@@ -1167,7 +1358,7 @@ export default function App() {
           )}
           {currentWork
             ? renderDetail(currentWork)
-            : ["library", "discovery"].includes(page)
+            : ["library", "favorites", "discovery"].includes(page)
               ? renderLibrary()
               : page === "queue"
                 ? renderQueue()
@@ -1184,7 +1375,7 @@ export default function App() {
                 ? `模拟执行中 · ${lookup(activeTask.workId).title}`
                 : "模拟队列就绪"}
           </span>
-          <span>原创示意作品 · 不访问真实漫画或本地文件</span>
+          <span>示例数据 · 尚未连接下载器</span>
         </footer>
       </div>
       {confirmation && (
@@ -1194,8 +1385,8 @@ export default function App() {
           onClose={() => setConfirmation(null)}
         >
           <p className="dialog-intro">
-            确认这 {confirmation.length} 部作品，队列会自动完成下载、校验、ZIP
-            打包和入库。
+            确认这 {confirmation.length}{" "}
+            部作品，队列会自动完成下载、校验和入库。
           </p>
           <div className="confirmation-list">
             {confirmation.map((id) => {
@@ -1207,7 +1398,9 @@ export default function App() {
                     <strong>{work.title}</strong>
                     <span>漫画库／{work.title}.zip</span>
                   </div>
-                  <span>{work.chapters} 章</span>
+                  <span>
+                    {work.source} · {work.chapters} 章
+                  </span>
                 </div>
               );
             })}

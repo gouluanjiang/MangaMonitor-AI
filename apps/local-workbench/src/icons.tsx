@@ -1,6 +1,9 @@
 import type { CSSProperties } from "react";
 
 const paths = {
+  heart: (
+    <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" />
+  ),
   library: (
     <>
       <path d="M4 4h5v16H4zM12 4h4v16h-4zM18 5l3 14" />

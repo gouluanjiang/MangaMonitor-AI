@@ -2,7 +2,7 @@ import type { Work } from "./types.ts";
 
 // Original fictional works for the local frontend sample. Source labels are
 // display-only examples; this catalogue has no connection to either service.
-export const works: Work[] = [
+const sampleWorks: Work[] = [
   {
     id: "rain",
     title: "雨停之前",
@@ -148,3 +148,29 @@ export const works: Work[] = [
     updated: "2026-09-08",
   },
 ];
+
+// Explicit synthetic acceptance datasets. No source requests or real inventory.
+export const fixtureName =
+  typeof window === "undefined"
+    ? null
+    : new URLSearchParams(window.location.search).get("fixture");
+export const activeFixture = ["ready-100", "owned-100"].includes(
+  fixtureName ?? "",
+)
+  ? fixtureName
+  : null;
+export const works: Work[] = activeFixture
+  ? [
+      ...sampleWorks,
+      ...Array.from({ length: 100 }, (_, i): Work => ({
+        ...sampleWorks[i % sampleWorks.length],
+        id: "fixture-" + String(i + 1).padStart(3, "0"),
+        title: "示例作品 " + String(i + 1).padStart(3, "0"),
+        subtitle: "可区分顺序的验收记录",
+        author: "示例作者 " + String(i + 1).padStart(3, "0"),
+        source: i % 2 === 0 ? "JM" : "Pica",
+        status: activeFixture === "owned-100" ? "owned" : "ready",
+        updated: "2026-09-09",
+      })),
+    ]
+  : sampleWorks;

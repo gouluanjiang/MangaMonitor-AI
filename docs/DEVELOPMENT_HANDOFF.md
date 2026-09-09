@@ -4,19 +4,28 @@ Updated 2026-09-09. This document separates the current continuation from histor
 
 ## Current continuation
 
+The new development session has taken over the existing checkout and retained the prior uncommitted implementation. See [the current acceptance record](LOCAL_WORKBENCH_ACCEPTANCE_2026-09-09.md). The mandatory external UI baseline is in the parent workspace, MANGAMONITOR_UI_BASELINE_2026-09-09.md; its specified PNGs and text corrections take priority over historical proposals and the old browser sample.
+
+The first continuation batch restores the local-only homepage with recent/all sections, browse versus selection modes, list anchors through density/settings/detail navigation, full-scope synthetic selection, and page-scoped settings without discarding temporarily unreadable backgrounds. Tauri, real accounts and remaining source-specific pages are still unfinished. Do not mistake the booklist tab placeholder for implemented booklist management.
+
+Current implementation task (2026-09-09): the user accepted the remaining UI after the following/settings review, with explicit corrections: author names without avatars or initial circles; remove ZIP packaging and image-processing tuning controls. The user said other parts were fine and to proceed. Frontend implementation has resumed. Do not generate or regenerate design preview images for this or future edits unless explicitly requested later.
+
+The first implementation slice covers the common narrow navigation rail, vertical 5/7/9 cover grid, A/B custom-background preferences (initial B), name-only author rows, and page-scoped appearance/resource settings. Keep the existing single batch confirmation and simulated recovery behavior. Real accounts, source favorites, native tasks, library inventory and production remain separate unfinished integrations. See [the implementation and source-review record](LOCAL_WORKBENCH_IMPLEMENTATION_2026-09-09.md).
+
+[Feature scope](LOCAL_WORKBENCH_FEATURE_SCOPE.md) and [UI structure](LOCAL_WORKBENCH_UI_STRUCTURE.md) retain both JM/Pica accounts and favorites, mixed local booklists, source-aware deduplication/review, discovery/rankings and optional PDF/CBZ export. Backup/restore and bulk link-list import remain deferred; later content is handled as new works, without old-ZIP updates or replacement. Previous paragraphs in historical design artifacts describe earlier discussion stages and do not reinstate the superseded frontend pause.
 The pre-downloader reliability batch was merged as PR #18, public main `69fcf1dd24526b5920406c9b97bb3e8b8909c6c6`. PR run `34245102484` passed 435 Linux workspace tests, Clippy and Windows safety/build checks; post-main run `34245838729` passed both jobs. The frontend discussion stop was reached before any desktop UI construction.
 
 The user has now confirmed the first local workbench product decisions in [LOCAL_WORKBENCH_V1_DESIGN.md](LOCAL_WORKBENCH_V1_DESIGN.md): cover-library homepage, independent detail and queue pages, no V1 reader, one ZIP per work directly under the library root with internal chapter directories, automatic queue execution after confirmation, batch confirmation of download-and-import, and safe pause/exit with recovery on reopening. Normal tasks complete automatically; exceptions are handled individually.
 
 The user then asked to begin the next step. `apps/local-workbench` now contains the first React/TypeScript browser interaction sample: a cover grid, independent detail page, batch confirmation, separate simulated queue, authors and settings. Original fictional covers and visibly labeled synthetic state require no service credentials or backend. Browser-local demo persistence is strictly separate from real state.
 
-The `Local workbench UI` workflow validates the sample in GitHub Actions and publishes a static preview artifact. The implementation still needs visual acceptance from the user before broadening the frontend. Native Tauri integration, ZIP packaging, desktop coordination, safe local recovery and cloud result publication remain work to implement and verify. This is not real-execution or production acceptance.
+The `Local workbench UI` workflow validates the sample in GitHub Actions and publishes a static preview artifact. The accepted design is being implemented in bounded code changes, verified in GitHub Actions without generating new design previews. Native Tauri integration, ZIP packaging, desktop coordination, safe local recovery and cloud result publication remain work to implement and verify. This is not real-execution or production acceptance.
 
 ## Historical discussion stop and current boundary
 
 The user requested continued project development and an explicit stop when the work reaches construction of the local downloader, so the frontend on their Windows computer can be discussed together.
 
-That discussion is complete for the first sample and the user authorized its construction. The earlier stop no longer prevents the isolated UI prototype. Existing local CLI binaries remain backend building blocks; the browser sample does not expose their authority or establish a delivered desktop application.
+The user previously authorized the first isolated sample, which was constructed. They subsequently paused further UI work to agree on features and redesign the visuals together. Existing local CLI binaries remain backend building blocks; the browser sample does not expose their authority or establish a delivered desktop application.
 
 Production activation and real task execution retain their existing separate authority gates. This continuation does not create a genuine new-work task, approve one, issue a completeness certificate from incomplete inventory, or enable production.
 
@@ -52,7 +61,7 @@ Branch: `codex/pre-downloader-reliability`.
 
 ## Remaining local implementation and acceptance work
 
-- Implement the confirmed local product behavior; refine visual layout, actual staging/library paths, credential storage and recovery presentation through the first UI sample.
+- Implement the already accepted scope and visual baseline. Complete the remaining source-specific pages, account storage, booklists and recovery; do not repeat design acceptance or reintroduce declined additions or old-ZIP updates.
 - Integrate the existing local CLI stages with a bounded local controller; do not let a UI manufacture task authority.
 - Implement the verified local inventory/completion publication bridge (Issue #7), including remote-base races and forward reconciliation of already-materialized content.
 - Complete local import/staging interruption and lost-receipt recovery, plus full V1.7/V1.8 execution-chain tests.

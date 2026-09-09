@@ -1,5 +1,6 @@
 use crate::{
-    model::ValidatedDocument, Booklists, Result, StoreError, WorkbenchPreferences, MAX_SAFE_INTEGER,
+    model::ValidatedDocument, AccountFollowing, Booklists, Result, StoreError,
+    WorkbenchPreferences, MAX_SAFE_INTEGER,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,8 +16,11 @@ use std::{
 pub const PRIVATE_DIRECTORY: &str = "workbench-preview-v1";
 const PREFERENCES: &str = "preferences.json";
 const BOOKLISTS: &str = "booklists.json";
+const FOLLOWING: &str = "following.json";
 const MAX_PREFERENCES_BYTES: usize = 12 * 1024 * 1024;
 const MAX_BOOKLISTS_BYTES: usize = 5 * 1024 * 1024;
+// Covers all permitted scopes and maximum-length UTF-8 names without truncation.
+const MAX_FOLLOWING_BYTES: usize = 16 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -100,6 +104,20 @@ impl WorkbenchStore {
         value: Booklists,
     ) -> Result<Document<Booklists>> {
         self.write(BOOKLISTS, MAX_BOOKLISTS_BYTES, expected_revision, value)
+    }
+
+    pub fn read_following(&self) -> Result<Document<AccountFollowing>> {
+        self.read(FOLLOWING, MAX_FOLLOWING_BYTES)
+    }
+
+    /// Native service only: derive account scope from its verified session and
+    /// apply a single authorized change. Never expose whole-document writes to IPC.
+    pub fn write_following(
+        &self,
+        expected_revision: u64,
+        value: AccountFollowing,
+    ) -> Result<Document<AccountFollowing>> {
+        self.write(FOLLOWING, MAX_FOLLOWING_BYTES, expected_revision, value)
     }
 
     fn read<T: ValidatedDocument>(&self, name: &str, maximum: usize) -> Result<Document<T>> {

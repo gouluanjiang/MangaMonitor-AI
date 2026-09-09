@@ -1,3 +1,6 @@
+mod accounts;
+
+use accounts::DesktopAccounts;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -147,6 +150,14 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             read_booklists,
             write_booklists,
             choose_background,
+            accounts::source_accounts,
+            accounts::source_login,
+            accounts::source_logout,
+            accounts::source_query,
+            accounts::source_favorite,
+            accounts::source_cover,
+            accounts::source_following,
+            accounts::source_follow,
         ])
 }
 
@@ -174,7 +185,8 @@ pub fn run() {
             let root = app.path().app_data_dir().map_err(|_| StoreError {
                 code: "APP_DATA_UNAVAILABLE",
             });
-            app.manage(Arc::new(DesktopStore::new(root)));
+            app.manage(Arc::new(DesktopStore::new(root.clone())));
+            app.manage(Arc::new(DesktopAccounts::new(root)));
             let window_config = app
                 .config()
                 .app

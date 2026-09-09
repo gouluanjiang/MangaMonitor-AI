@@ -198,3 +198,87 @@ impl ValidatedDocument for Booklists {
         Ok(())
     }
 }
+
+pub const MAX_FOLLOWED_ACCOUNTS: usize = 20;
+pub const MAX_FOLLOWED_WORKS_PER_ACCOUNT: usize = 500;
+pub const MAX_FOLLOWED_AUTHORS_PER_ACCOUNT: usize = 200;
+pub const MAX_FOLLOWING_NAME_CHARACTERS: usize = 200;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FollowedWork {
+    pub work_id: String,
+    pub title: String,
+}
+
+/// A local scope derived by the native service from a verified remote identity.
+/// account_key is a lowercase SHA-256 hex digest, never a renderer-selected key.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FollowedAccount {
+    pub source: Source,
+    pub account_key: String,
+    pub works: Vec<FollowedWork>,
+    pub authors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccountFollowing {
+    pub version: u32,
+    pub accounts: Vec<FollowedAccount>,
+}
+
+impl Default for AccountFollowing {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            accounts: Vec::new(),
+        }
+    }
+}
+
+fn valid_following_name(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.chars().count() <= MAX_FOLLOWING_NAME_CHARACTERS
+        && !value.chars().any(char::is_control)
+}
+
+impl ValidatedDocument for AccountFollowing {
+    fn validate(&self) -> Result<()> {
+        let invalid = || StoreError::new("VALIDATION_FAILED");
+        if self.version != 1 || self.accounts.len() > MAX_FOLLOWED_ACCOUNTS {
+            return Err(invalid());
+        }
+        let mut scopes = HashSet::new();
+        for account in &self.accounts {
+            if account.account_key.len() != 64
+                || !account
+                    .account_key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || !scopes.insert((account.source, &account.account_key))
+                || account.works.len() > MAX_FOLLOWED_WORKS_PER_ACCOUNT
+                || account.authors.len() > MAX_FOLLOWED_AUTHORS_PER_ACCOUNT
+            {
+                return Err(invalid());
+            }
+            let mut works = HashSet::new();
+            for work in &account.works {
+                if !valid_id(&work.work_id, 160)
+                    || !valid_following_name(&work.title)
+                    || !works.insert(&work.work_id)
+                {
+                    return Err(invalid());
+                }
+            }
+            let mut authors = HashSet::new();
+            for author in &account.authors {
+                if !valid_following_name(author) || !authors.insert(author) {
+                    return Err(invalid());
+                }
+            }
+        }
+        Ok(())
+    }
+}

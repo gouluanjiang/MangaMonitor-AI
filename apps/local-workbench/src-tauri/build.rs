@@ -6,6 +6,14 @@ fn main() {
         "read_booklists",
         "write_booklists",
         "choose_background",
+        "source_accounts",
+        "source_login",
+        "source_logout",
+        "source_query",
+        "source_favorite",
+        "source_cover",
+        "source_following",
+        "source_follow",
     ]);
     let windows_msvc = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");

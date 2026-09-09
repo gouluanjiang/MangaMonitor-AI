@@ -6,6 +6,9 @@ on:
     paths:
       - 'apps/local-workbench/**'
       - 'crates/workbench-storage/**'
+      - 'crates/workbench-credentials/**'
+      - 'crates/workbench-sources/**'
+      - 'crates/workbench-accounts/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -15,6 +18,9 @@ on:
     paths:
       - 'apps/local-workbench/**'
       - 'crates/workbench-storage/**'
+      - 'crates/workbench-credentials/**'
+      - 'crates/workbench-sources/**'
+      - 'crates/workbench-accounts/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -69,8 +75,10 @@ jobs:
       - name: Check desktop Rust formatting
         # --all follows path dependencies into the separate headless workspace.
         run: cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --package mangamonitor-workbench-preview -- --check
-      - name: Test offline native document storage
-        run: cargo +1.98.1 test --locked -p workbench-storage -- --test-threads=2
+      - name: Test offline document storage and account workflows
+        run: cargo +1.98.1 test --locked -p workbench-storage -p workbench-credentials -p workbench-sources -p workbench-accounts -- --test-threads=2
+      - name: Verify Windows credential persistence in random CI slots
+        run: cargo +1.98.1 test --locked -p workbench-credentials windows_credential_manager_roundtrip_uses_only_random_ci_slots -- --ignored --test-threads=1
       - name: Build frontend assets for native context tests
         working-directory: apps/local-workbench
         run: pnpm build

@@ -10,7 +10,8 @@ fn fixture() -> (tempfile::TempDir, tauri::App<MockRuntime>) {
 
 fn app_with_root(root: Result<PathBuf, StoreError>) -> tauri::App<MockRuntime> {
     app_builder(mock_builder())
-        .manage(Arc::new(DesktopStore::new(root)))
+        .manage(Arc::new(DesktopStore::new(root.clone())))
+        .manage(Arc::new(DesktopAccounts::new(root)))
         // Compile the real manifest/capabilities, not an allow-all mock context.
         .build(tauri::generate_context!())
         .unwrap()
@@ -300,4 +301,152 @@ fn navigation_is_limited_to_packaged_assets_and_the_development_server() {
     ] {
         assert!(!trusted_navigation(&url.parse().unwrap(), true));
     }
+}
+
+fn account_commands() -> Vec<(&'static str, Value)> {
+    vec![
+        ("source_accounts", json!({})),
+        // Invalid login data is deliberate: these IPC tests never authenticate.
+        (
+            "source_login",
+            json!({"source":"JM","username":"","password":"","remember":false}),
+        ),
+        ("source_logout", json!({"source":"JM","sessionId":null})),
+        (
+            "source_query",
+            json!({"source":"JM","sessionId":"stale","kind":"favorites","query":"","folderId":null,"page":1}),
+        ),
+        (
+            "source_favorite",
+            json!({"source":"JM","sessionId":"stale","workId":"123","desired":true}),
+        ),
+        (
+            "source_cover",
+            json!({"source":"JM","sessionId":"stale","workId":"123"}),
+        ),
+        (
+            "source_following",
+            json!({"source":"JM","sessionId":"stale"}),
+        ),
+        (
+            "source_follow",
+            json!({"source":"JM","sessionId":"stale","kind":"author","value":"Author","desired":true,"expectedRevision":0}),
+        ),
+    ]
+}
+
+#[test]
+fn account_commands_are_denied_for_secondary_windows_and_remote_origins() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let secondary = window(&app, "secondary");
+    for (command, body) in account_commands() {
+        let secondary_error = invoke(&secondary, command, body.clone()).unwrap_err();
+        assert!(
+            secondary_error.is_string(),
+            "{command}: expected capability denial"
+        );
+        let remote_error =
+            invoke_from(&main, "https://example.invalid", command, body).unwrap_err();
+        assert!(
+            remote_error.is_string(),
+            "{command}: expected remote-origin denial"
+        );
+    }
+}
+
+#[test]
+fn account_state_uses_only_empty_test_vault_and_no_account_operations_fail_closed() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let expected = json!([
+        {"source":"JM","sessionId":null,"accountId":null,"displayName":null,"state":"disconnected","remembered":false,"errorCode":null},
+        {"source":"Pica","sessionId":null,"accountId":null,"displayName":null,"state":"disconnected","remembered":false,"errorCode":null}
+    ]);
+    assert_eq!(
+        invoke(&main, "source_accounts", json!({})).unwrap(),
+        expected
+    );
+    assert_eq!(
+        invoke(&main, "source_accounts", json!({"refresh":true})).unwrap(),
+        expected
+    );
+    for (command, body) in account_commands() {
+        match command {
+            "source_accounts" | "source_logout" => continue,
+            "source_login" => assert_eq!(
+                invoke(&main, command, body).unwrap_err(),
+                json!({"code":"LOGIN_INPUT_INVALID"})
+            ),
+            _ => assert_eq!(
+                invoke(&main, command, body).unwrap_err(),
+                json!({"code":"SESSION_CHANGED"})
+            ),
+        }
+    }
+    // Null is only accepted for the already-observed disconnected generation.
+    let logged_out = invoke(
+        &main,
+        "source_logout",
+        json!({"source":"JM","sessionId":null}),
+    )
+    .unwrap();
+    assert_eq!(logged_out, expected[0]);
+    assert_eq!(
+        invoke(&main, "source_accounts", json!({})).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn account_inputs_reject_unknown_sources_kinds_and_unsafe_boundaries() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    for (command, mut body) in account_commands() {
+        if command == "source_accounts" {
+            continue;
+        }
+        body["source"] = json!("unknown-source");
+        assert!(invoke(&main, command, body).unwrap_err().is_string());
+    }
+    let invalid_logins = [
+        json!({"source":"JM","username":"","password":"private-fixture-value","remember":false}),
+        json!({"source":"Pica","username":"account","password":"secret\r\nheader","remember":true}),
+        json!({"source":"JM","username":"account","password":"x".repeat(4097),"remember":false}),
+    ];
+    for body in invalid_logins {
+        let error = invoke(&main, "source_login", body).unwrap_err();
+        assert_eq!(error, json!({"code":"LOGIN_INPUT_INVALID"}));
+    }
+    for body in [
+        json!({"source":"JM","sessionId":"stale","kind":"search","query":"query","folderId":null,"page":0}),
+        json!({"source":"JM","sessionId":"stale","kind":"search","query":"query\n","folderId":null,"page":1}),
+    ] {
+        assert_eq!(
+            invoke(&main, "source_query", body).unwrap_err(),
+            json!({"code":"QUERY_INVALID"})
+        );
+    }
+    assert!(invoke(&main, "source_query", json!({"source":"JM","sessionId":"stale","kind":"download","query":"","folderId":null,"page":1})).unwrap_err().is_string());
+    assert!(invoke(&main, "source_follow", json!({"source":"JM","sessionId":"stale","kind":"path","value":"x","desired":true,"expectedRevision":0})).unwrap_err().is_string());
+    assert_eq!(invoke(&main, "source_follow", json!({"source":"JM","sessionId":"stale","kind":"author","value":"bad\nname","desired":true,"expectedRevision":0})).unwrap_err(), json!({"code":"FOLLOWING_INPUT_INVALID"}));
+}
+
+#[test]
+fn account_initialization_failure_keeps_window_and_old_commands_available() {
+    let app = app_with_root(Err(StoreError {
+        code: "APP_DATA_UNAVAILABLE",
+    }));
+    let main = window(&app, "main");
+    for refresh in [false, true] {
+        assert_eq!(
+            invoke(&main, "source_accounts", json!({"refresh":refresh})).unwrap_err(),
+            json!({"code":"APP_DATA_UNAVAILABLE"})
+        );
+    }
+    assert_eq!(
+        invoke(&main, "read_preferences", json!({})).unwrap_err(),
+        json!({"code":"APP_DATA_UNAVAILABLE"})
+    );
+    assert!(app.get_webview_window("main").is_some());
 }

@@ -1,0 +1,19 @@
+[package]
+name = "workbench-sources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+workbench-credentials = { path = "../workbench-credentials" }
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+base64.workspace = true
+image.workspace = true
+sha2.workspace = true
+aes = "0.8"
+md5 = "0.7"
+hmac = "0.12"
+

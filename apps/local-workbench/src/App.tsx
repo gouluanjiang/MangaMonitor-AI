@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { works, activeFixture } from "./catalog.ts";
 import {
@@ -29,6 +29,18 @@ import {
 } from "./persistence.ts";
 import type { DocumentSnapshot } from "./persistence.ts";
 import "./booklists.css";
+import { AccountSettings } from "./AccountSettings.tsx";
+import { SourceWorkbench } from "./SourceWorkbench.tsx";
+import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
+import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
+import { sources, sourceWorkKey } from "./source-types.ts";
+import type {
+  AccountSummary,
+  Source,
+  SourceScope,
+  SourceWork,
+} from "./source-types.ts";
+const sourceAdapter = createSourceAdapter();
 const persistence = createWorkbenchPersistence({ fixture: activeFixture });
 const workReference = (work: Work): WorkReference => ({
   source: work.source,
@@ -123,6 +135,92 @@ function Dialog({
 }
 
 export default function App() {
+  const [accounts, setAccounts] = useState<AccountSummary[]>(() =>
+    sources.map((source) => ({
+      source,
+      sessionId: null,
+      accountId: null,
+      displayName: null,
+      state: "disconnected",
+      remembered: false,
+      errorCode: null,
+    })),
+  );
+  const [loadingAccounts, setLoadingAccounts] = useState(persistence.native);
+  const [accountsError, setAccountsError] = useState("");
+  const accountsRef = useRef(accounts);
+  accountsRef.current = accounts;
+  const [sourceCache, setSourceCache] = useState<
+    Record<string, { scope: SourceScope; work: SourceWork }>
+  >({});
+  const lastSourceView = useRef<"favorites" | "search" | "following">(
+    "favorites",
+  );
+  const [requestedSource, setRequestedSource] = useState<Source>();
+  const [requestedWork, setRequestedWork] = useState<WorkReference>();
+  const [sourceRequestKey, setSourceRequestKey] = useState(0);
+  const [sourceSearchHost, setSourceSearchHost] =
+    useState<HTMLDivElement | null>(null);
+  const mergeAccounts = useCallback((updates: AccountSummary[]) => {
+    const next = accountsRef.current.map(
+      (previous) =>
+        updates.find((update) => update.source === previous.source) ?? previous,
+    );
+    accountsRef.current = next;
+    setAccounts(next);
+    setSourceCache((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([, entry]) =>
+          next.some(
+            (account) =>
+              account.source === entry.scope.source &&
+              account.state === "connected" &&
+              account.sessionId === entry.scope.sessionId,
+          ),
+        ),
+      ),
+    );
+    setAccountsError("");
+  }, []);
+  const cacheSourceWorks = useCallback(
+    (scope: SourceScope, incoming: SourceWork[]) => {
+      if (
+        !accountsRef.current.some(
+          (account) =>
+            account.source === scope.source &&
+            account.state === "connected" &&
+            account.sessionId === scope.sessionId,
+        )
+      )
+        return;
+      setSourceCache((previous) => {
+        const next = { ...previous };
+        for (const work of incoming)
+          if (work.source === scope.source)
+            next[sourceWorkKey(work)] = { scope, work };
+        return Object.fromEntries(Object.entries(next).slice(-1000));
+      });
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!persistence.native) return;
+    let disposed = false;
+    void sourceAdapter
+      .accounts()
+      .then((updates) => {
+        if (!disposed) mergeAccounts(updates);
+      })
+      .catch((cause) => {
+        if (!disposed) setAccountsError(sourceErrorMessage(cause));
+      })
+      .finally(() => {
+        if (!disposed) setLoadingAccounts(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [mergeAccounts]);
   const [state, setState] = useState(readSavedDemo);
   const [page, setPage] = useState<Page>("library");
   const [detail, setDetail] = useState<string | null>(null);
@@ -162,6 +260,27 @@ export default function App() {
   const booklistsSnapshot = useRef<DocumentSnapshot<BooklistsDocument> | null>(
     null,
   );
+  const pickerCompletion = useRef<((saved: boolean) => void) | null>(null);
+  const openSourceBooklistPicker = useCallback(
+    (refs: WorkReference[]) =>
+      new Promise<boolean>((resolve) => {
+        pickerCompletion.current?.(false);
+        pickerCompletion.current = resolve;
+        setBooklistPickerMembers(refs);
+      }),
+    [],
+  );
+  function closeBooklistPicker(saved = false) {
+    pickerCompletion.current?.(saved);
+    pickerCompletion.current = null;
+    setBooklistPickerMembers(null);
+  }
+  useEffect(
+    () => () => {
+      pickerCompletion.current?.(false);
+    },
+    [],
+  );
   const booklistsBusy = useRef(false);
   const booklistsRead = useRef(0);
   const viewIdentity = useRef("");
@@ -178,6 +297,29 @@ export default function App() {
     (list) => list.id === selectedBooklistId && !list.archived,
   );
   const booklistView = page === "library" && libraryTab === "booklists";
+  const sourceActive =
+    persistence.native && ["favorites", "discovery", "authors"].includes(page);
+  const sourceView =
+    page === "favorites"
+      ? "favorites"
+      : page === "discovery"
+        ? "search"
+        : page === "authors"
+          ? "following"
+          : lastSourceView.current;
+  lastSourceView.current = sourceView;
+  function openSourceWork(ref: WorkReference) {
+    setRequestedSource(ref.source);
+    setRequestedWork(ref);
+    setSourceRequestKey((key) => key + 1);
+    navigate("discovery");
+  }
+  function openSourceFavorites(source: Source) {
+    setRequestedSource(source);
+    setRequestedWork(undefined);
+    setSourceRequestKey((key) => key + 1);
+    navigate("favorites");
+  }
   const unavailableMembers =
     currentBooklist?.members.filter(
       (member) => !works.some((work) => referenceMatches(member, work)),
@@ -844,7 +986,11 @@ export default function App() {
             </div>
           )}
         </div>
-        {booklistView && !currentBooklist ? null : visibleWorks.length ? (
+        {booklistView &&
+        (!currentBooklist ||
+          (persistence.native &&
+            unavailableMembers.length > 0 &&
+            visibleWorks.length === 0)) ? null : visibleWorks.length ? (
           renderGrid(visibleWorks, "cover-grid")
         ) : (
           <div className="empty-state">
@@ -880,40 +1026,77 @@ export default function App() {
             </button>
           </div>
         )}
-        {booklistView && currentBooklist && unavailableMembers.length > 0 && (
-          <section
-            className="unavailable-members"
-            data-testid="unavailable-members"
-          >
-            <h3>部分作品资料暂不可用（{unavailableMembers.length}）</h3>
-            <p>书单关联已保留，重新取得来源资料后可继续显示。</p>
-            {unavailableMembers.map((member) => (
-              <div key={member.source + ":" + member.workId}>
-                <span>
-                  {member.source} · {member.workId}
-                </span>
-                <button
-                  className="text-button"
-                  disabled={!booklistsReady || booklistsSaving}
-                  onClick={async () => {
-                    await commitBooklists(
-                      removeBooklistMembers(
-                        booklists,
-                        currentBooklist.id,
-                        [member],
-                        Date.now(),
-                      ),
-                    );
-                  }}
-                >
-                  移出书单
-                </button>
-              </div>
-            ))}
-          </section>
-        )}
+        {booklistView &&
+          currentBooklist &&
+          persistence.native &&
+          unavailableMembers.length > 0 && (
+            <NativeBooklistMembers
+              key={currentBooklist.id}
+              members={unavailableMembers}
+              accounts={accounts}
+              adapter={sourceAdapter}
+              cache={sourceCache}
+              onWorksChanged={cacheSourceWorks}
+              onAccountsChange={mergeAccounts}
+              density={appearance.density}
+              onOpenWork={openSourceWork}
+              onAddToBooklists={openSourceBooklistPicker}
+              query={query}
+              sourceFilter={source}
+              removeDisabled={!booklistsReady || booklistsSaving}
+              onRemove={(member) =>
+                commitBooklists(
+                  removeBooklistMembers(
+                    booklists,
+                    currentBooklist.id,
+                    [member],
+                    Date.now(),
+                  ),
+                )
+              }
+            />
+          )}
+        {booklistView &&
+          currentBooklist &&
+          !persistence.native &&
+          unavailableMembers.length > 0 && (
+            <section
+              className="unavailable-members"
+              data-testid="unavailable-members"
+            >
+              <h3>部分作品资料暂不可用（{unavailableMembers.length}）</h3>
+              <p>书单关联已保留，重新取得来源资料后可继续显示。</p>
+              {unavailableMembers.map((member) => (
+                <div key={member.source + ":" + member.workId}>
+                  <span>
+                    {member.source} · {member.workId}
+                  </span>
+                  <button
+                    className="text-button"
+                    disabled={!booklistsReady || booklistsSaving}
+                    onClick={async () => {
+                      await commitBooklists(
+                        removeBooklistMembers(
+                          booklists,
+                          currentBooklist.id,
+                          [member],
+                          Date.now(),
+                        ),
+                      );
+                    }}
+                  >
+                    移出书单
+                  </button>
+                </div>
+              ))}
+            </section>
+          )}
         <div className="library-footnote">
-          <span>所有封面与作品均为原创示意内容</span>
+          <span>
+            {booklistView && persistence.native
+              ? "书单关联保存在本机 · 库存待接入"
+              : "所有封面与作品均为原创示意内容"}
+          </span>
           <span>按行排列 · 向下浏览更多</span>
         </div>
         {selectedWorks.length > 0 && (
@@ -1499,6 +1682,17 @@ export default function App() {
   function renderSettings() {
     return preferencesReady ? (
       <WorkbenchSettings
+        accountPanel={
+          persistence.native ? (
+            <AccountSettings
+              adapter={sourceAdapter}
+              accounts={accounts}
+              onAccountsChange={mergeAccounts}
+              onOpenFavorites={openSourceFavorites}
+              loadingAccounts={loadingAccounts}
+            />
+          ) : undefined
+        }
         preferences={preferences}
         onSave={commitPreferences}
         saveDisabled={!preferencesSnapshot.current || preferencesSaving}
@@ -1602,50 +1796,55 @@ export default function App() {
               </>
             )}
           </div>
-          <label className="search-box">
-            <Icon name="search" size={17} />
-            <input
-              data-testid="search-input"
-              aria-label={page === "settings" ? "搜索设置" : "搜索作品或作者"}
-              placeholder={
-                page === "settings" ? "搜索设置…" : "搜索作品、作者…"
-              }
-              value={page === "settings" ? settingsQuery : query}
-              onChange={(event) => {
-                if (page === "settings") {
-                  setSettingsQuery(event.target.value);
-                  return;
+          <div ref={setSourceSearchHost} hidden={!sourceActive} />
+          {!sourceActive && (
+            <label className="search-box">
+              <Icon name="search" size={17} />
+              <input
+                data-testid="search-input"
+                aria-label={page === "settings" ? "搜索设置" : "搜索作品或作者"}
+                placeholder={
+                  page === "settings" ? "搜索设置…" : "搜索作品、作者…"
                 }
-                setQuery(event.target.value);
-                clearScopeSelection();
-                setDetail(null);
-                if (!["library", "favorites", "discovery"].includes(page)) {
-                  setPage("discovery");
-                  setFilter("all");
-                  setSource("all");
-                }
-              }}
-            />
-            {(page === "settings" ? settingsQuery : query) && (
-              <button
-                className="icon-button"
-                aria-label="清空搜索"
-                onClick={() => {
-                  if (page === "settings") setSettingsQuery("");
-                  else {
-                    setQuery("");
-                    clearScopeSelection();
+                value={page === "settings" ? settingsQuery : query}
+                onChange={(event) => {
+                  if (page === "settings") {
+                    setSettingsQuery(event.target.value);
+                    return;
+                  }
+                  setQuery(event.target.value);
+                  clearScopeSelection();
+                  setDetail(null);
+                  if (!["library", "favorites", "discovery"].includes(page)) {
+                    setPage("discovery");
+                    setFilter("all");
+                    setSource("all");
                   }
                 }}
-              >
-                <Icon name="close" size={14} />
-              </button>
-            )}
-          </label>
+              />
+              {(page === "settings" ? settingsQuery : query) && (
+                <button
+                  className="icon-button"
+                  aria-label="清空搜索"
+                  onClick={() => {
+                    if (page === "settings") setSettingsQuery("");
+                    else {
+                      setQuery("");
+                      clearScopeSelection();
+                    }
+                  }}
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              )}
+            </label>
+          )}
           <div className="demo-label" data-testid="demo-label">
             <span />
             {persistence.native
-              ? "桌面开发版 · 模拟数据"
+              ? sourceActive
+                ? "桌面开发版 · 真实来源"
+                : "桌面开发版 · 模拟数据"
               : "交互样例 · 模拟数据"}
             {activeFixture && " · 100 条验收数据"}
           </div>
@@ -1701,15 +1900,44 @@ export default function App() {
               浏览器存储不可用，模拟进度只在本次会话中保留。
             </div>
           )}
-          {currentWork
-            ? renderDetail(currentWork)
-            : ["library", "favorites", "discovery"].includes(page)
-              ? renderLibrary()
-              : page === "queue"
-                ? renderQueue()
-                : page === "authors"
-                  ? renderAuthors()
-                  : renderSettings()}
+          {accountsError && (
+            <p role="alert" className="storage-warning">
+              {accountsError} 可在设置的账号页重新读取。
+            </p>
+          )}
+          {persistence.native && (
+            <SourceWorkbench
+              adapter={sourceAdapter}
+              accounts={accounts}
+              onAccountsChange={mergeAccounts}
+              onOpenAccounts={(source) => {
+                setRequestedSource(source);
+                navigate("settings");
+              }}
+              onAddToBooklists={openSourceBooklistPicker}
+              onWorksChanged={cacheSourceWorks}
+              view={sourceView}
+              active={sourceActive}
+              density={appearance.density}
+              onDensityChange={changeDensity}
+              requestedSource={requestedSource}
+              requestedWork={requestedWork}
+              requestKey={sourceRequestKey}
+              loadingAccounts={loadingAccounts}
+              searchHost={sourceSearchHost}
+            />
+          )}
+          {sourceActive
+            ? null
+            : currentWork
+              ? renderDetail(currentWork)
+              : ["library", "favorites", "discovery"].includes(page)
+                ? renderLibrary()
+                : page === "queue"
+                  ? renderQueue()
+                  : page === "authors"
+                    ? renderAuthors()
+                    : renderSettings()}
         </main>
         <footer className="statusbar">
           <span>
@@ -1720,7 +1948,11 @@ export default function App() {
                 ? `模拟执行中 · ${lookup(activeTask.workId).title}`
                 : "模拟队列就绪"}
           </span>
-          <span>示例数据 · 尚未连接下载器</span>
+          <span>
+            {sourceActive
+              ? "真实账号资料 · 库存与下载待接入"
+              : "示例数据 · 尚未连接下载器"}
+          </span>
         </footer>
       </div>
       {confirmation && (
@@ -1782,10 +2014,17 @@ export default function App() {
           document={booklists}
           members={booklistPickerMembers}
           disabled={!booklistsReady || booklistsSaving}
-          onChange={commitBooklists}
+          onChange={async (next) => {
+            const saved = await commitBooklists(next);
+            if (saved) {
+              pickerCompletion.current?.(true);
+              pickerCompletion.current = null;
+            }
+            return saved;
+          }}
           onReload={loadBooklists}
           reloadDisabled={booklistsSaving}
-          onClose={() => setBooklistPickerMembers(null)}
+          onClose={() => closeBooklistPicker(false)}
         />
       )}
       {state.closed && (

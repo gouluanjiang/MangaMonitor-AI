@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/state-model", "crates/rules-core", "crates/jm-adapter", "crates/pica-adapter", "crates/cloud-monitor", "crates/workbench-storage"]
+members = ["crates/state-model", "crates/rules-core", "crates/jm-adapter", "crates/pica-adapter", "crates/cloud-monitor", "crates/workbench-storage", "crates/workbench-credentials", "crates/workbench-sources", "crates/workbench-accounts"]
 exclude = ["apps/local-workbench/src-tauri"]
 resolver = "2"
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import {
   initialPreferences,
   readBackgroundFile,
@@ -43,6 +43,7 @@ function sameResources(a: ResourcePreferences, b: ResourcePreferences) {
 }
 
 export interface WorkbenchSettingsProps {
+  accountPanel?: ReactNode;
   preferences: WorkbenchPreferences;
   onSave(next: WorkbenchPreferences): Promise<boolean>;
   storageLabel: string;
@@ -56,6 +57,7 @@ export interface WorkbenchSettingsProps {
 }
 
 export function WorkbenchSettings({
+  accountPanel,
   preferences,
   onSave,
   storageLabel,
@@ -271,29 +273,33 @@ export function WorkbenchSettings({
               本机存储当前不可用。修改会保留在本页草稿中，保存成功后才能在重开时恢复。
             </p>
           )}
-          {page === "accounts" && (
-            <section className="settings-card" aria-labelledby="accounts-title">
-              <h2 id="accounts-title">账号与收藏</h2>
-              <p className="settings-copy">
-                JM
-                与哔咔分别连接账号。收藏更新汇总后，批量确认一次即可加入下载队列。
-              </p>
-              <div className="settings-account-list">
-                {["JM", "哔咔"].map((name) => (
-                  <div className="settings-account-row" key={name}>
-                    <div>
-                      <strong>{name}</strong>
-                      <p>账号登录与收藏同步待接入</p>
+          {page === "accounts" &&
+            (accountPanel ?? (
+              <section
+                className="settings-card"
+                aria-labelledby="accounts-title"
+              >
+                <h2 id="accounts-title">账号与收藏</h2>
+                <p className="settings-copy">
+                  JM
+                  与哔咔分别连接账号。收藏更新汇总后，批量确认一次即可加入下载队列。
+                </p>
+                <div className="settings-account-list">
+                  {["JM", "哔咔"].map((name) => (
+                    <div className="settings-account-row" key={name}>
+                      <div>
+                        <strong>{name}</strong>
+                        <p>账号登录与收藏同步待接入</p>
+                      </div>
+                      <span className="settings-pending">未连接</span>
                     </div>
-                    <span className="settings-pending">未连接</span>
-                  </div>
-                ))}
-              </div>
-              <p className="settings-help">
-                当前页面不会收集账号或密码。在线收藏中的内容仍为演示数据。
-              </p>
-            </section>
-          )}
+                  ))}
+                </div>
+                <p className="settings-help">
+                  当前页面不会收集账号或密码。在线收藏中的内容仍为演示数据。
+                </p>
+              </section>
+            ))}
           {page === "library" && (
             <section className="settings-card" aria-labelledby="library-title">
               <h2 id="library-title">漫画库</h2>

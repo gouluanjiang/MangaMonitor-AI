@@ -8,3 +8,17 @@ commands.allow = [
   "write_booklists",
   "choose_background",
 ]
+
+[[permission]]
+identifier = "workbench-accounts"
+description = "Use native source sessions for metadata, favorites, covers and account-scoped local following."
+commands.allow = [
+  "source_accounts",
+  "source_login",
+  "source_logout",
+  "source_query",
+  "source_favorite",
+  "source_cover",
+  "source_following",
+  "source_follow",
+]

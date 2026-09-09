@@ -1,0 +1,22 @@
+[package]
+name = "workbench-credentials"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Explicit dependency injection for tests; never an automatic storage fallback.
+test-support = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+zeroize = { version = "=1.9.0", features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_System_Threading"] }
+
+[dev-dependencies]
+rand.workspace = true

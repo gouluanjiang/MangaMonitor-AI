@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-workbench",
-  "description": "Local development workbench documents and a native background chooser.",
+  "description": "Main local workbench documents, background chooser, source accounts and favorites.",
   "local": true,
   "windows": ["main"],
-  "permissions": ["workbench-documents"]
+  "permissions": ["workbench-documents", "workbench-accounts"]
 }

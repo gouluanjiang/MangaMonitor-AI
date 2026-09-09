@@ -7,8 +7,10 @@ mod store;
 
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
 pub use model::{
-    AppearancePreferences, BackgroundMode, Booklist, Booklists, ResourcePreferences,
-    ResourceProfile, Source, WorkIdentity, WorkbenchPreferences, MAX_SAFE_INTEGER,
+    AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,
+    FollowedWork, ResourcePreferences, ResourceProfile, Source, WorkIdentity, WorkbenchPreferences,
+    MAX_FOLLOWED_ACCOUNTS, MAX_FOLLOWED_AUTHORS_PER_ACCOUNT, MAX_FOLLOWED_WORKS_PER_ACCOUNT,
+    MAX_FOLLOWING_NAME_CHARACTERS, MAX_SAFE_INTEGER,
 };
 pub use store::{Document, WorkbenchStore, PRIVATE_DIRECTORY};
 

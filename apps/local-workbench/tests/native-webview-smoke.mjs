@@ -210,6 +210,33 @@ try {
   running = await launch();
   const page = running.page;
   await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("source-account-settings")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await expect(page.getByTestId("account-JM")).toContainText("未连接");
+  await expect(page.getByTestId("account-Pica")).toContainText("未连接");
+  // Synthetic input traverses the actual IPC controller. CI forbids live source
+  // requests before any network call and never persists this rejected login.
+  await page.getByTestId("account-connect-JM").click();
+  await page.getByTestId("account-username").fill("offline-ci-fixture");
+  await page.getByTestId("account-password").fill("synthetic-password-canary");
+  await page.getByTestId("account-login-submit").click();
+  await expect(page.getByTestId("account-password")).toHaveValue("");
+  await expect(
+    page.getByTestId("account-login-dialog").getByRole("alert"),
+  ).toBeVisible();
+  await page
+    .getByTestId("account-login-dialog")
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
+  await expect(page.getByTestId("account-JM")).toContainText("未连接");
+  assert.equal(
+    await page.evaluate(() =>
+      JSON.stringify({ ...localStorage }).includes("synthetic-password-canary"),
+    ),
+    false,
+  );
   await page.getByTestId("settings-appearance").click();
   await page.getByTestId("background-mode-A").click();
   await page.getByTestId("settings-density-5").click();
@@ -217,7 +244,7 @@ try {
   await expect(
     page.getByText("外观已保存到本机应用数据。", { exact: true }),
   ).toBeVisible();
-  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("nav-library").click();
   await page.getByRole("button", { name: "全部作品", exact: true }).click();
   await page.getByTestId("open-echo").click();
   await page.getByTestId("detail-booklist").click();
@@ -263,7 +290,7 @@ try {
     lists,
   );
   console.log(
-    "NATIVE_WEBVIEW_SMOKE_PASSED: actual Windows WebView, native IPC, disk revision and process restart; unresolved work remains blocked from download.",
+    "NATIVE_WEBVIEW_SMOKE_PASSED: actual Windows WebView, native account IPC rejection/secret clearing, disk revision and process restart; unresolved work remains blocked from download.",
   );
 } catch (error) {
   await writeFile(

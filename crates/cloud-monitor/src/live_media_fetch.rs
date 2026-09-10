@@ -12,8 +12,8 @@ use crate::{
         self, IsolatedStagingExecutionContext, IsolatedStagingExecutionResult, ProcessedMedia,
     },
     jm_media_transform,
-    media_validation,
     live_media_transport::{JmTransport, PicaTransport},
+    media_validation,
     source_media_descriptors::{self, MediaDescriptor, SourceMediaDescriptorSet},
 };
 
@@ -112,6 +112,37 @@ fn process_downloaded_bytes(
 /// There is deliberately no Pica token parameter. A6.12 invokes
 /// `reauthorize` immediately before every call into the fetcher and before every
 /// file write, and verifies the same generation again after filesystem proof.
+pub async fn execute_live_resumable<Reauthorize, Progress>(
+    context: IsolatedStagingExecutionContext<'_>,
+    resume: Option<&isolated_staging_execution::StagingCheckpoint>,
+    reauthorize: Reauthorize,
+    progress: Progress,
+) -> Result<IsolatedStagingExecutionResult, String>
+where
+    Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
+    Progress: FnMut(&isolated_staging_execution::StagingCheckpoint) -> Result<(), String>,
+{
+    source_media_descriptors::validate(
+        context.authorization,
+        context.evidence,
+        context.preflight,
+        context.descriptors,
+    )?;
+    validate_supported_fetch_scope(context.descriptors)?;
+    let fetcher = LiveFetcher::new(&context.authorization.source)?;
+    isolated_staging_execution::execute_resumable_with_fetcher(
+        context,
+        resume,
+        move |descriptor| {
+            let fetcher = fetcher.clone();
+            async move { fetcher.fetch_processed(descriptor).await }
+        },
+        reauthorize,
+        progress,
+    )
+    .await
+}
+
 pub async fn execute_live<Reauthorize>(
     context: IsolatedStagingExecutionContext<'_>,
     reauthorize: Reauthorize,
@@ -282,12 +313,8 @@ mod tests {
     #[test]
     fn positive_jm_scramble_requires_a_decodable_webp() {
         let media = descriptor("webp", "JM_SCRAMBLE_BLOCKS", 10);
-        let err = process_downloaded_bytes(
-            "jm",
-            &media,
-            b"RIFF1234WEBPnot-a-real-webp".to_vec(),
-        )
-        .unwrap_err();
+        let err = process_downloaded_bytes("jm", &media, b"RIFF1234WEBPnot-a-real-webp".to_vec())
+            .unwrap_err();
         assert_eq!(err, "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED");
     }
 
@@ -295,8 +322,7 @@ mod tests {
     fn content_magic_mismatch_fails_before_transform_or_a6_12_write() {
         let media = descriptor("png", "NONE", 0);
         assert_eq!(
-            process_downloaded_bytes("pica", &media, b"<html>error</html>".to_vec())
-                .unwrap_err(),
+            process_downloaded_bytes("pica", &media, b"<html>error</html>".to_vec()).unwrap_err(),
             "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED"
         );
     }

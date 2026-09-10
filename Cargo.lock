@@ -2035,6 +2035,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "workbench-downloads"
+version = "0.1.0"
+dependencies = [
+ "cloud-monitor",
+ "image",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+ "workbench-library",
+ "workbench-storage",
+]
+
+[[package]]
 name = "workbench-library"
 version = "0.1.0"
 dependencies = [

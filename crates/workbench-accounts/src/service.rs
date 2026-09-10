@@ -5,7 +5,14 @@ use crate::{
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::sync::{Mutex, OnceCell, Semaphore};
 use workbench_credentials::{StoredCredential, Vault};
 use workbench_sources::FavoritePageRequest;
@@ -13,7 +20,23 @@ use zeroize::Zeroizing;
 
 const MAX_QUERY_ITEMS: usize = 1000;
 
+/// An in-process account generation check, never a transferable download permit.
+/// No credential or session identifier is exposed to the download worker.
+#[derive(Clone)]
+pub struct SessionLease(Arc<AtomicBool>);
+
+impl SessionLease {
+    pub fn require_current(&self) -> Result<()> {
+        if self.0.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(AccountError::new("SESSION_CHANGED"))
+        }
+    }
+}
+
 struct Slot<S> {
+    lease: SessionLease,
     initialized: bool,
     source: Source,
     session: Option<Arc<S>>,
@@ -29,6 +52,7 @@ struct Slot<S> {
 impl<S> Slot<S> {
     fn new(source: Source) -> Self {
         Self {
+            lease: SessionLease(Arc::new(AtomicBool::new(false))),
             initialized: false,
             source,
             session: None,
@@ -55,6 +79,7 @@ impl<S> Slot<S> {
     }
 
     fn invalidate(&mut self, state: AccountState, code: Option<&'static str>) {
+        self.lease.0.store(false, Ordering::Release);
         self.session = None;
         self.account = None;
         self.session_id = None;
@@ -195,6 +220,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         slot.account = Some(auth.account);
         slot.session = Some(Arc::new(auth.session));
         slot.session_id = Some(session_id);
+        slot.lease = SessionLease(Arc::new(AtomicBool::new(true)));
         slot.saved_fingerprint = saved;
         Ok(())
     }
@@ -303,6 +329,15 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             return Err(AccountError::new("SESSION_CHANGED"));
         }
         self.check_saved(slot)
+    }
+
+    /// Checks the current authenticated session without performing source IO.
+    /// Logout, replacement login and source authentication failures revoke all
+    /// previously issued leases permanently, including after a new login.
+    pub async fn session_lease(&self, source: Source, session_id: &str) -> Result<SessionLease> {
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
+        Ok(slot.lease.clone())
     }
 
     fn finish<T>(&self, slot: &mut Slot<B::Session>, result: Result<T>) -> Result<T> {

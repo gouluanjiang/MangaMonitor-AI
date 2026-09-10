@@ -93,7 +93,7 @@ impl DesktopAccounts {
     }
 }
 
-async fn service(state: Arc<DesktopAccounts>) -> Result<Arc<Service>, AccountError> {
+pub(super) async fn service(state: Arc<DesktopAccounts>) -> Result<Arc<Service>, AccountError> {
     tauri::async_runtime::spawn_blocking(move || state.open())
         .await
         .map_err(|_| AccountError::new("ACCOUNT_SERVICE_UNAVAILABLE"))?

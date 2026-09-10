@@ -20,7 +20,7 @@ use crate::{
     source_preflight::{SourcePreflightEvidence, SourcePreflightProof},
     staging_manifest::StagedArtifact,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, Metadata, OpenOptions},
@@ -30,6 +30,322 @@ use std::{
 };
 
 pub const ISOLATED_STAGING_EXECUTION_SCHEMA_VERSION: u64 = 1;
+
+/// Private desktop checkpoints contain hashes only, never source URLs. A
+/// checkpoint is accepted only against the exact freshly authorized descriptor set.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StagingCheckpoint {
+    pub descriptor_hash: String,
+    pub expected_files: u64,
+    pub artifacts: Vec<StagedArtifact>,
+    /// Persisted before writing: closes the crash window between a complete
+    /// file write and committing its completed-progress record.
+    #[serde(default)]
+    pub pending: Option<StagedArtifact>,
+}
+
+fn verify_checkpoint_tree(
+    root: &Path,
+    checkpoint: &StagingCheckpoint,
+    descriptors: &SourceMediaDescriptorSet,
+) -> Result<(), String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::io::Read;
+    let ordered: Vec<_> = descriptors.chapters.iter().flat_map(|c| &c.media).collect();
+    if checkpoint.descriptor_hash != crate::monitor::hash(descriptors)
+        || checkpoint.expected_files != descriptors.expected_content_units
+        || checkpoint.artifacts.len() > ordered.len()
+    {
+        return Err("STAGING_CHECKPOINT_GENERATION_CHANGED".into());
+    }
+    let mut expected = BTreeMap::new();
+    for (artifact, descriptor) in checkpoint.artifacts.iter().zip(&ordered) {
+        if artifact.relative_path != descriptor.relative_path
+            || artifact.sha256.len() != 64
+            || !artifact
+                .sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || artifact.size_bytes == 0
+        {
+            return Err("STAGING_CHECKPOINT_INVALID".into());
+        }
+        expected.insert(artifact.relative_path.as_str(), artifact);
+    }
+    if let Some(pending) = &checkpoint.pending {
+        let descriptor = ordered
+            .get(checkpoint.artifacts.len())
+            .ok_or("STAGING_CHECKPOINT_INVALID")?;
+        if pending.relative_path != descriptor.relative_path
+            || pending.size_bytes == 0
+            || pending.sha256.len() != 64
+            || !pending
+                .sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("STAGING_CHECKPOINT_INVALID".into());
+        }
+        expected.insert(pending.relative_path.as_str(), pending);
+    }
+    let mut directories = BTreeSet::from(["chapters".to_string()]);
+    for chapter in &descriptors.chapters {
+        directories.insert(format!(
+            "chapters/{:06}-{}",
+            chapter.chapter_order, chapter.chapter_id
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(root.to_path_buf(), String::new())];
+    while let Some((directory, relative)) = stack.pop() {
+        checked_directory(&directory, "STAGING_CHECKPOINT_DIRECTORY_MISSING")?;
+        for entry in fs::read_dir(&directory).map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")? {
+            let entry = entry.map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| "STAGING_CHECKPOINT_INVALID")?;
+            let child = if relative.is_empty() {
+                name
+            } else {
+                format!("{relative}/{name}")
+            };
+            let metadata =
+                fs::symlink_metadata(entry.path()).map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
+            if link_like(&metadata) {
+                return Err("STAGING_LINK_OR_REPARSE_POINT_FORBIDDEN".into());
+            }
+            if metadata.is_dir() {
+                if !directories.contains(&child) {
+                    return Err("STAGING_CHECKPOINT_UNRECORDED_FILE".into());
+                }
+                stack.push((entry.path(), child));
+            } else {
+                let artifact = expected
+                    .get(child.as_str())
+                    .ok_or("STAGING_CHECKPOINT_UNRECORDED_FILE")?;
+                let pending = checkpoint
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| p.relative_path == child);
+                if !metadata.is_file()
+                    || (metadata.len() != artifact.size_bytes
+                        && !(pending && metadata.len() < artifact.size_bytes))
+                {
+                    return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+                }
+                if pending && metadata.len() < artifact.size_bytes {
+                    seen.insert(child);
+                    continue;
+                }
+                let mut file =
+                    fs::File::open(entry.path()).map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
+                let mut digest = Sha256::new();
+                let mut buffer = [0_u8; 65536];
+                loop {
+                    let count = file
+                        .read(&mut buffer)
+                        .map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
+                    if count == 0 {
+                        break;
+                    }
+                    digest.update(&buffer[..count]);
+                }
+                if format!("{:x}", digest.finalize()) != artifact.sha256 {
+                    return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+                }
+                seen.insert(child);
+            }
+        }
+    }
+    if checkpoint
+        .artifacts
+        .iter()
+        .any(|a| !seen.contains(&a.relative_path))
+    {
+        return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+    }
+    Ok(())
+}
+
+/// Explicit desktop continuation. The legacy fresh-only entry point remains
+/// unchanged. Unknown existing files are preserved and rejected, never adopted.
+pub async fn execute_resumable_with_fetcher<Fetch, FetchFuture, Reauthorize, Progress>(
+    context: IsolatedStagingExecutionContext<'_>,
+    resume: Option<&StagingCheckpoint>,
+    mut fetch: Fetch,
+    mut reauthorize: Reauthorize,
+    mut progress: Progress,
+) -> Result<IsolatedStagingExecutionResult, String>
+where
+    Fetch: FnMut(MediaDescriptor) -> FetchFuture,
+    FetchFuture: Future<Output = Result<ProcessedMedia, String>>,
+    Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
+    Progress: FnMut(&StagingCheckpoint) -> Result<(), String>,
+{
+    let IsolatedStagingExecutionContext {
+        staging_root,
+        plan,
+        authorization,
+        evidence,
+        preflight,
+        descriptors,
+    } = context;
+    validate_plan_chain(plan, authorization, evidence)?;
+    source_media_descriptors::validate(authorization, evidence, preflight, descriptors)?;
+    exact_authorization_generation(authorization, reauthorize()?)?;
+    let mut checkpoint = resume.cloned().unwrap_or_else(|| StagingCheckpoint {
+        descriptor_hash: crate::monitor::hash(descriptors),
+        expected_files: descriptors.expected_content_units,
+        artifacts: Vec::new(),
+        pending: None,
+    });
+    if checkpoint.descriptor_hash != crate::monitor::hash(descriptors)
+        || checkpoint.expected_files != descriptors.expected_content_units
+    {
+        return Err("STAGING_CHECKPOINT_GENERATION_CHANGED".into());
+    }
+    checked_directory(staging_root, "STAGING_ROOT_MISSING")?;
+    checked_directory(
+        &staging_root.join("commands"),
+        "STAGING_COMMANDS_DIRECTORY_MISSING",
+    )?;
+    let candidate = staging_root.join("commands").join(&plan.command_id);
+    let command_root = match fs::symlink_metadata(&candidate) {
+        Ok(_) if resume.is_some() => {
+            verify_checkpoint_tree(&candidate, &checkpoint, descriptors)?;
+            candidate
+        }
+        Ok(_) => return Err("STAGING_COMMAND_DIRECTORY_ALREADY_EXISTS".into()),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && checkpoint.artifacts.is_empty() =>
+        {
+            progress(&checkpoint)?;
+            prepare_command_root(staging_root, plan)?
+        }
+        Err(_) => return Err("STAGING_CHECKPOINT_READ_FAILED".into()),
+    };
+    if !command_root.join("chapters").exists()
+        && checkpoint.artifacts.is_empty()
+        && checkpoint.pending.is_none()
+    {
+        fs::create_dir(command_root.join("chapters"))
+            .map_err(|_| "STAGING_CHAPTERS_DIRECTORY_CREATE_FAILED")?;
+    }
+    let mut completed = 0_usize;
+    let mut chapters = Vec::new();
+    for (chapter, expected) in descriptors.chapters.iter().zip(&preflight.chapters) {
+        exact_authorization_generation(authorization, reauthorize()?)?;
+        let chapter_dir = command_root.join("chapters").join(format!(
+            "{:06}-{}",
+            chapter.chapter_order, chapter.chapter_id
+        ));
+        match fs::create_dir(&chapter_dir) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && resume.is_some() => {
+                checked_directory(&chapter_dir, "STAGING_CHAPTER_DIRECTORY_MISSING")?
+            }
+            Err(_) => return Err("STAGING_CHAPTER_DIRECTORY_CREATE_FAILED".into()),
+        }
+        let mut paths = Vec::new();
+        for descriptor in &chapter.media {
+            exact_authorization_generation(authorization, reauthorize()?)?;
+            if completed >= checkpoint.artifacts.len() {
+                if let Some(pending) = checkpoint.pending.clone() {
+                    if pending_file_complete(&command_root, &pending)? {
+                        checkpoint.artifacts.push(pending);
+                        checkpoint.pending = None;
+                        progress(&checkpoint)?;
+                        paths.push(descriptor.relative_path.clone());
+                        completed += 1;
+                        continue;
+                    }
+                }
+                let processed = fetch(descriptor.clone()).await?;
+                exact_processed_binding(descriptor, &processed)?;
+                exact_authorization_generation(authorization, reauthorize()?)?;
+                let pending = StagedArtifact {
+                    relative_path: descriptor.relative_path.clone(),
+                    size_bytes: processed.bytes.len() as u64,
+                    sha256: sha256_bytes(&processed.bytes),
+                };
+                if checkpoint
+                    .pending
+                    .as_ref()
+                    .is_some_and(|previous| previous != &pending)
+                {
+                    return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+                }
+                checkpoint.pending = Some(pending.clone());
+                progress(&checkpoint)?;
+                exact_authorization_generation(authorization, reauthorize()?)?;
+                write_pending_file(&command_root, &pending, &processed.bytes)?;
+                checkpoint.artifacts.push(pending);
+                checkpoint.pending = None;
+                progress(&checkpoint)?;
+            }
+            paths.push(descriptor.relative_path.clone());
+            completed += 1;
+        }
+        chapters.push(ChapterCompletion {
+            chapter_id: chapter.chapter_id.clone(),
+            chapter_order: chapter.chapter_order,
+            scheduled: true,
+            joined: true,
+            terminal_state: "COMPLETED".into(),
+            expected_images: expected.expected_images,
+            completed_images: expected.expected_images,
+            failed_images: 0,
+            image_pagination: expected.image_pagination.clone(),
+            artifact_paths: paths,
+        });
+    }
+    let mut artifacts = checkpoint.artifacts;
+    artifacts.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    let transcript = SourceCompletionTranscript {
+        schema_version: SOURCE_COMPLETION_SCHEMA_VERSION,
+        command_id: authorization.command_id.clone(),
+        task_id: authorization.task_id.clone(),
+        work_id: authorization.work_id.clone(),
+        task_revision: authorization.task_revision,
+        target_hash: authorization.target_hash.clone(),
+        source: authorization.source.clone(),
+        source_work_id: authorization.source_work_id.clone(),
+        upstream_commit: evidence.upstream_commit.clone(),
+        scope: evidence.scope.clone(),
+        source_enumeration_complete: true,
+        chapter_pagination: preflight.chapter_pagination.clone(),
+        expected_chapter_count: authorization.expected_chapter_count,
+        all_scheduled_downloads_joined: true,
+        chapters,
+        artifacts,
+    };
+    exact_authorization_generation(authorization, reauthorize()?)?;
+    let source_completion = source_completion::normalize(plan, &transcript)?;
+    let filesystem_verification =
+        filesystem_verifier::verify(staging_root, plan, &source_completion.manifest)?;
+    exact_authorization_generation(authorization, reauthorize()?)?;
+    Ok(IsolatedStagingExecutionResult {
+        schema_version: ISOLATED_STAGING_EXECUTION_SCHEMA_VERSION,
+        command_id: authorization.command_id.clone(),
+        task_id: authorization.task_id.clone(),
+        work_id: authorization.work_id.clone(),
+        task_revision: authorization.task_revision,
+        target_hash: authorization.target_hash.clone(),
+        source: authorization.source.clone(),
+        source_work_id: authorization.source_work_id.clone(),
+        preflight_hash: authorization.preflight_hash.clone(),
+        staging_execution_completed: true,
+        source_completion,
+        filesystem_verification,
+        inventory_mutation_authorized: false,
+        task_completion_authorized: false,
+        promotion_authorized: false,
+        replacement_authorized: false,
+        physical_delete_authorized: false,
+    })
+}
 
 /// Exact immutable trust inputs for one A6.12 command-staging execution.
 ///
@@ -245,6 +561,93 @@ fn write_new_file(
     })
 }
 
+fn pending_file_complete(root: &Path, pending: &StagedArtifact) -> Result<bool, String> {
+    use std::io::Read;
+    let path = join_portable(root, &pending.relative_path);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(value) => value,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => return Err("STAGING_CHECKPOINT_READ_FAILED".into()),
+    };
+    if link_like(&metadata) || !metadata.is_file() || metadata.len() > pending.size_bytes {
+        return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+    }
+    if metadata.len() < pending.size_bytes {
+        return Ok(false);
+    }
+    let mut file = fs::File::open(path).map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0_u8; 65536];
+    loop {
+        let n = file
+            .read(&mut buffer)
+            .map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    if format!("{:x}", hash.finalize()) != pending.sha256 {
+        return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+    }
+    Ok(true)
+}
+
+fn write_pending_file(root: &Path, pending: &StagedArtifact, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Read;
+    let path = join_portable(root, &pending.relative_path);
+    checked_directory(
+        path.parent().ok_or("STAGING_ARTIFACT_PARENT_MISSING")?,
+        "STAGING_ARTIFACT_PARENT_MISSING",
+    )?;
+    let exists = match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && !link_like(&metadata) => true,
+        Ok(_) => return Err("STAGING_CHECKPOINT_FILE_CHANGED".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => return Err("STAGING_CHECKPOINT_READ_FAILED".into()),
+    };
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    if !exists {
+        options.create_new(true);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0).custom_flags(0x0020_0000);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|_| "STAGING_ARTIFACT_CREATE_FAILED")?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "STAGING_ARTIFACT_METADATA_FAILED")?;
+    if !metadata.is_file() || link_like(&metadata) || metadata.len() > pending.size_bytes {
+        return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+    }
+    let prefix = usize::try_from(metadata.len()).map_err(|_| "STAGING_CHECKPOINT_FILE_CHANGED")?;
+    let mut checked = 0_usize;
+    let mut buffer = [0_u8; 65536];
+    while checked < prefix {
+        let count = (prefix - checked).min(buffer.len());
+        file.read_exact(&mut buffer[..count])
+            .map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
+        if buffer[..count] != bytes[checked..checked + count] {
+            return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+        }
+        checked += count;
+    }
+    file.write_all(&bytes[prefix..])
+        .map_err(|_| "STAGING_ARTIFACT_WRITE_FAILED")?;
+    file.sync_all()
+        .map_err(|_| "STAGING_ARTIFACT_SYNC_FAILED")?;
+    drop(file);
+    if !pending_file_complete(root, pending)? {
+        return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+    }
+    Ok(())
+}
+
 /// Execute one already-validated A6.11 work set into a fresh command-owned
 /// staging tree using caller-provided, in-process media fetching/processing.
 ///
@@ -295,11 +698,8 @@ where
             exact_processed_binding(descriptor, &processed)?;
             exact_authorization_generation(authorization, reauthorize()?)?;
 
-            let artifact = write_new_file(
-                &command_root,
-                &descriptor.relative_path,
-                &processed.bytes,
-            )?;
+            let artifact =
+                write_new_file(&command_root, &descriptor.relative_path, &processed.bytes)?;
             artifact_paths.push(artifact.relative_path.clone());
             artifacts.push(artifact);
         }

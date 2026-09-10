@@ -25,6 +25,11 @@ commands.allow = [
 ]
 
 [[permission]]
+identifier = "workbench-downloads"
+description = "Prepare and explicitly confirm one native JM download into a selected PC library, read progress, pause, continue or retry. No renderer paths or media URLs."
+commands.allow = ["jm_download_prepare", "jm_download_confirm", "jm_download_read", "jm_download_control"]
+
+[[permission]]
 identifier = "workbench-library"
 description = "Read the native-picked existing comic library and update its private index and explicit source associations; no media writes or execution authority."
 commands.allow = ["library_read", "library_choose", "library_scan", "library_cover", "library_link", "phone_library_read", "phone_library_import", "phone_library_mark", "phone_library_unmark"]

@@ -5,7 +5,7 @@ mod service;
 
 pub use backend::{Authenticated, SourceBackend};
 pub use cache::{CatalogAction, CatalogResult, CatalogSnapshot};
-pub use service::AccountService;
+pub use service::{AccountService, SessionLease};
 pub use workbench_credentials::Source;
 pub use workbench_sources::{SourceAccount, SourceFolder, SourcePage, SourceWork};
 

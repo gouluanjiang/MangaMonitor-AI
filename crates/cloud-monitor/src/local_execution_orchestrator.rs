@@ -15,8 +15,7 @@ use crate::{
     monitor::State,
     source_bridge_request::{self, SourceBridgeRequest},
     source_completion::SourceCompletionProof,
-    source_preflight_authorization,
-    verified_execution_receipt,
+    source_preflight_authorization, verified_execution_receipt,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -168,9 +167,7 @@ where
     Reload: FnMut() -> Result<(State, GateLedger), String>,
 {
     if let Some(value) = completed_at {
-        if value.trim() != value
-            || value.is_empty()
-            || DateTime::parse_from_rfc3339(value).is_err()
+        if value.trim() != value || value.is_empty() || DateTime::parse_from_rfc3339(value).is_err()
         {
             return Err("LOCAL_ORCHESTRATOR_INVALID_COMPLETED_AT".into());
         }
@@ -213,9 +210,90 @@ where
     .await?;
 
     let (final_state, final_ledger) = reload()?;
-    let completed_at = completed_at.map(str::to_owned).unwrap_or_else(|| {
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
-    });
+    let completed_at = completed_at
+        .map(str::to_owned)
+        .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
+    finalize(
+        &final_state,
+        &final_ledger,
+        command,
+        &plan,
+        &execution,
+        &completed_at,
+    )
+}
+
+/// Explicit desktop continuation; callbacks persist hashes and recheck authority.
+// Keep the legacy CLI arguments intact while adding explicit checkpoint hooks.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_live_resumable<Reload, Progress>(
+    initial_state: &State,
+    initial_ledger: &GateLedger,
+    command: &ExecutorCommand,
+    staging_root: &Path,
+    pica_token: Option<&str>,
+    completed_at: Option<&str>,
+    mut reload: Reload,
+    resume: Option<&crate::isolated_staging_execution::StagingCheckpoint>,
+    progress: Progress,
+) -> Result<LocalExecutionReport, String>
+where
+    Reload: FnMut() -> Result<(State, GateLedger), String>,
+    Progress: FnMut(&crate::isolated_staging_execution::StagingCheckpoint) -> Result<(), String>,
+{
+    if std::env::var("GITHUB_ACTIONS").ok().as_deref() == Some("true") {
+        return Err("LOCAL_EXECUTOR_GITHUB_ACTIONS_FORBIDDEN".into());
+    }
+    if let Some(value) = completed_at {
+        if value.trim() != value || value.is_empty() || DateTime::parse_from_rfc3339(value).is_err()
+        {
+            return Err("LOCAL_ORCHESTRATOR_INVALID_COMPLETED_AT".into());
+        }
+    }
+
+    let (plan, request) = prepare_current(initial_state, initial_ledger, command)?;
+
+    let live = live_source_preflight::run_live(
+        initial_state,
+        initial_ledger,
+        command,
+        &plan,
+        &request,
+        pica_token,
+        &mut reload,
+    )
+    .await?;
+
+    let authorization = reauthorize_image(&mut reload, command, &plan, &request, &live)?;
+    let descriptors = live_media_descriptors::run_live(
+        &authorization,
+        &live.evidence,
+        &live.proof,
+        pica_token,
+        || reauthorize_image(&mut reload, command, &plan, &request, &live),
+    )
+    .await?;
+
+    let context = IsolatedStagingExecutionContext {
+        staging_root,
+        plan: &plan,
+        authorization: &authorization,
+        evidence: &live.evidence,
+        preflight: &live.proof,
+        descriptors: &descriptors,
+    };
+    let execution = live_media_fetch::execute_live_resumable(
+        context,
+        resume,
+        || reauthorize_image(&mut reload, command, &plan, &request, &live),
+        progress,
+    )
+    .await?;
+
+    let (final_state, final_ledger) = reload()?;
+    let completed_at = completed_at
+        .map(str::to_owned)
+        .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true));
     finalize(
         &final_state,
         &final_ledger,
@@ -301,7 +379,10 @@ mod tests {
     fn preparation_is_current_approval_bound_and_staging_only() {
         let (state, ledger, command) = fixture();
         let (plan, request) = prepare_current(&state, &ledger, &command).unwrap();
-        assert_eq!(plan.staging_subdir, format!("commands/{}", command.command_id));
+        assert_eq!(
+            plan.staging_subdir,
+            format!("commands/{}", command.command_id)
+        );
         assert!(!plan.execution_supported);
         assert!(!plan.promotion_authorized);
         assert!(!plan.replacement_authorized);

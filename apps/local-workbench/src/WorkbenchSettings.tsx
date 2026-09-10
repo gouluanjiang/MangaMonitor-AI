@@ -45,6 +45,7 @@ function sameResources(a: ResourcePreferences, b: ResourcePreferences) {
 export interface WorkbenchSettingsProps {
   accountPanel?: ReactNode;
   libraryPanel?: ReactNode;
+  downloadPanel?: ReactNode;
   preferences: WorkbenchPreferences;
   onSave(next: WorkbenchPreferences): Promise<boolean>;
   storageLabel: string;
@@ -60,6 +61,7 @@ export interface WorkbenchSettingsProps {
 export function WorkbenchSettings({
   accountPanel,
   libraryPanel,
+  downloadPanel,
   preferences,
   onSave,
   storageLabel,
@@ -114,7 +116,8 @@ export function WorkbenchSettings({
   const appearanceDirty = !sameAppearance(appearance, preferences.appearance);
   const resourcesDirty = !sameResources(resources, preferences.resources);
   const currentDirty = page === "appearance" ? appearanceDirty : resourcesDirty;
-  const editablePage = page === "appearance" || page === "resources";
+  const editablePage =
+    page === "appearance" || (page === "resources" && !downloadPanel);
   const defaults = initialPreferences();
   const canRestorePage =
     page === "appearance"
@@ -506,163 +509,177 @@ export function WorkbenchSettings({
               </div>
             </section>
           )}
-          {page === "resources" && (
-            <section
-              className="settings-card"
-              aria-labelledby="resources-title"
-            >
-              <h2 id="resources-title">下载资源</h2>
-              <p className="settings-copy">
-                控制同时处理的作品与图片请求，减少对电脑和网络的占用。
-              </p>
-              <div
-                className="settings-segmented settings-profile-options"
-                role="group"
-                aria-label="资源模式"
+          {page === "resources" &&
+            (downloadPanel ?? (
+              <section
+                className="settings-card"
+                aria-labelledby="resources-title"
               >
-                {[
-                  ["economy", "省资源"],
-                  ["balanced", "均衡"],
-                  ["custom", "自定义"],
-                ].map(([profile, label]) => (
-                  <button
-                    key={profile}
-                    type="button"
-                    aria-pressed={resources.profile === profile}
-                    data-testid={`resource-profile-${profile}`}
-                    onClick={() => {
-                      setResources((draft) =>
-                        profile === "custom"
-                          ? { ...draft, profile: "custom" }
-                          : resourcePreset(profile as "economy" | "balanced"),
-                      );
-                      clearFeedback();
-                    }}
-                  >
-                    <strong>{label}</strong>
-                    <span className="resource-description">
-                      {profile === "economy"
-                        ? "较小的网络与磁盘占用"
-                        : profile === "balanced"
-                          ? "平衡速度与资源占用"
-                          : "手动调整各项上限"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <p className="settings-notice warning">
-                建议起点，尚未实测；可按电脑负载调整。
-              </p>
-              <div className="settings-resource-fields">
-                <label>
-                  <span>同时下载作品</span>
-                  <select
-                    aria-label="同时下载作品"
-                    value={resources.simultaneousWorks}
-                    disabled={resources.profile !== "custom"}
-                    onChange={(event) => {
-                      setResources((draft) => ({
-                        ...draft,
-                        simultaneousWorks: Number(event.target.value),
-                      }));
-                      clearFeedback();
-                    }}
-                  >
-                    {[1, 2, 3, 4].map((count) => (
-                      <option key={count} value={count}>
-                        {count} 部
-                      </option>
-                    ))}
-                  </select>
-                  <small>同一时间处于下载过程中的作品数量</small>
-                </label>
-                <label>
-                  <span>全局图片请求数</span>
-                  <select
-                    aria-label="全局图片请求数"
-                    value={resources.imageRequests}
-                    disabled={resources.profile !== "custom"}
-                    onChange={(event) => {
-                      setResources((draft) => ({
-                        ...draft,
-                        imageRequests: Number(event.target.value),
-                      }));
-                      clearFeedback();
-                    }}
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((count) => (
-                      <option key={count} value={count}>
-                        {count} 个
-                      </option>
-                    ))}
-                  </select>
-                  <small>所有作品合计的图片网络请求数量</small>
-                </label>
-              </div>
-              <dl className="settings-facts">
-                <div>
-                  <dt>确认下载后</dt>
-                  <dd>加入队列，有空闲名额时开始</dd>
+                <h2 id="resources-title">下载资源</h2>
+                <p className="settings-copy">
+                  控制同时处理的作品与图片请求，减少对电脑和网络的占用。
+                </p>
+                <div
+                  className="settings-segmented settings-profile-options"
+                  role="group"
+                  aria-label="资源模式"
+                >
+                  {[
+                    ["economy", "省资源"],
+                    ["balanced", "均衡"],
+                    ["custom", "自定义"],
+                  ].map(([profile, label]) => (
+                    <button
+                      key={profile}
+                      type="button"
+                      aria-pressed={resources.profile === profile}
+                      data-testid={`resource-profile-${profile}`}
+                      onClick={() => {
+                        setResources((draft) =>
+                          profile === "custom"
+                            ? { ...draft, profile: "custom" }
+                            : resourcePreset(profile as "economy" | "balanced"),
+                        );
+                        clearFeedback();
+                      }}
+                    >
+                      <strong>{label}</strong>
+                      <span className="resource-description">
+                        {profile === "economy"
+                          ? "较小的网络与磁盘占用"
+                          : profile === "balanced"
+                            ? "平衡速度与资源占用"
+                            : "手动调整各项上限"}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-                <div>
-                  <dt>关闭应用</dt>
-                  <dd>保存进度、安全暂停并退出，下次打开恢复</dd>
+                <p className="settings-notice warning">
+                  建议起点，尚未实测；可按电脑负载调整。
+                </p>
+                <div className="settings-resource-fields">
+                  <label>
+                    <span>同时下载作品</span>
+                    <select
+                      aria-label="同时下载作品"
+                      value={resources.simultaneousWorks}
+                      disabled={resources.profile !== "custom"}
+                      onChange={(event) => {
+                        setResources((draft) => ({
+                          ...draft,
+                          simultaneousWorks: Number(event.target.value),
+                        }));
+                        clearFeedback();
+                      }}
+                    >
+                      {[1, 2, 3, 4].map((count) => (
+                        <option key={count} value={count}>
+                          {count} 部
+                        </option>
+                      ))}
+                    </select>
+                    <small>同一时间处于下载过程中的作品数量</small>
+                  </label>
+                  <label>
+                    <span>全局图片请求数</span>
+                    <select
+                      aria-label="全局图片请求数"
+                      value={resources.imageRequests}
+                      disabled={resources.profile !== "custom"}
+                      onChange={(event) => {
+                        setResources((draft) => ({
+                          ...draft,
+                          imageRequests: Number(event.target.value),
+                        }));
+                        clearFeedback();
+                      }}
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((count) => (
+                        <option key={count} value={count}>
+                          {count} 个
+                        </option>
+                      ))}
+                    </select>
+                    <small>所有作品合计的图片网络请求数量</small>
+                  </label>
                 </div>
-              </dl>
-              <p className="settings-help">
-                真实调度器尚未接入，目前只保存偏好。退出与恢复为桌面端约定，浏览器样例使用“模拟退出”演示。
-              </p>
-            </section>
-          )}
-          {page === "network" && (
-            <>
+                <dl className="settings-facts">
+                  <div>
+                    <dt>确认下载后</dt>
+                    <dd>加入队列，有空闲名额时开始</dd>
+                  </div>
+                  <div>
+                    <dt>关闭应用</dt>
+                    <dd>保存进度、安全暂停并退出，下次打开恢复</dd>
+                  </div>
+                </dl>
+                <p className="settings-help">
+                  真实调度器尚未接入，目前只保存偏好。退出与恢复为桌面端约定，浏览器样例使用“模拟退出”演示。
+                </p>
+              </section>
+            ))}
+          {page === "network" &&
+            (downloadPanel ? (
               <section
                 className="settings-card"
                 aria-labelledby="network-title"
               >
                 <h2 id="network-title">网络与诊断</h2>
                 <p className="settings-copy">
-                  来源连接检测、代理配置与诊断日志将在本地服务接入后提供。
+                  JM
+                  和哔咔的连接状态可在“账号”页查看。下载中遇到的问题会保留在下载队列，按任务提示继续或重试。
                 </p>
-                <dl className="settings-facts">
-                  <div>
-                    <dt>JM／哔咔连接</dt>
-                    <dd>待接入</dd>
-                  </div>
-                  <div>
-                    <dt>本地下载器</dt>
-                    <dd>尚未连接</dd>
-                  </div>
-                  <div>
-                    <dt>诊断数据</dt>
-                    <dd>当前没有采集网络或账号日志</dd>
-                  </div>
-                </dl>
+                <p className="settings-help">代理设置和诊断报告尚未接入。</p>
               </section>
-              <section className="settings-card" aria-labelledby="demo-title">
-                <h2 id="demo-title">关于这个样例</h2>
-                <p className="settings-copy">
-                  作品、封面和队列状态均为演示内容。外观与资源偏好单独保存在
-                  {storageLabel}，不会影响真实漫画库或线上账号。
-                </p>
-                <div className="settings-reset-row">
-                  <div>
-                    <h3>重新体验</h3>
-                    <p className="settings-help">
-                      重置模拟队列和页面选择，保留外观与资源偏好。
-                    </p>
+            ) : (
+              <>
+                <section
+                  className="settings-card"
+                  aria-labelledby="network-title"
+                >
+                  <h2 id="network-title">网络与诊断</h2>
+                  <p className="settings-copy">
+                    来源连接检测、代理配置与诊断日志将在本地服务接入后提供。
+                  </p>
+                  <dl className="settings-facts">
+                    <div>
+                      <dt>JM／哔咔连接</dt>
+                      <dd>待接入</dd>
+                    </div>
+                    <div>
+                      <dt>本地下载器</dt>
+                      <dd>尚未连接</dd>
+                    </div>
+                    <div>
+                      <dt>诊断数据</dt>
+                      <dd>当前没有采集网络或账号日志</dd>
+                    </div>
+                  </dl>
+                </section>
+                <section className="settings-card" aria-labelledby="demo-title">
+                  <h2 id="demo-title">关于这个样例</h2>
+                  <p className="settings-copy">
+                    作品、封面和队列状态均为演示内容。外观与资源偏好单独保存在
+                    {storageLabel}，不会影响真实漫画库或线上账号。
+                  </p>
+                  <div className="settings-reset-row">
+                    <div>
+                      <h3>重新体验</h3>
+                      <p className="settings-help">
+                        重置模拟队列和页面选择，保留外观与资源偏好。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={onResetDemo}
+                    >
+                      重置样例
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={onResetDemo}
-                  >
-                    重置样例
-                  </button>
-                </div>
-              </section>
-            </>
-          )}
+                </section>
+              </>
+            ))}
           {editablePage && (
             <div className="settings-savebar">
               <div

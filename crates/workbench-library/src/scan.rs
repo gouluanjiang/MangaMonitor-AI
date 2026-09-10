@@ -4,19 +4,79 @@ use crate::{
     Result,
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     io::Read,
     time::{Duration, Instant},
 };
 use workbench_storage::{
     library_relative_path_is_valid, LibraryCoverFile, LibraryDocument, LibraryEvidence,
-    LibraryFormat, LibraryItem, LibraryItemState, LibraryPhase, LibraryRecord, MAX_LIBRARY_ITEMS,
-    MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
+    LibraryFormat, LibraryItem, LibraryItemState, LibraryPhase, LibraryRecord, Source,
+    MAX_LIBRARY_ITEMS, MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
 };
 
 const BATCH_NODES: usize = 128;
 const MAX_WORK_NODES: u64 = 20_000;
 const MAX_WORK_DEPTH: usize = 8;
+const MANAGED_LAYOUT: &str = "_mangamonitor-layout.json";
+const MANAGED_MANIFEST: &str = "_mangamonitor.json";
+const MAX_MANAGED_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManagedLayout {
+    version: u64,
+    source: String,
+    work_id: String,
+    expected_pages: u64,
+    layout_version: u64,
+    task_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManagedManifest {
+    version: u64,
+    origin: String,
+    task_id: String,
+    approval_revision: u64,
+    target_hash: String,
+    source: String,
+    work_id: String,
+    root_id: String,
+    generation: u64,
+    layout_version: u64,
+    files: Vec<ManagedFile>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManagedFile {
+    relative_path: String,
+    size_bytes: u64,
+    sha256: String,
+}
+
+fn managed_json<T: serde::de::DeserializeOwned>(file: &std::fs::File, limit: u64) -> Result<T> {
+    let before = paths::identity(file)?;
+    if before.bytes == 0 || before.bytes > limit {
+        return Err(error("LIBRARY_DOWNLOAD_INCOMPLETE"));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| error("LIBRARY_DOWNLOAD_INCOMPLETE"))?;
+    if paths::identity(file)? != before || bytes.len() as u64 != before.bytes {
+        return Err(error("LIBRARY_DOWNLOAD_INCOMPLETE"));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| error("LIBRARY_DOWNLOAD_INCOMPLETE"))
+}
+
+fn opaque_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
+}
 
 pub(crate) struct ScanJob {
     pub root: Root,
@@ -36,6 +96,37 @@ struct WorkScan {
     top_pages: u64,
     chapter_pages: u64,
     unfinished: bool,
+    registration_files: Option<Vec<(String, workbench_storage::LibraryFileIdentity)>>,
+    managed: bool,
+    managed_layout: Option<ManagedLayout>,
+    managed_manifest: Option<ManagedManifest>,
+    observed_files: BTreeMap<String, u64>,
+}
+
+/// Inspects only the already finalized directory. The caller owns download proof;
+/// this path checks names, metadata, counts and stable file identities, not pixels.
+pub(crate) fn completed_directory(
+    root: &Root,
+    relative: &str,
+) -> Result<(LibraryRecord, u64, u64)> {
+    root.verify()?;
+    let mut work = WorkScan::new(&root.saved.id, relative, root.directory(relative)?)?;
+    work.registration_files = Some(Vec::new());
+    let mut counts = LibraryDocument {
+        visited: 1,
+        ..LibraryDocument::default()
+    };
+    // WorkScan limits directory depth, number of directories, pages and nodes.
+    // Unlike ScanJob, this never obtains or advances the selected root iterator.
+    while !work.step(root, &mut counts)? {}
+    root.verify()?;
+    if work.unfinished
+        || work.record.item.state != LibraryItemState::Indexed
+        || work.record.item.error_code.is_some()
+    {
+        return Err(error("LIBRARY_REGISTER_INCOMPLETE"));
+    }
+    Ok((work.record, counts.visited, counts.skipped))
 }
 
 pub(crate) fn base_record(root_id: &str, relative: &str, format: LibraryFormat) -> LibraryRecord {
@@ -118,6 +209,13 @@ impl ScanJob {
                     Ok(true) => self.finish_work(document, active.record),
                     Ok(false) => self.active = Some(active),
                     Err(problem) => {
+                        if active.managed {
+                            // A task-owned directory is not a library work until
+                            // its final manifest agrees with the observed tree.
+                            document.skipped += 1;
+                            self.incomplete = true;
+                            continue;
+                        }
                         mark_error(&mut active.record, problem.code);
                         self.incomplete = true;
                         self.finish_work(document, active.record);
@@ -261,6 +359,11 @@ impl WorkScan {
             top_pages: 0,
             chapter_pages: 0,
             unfinished: false,
+            registration_files: None,
+            managed: false,
+            managed_layout: None,
+            managed_manifest: None,
+            observed_files: BTreeMap::new(),
         })
     }
 
@@ -271,6 +374,16 @@ impl WorkScan {
             for (relative, expected) in &self.directories {
                 if paths::identity(&root.directory(relative)?.file)? != *expected {
                     return Err(error("LIBRARY_FILE_CHANGED"));
+                }
+            }
+            if let Some(files) = &self.registration_files {
+                for (relative, expected) in files {
+                    let Node::File(file) = root.node(relative)? else {
+                        return Err(error("LIBRARY_FILE_CHANGED"));
+                    };
+                    if paths::identity(&file.file)? != *expected {
+                        return Err(error("LIBRARY_FILE_CHANGED"));
+                    }
                 }
             }
             let cover_only = self.chapter_pages == 0
@@ -290,6 +403,9 @@ impl WorkScan {
                 self.top_pages
             });
             self.record.item.cover_available = self.record.cover.is_some();
+            if self.managed {
+                self.validate_managed()?;
+            }
             if self.record.item.error_code.is_none() {
                 self.record.item.error_code = if self.unfinished {
                     Some("LIBRARY_DOWNLOAD_INCOMPLETE".into())
@@ -317,6 +433,9 @@ impl WorkScan {
             .filter(|v| library_relative_path_is_valid(v))
             .ok_or(error("LIBRARY_UNSAFE_PATH"))?;
         let relative = format!("{parent}/{name}");
+        if parent.as_str() == self.record.item.relative_path && name == MANAGED_LAYOUT {
+            self.managed = true;
+        }
         if !library_relative_path_is_valid(&relative) {
             return Err(error("LIBRARY_UNSAFE_PATH"));
         }
@@ -336,6 +455,20 @@ impl WorkScan {
             }
             Node::File(file) => {
                 let identity = paths::identity(&file.file)?;
+                let work_relative = relative
+                    .strip_prefix(&format!("{}/", self.record.item.relative_path))
+                    .ok_or(error("LIBRARY_UNSAFE_PATH"))?;
+                self.observed_files
+                    .insert(work_relative.into(), identity.bytes);
+                if let Some(files) = &mut self.registration_files {
+                    files.push((relative.clone(), identity.clone()));
+                    if identity.bytes == 0 && archive::is_image(name) {
+                        return Err(error("LIBRARY_REGISTER_INCOMPLETE"));
+                    }
+                    if name.ends_with(".part") || name.ends_with(".tmp") {
+                        self.unfinished = true;
+                    }
+                }
                 self.record.item.bytes = self
                     .record
                     .item
@@ -343,7 +476,16 @@ impl WorkScan {
                     .checked_add(identity.bytes)
                     .filter(|v| *v <= MAX_SAFE_INTEGER)
                     .ok_or(error("LIBRARY_LIMIT_REACHED"))?;
-                if archive::is_image(name) {
+                if parent.as_str() == self.record.item.relative_path && name == MANAGED_LAYOUT {
+                    self.managed_layout = Some(managed_json(&file.file, 4096)?);
+                } else if parent.as_str() == self.record.item.relative_path
+                    && name == MANAGED_MANIFEST
+                {
+                    // An unrelated external directory with this filename keeps
+                    // its existing behavior unless the managed marker is found.
+                    self.managed_manifest =
+                        managed_json(&file.file, MAX_MANAGED_MANIFEST_BYTES).ok();
+                } else if archive::is_image(name) {
                     if parent.as_str() == self.record.item.relative_path {
                         self.top_pages += 1;
                     } else {
@@ -399,9 +541,119 @@ impl WorkScan {
                 }
             }
             Node::Skipped => {
+                if self.registration_files.is_some() {
+                    return Err(error("LIBRARY_REGISTER_INCOMPLETE"));
+                }
                 document.skipped += 1;
             }
         }
         Ok(false)
+    }
+
+    fn validate_managed(&self) -> Result<()> {
+        let invalid = || error("LIBRARY_DOWNLOAD_INCOMPLETE");
+        let layout = self.managed_layout.as_ref().ok_or_else(invalid)?;
+        let manifest = self.managed_manifest.as_ref().ok_or_else(invalid)?;
+        if layout.version != 1
+            || layout.layout_version != 1
+            || layout.source != "JM"
+            || !(1..=10_000).contains(&layout.expected_pages)
+            || !opaque_hash(&layout.task_id)
+            || manifest.version != 1
+            || manifest.layout_version != 1
+            || manifest.origin != "manual"
+            || manifest.source != layout.source
+            || manifest.work_id != layout.work_id
+            || manifest.task_id != layout.task_id
+            || !opaque_hash(&manifest.target_hash)
+            || !opaque_hash(&manifest.root_id)
+            || manifest.approval_revision > MAX_SAFE_INTEGER
+            || manifest.generation > MAX_SAFE_INTEGER
+            || manifest.files.len() > 10_402
+            || self.unfinished
+            || self.record.item.error_code.is_some()
+            || self
+                .record
+                .item
+                .source_ref
+                .as_ref()
+                .is_none_or(|reference| {
+                    reference.source != Source::Jm || reference.work_id != layout.work_id
+                })
+            || self.record.item.page_count != Some(layout.expected_pages)
+        {
+            return Err(invalid());
+        }
+        let mut expected = BTreeMap::new();
+        let mut chapters = BTreeSet::new();
+        let mut pages = 0_u64;
+        for file in &manifest.files {
+            if !library_relative_path_is_valid(&file.relative_path)
+                || file.size_bytes == 0
+                || file.size_bytes > MAX_SAFE_INTEGER
+                || !opaque_hash(&file.sha256)
+                || expected
+                    .insert(file.relative_path.clone(), file.size_bytes)
+                    .is_some()
+            {
+                return Err(invalid());
+            }
+            if let Some((chapter, name)) = file.relative_path.split_once('/') {
+                let (order, id) = chapter.split_once('-').ok_or_else(invalid)?;
+                if order.is_empty()
+                    || !order.bytes().all(|v| v.is_ascii_digit())
+                    || id.is_empty()
+                    || !id.bytes().all(|v| v.is_ascii_digit())
+                    || id.parse::<u64>().ok().is_none_or(|v| v == 0)
+                    || name.contains('/')
+                {
+                    return Err(invalid());
+                }
+                chapters.insert(chapter.to_owned());
+                if name != "章节元数据.json" {
+                    let (number, extension) = name.rsplit_once('.').ok_or_else(invalid)?;
+                    if !matches!(extension, "webp" | "gif")
+                        || number.is_empty()
+                        || !number.bytes().all(|v| v.is_ascii_digit())
+                        || number.parse::<u64>().ok().is_none_or(|v| v == 0)
+                    {
+                        return Err(invalid());
+                    }
+                    pages += 1;
+                }
+            } else if !matches!(
+                file.relative_path.as_str(),
+                MANAGED_LAYOUT | "元数据.json" | "cover.jpg"
+            ) {
+                return Err(invalid());
+            }
+        }
+        if pages != layout.expected_pages
+            || chapters.is_empty()
+            || chapters.len() > 200
+            || ![MANAGED_LAYOUT, "元数据.json", "cover.jpg"]
+                .iter()
+                .all(|v| expected.contains_key(*v))
+            || !chapters
+                .iter()
+                .all(|chapter| expected.contains_key(&format!("{chapter}/章节元数据.json")))
+        {
+            return Err(invalid());
+        }
+        let mut observed = self.observed_files.clone();
+        if observed.remove(MANAGED_MANIFEST).is_none() || observed != expected {
+            return Err(invalid());
+        }
+        let work_prefix = format!("{}/", self.record.item.relative_path);
+        let directories: BTreeSet<_> = self
+            .directories
+            .iter()
+            .skip(1)
+            .map(|(path, _)| path.strip_prefix(&work_prefix).unwrap_or("").to_owned())
+            .collect();
+        if directories != chapters {
+            return Err(invalid());
+        }
+        Ok(())
     }
 }

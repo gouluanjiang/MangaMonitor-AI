@@ -1,4 +1,5 @@
 mod accounts;
+mod downloads;
 mod library;
 mod phone;
 
@@ -152,6 +153,7 @@ async fn choose_background<R: Runtime>(
 fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .manage(Arc::new(library::DesktopLibrary::default()))
+        .manage(Arc::new(downloads::DesktopDownloads::default()))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_preferences,
@@ -159,6 +161,10 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             read_booklists,
             write_booklists,
             choose_background,
+            downloads::jm_download_prepare,
+            downloads::jm_download_confirm,
+            downloads::jm_download_read,
+            downloads::jm_download_control,
             library::library_read,
             library::library_choose,
             library::library_scan,

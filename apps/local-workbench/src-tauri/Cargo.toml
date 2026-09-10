@@ -22,10 +22,12 @@ tauri = { version = "=2.11.5", features = [] }
 tauri-plugin-dialog = "=2.7.3"
 workbench-storage = { path = "../../../crates/workbench-storage" }
 workbench-library = { path = "../../../crates/workbench-library" }
+workbench-downloads = { path = "../../../crates/workbench-downloads" }
 workbench-accounts = { path = "../../../crates/workbench-accounts" }
 workbench-sources = { path = "../../../crates/workbench-sources" }
 workbench-credentials = { path = "../../../crates/workbench-credentials" }
 zeroize = "=1.9.0"
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tauri = { version = "=2.11.5", features = ["test"] }

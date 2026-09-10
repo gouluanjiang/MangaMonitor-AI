@@ -38,6 +38,20 @@ import {
   usePhoneLibrary,
 } from "./LibraryWorkbench.tsx";
 import { createLibraryAdapter } from "./library-runtime.ts";
+import { createDownloadAdapter } from "./download-runtime.ts";
+import {
+  NativeDownloads,
+  DownloadSettingsPanel,
+  useDownloads,
+  downloadStatusText,
+  unfinishedDownloadCount,
+} from "./NativeDownloads.tsx";
+import type {
+  DownloadContext,
+  DownloadScope,
+  DownloadTask,
+} from "./download-types.ts";
+import { parseLibraryReference } from "./library-model.ts";
 import { createPhoneLibraryAdapter } from "./phone-library-runtime.ts";
 import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
@@ -51,6 +65,7 @@ import type {
 } from "./source-types.ts";
 const sourceAdapter = createSourceAdapter();
 const libraryAdapter = createLibraryAdapter();
+const downloadAdapter = createDownloadAdapter();
 const phoneLibraryAdapter = createPhoneLibraryAdapter();
 const persistence = createWorkbenchPersistence({ fixture: activeFixture });
 const workReference = (work: Work): WorkReference => ({
@@ -146,6 +161,12 @@ function Dialog({
 }
 
 export default function App() {
+  const [downloadInput, setDownloadInput] = useState("");
+  const [downloadFeedback, setDownloadFeedback] = useState(false);
+  const [downloadLibraryRefresh, setDownloadLibraryRefresh] = useState(false);
+  const [pendingDownloadedWork, setPendingDownloadedWork] =
+    useState<DownloadTask | null>(null);
+  const [libraryNavigationKey, setLibraryNavigationKey] = useState(0);
   const library = useLibrary(libraryAdapter, persistence.native);
   const phoneLibrary = usePhoneLibrary(phoneLibraryAdapter, persistence.native);
   const [requestedLibraryWork, setRequestedLibraryWork] =
@@ -166,6 +187,30 @@ export default function App() {
   const [accountsError, setAccountsError] = useState("");
   const accountsRef = useRef(accounts);
   accountsRef.current = accounts;
+  const jmAccount = accounts.find((account) => account.source === "JM");
+  const downloadScope: DownloadScope | null =
+    jmAccount?.state === "connected" && jmAccount.sessionId
+      ? { source: "JM", sessionId: jmAccount.sessionId }
+      : null;
+  const downloadContext: DownloadContext | null =
+    downloadScope && library.snapshot.rootId
+      ? {
+          scope: downloadScope,
+          rootId: library.snapshot.rootId,
+          generation: library.snapshot.generation,
+        }
+      : null;
+  const downloads = useDownloads(
+    downloadAdapter,
+    persistence.native,
+    downloadContext,
+    () => setDownloadLibraryRefresh(true),
+  );
+  useEffect(() => {
+    if (!downloadLibraryRefresh || library.busy) return;
+    setDownloadLibraryRefresh(false);
+    void library.controller.read();
+  }, [downloadLibraryRefresh, library.busy, library.controller]);
   const [sourceCache, setSourceCache] = useState<
     Record<string, { scope: SourceScope; work: SourceWork }>
   >({});
@@ -239,7 +284,9 @@ export default function App() {
       disposed = true;
     };
   }, [mergeAccounts]);
-  const [state, setState] = useState(readSavedDemo);
+  const [state, setState] = useState(() =>
+    persistence.native ? { ...initialDemoState(), tasks: [] } : readSavedDemo(),
+  );
   const [page, setPage] = useState<Page>("library");
   const [detail, setDetail] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState("chapters");
@@ -333,6 +380,91 @@ export default function App() {
     setRequestedWork(ref);
     setSourceRequestKey((key) => key + 1);
     navigate("discovery");
+  }
+  function chooseDownloadLibrary() {
+    navigate("library");
+    setLibraryTab("all");
+    setQuery("");
+    setLibraryNavigationKey((value) => value + 1);
+    setNotice("选择电脑漫画目录后，返回下载队列继续准备这本作品。");
+  }
+  function showDownloadLibrary(work: SourceWork) {
+    navigate("library");
+    setLibraryTab("all");
+    setQuery("");
+    setRequestedLibraryWork(work);
+    setLibraryRequestKey((value) => value + 1);
+  }
+  function openDownloaded(task: DownloadTask) {
+    setPendingDownloadedWork(task);
+    if (!library.snapshot.items.some((item) => item.id === task.libraryEntryId))
+      setDownloadLibraryRefresh(true);
+  }
+  useEffect(() => {
+    if (!pendingDownloadedWork || downloadLibraryRefresh || library.busy)
+      return;
+    const task = pendingDownloadedWork;
+    setPendingDownloadedWork(null);
+    if (!library.snapshot.items.some((item) => item.id === task.libraryEntryId))
+      setNotice("这本作品已下载，当前目录尚未读取到对应文件。请核对电脑目录。");
+    showDownloadLibrary({
+      source: "JM",
+      workId: task.workId,
+      title: task.title,
+      authors: [],
+      description: null,
+      tags: [],
+      favorite: null,
+      chapterCount: null,
+      pageCount: null,
+      coverAvailable: false,
+    });
+  }, [
+    pendingDownloadedWork,
+    downloadLibraryRefresh,
+    library.busy,
+    library.snapshot.items,
+  ]);
+  function beginDownload(input: string, work?: SourceWork) {
+    if (work && work.source !== "JM") {
+      setNotice("Pica 下载将在后续批次接入。");
+      return;
+    }
+    setDownloadInput(input);
+    setDownloadFeedback(true);
+    if (!downloadScope) {
+      setNotice("请先连接 JM 账号。");
+      navigate("settings");
+      return;
+    }
+    if (!downloadContext) {
+      chooseDownloadLibrary();
+      return;
+    }
+    const id = work?.workId ?? parseLibraryReference("JM", input)?.workId;
+    const existing = id
+      ? library.snapshot.items.find(
+          (item) =>
+            item.sourceRef?.source === "JM" && item.sourceRef.workId === id,
+        )
+      : undefined;
+    if (existing && id) {
+      setNotice("电脑已有该作品副本，请先核对电脑文件。");
+      showDownloadLibrary({
+        source: "JM",
+        workId: id,
+        title: existing.title,
+        authors: existing.authors,
+        description: existing.description,
+        tags: existing.tags,
+        favorite: null,
+        chapterCount: null,
+        pageCount: existing.pageCount,
+        coverAvailable: existing.coverAvailable,
+      });
+      return;
+    }
+    void downloads.controller.prepare(downloadContext, id ?? input);
   }
   function openSourceFavorites(source: Source) {
     setRequestedSource(source);
@@ -573,6 +705,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (persistence.native) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       setStorageFailed(false);
@@ -581,6 +714,7 @@ export default function App() {
     }
   }, [state]);
   useEffect(() => {
+    if (persistence.native) return;
     const timer = window.setInterval(
       () => setState((previous) => tickDemo(previous)),
       1800,
@@ -1705,6 +1839,14 @@ export default function App() {
   function renderSettings() {
     return preferencesReady ? (
       <WorkbenchSettings
+        downloadPanel={
+          persistence.native ? (
+            <DownloadSettingsPanel
+              downloads={downloads}
+              onOpenQueue={() => navigate("queue")}
+            />
+          ) : undefined
+        }
         libraryPanel={
           persistence.native ? (
             <LibrarySettingsPanel library={library} phone={phoneLibrary} />
@@ -1792,9 +1934,16 @@ export default function App() {
             >
               <Icon name={icon} size={19} />
               <span className="nav-tooltip">{pageNames[value]}</span>
-              {value === "queue" && unfinished > 0 && (
-                <span className="nav-count">{unfinished}</span>
-              )}
+              {value === "queue" &&
+                (persistence.native
+                  ? unfinishedDownloadCount(downloads.snapshot.tasks)
+                  : unfinished) > 0 && (
+                  <span className="nav-count">
+                    {persistence.native
+                      ? unfinishedDownloadCount(downloads.snapshot.tasks)
+                      : unfinished}
+                  </span>
+                )}
               {value === "discovery" && <span className="nav-dot" />}
             </button>
           ))}
@@ -1878,7 +2027,7 @@ export default function App() {
                 ? "桌面开发版 · 真实来源"
                 : page === "library"
                   ? "桌面开发版 · 双库记录"
-                  : "桌面开发版 · 模拟数据"
+                  : "桌面开发版 · 本机任务"
               : "交互样例 · 模拟数据"}
             {activeFixture && " · 100 条验收数据"}
           </div>
@@ -1941,6 +2090,7 @@ export default function App() {
           )}
           {persistence.native && (
             <LibraryWorkbench
+              key={libraryNavigationKey}
               library={library}
               phone={phoneLibrary}
               active={libraryActive}
@@ -1957,8 +2107,27 @@ export default function App() {
             />
           )}
           {persistence.native && (
+            <NativeDownloads
+              downloads={downloads}
+              active={page === "queue"}
+              context={downloadContext}
+              scope={downloadScope}
+              input={downloadInput}
+              onInputChange={setDownloadInput}
+              onPrepare={() => beginDownload(downloadInput)}
+              onChooseLibrary={chooseDownloadLibrary}
+              onOpenAccounts={() => navigate("settings")}
+              onConfirmed={() => navigate("queue")}
+              onOpenDownloaded={openDownloaded}
+              showFeedback={downloadFeedback}
+            />
+          )}
+          {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
+              onDownload={(work) => beginDownload(work.workId, work)}
+              downloadReady={downloads.ready}
+              downloadBusy={downloads.busy}
               librarySnapshot={library.snapshot}
               phoneSnapshot={phoneLibrary.snapshot}
               phoneBusy={phoneLibrary.busy || !phoneLibrary.ready}
@@ -2004,7 +2173,9 @@ export default function App() {
               : ["library", "favorites", "discovery"].includes(page)
                 ? renderLibrary()
                 : page === "queue"
-                  ? renderQueue()
+                  ? persistence.native
+                    ? null
+                    : renderQueue()
                   : page === "authors"
                     ? renderAuthors()
                     : renderSettings()}
@@ -2012,22 +2183,26 @@ export default function App() {
         <footer className="statusbar">
           <span>
             <span className="statusbar-dot" />
-            {state.paused
-              ? "模拟队列已暂停"
-              : activeTask
-                ? `模拟执行中 · ${lookup(activeTask.workId).title}`
-                : "模拟队列就绪"}
+            {persistence.native
+              ? downloadStatusText(downloads)
+              : state.paused
+                ? "模拟队列已暂停"
+                : activeTask
+                  ? `模拟执行中 · ${lookup(activeTask.workId).title}`
+                  : "模拟队列就绪"}
           </span>
           <span>
             {sourceActive
-              ? "手机名单与电脑文件核对 · 下载待接入"
+              ? "手机名单与电脑文件核对 · JM 单本下载"
               : libraryActive
                 ? "电脑文件保留 · 手机由你手动转入"
-                : "示例数据 · 尚未连接下载器"}
+                : persistence.native
+                  ? "JM 单本下载 · Pica 下载后续接入"
+                  : "示例数据 · 尚未连接下载器"}
           </span>
         </footer>
       </div>
-      {confirmation && (
+      {!persistence.native && confirmation && (
         <Dialog
           title="下载并入库"
           testId="confirm-dialog"
@@ -2099,7 +2274,7 @@ export default function App() {
           onClose={() => closeBooklistPicker(false)}
         />
       )}
-      {state.closed && (
+      {!persistence.native && state.closed && (
         <Dialog
           title="模拟工作台已安全退出"
           dismissible={false}

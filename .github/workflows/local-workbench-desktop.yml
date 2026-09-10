@@ -10,6 +10,12 @@ on:
       - 'crates/workbench-sources/**'
       - 'crates/workbench-accounts/**'
       - 'crates/workbench-library/**'
+      - 'crates/workbench-downloads/**'
+      - 'crates/cloud-monitor/**'
+      - 'crates/jm-adapter/**'
+      - 'crates/pica-adapter/**'
+      - 'crates/rules-core/**'
+      - 'crates/state-model/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -23,6 +29,12 @@ on:
       - 'crates/workbench-sources/**'
       - 'crates/workbench-accounts/**'
       - 'crates/workbench-library/**'
+      - 'crates/workbench-downloads/**'
+      - 'crates/cloud-monitor/**'
+      - 'crates/jm-adapter/**'
+      - 'crates/pica-adapter/**'
+      - 'crates/rules-core/**'
+      - 'crates/state-model/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -84,7 +96,7 @@ jobs:
         # --all follows path dependencies into the separate headless workspace.
         run: cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --package mangamonitor-workbench-preview -- --check
       - name: Test offline document storage and account workflows
-        run: cargo +1.98.1 test --locked -p workbench-storage -p workbench-credentials -p workbench-sources -p workbench-accounts -p workbench-library -- --test-threads=2
+        run: cargo +1.98.1 test --locked -p workbench-storage -p workbench-credentials -p workbench-sources -p workbench-accounts -p workbench-library -p workbench-downloads -- --test-threads=2
       - name: Verify Windows credential persistence in random CI slots
         run: cargo +1.98.1 test --locked -p workbench-credentials windows_credential_manager_roundtrip_uses_only_random_ci_slots -- --ignored --test-threads=1
       - name: Build frontend assets for native context tests
@@ -188,6 +200,14 @@ jobs:
         working-directory: apps/local-workbench
         timeout-minutes: 5
         run: node tests/native-webview-smoke.mjs
+      - name: Upload verified executable for manual acceptance
+        # This is the already-tested development executable, not an installer or release.
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-dev-executable-${{ github.sha }}
+          path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/mangamonitor-workbench-preview.exe
+          retention-days: 7
+          if-no-files-found: error
       - name: Upload native smoke failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

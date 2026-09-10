@@ -1118,3 +1118,48 @@ async fn explicit_cleanup_lock_contention_is_bounded_and_a_new_service_can_retry
     let next = service(&root, FakeBackend::default(), SharedVault::default());
     assert!(next.cleanup_legacy_cover_cache().await.is_ok());
 }
+
+#[tokio::test]
+async fn session_leases_are_revoked_by_logout_and_cannot_revive_after_login() {
+    let root = tempfile::tempdir().unwrap();
+    let service = service(&root, FakeBackend::default(), SharedVault::default());
+    let first = login(&service, Source::Jm, "first", false).await;
+    let old = service.session_lease(Source::Jm, &first).await.unwrap();
+    assert!(old.require_current().is_ok());
+    assert_eq!(
+        error(service.session_lease(Source::Pica, &first).await),
+        "SESSION_CHANGED"
+    );
+    service.logout(Source::Jm, Some(&first)).await.unwrap();
+    assert_eq!(error(old.require_current()), "SESSION_CHANGED");
+    let next = login(&service, Source::Jm, "next", false).await;
+    assert!(service
+        .session_lease(Source::Jm, &next)
+        .await
+        .unwrap()
+        .require_current()
+        .is_ok());
+    assert_eq!(error(old.require_current()), "SESSION_CHANGED");
+    assert_eq!(
+        error(service.session_lease(Source::Jm, &first).await),
+        "SESSION_CHANGED"
+    );
+}
+
+#[tokio::test]
+async fn replacement_session_and_observed_external_credential_change_revoke_leases() {
+    let root = tempfile::tempdir().unwrap();
+    let vault = SharedVault::default();
+    let service = service(&root, FakeBackend::default(), vault.clone());
+    let first = login(&service, Source::Jm, "first", true).await;
+    let old = service.session_lease(Source::Jm, &first).await.unwrap();
+    let next = login(&service, Source::Jm, "next", true).await;
+    assert_eq!(error(old.require_current()), "SESSION_CHANGED");
+    let current = service.session_lease(Source::Jm, &next).await.unwrap();
+    vault.delete(Source::Jm).unwrap();
+    assert_eq!(
+        error(service.session_lease(Source::Jm, &next).await),
+        "SESSION_CHANGED"
+    );
+    assert_eq!(error(current.require_current()), "SESSION_CHANGED");
+}

@@ -37,6 +37,9 @@ import "./source-workbench.css";
 
 export interface SourceWorkbenchProps {
   adapter: SourceAdapter;
+  onDownload?(work: SourceWork): void;
+  downloadReady?: boolean;
+  downloadBusy?: boolean;
   librarySnapshot?: LibrarySnapshot;
   phoneSnapshot?: PhoneLibrarySnapshot;
   phoneBusy?: boolean;
@@ -244,6 +247,9 @@ const scopeKey = (scope: SourceScope | null) =>
   scope ? scope.source + ":" + scope.sessionId : "";
 export function SourceWorkbench({
   adapter,
+  onDownload,
+  downloadReady = false,
+  downloadBusy = false,
   librarySnapshot,
   phoneSnapshot,
   phoneBusy = false,
@@ -1317,10 +1323,20 @@ export function SourceWorkbench({
                 <button
                   type="button"
                   className="button primary"
-                  disabled
+                  disabled={
+                    detail.source !== "JM" ||
+                    !onDownload ||
+                    !downloadReady ||
+                    downloadBusy
+                  }
                   data-testid="source-download"
+                  onClick={() => onDownload?.(detail)}
                 >
-                  真实下载尚未接入
+                  {detail.source === "Pica"
+                    ? "Pica 下载后续批次接入"
+                    : downloadBusy
+                      ? "正在准备下载…"
+                      : "下载到电脑"}
                 </button>
                 <button
                   type="button"
@@ -1372,7 +1388,8 @@ export function SourceWorkbench({
                 </button>
               </div>
               <p className="source-muted">
-                网站收藏、本机关注与本地书单分别保存。当前没有操作漫画文件或下载队列。
+                网站收藏、本机关注与本地书单分别保存。JM
+                下载经单独确认后加入电脑队列。
                 <button
                   type="button"
                   className="text-button"
@@ -1780,7 +1797,7 @@ export function SourceWorkbench({
                     : complete
                       ? "已读取完整范围"
                       : "范围尚未读全，已读取页面不代表全部作品"}{" "}
-                  · 手机名单与电脑文件分别核对；下载尚未接入
+                  · 手机名单与电脑文件分别核对；JM 下载从详情单本确认
                 </p>
               )}
               {grid(visible)}

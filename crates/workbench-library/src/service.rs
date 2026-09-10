@@ -1,7 +1,7 @@
 use crate::{
     archive, cover, error,
     paths::{self, Node, Root},
-    scan::ScanJob,
+    scan::{completed_directory, ScanJob},
     LibraryCover, LibraryFreshness, LibraryPhase, LibraryReference, LibrarySnapshot, Result,
     ScanAction,
 };
@@ -11,8 +11,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use workbench_storage::{
-    library_hash_is_valid, Document, LibraryDocument, LibraryEvidence, LibraryFormat,
-    LibraryRecord, WorkbenchStore, MAX_SAFE_INTEGER,
+    library_hash_is_valid, library_relative_path_is_valid, Document, LibraryDocument,
+    LibraryEvidence, LibraryFormat, LibraryRecord, WorkbenchStore, MAX_LIBRARY_ITEMS,
+    MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
 };
 
 #[derive(Default)]
@@ -253,6 +254,124 @@ impl LibraryService {
             self.job = None;
         }
         Ok(snapshot(saved, was_live))
+    }
+
+    /// Adds a private PC-index record for one command-finalized work directory.
+    /// This is not a download completion, promotion or phone-presence authority.
+    /// The command must have already validated its exact media tree and hashes.
+    pub fn register_completed(
+        &mut self,
+        store: &WorkbenchStore,
+        root_id: &str,
+        generation: u64,
+        relative_path: &str,
+        expected_reference: &LibraryReference,
+        expected_pages: u64,
+    ) -> Result<LibrarySnapshot> {
+        if !library_relative_path_is_valid(relative_path)
+            || relative_path
+                .split('/')
+                .any(|part| part.starts_with(".下载中-"))
+            || !expected_reference.is_valid()
+            || !(1..=10_000).contains(&expected_pages)
+        {
+            return Err(error("VALIDATION_FAILED"));
+        }
+        let mut document = store.read_library()?;
+        require_scope(&document.value, root_id, generation)?;
+        if matches!(
+            document.value.phase,
+            LibraryPhase::Reading | LibraryPhase::Paused
+        ) {
+            return Err(error("LIBRARY_BUSY"));
+        }
+        // Never alias an existing work under a second path, or revise a prior
+        // manual unlink/association as a side effect of download registration.
+        for old in &document.value.records {
+            if old.item.relative_path != relative_path
+                && old.item.source_ref.as_ref() == Some(expected_reference)
+            {
+                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
+            }
+            if old.item.relative_path == relative_path
+                && (old.item.format != LibraryFormat::Directory
+                    || (old.manual_override
+                        && old.item.source_ref.as_ref() != Some(expected_reference)))
+            {
+                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
+            }
+        }
+        let root = Root::restore(
+            document
+                .value
+                .root
+                .as_ref()
+                .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
+        )?;
+        let (mut record, visited, skipped) = completed_directory(&root, relative_path)?;
+        if record.item.source_ref.as_ref() != Some(expected_reference)
+            || record.item.identity_evidence != Some(LibraryEvidence::Metadata)
+            || record.item.page_count != Some(expected_pages)
+        {
+            return Err(error("LIBRARY_IDENTITY_CONFLICT"));
+        }
+        let existing = document
+            .value
+            .records
+            .iter()
+            .position(|old| old.item.relative_path == relative_path);
+        if let Some(index) = existing {
+            let old = &document.value.records[index];
+            if old.identity.is_none() || old.identity != record.identity {
+                return Err(error("LIBRARY_FILE_CHANGED"));
+            }
+            if old
+                .item
+                .source_ref
+                .as_ref()
+                .is_some_and(|reference| reference != expected_reference)
+            {
+                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
+            }
+            if old.manual_override {
+                record.manual_override = true;
+                record.item.source_ref = old.item.source_ref.clone();
+                record.item.identity_evidence = old.item.identity_evidence;
+            }
+            if old == &record {
+                let latest = store.read_library()?;
+                require_scope(&latest.value, root_id, generation)?;
+                if latest.revision != document.revision {
+                    return Err(error("LIBRARY_STALE_SNAPSHOT"));
+                }
+                return Ok(snapshot(document, false));
+            }
+            document.value.records[index] = record;
+        } else {
+            if document.value.records.len() >= MAX_LIBRARY_ITEMS {
+                return Err(error("LIBRARY_LIMIT_REACHED"));
+            }
+            document.value.visited = document
+                .value
+                .visited
+                .checked_add(visited)
+                .filter(|value| *value <= MAX_LIBRARY_VISITED)
+                .ok_or(error("LIBRARY_LIMIT_REACHED"))?;
+            document.value.skipped = document
+                .value
+                .skipped
+                .checked_add(skipped)
+                .filter(|value| *value <= document.value.visited)
+                .ok_or(error("LIBRARY_LIMIT_REACHED"))?;
+            document.value.records.push(record);
+        }
+        root.verify()?;
+        document.value.updated_at = Some(now());
+        // Compare-and-swap rejects another window changing the root, generation
+        // or index while this bounded directory inspection was in progress.
+        let saved = store.write_library(document.revision, document.value)?;
+        self.job = None;
+        Ok(snapshot(saved, false))
     }
 
     fn job_matches(&self, document: &Document<LibraryDocument>) -> bool {

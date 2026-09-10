@@ -1,0 +1,63 @@
+.native-downloads[hidden] {
+  display: none;
+}
+.native-download-add {
+  margin: 20px 0 26px;
+}
+.native-download-add label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--muted);
+}
+.native-download-add input {
+  flex: 1;
+  min-width: 180px;
+  border: 1px solid var(--line, #35303d);
+  border-radius: 7px;
+  padding: 12px 14px;
+  background: #17141c;
+  color: inherit;
+}
+.native-downloads .source-actions {
+  flex-wrap: wrap;
+}
+.native-downloads .task-card {
+  align-items: flex-start;
+}
+.download-task-icon {
+  flex: 0 0 74px;
+  min-height: 105px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(100, 72, 151, 0.15);
+  color: #b79bfa;
+}
+.download-destination {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.download-confirmation h3 {
+  font-size: 22px;
+  margin: 20px 0 12px;
+}
+.download-confirmation p {
+  line-height: 1.7;
+}
+.download-confirmation .dialog-actions {
+  margin-top: 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+@media (max-width: 700px) {
+  .native-downloads .task-bottom {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .download-task-icon {
+    flex-basis: 42px;
+    min-height: 70px;
+  }
+}

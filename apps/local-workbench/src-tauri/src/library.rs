@@ -12,7 +12,7 @@ pub(crate) struct DesktopLibrary {
     service: Mutex<LibraryService>,
 }
 
-async fn with_library<T, F>(
+pub(super) async fn with_library<T, F>(
     library: Arc<DesktopLibrary>,
     store: Arc<DesktopStore>,
     operation: F,

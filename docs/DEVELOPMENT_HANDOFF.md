@@ -1,8 +1,16 @@
 # Active development handoff
 
-Updated 2026-09-10. This document separates the current continuation from historical milestone reports.
+Updated 2026-09-11. This document separates the current continuation from historical milestone reports.
 
-## Current batch: separate PC downloads and phone presence (2026-09-10)
+## Current batch: explicit JM single-work desktop downloads (2026-09-11)
+
+The user requested the next development batch and supplied a private single-work JM acceptance sample. Implemented scope: prepare a native-scoped plan, explicitly confirm one work and picked PC directory, run the existing A6 source/media/staging chain, save an add-only compatible directory, verify it, and register only that work in the PC index. The native queue now uses real state, pause/continue/manual retry and read-only restart recovery. Phone presence stays independent and PC copies remain.
+
+Read [the batch report](JM_SINGLE_DOWNLOAD_BATCH_2026-09-11.md), [the session gate review](JM_DESKTOP_DOWNLOAD_GATE_2026-09-10.md), and [the updated roadmap](ROADMAP_AFTER_JM_DOWNLOAD_2026-09-11.md). All three pinned upstreams were reopened this session. The desktop manual ledger is not a synthetic PROVEN_NEW/matcher certificate and does not mutate production inventory. Completed task-owned temporary staging may be released only after verified final output, PC registration and durable task completion; final work files are never deleted by this lifecycle.
+
+Formal test/build execution remains CI-only. Local work is limited to edits, formatter edits and distinct read-only review. Verify the exact PR #19 commit checks and final delivery evidence; code presence and synthetic tests do not prove real-source acceptance. The CI-tested EXE is available for manual acceptance without a new installer. Keep version 0.3.4, PR #19 draft/unmerged, production disabled and updater work frozen. Next development batch is Pica single-work download, followed by batch queue/history and identity confirmation.
+
+## Previous batch: separate PC downloads and phone presence (2026-09-10)
 
 The user also requested a roadmap after this batch. See [the updated roadmap](ROADMAP_AFTER_DUAL_LIBRARY_2026-09-10.md): current dual-library integration, then JM and Pica real single-work downloads, batch queue/identity review, discovery/monitor synchronization, rankings, and formal V1 acceptance. Forecasts are engineering effort estimates, not calendar promises; no separate 0.3.5 installer or updater work is introduced.
 

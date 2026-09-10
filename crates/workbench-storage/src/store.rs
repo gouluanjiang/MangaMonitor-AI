@@ -153,7 +153,11 @@ impl WorkbenchStore {
             value,
         )
     }
-    fn read<T: ValidatedDocument>(&self, name: &str, maximum: usize) -> Result<Document<T>> {
+    pub(crate) fn read<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        maximum: usize,
+    ) -> Result<Document<T>> {
         let _local = self
             .local_lock
             .lock()
@@ -162,7 +166,7 @@ impl WorkbenchStore {
         self.read_unlocked(name, maximum)
     }
 
-    fn write<T: ValidatedDocument>(
+    pub(crate) fn write<T: ValidatedDocument>(
         &self,
         name: &str,
         maximum: usize,
@@ -358,7 +362,7 @@ fn check_path_form(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_directory_tree(path: &Path) -> Result<Vec<File>> {
+pub(crate) fn ensure_directory_tree(path: &Path) -> Result<Vec<File>> {
     check_path_form(path)?;
     let mut current = PathBuf::new();
     #[allow(unused_mut)]

@@ -405,6 +405,85 @@ fn library_commands_require_main_packaged_origin_and_never_offer_generic_paths()
 }
 
 #[test]
+fn download_commands_require_the_main_packaged_window() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let secondary = window(&app, "secondary");
+    for (command, body) in [
+        ("jm_download_read", json!({})),
+        (
+            "jm_download_prepare",
+            json!({"scope":{"source":"JM","sessionId":"stale"},"input":"123","rootId":"a".repeat(64),"generation":1}),
+        ),
+        (
+            "jm_download_confirm",
+            json!({"planId":"a".repeat(64),"expectedRevision":1}),
+        ),
+        (
+            "jm_download_control",
+            json!({"scope":{"source":"JM","sessionId":"stale"},"taskId":"a".repeat(64),"expectedRevision":1,"action":"pause"}),
+        ),
+    ] {
+        assert!(
+            invoke(&secondary, command, body.clone())
+                .unwrap_err()
+                .is_string(),
+            "{command}"
+        );
+        assert!(
+            invoke_from(&main, "https://example.invalid", command, body)
+                .unwrap_err()
+                .is_string(),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn reading_empty_download_queue_never_creates_media_or_changes_phone_inventory() {
+    let (root, app) = fixture();
+    let main = window(&app, "main");
+    let phone = invoke(&main, "phone_library_read", json!({})).unwrap();
+    let library = invoke(&main, "library_read", json!({})).unwrap();
+    let queue = invoke(&main, "jm_download_read", json!({})).unwrap();
+    assert_eq!(queue, json!({"revision":0,"tasks":[]}));
+    assert_eq!(invoke(&main, "jm_download_read", json!({})).unwrap(), queue);
+    assert_eq!(
+        invoke(&main, "phone_library_read", json!({})).unwrap(),
+        phone
+    );
+    assert_eq!(invoke(&main, "library_read", json!({})).unwrap(), library);
+    assert!(!root
+        .path()
+        .join(workbench_storage::PRIVATE_DIRECTORY)
+        .join("download-staging-v1")
+        .exists());
+}
+
+#[test]
+fn unknown_download_plan_never_creates_a_task_and_ci_refuses_live_execution() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let problem = invoke(
+        &main,
+        "jm_download_confirm",
+        json!({"planId":"a".repeat(64),"expectedRevision":1}),
+    )
+    .unwrap_err();
+    let expected = if std::env::var("GITHUB_ACTIONS").is_ok_and(|v| v.eq_ignore_ascii_case("true"))
+    {
+        "DOWNLOAD_LIVE_EXECUTION_DISABLED_IN_CI"
+    } else {
+        "DOWNLOAD_PLAN_EXPIRED"
+    };
+    assert_eq!(problem, json!({"code":expected}));
+    assert_eq!(
+        invoke(&main, "jm_download_read", json!({})).unwrap()["tasks"],
+        json!([])
+    );
+}
+
+#[test]
 fn phone_marks_survive_native_restart_without_removing_pc_copy() {
     let (root, app) = fixture();
     let main = window(&app, "main");

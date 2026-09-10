@@ -3,6 +3,7 @@
 //! Library root paths are stored only as private metadata selected by the native picker.
 mod background;
 mod cache;
+mod downloads;
 mod library;
 mod model;
 mod phone;
@@ -10,6 +11,7 @@ mod store;
 
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
 pub use cache::{AccountCache, CacheEntry};
+pub use downloads::*;
 pub use library::*;
 pub use model::{
     AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,

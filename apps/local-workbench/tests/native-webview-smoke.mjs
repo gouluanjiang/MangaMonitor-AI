@@ -205,6 +205,26 @@ try {
   policyPrepared = true;
   running = await launch();
   const page = running.page;
+  // Real queue IPC is read-only at startup; an empty queue must not turn into
+  // browser demonstration work, and opening its page cannot start a download.
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-empty")).toBeVisible();
+  await expect(page.getByTestId("download-error")).toHaveCount(0);
+  await expect(page.getByTestId("queue-page")).toHaveCount(0);
+  assert.deepEqual(
+    await page.evaluate(async () =>
+      window.__TAURI_INTERNALS__.invoke("jm_download_read"),
+    ),
+    { revision: 0, tasks: [] },
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      Object.keys(localStorage).some((key) =>
+        key.startsWith("mangamonitor.workbench.demo"),
+      ),
+    ),
+    false,
+  );
   await page.getByTestId("nav-settings").click();
   await expect(page.getByTestId("source-account-settings")).toHaveAttribute(
     "aria-busy",

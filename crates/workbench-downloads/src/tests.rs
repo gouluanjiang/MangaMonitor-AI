@@ -1,0 +1,793 @@
+use super::*;
+use crate::{fs::Directory, materialize};
+use cloud_monitor::{
+    executor_handoff, filesystem_verifier,
+    image_download_authorization::ImageDownloadAuthorization,
+    isolated_staging_execution::{
+        self, IsolatedStagingExecutionContext, IsolatedStagingExecutionResult, ProcessedMedia,
+    },
+    local_executor::{self, LocalExecutionPlan},
+    monitor, source_bridge_request,
+    source_completion::{SourceCompletionProof, JM_UPSTREAM_COMMIT},
+    source_media_descriptors::{
+        MediaChapterDescriptors, MediaDescriptor, SourceMediaDescriptorSet,
+    },
+    source_preflight::{self, PreflightChapter, SourcePreflightEvidence, SourcePreflightProof},
+    staging_manifest::{StagedArtifact, StagingManifest},
+    verified_execution_receipt,
+};
+use std::{
+    cell::{Cell, RefCell},
+    fs,
+    io::Cursor,
+    path::{Path, PathBuf},
+};
+use tempfile::TempDir;
+
+struct Fixture {
+    _temp: TempDir,
+    store: WorkbenchStore,
+    service: DownloadService,
+    library: PathBuf,
+    id: String,
+}
+fn fixture() -> Fixture {
+    let temp = TempDir::new().unwrap();
+    let library = temp.path().join("library");
+    fs::create_dir(&library).unwrap();
+    let store = WorkbenchStore::open(temp.path().join("private")).unwrap();
+    let mut indexer = workbench_library::LibraryService::new();
+    indexer.choose(&store, &library).unwrap();
+    let mut lib = store.read_library().unwrap();
+    lib.value.phase = LibraryPhase::Complete;
+    let lib = store.write_library(lib.revision, lib.value).unwrap();
+    let root = lib.value.root.unwrap();
+    let service = DownloadService::new();
+    let plan = service
+        .prepare(
+            &store,
+            &root.id,
+            lib.value.generation,
+            JmDownloadMetadata {
+                work_id: "123456".into(),
+                title: "Offline example".into(),
+                authors: vec!["Example author".into()],
+                tags: vec!["test".into()],
+                description: None,
+            },
+        )
+        .unwrap();
+    service
+        .confirm(&store, &plan.plan_id, plan.revision)
+        .unwrap();
+    Fixture {
+        _temp: temp,
+        store,
+        service,
+        library,
+        id: plan.plan_id,
+    }
+}
+fn record(f: &Fixture) -> DownloadRecord {
+    f.store
+        .read_downloads()
+        .unwrap()
+        .value
+        .tasks
+        .into_iter()
+        .next()
+        .unwrap()
+}
+fn put(f: &Fixture, record: DownloadRecord) {
+    let mut doc = f.store.read_downloads().unwrap();
+    doc.value.tasks[0] = record;
+    f.store.write_downloads(doc.revision, doc.value).unwrap();
+}
+fn gif() -> Vec<u8> {
+    let image =
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([30, 60, 90])));
+    let mut bytes = Cursor::new(Vec::new());
+    image.write_to(&mut bytes, image::ImageFormat::Gif).unwrap();
+    bytes.into_inner()
+}
+fn report(f: &Fixture, record: &DownloadRecord) -> (PathBuf, LocalExecutionReport) {
+    let workspace = f.store.open_download_workspace().unwrap();
+    let staging = workspace.path().to_path_buf();
+    let (state, ledger, command) = adapter::current(record).unwrap();
+    let plan = local_executor::plan(&command).unwrap();
+    let root = staging.join(&plan.staging_subdir);
+    fs::create_dir_all(root.join("chapters/000001-123456")).unwrap();
+    let bytes = gif();
+    let mut artifacts = Vec::new();
+    for number in 1..=2 {
+        let path = format!("chapters/000001-123456/{number:06}.gif");
+        fs::write(root.join(&path), &bytes).unwrap();
+        artifacts.push(StagedArtifact {
+            relative_path: path,
+            size_bytes: bytes.len() as u64,
+            sha256: hash(&bytes),
+        });
+    }
+    let source_completion = SourceCompletionProof {
+        schema_version: 1,
+        source: "jm".into(),
+        upstream_commit: JM_UPSTREAM_COMMIT.into(),
+        source_contract_verified: true,
+        execution_supported: false,
+        manifest: StagingManifest {
+            schema_version: 1,
+            command_id: command.command_id.clone(),
+            task_id: command.task_id.clone(),
+            work_id: command.work_id.clone(),
+            task_revision: command.task_revision,
+            target_hash: command.target_hash.clone(),
+            backend: "JM".into(),
+            source_work_id: command.source_work_id.clone(),
+            staging_subdir: plan.staging_subdir.clone(),
+            source_enumeration_complete: true,
+            all_scheduled_downloads_joined: true,
+            downloader_reported_full_completion: true,
+            expected_content_units: 2,
+            completed_content_units: 2,
+            failed_content_units: 0,
+            artifacts,
+        },
+        inventory_mutation_authorized: false,
+        task_completion_authorized: false,
+        promotion_authorized: false,
+        replacement_authorized: false,
+        physical_delete_authorized: false,
+    };
+    let filesystem_verification =
+        filesystem_verifier::verify(&staging, &plan, &source_completion.manifest).unwrap();
+    let execution = IsolatedStagingExecutionResult {
+        schema_version: 1,
+        command_id: command.command_id.clone(),
+        task_id: command.task_id.clone(),
+        work_id: command.work_id.clone(),
+        task_revision: command.task_revision,
+        target_hash: command.target_hash.clone(),
+        source: "jm".into(),
+        source_work_id: command.source_work_id.clone(),
+        preflight_hash: "a".repeat(64),
+        staging_execution_completed: true,
+        source_completion: source_completion.clone(),
+        filesystem_verification: filesystem_verification.clone(),
+        inventory_mutation_authorized: false,
+        task_completion_authorized: false,
+        promotion_authorized: false,
+        replacement_authorized: false,
+        physical_delete_authorized: false,
+    };
+    let receipt =
+        verified_execution_receipt::build(&command, &plan, &execution, "2026-09-10T12:00:00Z")
+            .unwrap();
+    let receipt_view = executor_handoff::receipt_view(&state, &ledger, &receipt).unwrap();
+    (
+        staging,
+        LocalExecutionReport {
+            schema_version: 2,
+            command_id: command.command_id,
+            task_id: command.task_id,
+            work_id: command.work_id,
+            task_revision: command.task_revision,
+            target_hash: command.target_hash,
+            source: "jm".into(),
+            source_work_id: command.source_work_id,
+            staging_subdir: plan.staging_subdir,
+            preflight_hash: execution.preflight_hash,
+            staging_execution_completed: true,
+            receipt,
+            source_completion,
+            filesystem_verification,
+            receipt_view,
+            inventory_mutation_authorized: false,
+            task_completion_authorized: false,
+            promotion_authorized: false,
+            replacement_authorized: false,
+            physical_delete_authorized: false,
+            production_enablement_authorized: false,
+        },
+    )
+}
+fn seed_report(f: &Fixture) {
+    let mut value = record(f);
+    let (_, report) = report(f, &value);
+    value.files_done = 2;
+    value.files_total = Some(2);
+    value.bytes_done = report.filesystem_verification.total_bytes;
+    value.staging_report_json = Some(serde_json::to_string(&report).unwrap());
+    put(f, value);
+}
+fn set_active(f: &Fixture) {
+    let value = record(f);
+    let workspace = f.store.open_download_workspace().unwrap();
+    f.service.lock().unwrap().active = Some(Active {
+        task_id: value.id,
+        revision: value.revision,
+        _workspace: workspace,
+    });
+}
+
+#[test]
+fn read_reopens_as_paused_without_changing_disk_or_starting_work() {
+    let f = fixture();
+    let before = f.store.read_downloads().unwrap();
+    let new = DownloadService::new();
+    let view = new.read(&f.store).unwrap();
+    assert_eq!(view.tasks[0].phase, DownloadPhase::Paused);
+    assert_eq!(before, f.store.read_downloads().unwrap());
+    assert!(fs::read_dir(&f.library).unwrap().next().is_none());
+}
+#[test]
+fn active_read_is_not_recovered_as_paused_and_resume_waits_for_old_worker() {
+    let f = fixture();
+    set_active(&f);
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].phase,
+        DownloadPhase::Queued
+    );
+    let paused = f
+        .service
+        .control(&f.store, &f.id, 1, Control::Pause)
+        .unwrap();
+    assert_eq!(paused.tasks[0].revision, 2);
+    assert_eq!(
+        f.service
+            .control(&f.store, &f.id, 2, Control::Resume)
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_WORKER_BUSY"
+    );
+    assert_eq!(record(&f).phase, DownloadPhase::Paused);
+    f.service.clear(&f.id, 1);
+    assert_eq!(
+        f.service
+            .control(&f.store, &f.id, 2, Control::Resume)
+            .unwrap()
+            .tasks[0]
+            .phase,
+        DownloadPhase::Queued
+    );
+}
+#[test]
+fn stale_control_and_changed_root_are_refused_without_writes() {
+    let f = fixture();
+    let before = f.store.read_downloads().unwrap();
+    assert_eq!(
+        f.service
+            .control(&f.store, &f.id, 99, Control::Pause)
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_TASK_STALE"
+    );
+    assert_eq!(before, f.store.read_downloads().unwrap());
+    let mut library = f.store.read_library().unwrap();
+    library.value.generation += 1;
+    f.store
+        .write_library(library.revision, library.value)
+        .unwrap();
+    assert_eq!(
+        f.service
+            .control(&f.store, &f.id, 1, Control::Resume)
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_ROOT_CHANGED"
+    );
+}
+#[test]
+fn document_corruption_and_future_schema_preserve_original_bytes() {
+    let f = fixture();
+    let path = f
+        ._temp
+        .path()
+        .join("private")
+        .join(workbench_storage::PRIVATE_DIRECTORY)
+        .join("downloads.json");
+    for bytes in [
+        b"{corrupt".as_slice(),
+        b"{\"schemaVersion\":2,\"revision\":1,\"value\":{\"version\":2}}".as_slice(),
+    ] {
+        fs::write(&path, bytes).unwrap();
+        assert!(f.service.read(&f.store).is_err());
+        assert!(f
+            .store
+            .write_downloads(0, DownloadsDocument::default())
+            .is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+}
+#[test]
+fn worker_file_lock_is_cross_instance_and_released_on_drop() {
+    let f = fixture();
+    let other = WorkbenchStore::open(f._temp.path().join("private")).unwrap();
+    let worker = f.store.open_download_workspace().unwrap();
+    assert!(other.open_download_workspace().is_err());
+    drop(worker);
+    assert!(other.open_download_workspace().is_ok());
+}
+#[test]
+fn pause_after_authorized_write_preserves_new_revision_and_completed_checkpoint() {
+    let f = fixture();
+    set_active(&f);
+    let initial = record(&f);
+    let page = StagedArtifact {
+        relative_path: "chapters/000001-123456/000001.gif".into(),
+        size_bytes: gif().len() as u64,
+        sha256: hash(&gif()),
+    };
+    let mut checkpoint = StagingCheckpoint {
+        descriptor_hash: "a".repeat(64),
+        expected_files: 2,
+        artifacts: vec![],
+        pending: Some(page.clone()),
+    };
+    f.service
+        .checkpoint(&f.store, &initial, &checkpoint)
+        .unwrap();
+    f.service
+        .control(&f.store, &f.id, 1, Control::Pause)
+        .unwrap();
+    checkpoint.pending = None;
+    checkpoint.artifacts.push(page);
+    f.service
+        .checkpoint(&f.store, &initial, &checkpoint)
+        .unwrap();
+    let saved = record(&f);
+    assert_eq!(saved.revision, 2);
+    assert_eq!(saved.phase, DownloadPhase::Paused);
+    assert_eq!(saved.files_done, 1);
+}
+#[test]
+fn materialization_is_exact_add_only_and_compatible_metadata_is_complete() {
+    let f = fixture();
+    let mut record = record(&f);
+    let (stage, report) = report(&f, &record);
+    materialize::save(&mut record, &report, &stage, &|| Ok(()), &mut |_| Ok(())).unwrap();
+    materialize::verify_output(&record).unwrap();
+    let root = f.library.join(&record.destination);
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("元数据.json")).unwrap()).unwrap();
+    for key in [
+        "id",
+        "name",
+        "addtime",
+        "description",
+        "total_views",
+        "likes",
+        "chapterInfos",
+        "series_id",
+        "comment_total",
+        "author",
+        "tags",
+        "works",
+        "actors",
+        "related_list",
+        "liked",
+        "is_favorite",
+        "is_aids",
+    ] {
+        assert!(metadata.get(key).is_some(), "{key}");
+    }
+    assert_eq!(metadata["description"], "");
+    assert!(root.join("_mangamonitor-layout.json").is_file());
+    assert!(root.join("0001-123456/0001.gif").is_file());
+    let mut unrelated = record.clone();
+    unrelated.output_identity = None;
+    unrelated.output_manifest_hash = None;
+    assert_eq!(
+        materialize::save(&mut unrelated, &report, &stage, &|| Ok(()), &mut |_| Ok(()))
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_DESTINATION_EXISTS"
+    );
+}
+#[test]
+fn interrupted_partial_output_resumes_exact_prefix_and_never_replaces_wrong_bytes() {
+    let f = fixture();
+    let mut record = record(&f);
+    let (stage, report) = report(&f, &record);
+    let first_page = f
+        .library
+        .join(&record.destination)
+        .join("0001-123456/0001.gif");
+    let interrupted = Cell::new(false);
+    let persisted = RefCell::new(None);
+    let result = materialize::save(
+        &mut record,
+        &report,
+        &stage,
+        &|| {
+            if first_page.is_file() && !interrupted.replace(true) {
+                Err(error("DOWNLOAD_PAUSED"))
+            } else {
+                Ok(())
+            }
+        },
+        &mut |v| {
+            *persisted.borrow_mut() = Some(v.clone());
+            Ok(())
+        },
+    );
+    assert!(result.is_err());
+    record = persisted.borrow().clone().unwrap();
+    let path = f
+        .library
+        .join(&record.destination)
+        .join("0001-123456/0001.gif");
+    if path.exists() {
+        fs::write(&path, &gif()[..5]).unwrap();
+    }
+    materialize::save(&mut record, &report, &stage, &|| Ok(()), &mut |_| Ok(())).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), gif());
+    record.output_manifest_hash = None;
+    fs::write(&path, b"WRONG").unwrap();
+    assert_eq!(
+        materialize::save(&mut record, &report, &stage, &|| Ok(()), &mut |_| Ok(()))
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_OUTPUT_CHANGED"
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"WRONG");
+}
+#[tokio::test]
+async fn completed_staging_runs_offline_and_index_retry_does_not_download_again() {
+    let f = fixture();
+    seed_report(&f);
+    let receipt = f
+        .service
+        .run(&f.store, &f.id, || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].phase,
+        DownloadPhase::Saving
+    );
+    assert_eq!(
+        f.service
+            .control(&f.store, &f.id, 1, Control::Pause)
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_CONTROL_INVALID"
+    );
+    f.service.index_failed(&f.store, &receipt, "BUSY").unwrap();
+    f.service
+        .control(&f.store, &f.id, 1, Control::Retry)
+        .unwrap();
+    let retry = f
+        .service
+        .run(&f.store, &f.id, || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retry.manifest_hash, receipt.manifest_hash);
+    assert_eq!(retry.expected_pages, 2);
+    let mut library = workbench_library::LibraryService::new();
+    let snapshot = library
+        .register_completed(
+            &f.store,
+            &retry.root_id,
+            retry.generation,
+            &retry.relative_path,
+            &workbench_storage::LibraryReference {
+                source: Source::Jm,
+                work_id: retry.work_id.clone(),
+            },
+            retry.expected_pages,
+        )
+        .unwrap();
+    let entry = snapshot
+        .items
+        .iter()
+        .find(|item| item.relative_path == retry.relative_path)
+        .unwrap();
+    let done = f.service.mark_indexed(&f.store, &retry, &entry.id).unwrap();
+    assert_eq!(done.tasks[0].phase, DownloadPhase::Downloaded);
+    assert_eq!(f.store.read_phone_library().unwrap().revision, 0);
+    let workspace = f.store.open_download_workspace().unwrap();
+    let (_, _, command) = adapter::current(&record(&f)).unwrap();
+    assert!(!workspace
+        .path()
+        .join("commands")
+        .join(command.command_id)
+        .exists());
+    assert!(f
+        .library
+        .join(&retry.relative_path)
+        .join("0001-123456/0001.gif")
+        .is_file());
+}
+#[tokio::test]
+async fn invalid_finish_receipt_releases_worker_and_preserves_complete_files() {
+    let f = fixture();
+    seed_report(&f);
+    let mut receipt = f
+        .service
+        .run(&f.store, &f.id, || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    receipt.manifest_hash = "f".repeat(64);
+    assert!(f
+        .service
+        .mark_indexed(&f.store, &receipt, &"e".repeat(64))
+        .is_err());
+    assert!(f.service.lock().unwrap().active.is_none());
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].phase,
+        DownloadPhase::Paused
+    );
+    assert!(f
+        .library
+        .join(&receipt.relative_path)
+        .join("_mangamonitor.json")
+        .is_file());
+}
+
+struct Core {
+    plan: LocalExecutionPlan,
+    authorization: ImageDownloadAuthorization,
+    evidence: SourcePreflightEvidence,
+    proof: SourcePreflightProof,
+    descriptors: SourceMediaDescriptorSet,
+}
+fn core(record: &DownloadRecord) -> Core {
+    let (_, _, command) = adapter::current(record).unwrap();
+    let plan = local_executor::plan(&command).unwrap();
+    let request = source_bridge_request::build(&plan).unwrap();
+    let evidence = SourcePreflightEvidence {
+        schema_version: 1,
+        command_id: request.command_id.clone(),
+        task_id: request.task_id.clone(),
+        work_id: request.work_id.clone(),
+        task_revision: request.task_revision,
+        target_hash: request.target_hash.clone(),
+        source: request.source.clone(),
+        source_work_id: request.source_work_id.clone(),
+        upstream_commit: request.upstream_commit.clone(),
+        completion_contract_version: request.completion_contract_version,
+        scope: request.scope.clone(),
+        source_enumeration_complete: true,
+        chapter_pagination: None,
+        expected_chapter_count: 1,
+        chapters: vec![PreflightChapter {
+            chapter_id: "123456".into(),
+            chapter_order: 1,
+            expected_images: 2,
+            image_pagination: None,
+        }],
+        image_bytes_downloaded: false,
+        staging_written: false,
+    };
+    let proof = source_preflight::validate(&plan, &request, &evidence).unwrap();
+    let authorization = ImageDownloadAuthorization {
+        schema_version: 1,
+        command_id: request.command_id.clone(),
+        task_id: request.task_id.clone(),
+        work_id: request.work_id.clone(),
+        task_revision: request.task_revision,
+        target_hash: request.target_hash.clone(),
+        source: request.source.clone(),
+        source_work_id: request.source_work_id.clone(),
+        preflight_hash: proof.preflight_hash.clone(),
+        expected_chapter_count: 1,
+        expected_content_units: 2,
+        staging_subdir: plan.staging_subdir.clone(),
+        write_scope: "COMMAND_OWNED_STAGING_ONLY".into(),
+        current_state_binding_hash: "state-generation".into(),
+        current_gate_ledger_hash: "gate-generation".into(),
+        live_preflight_generation_verified: true,
+        image_download_authorized: true,
+        staging_write_authorized: true,
+        reusable_permit: false,
+        inventory_mutation_authorized: false,
+        task_completion_authorized: false,
+        promotion_authorized: false,
+        replacement_authorized: false,
+        physical_delete_authorized: false,
+    };
+    let media = (1..=2)
+        .map(|n| MediaDescriptor {
+            image_index: n,
+            source_media_id: format!("{n:03}.gif"),
+            request_url: format!("https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/{n:03}.gif"),
+            source_format: "gif".into(),
+            transform: "NONE".into(),
+            transform_parameter: 0,
+            relative_path: format!("chapters/000001-123456/{n:06}.gif"),
+        })
+        .collect();
+    let descriptors = SourceMediaDescriptorSet {
+        schema_version: 1,
+        command_id: authorization.command_id.clone(),
+        task_id: authorization.task_id.clone(),
+        work_id: authorization.work_id.clone(),
+        task_revision: authorization.task_revision,
+        target_hash: authorization.target_hash.clone(),
+        source: authorization.source.clone(),
+        source_work_id: authorization.source_work_id.clone(),
+        preflight_hash: authorization.preflight_hash.clone(),
+        expected_chapter_count: 1,
+        expected_content_units: 2,
+        staging_subdir: authorization.staging_subdir.clone(),
+        write_scope: authorization.write_scope.clone(),
+        chapters: vec![MediaChapterDescriptors {
+            chapter_id: "123456".into(),
+            chapter_order: 1,
+            jm_scramble_id: Some(200_000),
+            media,
+        }],
+        image_download_authorized: true,
+        staging_write_authorized: true,
+        inventory_mutation_authorized: false,
+        task_completion_authorized: false,
+        promotion_authorized: false,
+        replacement_authorized: false,
+        physical_delete_authorized: false,
+    };
+    Core {
+        plan,
+        authorization,
+        evidence,
+        proof,
+        descriptors,
+    }
+}
+fn context<'a>(stage: &'a Path, core: &'a Core) -> IsolatedStagingExecutionContext<'a> {
+    IsolatedStagingExecutionContext {
+        staging_root: stage,
+        plan: &core.plan,
+        authorization: &core.authorization,
+        evidence: &core.evidence,
+        preflight: &core.proof,
+        descriptors: &core.descriptors,
+    }
+}
+fn processed(d: MediaDescriptor) -> ProcessedMedia {
+    ProcessedMedia {
+        source_media_id: d.source_media_id,
+        request_url: d.request_url,
+        source_format: d.source_format,
+        applied_transform: d.transform,
+        applied_transform_parameter: d.transform_parameter,
+        bytes: gif(),
+    }
+}
+#[tokio::test]
+async fn full_pending_page_after_checkpoint_interruption_is_reused_without_fetch() {
+    let f = fixture();
+    let c = core(&record(&f));
+    let workspace = f.store.open_download_workspace().unwrap();
+    let saved = RefCell::new(None);
+    let failure = isolated_staging_execution::execute_resumable_with_fetcher(
+        context(workspace.path(), &c),
+        None,
+        |d| async { Ok(processed(d)) },
+        || Ok(c.authorization.clone()),
+        |cp| {
+            if cp.pending.is_none() && cp.artifacts.len() == 1 {
+                return Err("SIMULATED_EXIT".into());
+            }
+            *saved.borrow_mut() = Some(cp.clone());
+            Ok(())
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure, "SIMULATED_EXIT");
+    let checkpoint = saved.borrow().clone().unwrap();
+    assert!(checkpoint.pending.is_some());
+    let requested = RefCell::new(Vec::new());
+    let result = isolated_staging_execution::execute_resumable_with_fetcher(
+        context(workspace.path(), &c),
+        Some(&checkpoint),
+        |d| {
+            requested.borrow_mut().push(d.image_index);
+            async { Ok(processed(d)) }
+        },
+        || Ok(c.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(*requested.borrow(), vec![2]);
+    assert!(result.staging_execution_completed);
+}
+#[tokio::test]
+async fn partial_pending_page_resumes_only_matching_prefix_and_descriptor_generation() {
+    let f = fixture();
+    let c = core(&record(&f));
+    let workspace = f.store.open_download_workspace().unwrap();
+    let page = &c.descriptors.chapters[0].media[0];
+    let root = workspace.path().join(&c.plan.staging_subdir);
+    fs::create_dir_all(root.join("chapters/000001-123456")).unwrap();
+    fs::write(root.join(&page.relative_path), &gif()[..5]).unwrap();
+    let mut cp = StagingCheckpoint {
+        descriptor_hash: monitor::hash(&c.descriptors),
+        expected_files: 2,
+        artifacts: Vec::new(),
+        pending: Some(StagedArtifact {
+            relative_path: page.relative_path.clone(),
+            size_bytes: gif().len() as u64,
+            sha256: hash(&gif()),
+        }),
+    };
+    let original = fs::read(root.join(&page.relative_path)).unwrap();
+    cp.descriptor_hash = "f".repeat(64);
+    assert!(isolated_staging_execution::execute_resumable_with_fetcher(
+        context(workspace.path(), &c),
+        Some(&cp),
+        |_| async { panic!("must not fetch stale generation") },
+        || Ok(c.authorization.clone()),
+        |_| Ok(())
+    )
+    .await
+    .is_err());
+    assert_eq!(original, fs::read(root.join(&page.relative_path)).unwrap());
+    cp.descriptor_hash = monitor::hash(&c.descriptors);
+    isolated_staging_execution::execute_resumable_with_fetcher(
+        context(workspace.path(), &c),
+        Some(&cp),
+        |d| async { Ok(processed(d)) },
+        || Ok(c.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(gif(), fs::read(root.join(&page.relative_path)).unwrap());
+}
+#[cfg(unix)]
+#[test]
+fn redirected_destination_is_rejected_and_unrelated_bytes_survive() {
+    use std::os::unix::fs::symlink;
+    let f = fixture();
+    let mut r = record(&f);
+    let (stage, report) = report(&f, &r);
+    let outside = f._temp.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("KEEP"), b"keep").unwrap();
+    symlink(&outside, f.library.join(&r.destination)).unwrap();
+    assert!(materialize::save(&mut r, &report, &stage, &|| Ok(()), &mut |_| Ok(())).is_err());
+    assert_eq!(fs::read(outside.join("KEEP")).unwrap(), b"keep");
+}
+#[test]
+fn safe_directory_does_not_follow_file_symlinks_or_overwrite_existing_files() {
+    let temp = TempDir::new().unwrap();
+    let directory = Directory::open(temp.path()).unwrap();
+    fs::write(temp.path().join("sentinel"), b"keep").unwrap();
+    assert!(directory.create_file("sentinel").is_err());
+    assert!(directory.create_file("../escape").is_err());
+    assert_eq!(fs::read(temp.path().join("sentinel")).unwrap(), b"keep");
+}
+
+#[test]
+fn completed_temporary_cleanup_is_exact_idempotent_and_leaves_final_work() {
+    let f = fixture();
+    let mut value = record(&f);
+    let (stage, report) = report(&f, &value);
+    value.files_total = Some(2);
+    value.staging_report_json = Some(serde_json::to_string(&report).unwrap());
+    materialize::save(&mut value, &report, &stage, &|| Ok(()), &mut |_| Ok(())).unwrap();
+    assert!(materialize::cleanup_completed(&value, &stage).is_err());
+    let staged_root = stage.join(&report.staging_subdir);
+    let foreign = staged_root.join("unknown.bin");
+    fs::write(&foreign, b"keep").unwrap();
+    value.phase = DownloadPhase::Downloaded;
+    value.library_entry_id = Some("e".repeat(64));
+    assert!(materialize::cleanup_completed(&value, &stage).is_err());
+    assert_eq!(fs::read(&foreign).unwrap(), b"keep");
+    assert!(staged_root
+        .join("chapters/000001-123456/000001.gif")
+        .is_file());
+    fs::remove_file(&foreign).unwrap();
+    materialize::cleanup_completed(&value, &stage).unwrap();
+    materialize::cleanup_completed(&value, &stage).unwrap();
+    assert!(!staged_root.exists());
+    materialize::verify_output(&value).unwrap();
+    assert!(f
+        .library
+        .join(&value.destination)
+        .join("0001-123456/0001.gif")
+        .is_file());
+}

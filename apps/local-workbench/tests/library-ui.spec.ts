@@ -447,12 +447,23 @@ test("PC directories use bounded rows, preserve full names during Unicode search
     "Cafe\u0301 A [翻译甲]",
   );
   await page.getByTestId("search-input").fill("");
-  await page.getByTestId("library-choose").click();
   await expect(page.getByTestId("library-grid")).toHaveAttribute(
     "data-total-items",
     "586",
   );
-  expect(await commands(page, "library_choose")).toHaveLength(1);
+  const choose = page.getByTestId("library-choose");
+  await expect(choose).toBeEnabled();
+  await choose.click();
+  // Cancellation leaves the old catalog visible throughout the asynchronous
+  // IPC call, so the unchanged count alone cannot prove that choice finished.
+  await expect
+    .poll(async () => (await commands(page, "library_choose")).length)
+    .toBe(1);
+  await expect(choose).toBeEnabled();
+  await expect(page.getByTestId("library-grid")).toHaveAttribute(
+    "data-total-items",
+    "586",
+  );
   expect(await commands(page, "library_scan")).toEqual([]);
 });
 

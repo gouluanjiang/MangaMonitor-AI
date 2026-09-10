@@ -269,7 +269,7 @@ try {
     const invoke = window.__TAURI_INTERNALS__.invoke;
     const current = await invoke("read_booklists");
     const list = current.value.lists.find((entry) => entry.name === name);
-    list.members.push({ source: "JM", workId: "summer" });
+    list.members.push({ source: "Pica", workId: "summer" });
     list.members.push({ source: "JM", workId: "unresolved-native-ci" });
     list.updatedAt = Date.now();
     await invoke("write_booklists", {

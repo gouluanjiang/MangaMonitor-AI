@@ -180,17 +180,18 @@ fn current(store: &WorkbenchStore, revision: u64) -> Result<Document<PhoneLibrar
 fn decode_names(bytes: &[u8]) -> Result<Vec<String>> {
     let invalid = || StoreError::new("PHONE_LIBRARY_INVALID_TXT");
     let text = if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
-        if bytes.len() % 2 != 0 {
+        let (pairs, remainder) = bytes[2..].as_chunks::<2>();
+        if !remainder.is_empty() {
             return Err(invalid());
         }
         let little_endian = bytes[0] == 0xff;
-        let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
+        let units: Vec<u16> = pairs
+            .iter()
             .map(|chunk| {
                 if little_endian {
-                    u16::from_le_bytes([chunk[0], chunk[1]])
+                    u16::from_le_bytes(*chunk)
                 } else {
-                    u16::from_be_bytes([chunk[0], chunk[1]])
+                    u16::from_be_bytes(*chunk)
                 }
             })
             .collect();

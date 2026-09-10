@@ -4,6 +4,8 @@ Updated 2026-09-10. This document separates the current continuation from histor
 
 ## Current batch: separate PC downloads and phone presence (2026-09-10)
 
+The user also requested a roadmap after this batch. See [the updated roadmap](ROADMAP_AFTER_DUAL_LIBRARY_2026-09-10.md): current dual-library integration, then JM and Pica real single-work downloads, batch queue/identity review, discovery/monitor synchronization, rankings, and formal V1 acceptance. Forecasts are engineering effort estimates, not calendar promises; no separate 0.3.5 installer or updater work is introduced.
+
 The user resolved the library model: phone presence means 已入库, whether or not a PC copy also exists; a PC-only copy means 已下载. PC files remain after transfer to phone. The user manually transfers files and chose manual phone marks plus updated TXT name imports. Import replaces only the previous TXT snapshot, preserving manual marks. No phone access, file transfer, PC cleanup, media mutation or production inventory authority follows from these private records.
 
 This batch implements native-picked read-only work-directory / ZIP / CBZ indexing, JM/Pica downloader metadata compatibility, virtualized PC and phone browsing, run-only covers, and source-scoped associations/status. Explicit-reference phone marks cannot mark a different same-title source as owned. A failed initial phone read remains unknown. Source downloads and the queue are still unconnected; no real downloads or installer are part of this batch. Formal validation is assigned exclusively to the existing GitHub UI, desktop and baseline workflows. See [the current batch report](LOCAL_WORKBENCH_DUAL_LIBRARY_2026-09-10.md); do not infer user acceptance from code or CI alone.

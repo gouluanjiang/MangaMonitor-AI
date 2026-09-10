@@ -227,7 +227,7 @@ pub(crate) fn comic_info(bytes: &[u8]) -> Result<Metadata> {
                     return Err(error("LIBRARY_METADATA_LIMIT"));
                 }
                 if depth == 1 {
-                    if root_seen || element.name().as_ref() != b"ComicInfo" {
+                    if root_seen || element.name().as_ref() != "ComicInfo" {
                         return Err(error("LIBRARY_METADATA_INVALID"));
                     }
                     root_seen = true;
@@ -235,25 +235,23 @@ pub(crate) fn comic_info(bytes: &[u8]) -> Result<Metadata> {
                 if depth == 2
                     && matches!(
                         element.name().as_ref(),
-                        b"Title"
-                            | b"Writer"
-                            | b"Penciller"
-                            | b"Summary"
-                            | b"Genre"
-                            | b"Tags"
-                            | b"Source"
-                            | b"WorkId"
-                            | b"Web"
+                        "Title"
+                            | "Writer"
+                            | "Penciller"
+                            | "Summary"
+                            | "Genre"
+                            | "Tags"
+                            | "Source"
+                            | "WorkId"
+                            | "Web"
                     )
                 {
-                    let name = String::from_utf8(element.name().as_ref().to_vec())
-                        .map_err(|_| error("LIBRARY_METADATA_INVALID"))?;
+                    let name = element.name().as_ref().to_owned();
                     let text = reader
                         .read_text(element.name())
                         .map_err(|_| error("LIBRARY_METADATA_INVALID"))?;
-                    let text_bytes = text.into_inner();
-                    let raw = std::str::from_utf8(&text_bytes)
-                        .map_err(|_| error("LIBRARY_METADATA_INVALID"))?;
+                    let text_value = text.into_inner();
+                    let raw = text_value.as_ref();
                     if raw.contains('<') {
                         return Err(error("LIBRARY_METADATA_INVALID"));
                     }

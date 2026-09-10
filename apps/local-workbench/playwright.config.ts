@@ -7,6 +7,7 @@ export default defineConfig({
     "**/booklists-ui.spec.ts",
     "**/source-ui.spec.ts",
     "**/library-ui.spec.ts",
+    "**/download-ui.spec.ts",
   ],
   outputDir: "test-results",
   fullyParallel: false,

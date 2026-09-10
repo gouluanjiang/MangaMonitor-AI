@@ -5287,10 +5287,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "tempfile",
  "tokio",
  "windows-sys 0.61.2",
- "workbench-library",
  "workbench-storage",
 ]
 

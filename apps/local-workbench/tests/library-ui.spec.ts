@@ -46,13 +46,21 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async ({ page }) => {
   expect(errors.get(page) ?? [], "browser runtime errors").toEqual([]);
   const forbidden = await page.evaluate(() =>
-    (window.libraryTest?.calls ?? []).filter((call) =>
-      /download|delete|remove_file|move_file|source_set_favorite|production|promote/.test(
-        call.command,
-      ),
+    (window.libraryTest?.calls ?? []).filter(
+      (call) =>
+        call.command !== "jm_download_read" &&
+        /download|enqueue|delete|remove_file|move_file|source_set_favorite|source_favorite|production|promote/.test(
+          call.command,
+        ),
     ),
   );
   expect(forbidden).toEqual([]);
+  const reads = await page.evaluate(() =>
+    (window.libraryTest?.calls ?? []).filter(
+      (call) => call.command === "jm_download_read",
+    ),
+  );
+  expect(reads.map((call) => call.args)).toEqual(reads.map(() => ({})));
 });
 
 async function installMock(page: Page, options: Options = {}) {
@@ -181,6 +189,7 @@ async function installMock(page: Page, options: Options = {}) {
       value: {
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           hooks.calls.push({ command, args: clone(args) });
+          if (command === "jm_download_read") return { revision: 0, tasks: [] };
           if (command === "read_preferences") return clone(preferences);
           if (command === "read_booklists") return clone(booklists);
           if (command === "write_preferences") {

@@ -669,6 +669,18 @@ test("paused favorites verify their head after a settings visit before resuming;
 });
 test.afterEach(async ({ page }) => {
   expect(errors.get(page) ?? [], "browser preview runtime errors").toEqual([]);
+  // Browsing, favorites and local booklist interactions may restore the queue,
+  // but none may prepare, confirm, control or otherwise start download work.
+  const forbidden = await page.evaluate(() =>
+    (window.sourceTest?.calls ?? []).filter(
+      (call) =>
+        call.command !== "jm_download_read" &&
+        /download|enqueue|delete|remove_file|move_file|production|promote/.test(
+          call.command,
+        ),
+    ),
+  );
+  expect(forbidden).toEqual([]);
 });
 
 async function installMock(page: Page, options: MockOptions = {}) {
@@ -804,6 +816,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
             reverse: raw.reverse as boolean | undefined,
           });
           if (command === "read_preferences") return clone(hooks.preferences);
+          if (command === "jm_download_read") return { revision: 0, tasks: [] };
           if (command === "read_booklists") return clone(hooks.booklists);
           if (command === "library_read")
             return {
@@ -1360,7 +1373,9 @@ test("unknown metadata and uncertain favorite writes never imply zero counts or 
   await expect(
     page.getByTestId("source-detail").locator(".source-facts dd"),
   ).toHaveText(["未知", "未知", "尚未设置漫画库"]);
-  await expect(page.getByTestId("source-download")).toBeDisabled();
+  // This entry can guide the user to PC-folder selection. Unknown source counts
+  // still cannot create or start a task without a separate native plan/confirm.
+  await expect(page.getByTestId("source-download")).toBeEnabled();
   await expect(page.getByTestId("source-detail")).toContainText(
     "作者资料未取得",
   );
@@ -1438,8 +1453,10 @@ test("two source identities sharing a work ID join one local booklist and return
   ]);
   expect(
     await page.evaluate(() =>
-      window.sourceTest.calls.some((call) =>
-        /download|enqueue/.test(call.command),
+      window.sourceTest.calls.some(
+        (call) =>
+          call.command !== "jm_download_read" &&
+          /download|enqueue/.test(call.command),
       ),
     ),
   ).toBe(false);

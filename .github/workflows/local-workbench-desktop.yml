@@ -103,7 +103,17 @@ jobs:
         working-directory: apps/local-workbench
         run: pnpm build
       - name: Test native IPC and window permissions
+        id: native-ipc
         run: cargo +1.98.1 test --manifest-path apps/local-workbench/src-tauri/Cargo.toml --lib --locked -- --test-threads=2
+      - name: Explain native lock drift after failed validation
+        if: failure() && steps.native-ipc.outcome == 'failure'
+        # Diagnostic only: the failed locked check still blocks all later builds.
+        # --workspace retains registry pins and updates local dependency edges.
+        run: |
+          cargo +1.98.1 update --manifest-path apps/local-workbench/src-tauri/Cargo.toml --workspace --offline
+          $resolverExit = $LASTEXITCODE
+          git diff -- apps/local-workbench/src-tauri/Cargo.lock
+          if ($resolverExit -ne 0) { throw 'Native lock diagnostic could not resolve offline' }
       - name: Lint desktop commands and tests
         run: cargo +1.98.1 clippy --manifest-path apps/local-workbench/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
       - name: Build desktop executable for validation

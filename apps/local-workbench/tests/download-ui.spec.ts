@@ -338,9 +338,15 @@ test("confirmed work pauses, survives restart and resumes only after an explicit
   await install(page);
   await prepare(page);
   await page.getByTestId("download-confirm").click();
-  expect(
-    (await calls(page, "jm_download_confirm"))[0].args.expectedRevision,
-  ).toBe(0);
+  // The controller waits for any in-flight read before sending confirmation.
+  // Wait for the actual invocation while retaining exact count and revision.
+  await expect
+    .poll(async () =>
+      (await calls(page, "jm_download_confirm")).map(
+        (call) => call.args.expectedRevision,
+      ),
+    )
+    .toEqual([0]);
   await expect(
     page.getByTestId(
       "download-phase-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",

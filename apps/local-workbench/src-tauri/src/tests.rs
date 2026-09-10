@@ -360,6 +360,128 @@ fn account_commands_are_denied_for_secondary_windows_and_remote_origins() {
 }
 
 #[test]
+fn library_commands_require_main_packaged_origin_and_never_offer_generic_paths() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let secondary = window(&app, "secondary");
+    let id = "a".repeat(64);
+    let commands = [
+        ("library_read", json!({})),
+        ("library_choose", json!({})),
+        (
+            "library_scan",
+            json!({"rootId":id,"generation":1,"action":"next"}),
+        ),
+        (
+            "library_cover",
+            json!({"rootId":id,"generation":1,"entryId":id}),
+        ),
+        (
+            "library_link",
+            json!({"rootId":id,"generation":1,"entryId":id,"reference":null}),
+        ),
+        ("phone_library_read", json!({})),
+        ("phone_library_import", json!({"revision":0})),
+        (
+            "phone_library_mark",
+            json!({"revision":0,"name":"Example","reference":null}),
+        ),
+        ("phone_library_unmark", json!({"revision":0,"entryId":id})),
+    ];
+    for (command, body) in commands {
+        assert!(
+            invoke(&secondary, command, body.clone())
+                .unwrap_err()
+                .is_string(),
+            "{command}"
+        );
+        assert!(
+            invoke_from(&main, "https://example.invalid", command, body)
+                .unwrap_err()
+                .is_string(),
+            "{command}"
+        );
+    }
+}
+
+#[test]
+fn phone_marks_survive_native_restart_without_removing_pc_copy() {
+    let (root, app) = fixture();
+    let main = window(&app, "main");
+    let pc = root.path().join("pc-copy.zip");
+    std::fs::write(&pc, b"retained PC bytes").unwrap();
+    let initial = invoke(&main, "phone_library_read", json!({})).unwrap();
+    assert_eq!(initial["importedNames"], json!([]));
+    let marked = invoke(
+        &main,
+        "phone_library_mark",
+        json!({
+            "revision":initial["revision"],"name":"Example / subtitle.zip",
+            "reference":{"source":"JM","workId":"123"}
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        marked["manualEntries"][0]["name"],
+        json!("Example / subtitle.zip")
+    );
+    assert_eq!(
+        invoke(&main, "phone_library_read", json!({})).unwrap(),
+        marked
+    );
+    drop(main);
+    drop(app);
+    let app = app_with_root(Ok(root.path().to_owned()));
+    let main = window(&app, "main");
+    assert_eq!(
+        invoke(&main, "phone_library_read", json!({})).unwrap(),
+        marked
+    );
+    assert_eq!(
+        invoke(
+            &main,
+            "phone_library_mark",
+            json!({"revision":0,"name":"Another","reference":null})
+        )
+        .unwrap_err(),
+        json!({"code":"REVISION_CONFLICT"})
+    );
+    let unmarked = invoke(
+        &main,
+        "phone_library_unmark",
+        json!({"revision":marked["revision"],"entryId":marked["manualEntries"][0]["id"]}),
+    )
+    .unwrap();
+    assert_eq!(unmarked["manualEntries"], json!([]));
+    assert_eq!(std::fs::read(&pc).unwrap(), b"retained PC bytes");
+}
+
+#[test]
+fn native_library_restore_does_not_start_a_scan_or_accept_renderer_file_paths() {
+    let (root, app) = fixture();
+    let main = window(&app, "main");
+    let before = invoke(&main, "library_read", json!({})).unwrap();
+    assert_eq!(before["rootId"], Value::Null);
+    assert_eq!(before["phase"], json!("idle"));
+    let error = invoke(
+        &main,
+        "library_cover",
+        json!({
+            "rootId":"C:/private","generation":1,"entryId":"../private.txt"
+        }),
+    )
+    .unwrap_err();
+    assert!(error["code"].as_str().is_some());
+    assert!(!error.to_string().contains("private.txt"));
+    assert_eq!(invoke(&main, "library_read", json!({})).unwrap(), before);
+    assert!(!root
+        .path()
+        .join(workbench_storage::PRIVATE_DIRECTORY)
+        .join("library.json")
+        .exists());
+}
+
+#[test]
 fn account_state_uses_only_empty_test_vault_and_no_account_operations_fail_closed() {
     let (_root, app) = fixture();
     let main = window(&app, "main");

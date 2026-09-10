@@ -9,6 +9,7 @@ on:
       - 'crates/workbench-credentials/**'
       - 'crates/workbench-sources/**'
       - 'crates/workbench-accounts/**'
+      - 'crates/workbench-library/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -21,6 +22,7 @@ on:
       - 'crates/workbench-credentials/**'
       - 'crates/workbench-sources/**'
       - 'crates/workbench-accounts/**'
+      - 'crates/workbench-library/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -82,7 +84,7 @@ jobs:
         # --all follows path dependencies into the separate headless workspace.
         run: cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --package mangamonitor-workbench-preview -- --check
       - name: Test offline document storage and account workflows
-        run: cargo +1.98.1 test --locked -p workbench-storage -p workbench-credentials -p workbench-sources -p workbench-accounts -- --test-threads=2
+        run: cargo +1.98.1 test --locked -p workbench-storage -p workbench-credentials -p workbench-sources -p workbench-accounts -p workbench-library -- --test-threads=2
       - name: Verify Windows credential persistence in random CI slots
         run: cargo +1.98.1 test --locked -p workbench-credentials windows_credential_manager_roundtrip_uses_only_random_ci_slots -- --ignored --test-threads=1
       - name: Build frontend assets for native context tests

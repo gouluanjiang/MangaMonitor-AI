@@ -4,5 +4,9 @@
   "description": "Main local workbench documents, background chooser, source accounts and favorites.",
   "local": true,
   "windows": ["main"],
-  "permissions": ["workbench-documents", "workbench-accounts"]
+  "permissions": [
+    "workbench-documents",
+    "workbench-accounts",
+    "workbench-library"
+  ]
 }

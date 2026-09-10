@@ -44,6 +44,7 @@ function sameResources(a: ResourcePreferences, b: ResourcePreferences) {
 
 export interface WorkbenchSettingsProps {
   accountPanel?: ReactNode;
+  libraryPanel?: ReactNode;
   preferences: WorkbenchPreferences;
   onSave(next: WorkbenchPreferences): Promise<boolean>;
   storageLabel: string;
@@ -58,6 +59,7 @@ export interface WorkbenchSettingsProps {
 
 export function WorkbenchSettings({
   accountPanel,
+  libraryPanel,
   preferences,
   onSave,
   storageLabel,
@@ -300,36 +302,40 @@ export function WorkbenchSettings({
                 </p>
               </section>
             ))}
-          {page === "library" && (
-            <section className="settings-card" aria-labelledby="library-title">
-              <h2 id="library-title">漫画库</h2>
-              <p className="settings-copy">
-                每部作品保存为一个 ZIP，包内按章节分目录。现有 ZIP／CBZ
-                保持原格式。
-              </p>
-              <dl className="settings-facts">
-                <div>
-                  <dt>保存目录</dt>
-                  <dd>待接入本地目录选择</dd>
-                </div>
-                <div>
-                  <dt>目录结构</dt>
-                  <dd>漫画库／作品名.zip</dd>
-                </div>
-                <div>
-                  <dt>同一作品、同一版本</dt>
-                  <dd>默认保留一个来源，可手动选择另一来源</dd>
-                </div>
-                <div>
-                  <dt>阅读</dt>
-                  <dd>首版提供详情与下载管理，暂不内置阅读器</dd>
-                </div>
-              </dl>
-              <p className="settings-help">
-                本地库扫描与文件导入尚未接入，当前没有读取或修改电脑上的漫画文件。
-              </p>
-            </section>
-          )}
+          {page === "library" &&
+            (libraryPanel ?? (
+              <section
+                className="settings-card"
+                aria-labelledby="library-title"
+              >
+                <h2 id="library-title">漫画库</h2>
+                <p className="settings-copy">
+                  每部作品保存为一个 ZIP，包内按章节分目录。现有 ZIP／CBZ
+                  保持原格式。
+                </p>
+                <dl className="settings-facts">
+                  <div>
+                    <dt>保存目录</dt>
+                    <dd>待接入本地目录选择</dd>
+                  </div>
+                  <div>
+                    <dt>目录结构</dt>
+                    <dd>漫画库／作品名.zip</dd>
+                  </div>
+                  <div>
+                    <dt>同一作品、同一版本</dt>
+                    <dd>默认保留一个来源，可手动选择另一来源</dd>
+                  </div>
+                  <div>
+                    <dt>阅读</dt>
+                    <dd>首版提供详情与下载管理，暂不内置阅读器</dd>
+                  </div>
+                </dl>
+                <p className="settings-help">
+                  本地库扫描与文件导入尚未接入，当前没有读取或修改电脑上的漫画文件。
+                </p>
+              </section>
+            ))}
           {page === "appearance" && (
             <section
               className="settings-card"

@@ -31,6 +31,14 @@ import type { DocumentSnapshot } from "./persistence.ts";
 import "./booklists.css";
 import { AccountSettings } from "./AccountSettings.tsx";
 import { SourceWorkbench } from "./SourceWorkbench.tsx";
+import {
+  LibraryWorkbench,
+  LibrarySettingsPanel,
+  useLibrary,
+  usePhoneLibrary,
+} from "./LibraryWorkbench.tsx";
+import { createLibraryAdapter } from "./library-runtime.ts";
+import { createPhoneLibraryAdapter } from "./phone-library-runtime.ts";
 import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
 import { boundSourceCache } from "./source-memory.ts";
@@ -42,6 +50,8 @@ import type {
   SourceWork,
 } from "./source-types.ts";
 const sourceAdapter = createSourceAdapter();
+const libraryAdapter = createLibraryAdapter();
+const phoneLibraryAdapter = createPhoneLibraryAdapter();
 const persistence = createWorkbenchPersistence({ fixture: activeFixture });
 const workReference = (work: Work): WorkReference => ({
   source: work.source,
@@ -136,6 +146,11 @@ function Dialog({
 }
 
 export default function App() {
+  const library = useLibrary(libraryAdapter, persistence.native);
+  const phoneLibrary = usePhoneLibrary(phoneLibraryAdapter, persistence.native);
+  const [requestedLibraryWork, setRequestedLibraryWork] =
+    useState<SourceWork | null>(null);
+  const [libraryRequestKey, setLibraryRequestKey] = useState(0);
   const [accounts, setAccounts] = useState<AccountSummary[]>(() =>
     sources.map((source) => ({
       source,
@@ -300,6 +315,8 @@ export default function App() {
     (list) => list.id === selectedBooklistId && !list.archived,
   );
   const booklistView = page === "library" && libraryTab === "booklists";
+  const libraryActive =
+    persistence.native && page === "library" && !booklistView;
   const sourceActive =
     persistence.native && ["favorites", "discovery", "authors"].includes(page);
   const sourceView =
@@ -1685,6 +1702,11 @@ export default function App() {
   function renderSettings() {
     return preferencesReady ? (
       <WorkbenchSettings
+        libraryPanel={
+          persistence.native ? (
+            <LibrarySettingsPanel library={library} phone={phoneLibrary} />
+          ) : undefined
+        }
         accountPanel={
           persistence.native ? (
             <AccountSettings
@@ -1851,7 +1873,9 @@ export default function App() {
             {persistence.native
               ? sourceActive
                 ? "桌面开发版 · 真实来源"
-                : "桌面开发版 · 模拟数据"
+                : page === "library"
+                  ? "桌面开发版 · 双库记录"
+                  : "桌面开发版 · 模拟数据"
               : "交互样例 · 模拟数据"}
             {activeFixture && " · 100 条验收数据"}
           </div>
@@ -1913,8 +1937,44 @@ export default function App() {
             </p>
           )}
           {persistence.native && (
+            <LibraryWorkbench
+              library={library}
+              phone={phoneLibrary}
+              active={libraryActive}
+              density={appearance.density}
+              onDensityChange={changeDensity}
+              query={query}
+              onBooklists={() => {
+                setLibraryTab("booklists");
+                setQuery("");
+              }}
+              onAddToBooklists={openSourceBooklistPicker}
+              externalWork={requestedLibraryWork}
+              requestKey={libraryRequestKey}
+            />
+          )}
+          {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
+              librarySnapshot={library.snapshot}
+              phoneSnapshot={phoneLibrary.snapshot}
+              phoneBusy={phoneLibrary.busy || !phoneLibrary.ready}
+              phoneReady={phoneLibrary.ready}
+              phoneError={phoneLibrary.error}
+              onMarkPhone={(work) =>
+                phoneLibrary.mark(work.title, {
+                  source: work.source,
+                  workId: work.workId,
+                })
+              }
+              onUnmarkPhone={phoneLibrary.unmark}
+              onOpenLibrary={(work) => {
+                navigate("library");
+                setLibraryTab("all");
+                setRequestedLibraryWork(work);
+                setLibraryRequestKey((key) => key + 1);
+                setQuery(work.title);
+              }}
               accounts={accounts}
               onAccountsChange={mergeAccounts}
               onOpenAccounts={(source) => {
@@ -1934,7 +1994,7 @@ export default function App() {
               searchHost={sourceSearchHost}
             />
           )}
-          {sourceActive
+          {sourceActive || libraryActive
             ? null
             : currentWork
               ? renderDetail(currentWork)
@@ -1957,8 +2017,10 @@ export default function App() {
           </span>
           <span>
             {sourceActive
-              ? "真实账号资料 · 库存与下载待接入"
-              : "示例数据 · 尚未连接下载器"}
+              ? "手机名单与电脑文件核对 · 下载待接入"
+              : libraryActive
+                ? "电脑文件保留 · 手机由你手动转入"
+                : "示例数据 · 尚未连接下载器"}
           </span>
         </footer>
       </div>

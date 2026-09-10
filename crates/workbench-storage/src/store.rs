@@ -1,6 +1,6 @@
 use crate::{
-    model::ValidatedDocument, AccountFollowing, Booklists, Result, StoreError,
-    WorkbenchPreferences, MAX_SAFE_INTEGER,
+    model::ValidatedDocument, AccountFollowing, Booklists, LibraryDocument, PhoneLibraryDocument,
+    Result, StoreError, WorkbenchPreferences, MAX_LIBRARY_DOCUMENT_BYTES, MAX_SAFE_INTEGER,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -120,6 +120,39 @@ impl WorkbenchStore {
         self.write(FOLLOWING, MAX_FOLLOWING_BYTES, expected_revision, value)
     }
 
+    /// Fixed private document; callers cannot select a filename or output directory.
+    pub fn read_library(&self) -> Result<Document<LibraryDocument>> {
+        self.read("library.json", MAX_LIBRARY_DOCUMENT_BYTES)
+    }
+
+    pub fn write_library(
+        &self,
+        expected_revision: u64,
+        value: LibraryDocument,
+    ) -> Result<Document<LibraryDocument>> {
+        self.write(
+            "library.json",
+            MAX_LIBRARY_DOCUMENT_BYTES,
+            expected_revision,
+            value,
+        )
+    }
+    pub fn read_phone_library(&self) -> Result<Document<PhoneLibraryDocument>> {
+        self.read("phone-library.json", 32 * 1024 * 1024)
+    }
+
+    pub fn write_phone_library(
+        &self,
+        expected_revision: u64,
+        value: PhoneLibraryDocument,
+    ) -> Result<Document<PhoneLibraryDocument>> {
+        self.write(
+            "phone-library.json",
+            32 * 1024 * 1024,
+            expected_revision,
+            value,
+        )
+    }
     fn read<T: ValidatedDocument>(&self, name: &str, maximum: usize) -> Result<Document<T>> {
         let _local = self
             .local_lock

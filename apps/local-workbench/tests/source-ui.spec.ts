@@ -805,6 +805,28 @@ async function installMock(page: Page, options: MockOptions = {}) {
           });
           if (command === "read_preferences") return clone(hooks.preferences);
           if (command === "read_booklists") return clone(hooks.booklists);
+          if (command === "library_read")
+            return {
+              revision: 0,
+              rootId: null,
+              rootPath: null,
+              generation: 0,
+              phase: "idle",
+              freshness: "none",
+              items: [],
+              visited: 0,
+              skipped: 0,
+              updatedAt: null,
+              errorCode: null,
+            };
+          if (command === "phone_library_read")
+            return {
+              revision: 0,
+              importedNames: [],
+              importedAt: null,
+              importFileName: null,
+              manualEntries: [],
+            };
           if (
             command === "write_preferences" ||
             command === "write_booklists"
@@ -1337,7 +1359,7 @@ test("unknown metadata and uncertain favorite writes never imply zero counts or 
   await detail(page);
   await expect(
     page.getByTestId("source-detail").locator(".source-facts dd"),
-  ).toHaveText(["未知", "未知", "尚未核对"]);
+  ).toHaveText(["未知", "未知", "尚未设置漫画库"]);
   await expect(page.getByTestId("source-download")).toBeDisabled();
   await expect(page.getByTestId("source-detail")).toContainText(
     "作者资料未取得",

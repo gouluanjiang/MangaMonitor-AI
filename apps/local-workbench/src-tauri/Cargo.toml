@@ -21,6 +21,7 @@ tauri-build = { version = "=2.6.3", features = [] }
 tauri = { version = "=2.11.5", features = [] }
 tauri-plugin-dialog = "=2.7.3"
 workbench-storage = { path = "../../../crates/workbench-storage" }
+workbench-library = { path = "../../../crates/workbench-library" }
 workbench-accounts = { path = "../../../crates/workbench-accounts" }
 workbench-sources = { path = "../../../crates/workbench-sources" }
 workbench-credentials = { path = "../../../crates/workbench-credentials" }

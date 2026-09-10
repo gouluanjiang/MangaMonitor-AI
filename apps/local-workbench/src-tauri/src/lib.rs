@@ -1,4 +1,6 @@
 mod accounts;
+mod library;
+mod phone;
 
 use accounts::DesktopAccounts;
 use std::{
@@ -149,6 +151,7 @@ async fn choose_background<R: Runtime>(
 
 fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
+        .manage(Arc::new(library::DesktopLibrary::default()))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_preferences,
@@ -156,6 +159,15 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             read_booklists,
             write_booklists,
             choose_background,
+            library::library_read,
+            library::library_choose,
+            library::library_scan,
+            library::library_cover,
+            library::library_link,
+            phone::phone_library_read,
+            phone::phone_library_import,
+            phone::phone_library_mark,
+            phone::phone_library_unmark,
             accounts::source_accounts,
             accounts::source_login,
             accounts::source_logout,

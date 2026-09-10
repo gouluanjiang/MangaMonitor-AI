@@ -153,14 +153,10 @@ async function launch() {
     ).toBeEnabled();
     await expect(page.getByTestId("preferences-error")).toHaveCount(0);
     await expect(page.getByTestId("booklists-error")).toHaveCount(0);
-    await expect
-      .poll(() =>
-        page
-          .locator(".cover-button img")
-          .first()
-          .evaluate((image) => image.complete && image.naturalWidth > 0),
-      )
-      .toBe(true);
+    await expect(page.getByTestId("library-empty")).toBeVisible();
+    // Native startup restores private inventory without scanning media or
+    // presenting browser fixture covers as a real local library.
+    await expect(page.getByTestId("library-grid")).toHaveCount(0);
     return { page, stop };
   } catch (error) {
     await startupDiagnostics(child, debuggingPort, lastConnectionError).catch(
@@ -262,19 +258,18 @@ try {
     page.getByText("外观已保存到本机应用数据。", { exact: true }),
   ).toBeVisible();
   await page.getByTestId("nav-library").click();
-  await page.getByRole("button", { name: "全部作品", exact: true }).click();
-  await page.getByTestId("cover-grid").getByTestId("open-summer").click();
-  await page.getByTestId("detail-booklist").click();
-  await page.getByTestId("booklist-picker-create").click();
-  await page.getByTestId("booklist-picker-name").fill(listName);
-  await page.getByTestId("booklist-picker-save").click();
-  await expect(page.getByTestId("booklist-picker")).toHaveCount(0);
+  await page.getByRole("button", { name: "本地书单", exact: true }).click();
+  await page.getByTestId("booklist-create").click();
+  await page.getByTestId("booklist-name").fill(listName);
+  await page.getByTestId("booklist-save").click();
+  await expect(page.getByTestId("booklist-name")).toHaveCount(0);
   // Exercise an unresolved reference through the actual scoped document IPC.
   // It is synthetic, does not request source metadata and belongs to this CI run.
   await page.evaluate(async (name) => {
     const invoke = window.__TAURI_INTERNALS__.invoke;
     const current = await invoke("read_booklists");
     const list = current.value.lists.find((entry) => entry.name === name);
+    list.members.push({ source: "JM", workId: "summer" });
     list.members.push({ source: "JM", workId: "unresolved-native-ci" });
     list.updatedAt = Date.now();
     await invoke("write_booklists", {
@@ -282,6 +277,25 @@ try {
       value: current.value,
     });
   }, listName);
+  const pcCopy = path.join(webviewProfile, "retained-pc-copy.zip");
+  await writeFile(pcCopy, "synthetic PC bytes remain after phone marking");
+  await page.evaluate(async () => {
+    const invoke = window.__TAURI_INTERNALS__.invoke;
+    const phone = await invoke("phone_library_read");
+    await invoke("phone_library_mark", {
+      revision: phone.revision,
+      name: "CI手机记录.zip",
+      reference: { source: "JM", workId: "123" },
+    });
+  });
+  const phoneDocument = JSON.parse(
+    await readFile(path.join(documents, "phone-library.json"), "utf8"),
+  );
+  assert.equal(phoneDocument.value.manualEntries[0].name, "CI手机记录.zip");
+  assert.equal(
+    await readFile(pcCopy, "utf8"),
+    "synthetic PC bytes remain after phone marking",
+  );
   const prefs = JSON.parse(
     await readFile(path.join(documents, "preferences.json"), "utf8"),
   );
@@ -305,6 +319,20 @@ try {
   await expect(
     running.page.getByRole("button", { name: "每行 5 部", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await running.page.getByTestId("phone-tab").click();
+  await expect(running.page.getByTestId("phone-library-grid")).toContainText(
+    "CI手机记录.zip",
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(path.join(documents, "phone-library.json"), "utf8"),
+    ),
+    phoneDocument,
+  );
+  assert.equal(
+    await readFile(pcCopy, "utf8"),
+    "synthetic PC bytes remain after phone marking",
+  );
   await running.page
     .getByRole("button", { name: "本地书单", exact: true })
     .click();
@@ -328,7 +356,7 @@ try {
     lists,
   );
   console.log(
-    "NATIVE_WEBVIEW_SMOKE_PASSED: actual Windows WebView, native account/cache IPC rejection/secret clearing, disk revision and process restart; unresolved work remains blocked from download.",
+    "NATIVE_WEBVIEW_SMOKE_PASSED: actual Windows WebView, empty real-library startup without scan, native phone mark persisted across restart with PC copy retained, account/cache rejection/secret clearing and booklist persistence; unresolved work remains blocked from download.",
   );
 } catch (error) {
   await writeFile(

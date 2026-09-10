@@ -1,5 +1,12 @@
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { LibrarySnapshot } from "./library-types.ts";
+import type { PhoneLibrarySnapshot } from "./phone-library-types.ts";
+import { emptyPhoneLibrary } from "./phone-library-types.ts";
+import {
+  createInventoryMatcher,
+  inventoryLabel,
+} from "./phone-library-model.ts";
 import type { WorkReference } from "./booklists.ts";
 import type {
   AccountSummary,
@@ -30,6 +37,14 @@ import "./source-workbench.css";
 
 export interface SourceWorkbenchProps {
   adapter: SourceAdapter;
+  librarySnapshot?: LibrarySnapshot;
+  phoneSnapshot?: PhoneLibrarySnapshot;
+  phoneBusy?: boolean;
+  phoneReady?: boolean;
+  phoneError?: string;
+  onMarkPhone?(work: SourceWork): Promise<boolean>;
+  onUnmarkPhone?(entryId: string): Promise<boolean>;
+  onOpenLibrary?(work: SourceWork): void;
   accounts: AccountSummary[];
   onAccountsChange(updates: AccountSummary[]): void;
   onOpenAccounts(source: Source): void;
@@ -229,6 +244,14 @@ const scopeKey = (scope: SourceScope | null) =>
   scope ? scope.source + ":" + scope.sessionId : "";
 export function SourceWorkbench({
   adapter,
+  librarySnapshot,
+  phoneSnapshot,
+  phoneBusy = false,
+  phoneReady = true,
+  phoneError = "",
+  onMarkPhone,
+  onUnmarkPhone,
+  onOpenLibrary,
   accounts,
   onAccountsChange,
   onOpenAccounts,
@@ -244,6 +267,16 @@ export function SourceWorkbench({
   loadingAccounts = false,
   searchHost,
 }: SourceWorkbenchProps) {
+  const inventory = useMemo(
+    () =>
+      createInventoryMatcher(
+        librarySnapshot,
+        phoneSnapshot ?? emptyPhoneLibrary(),
+        phoneReady,
+      ),
+    [librarySnapshot, phoneSnapshot, phoneReady],
+  );
+  const [phoneNotice, setPhoneNotice] = useState("");
   useEffect(() => {
     getCoverCache(adapter).retainScopes(
       accounts.flatMap((account) => {
@@ -1118,7 +1151,7 @@ export function SourceWorkbench({
                   : "作者资料未取得"}
               </p>
               <p className="source-card-state">
-                {sourceLabel(work.source)} · 库存状态待核对
+                {sourceLabel(work.source)} · {inventoryLabel(inventory(work))}
               </p>
             </article>
           );
@@ -1137,6 +1170,11 @@ export function SourceWorkbench({
         ← 返回列表
       </button>
       {detailLoading && <p role="status">正在读取作品详情…</p>}
+      {(phoneNotice || phoneError) && (
+        <p role="status" className="source-notice">
+          {phoneError || phoneNotice}
+        </p>
+      )}
       {detailError && (
         <div className="source-notice">
           <p role="alert">{detailError}</p>
@@ -1215,10 +1253,67 @@ export function SourceWorkbench({
                 </div>
                 <div>
                   <dt>本地库存</dt>
-                  <dd>尚未核对</dd>
+                  <dd data-testid="source-detail-stock">
+                    {inventoryLabel(inventory(detail))}
+                  </dd>
                 </div>
               </dl>
               <div className="source-actions">
+                {onOpenLibrary && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    data-testid="source-open-library"
+                    onClick={() => onOpenLibrary(detail)}
+                  >
+                    核对电脑文件
+                  </button>
+                )}
+                {onMarkPhone && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    data-testid="source-phone-mark"
+                    disabled={phoneBusy}
+                    onClick={() =>
+                      void onMarkPhone(detail).then((saved) =>
+                        setPhoneNotice(
+                          saved
+                            ? "已标记手机已入库，电脑文件保留。"
+                            : "手机标记未完成，请重试。",
+                        ),
+                      )
+                    }
+                  >
+                    标记手机已入库
+                  </button>
+                )}
+                {onUnmarkPhone &&
+                  phoneSnapshot?.manualEntries
+                    .filter(
+                      (entry) =>
+                        entry.reference?.source === detail.source &&
+                        entry.reference.workId === detail.workId,
+                    )
+                    .map((entry) => (
+                      <button
+                        key={entry.id}
+                        className="text-button"
+                        data-testid={"source-phone-unmark-" + entry.id}
+                        disabled={phoneBusy}
+                        onClick={() =>
+                          void onUnmarkPhone(entry.id).then((saved) =>
+                            setPhoneNotice(
+                              saved
+                                ? "已撤销手动标记；导入名单仍保留。"
+                                : "撤销未完成，请重试。",
+                            ),
+                          )
+                        }
+                      >
+                        撤销手动标记
+                      </button>
+                    ))}
                 <button
                   type="button"
                   className="button primary"
@@ -1685,7 +1780,7 @@ export function SourceWorkbench({
                     : complete
                       ? "已读取完整范围"
                       : "范围尚未读全，已读取页面不代表全部作品"}{" "}
-                  · 库存与下载状态尚未接入
+                  · 手机名单与电脑文件分别核对；下载尚未接入
                 </p>
               )}
               {grid(visible)}

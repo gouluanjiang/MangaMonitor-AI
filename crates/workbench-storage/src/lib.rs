@@ -1,18 +1,25 @@
 //! Bounded, revisioned storage for the desktop preview's private UI documents.
 //!
-//! No library paths, credentials, download commands, or media operations are exposed.
+//! Library root paths are stored only as private metadata selected by the native picker.
 mod background;
 mod cache;
+mod library;
 mod model;
+mod phone;
 mod store;
 
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
 pub use cache::{AccountCache, CacheEntry};
+pub use library::*;
 pub use model::{
     AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,
     FollowedWork, ResourcePreferences, ResourceProfile, Source, WorkIdentity, WorkbenchPreferences,
     MAX_FOLLOWED_ACCOUNTS, MAX_FOLLOWED_AUTHORS_PER_ACCOUNT, MAX_FOLLOWED_WORKS_PER_ACCOUNT,
     MAX_FOLLOWING_NAME_CHARACTERS, MAX_SAFE_INTEGER,
+};
+pub use phone::{
+    phone_library_from_path, phone_library_mark, phone_library_read, phone_library_unmark,
+    PhoneLibraryDocument, PhoneLibraryEntry, PhoneLibrarySnapshot,
 };
 pub use store::{Document, WorkbenchStore, PRIVATE_DIRECTORY};
 

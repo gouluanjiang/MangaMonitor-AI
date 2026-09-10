@@ -172,7 +172,7 @@ fn zip_cbz_metadata_and_bad_rar_files_are_isolated() {
     let png = image_bytes();
     archive(&media.path().join("valid.cbz"), &[("001.png", &png), ("ComicInfo.xml", b"<ComicInfo><Title>Title &amp; text</Title><Writer>A, B</Writer><Source>JM</Source><WorkId>123</WorkId></ComicInfo>")]);
     archive(
-        &media.path().join("[JM:123] conflicting.zip"),
+        &media.path().join("[JM-123] conflicting.zip"),
         &[
             ("001.png", &png),
             (
@@ -200,7 +200,7 @@ fn zip_cbz_metadata_and_bad_rar_files_are_isolated() {
         named(&result, "unsupported.rar").state,
         LibraryItemState::Unsupported
     );
-    let conflict = named(&result, "[JM:123] conflicting.zip");
+    let conflict = named(&result, "[JM-123] conflicting.zip");
     assert!(conflict.source_ref.is_none());
     assert_eq!(
         conflict.error_code.as_deref(),
@@ -272,7 +272,7 @@ fn large_work_is_incremental_pause_survives_and_restart_requires_refresh() {
 fn manual_link_and_unlink_survive_refresh_and_dont_touch_files() {
     let app = TempDir::new().unwrap();
     let media = TempDir::new().unwrap();
-    let path = media.path().join("[JM:123] synthetic.zip");
+    let path = media.path().join("[JM-123] synthetic.zip");
     archive(&path, &[("001.png", &image_bytes())]);
     let original = fs::read(&path).unwrap();
     let store = WorkbenchStore::open(app.path()).unwrap();

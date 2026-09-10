@@ -35,7 +35,7 @@ visible unsupported item. Malformed archives are isolated from other works.
 Supported metadata consists of bounded UTF-8 ComicInfo.xml (no DTD or external
 entities) and the distinct JM/Pica downloader `元数据.json` shapes. Their paths and
 URLs never authorize filesystem or network access. Only explicit source IDs from
-those documents or exact `[JM:123]` / `[Pica:24-lowercase-hex]` filename tokens
+those documents or exact `[JM-123]` / `[Pica-24-lowercase-hex]` filename tokens
 create links; conflicting evidence does not. Manual links and explicit unlinks
 persist through refresh when the record's file identity remains unchanged.
 Directory identity means the directory object and its modification timestamp;

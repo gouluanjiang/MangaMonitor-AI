@@ -566,7 +566,10 @@ export default function App() {
       setNotice("封面密度未能保存，请稍后重试");
       return;
     }
-    if (viewIdentity.current === before) restoreAnchor(anchor);
+    // The native library restores its virtual-grid item after density commits.
+    // The demo anchor has no matching cards there and would restore stale pixels.
+    if (!libraryActive && viewIdentity.current === before)
+      restoreAnchor(anchor);
   };
 
   useEffect(() => {

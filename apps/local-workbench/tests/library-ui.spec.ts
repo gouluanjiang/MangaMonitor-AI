@@ -679,6 +679,15 @@ test("PC density changes and a detail return retain a deep catalog anchor", asyn
     await page
       .getByTestId("library-density-" + density)
       .evaluate((button: HTMLButtonElement) => button.click());
+    // A still-visible old row is not evidence that the requested density has
+    // committed. Wait for the new grid geometry before checking the anchor.
+    await expect(page.getByTestId("library-grid")).toHaveAttribute(
+      "data-density",
+      String(density),
+    );
+    await expect(
+      page.getByTestId("library-grid").locator(".source-virtual-row").first(),
+    ).toHaveAttribute("data-columns", String(density));
     await expect(page.getByTestId("library-card-" + anchor)).toBeVisible();
     expect(
       await page.getByTestId("library-grid").locator("article").count(),

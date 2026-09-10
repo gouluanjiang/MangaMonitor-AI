@@ -41,7 +41,9 @@ pub(crate) fn filename_reference(name: &str) -> (Option<LibraryReference>, bool)
         let Some((token, _)) = part.split_once(']') else {
             continue;
         };
-        let Some((source, id)) = token.split_once(':') else {
+        // A hyphen is valid in Windows filenames; a colon is not. Retain the
+        // existing token spelling for metadata supplied as plain text.
+        let Some((source, id)) = token.split_once('-').or_else(|| token.split_once(':')) else {
             continue;
         };
         let source = match source {

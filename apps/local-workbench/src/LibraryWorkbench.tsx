@@ -660,10 +660,15 @@ export function LibraryWorkbench({
 }) {
   const [tab, setTab] = useState<"pc" | "phone">("pc"),
     [sort, setSort] = useState<"title" | "modified">("title"),
-    [detailId, setDetailId] = useState<string | null>(null);
+    [detailId, setDetailId] = useState<string | null>(null),
+    [densitySaving, setDensitySaving] = useState(false);
   const grid = useRef<SourceGridHandle>(null),
     root = useRef<HTMLDivElement>(null),
     anchor = useRef<GridAnchor | null>(null),
+    densityAnchor = useRef<{
+      density: 5 | 7 | 9;
+      anchor: GridAnchor | null;
+    } | null>(null),
     scroll = useRef(0),
     activeRef = useRef(active);
   activeRef.current = active;
@@ -698,6 +703,15 @@ export function LibraryWorkbench({
     );
     setDetailId(exact?.id ?? null);
   }, [requestKey]);
+  useLayoutEffect(() => {
+    const pending = densityAnchor.current;
+    if (pending?.density === density) {
+      // Restore only after the new density commits. Restoring from the save
+      // promise can start on the old grid and be canceled by its effect cleanup.
+      grid.current?.restore(pending.anchor);
+      densityAnchor.current = null;
+    }
+  }, [density]);
   useLayoutEffect(() => {
     const main = root.current?.closest("main");
     if (!main) return;
@@ -779,11 +793,19 @@ export function LibraryWorkbench({
                   aria-pressed={density === value}
                   aria-label={"每行 " + value + " 部"}
                   data-testid={"library-density-" + value}
+                  disabled={densitySaving}
                   onClick={() => {
-                    const saved = grid.current?.capture() ?? null;
-                    void Promise.resolve(onDensityChange(value)).then(() =>
-                      grid.current?.restore(saved),
-                    );
+                    if (value === density) return;
+                    densityAnchor.current = {
+                      density: value,
+                      anchor: grid.current?.capture() ?? null,
+                    };
+                    setDensitySaving(true);
+                    void Promise.resolve(onDensityChange(value))
+                      .catch(() => {
+                        densityAnchor.current = null;
+                      })
+                      .finally(() => setDensitySaving(false));
                   }}
                 >
                   {value}

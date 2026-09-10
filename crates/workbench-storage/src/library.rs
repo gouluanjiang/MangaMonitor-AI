@@ -288,7 +288,7 @@ impl ValidatedDocument for LibraryDocument {
                     || !identity
                         .modified
                         .bytes()
-                        .all(|b| b.is_ascii_digit() || b == ':' || b == '-')
+                        .all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
                 {
                     return Err(invalid());
                 }
@@ -317,7 +317,7 @@ impl ValidatedDocument for LibraryDocument {
                         || !identity
                             .modified
                             .bytes()
-                            .all(|b| b.is_ascii_digit() || b == ':' || b == '-')
+                            .all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
                     {
                         return Err(invalid());
                     }

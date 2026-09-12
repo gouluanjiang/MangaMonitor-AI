@@ -60,7 +60,9 @@ test.afterEach(async ({ page }) => {
       (call) => call.command === "jm_download_read",
     ),
   );
-  expect(reads.map((call) => call.args)).toEqual(reads.map(() => ({})));
+  expect(reads.map((call) => call.args)).toEqual(
+    reads.map(() => ({ recheckFiles: true })),
+  );
 });
 
 async function installMock(page: Page, options: Options = {}) {

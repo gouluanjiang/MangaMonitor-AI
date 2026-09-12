@@ -411,6 +411,7 @@ fn download_commands_require_the_main_packaged_window() {
     let secondary = window(&app, "secondary");
     for (command, body) in [
         ("jm_download_read", json!({})),
+        ("jm_download_read", json!({"recheckFiles": false})),
         (
             "jm_download_prepare",
             json!({"scope":{"source":"JM","sessionId":"stale"},"input":"123","rootId":"a".repeat(64),"generation":1}),
@@ -447,7 +448,13 @@ fn reading_empty_download_queue_never_creates_media_or_changes_phone_inventory()
     let library = invoke(&main, "library_read", json!({})).unwrap();
     let queue = invoke(&main, "jm_download_read", json!({})).unwrap();
     assert_eq!(queue, json!({"revision":0,"tasks":[]}));
-    assert_eq!(invoke(&main, "jm_download_read", json!({})).unwrap(), queue);
+    for body in [
+        json!({}),
+        json!({"recheckFiles": true}),
+        json!({"recheckFiles": false}),
+    ] {
+        assert_eq!(invoke(&main, "jm_download_read", body).unwrap(), queue);
+    }
     assert_eq!(
         invoke(&main, "phone_library_read", json!({})).unwrap(),
         phone

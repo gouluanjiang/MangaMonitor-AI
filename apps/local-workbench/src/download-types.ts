@@ -19,6 +19,8 @@ export interface DownloadPlan {
   generation: number;
 }
 export type DownloadAction = "pause" | "resume" | "retry";
+export type DownloadLocalFiles =
+  "present" | "missing" | "incomplete" | "unavailable";
 export type DownloadPhase =
   | "queued"
   | "downloading"
@@ -40,6 +42,7 @@ export interface DownloadTask {
   errorCode: string | null;
   allowedActions: DownloadAction[];
   libraryEntryId: string | null;
+  localFiles: DownloadLocalFiles | null;
   updatedAt: number;
   destinationDisplay: string;
 }
@@ -48,7 +51,7 @@ export interface DownloadSnapshot {
   tasks: DownloadTask[];
 }
 export interface DownloadAdapter {
-  read(): Promise<DownloadSnapshot>;
+  read(recheckFiles?: boolean): Promise<DownloadSnapshot>;
   prepare(context: DownloadContext, input: string): Promise<DownloadPlan>;
   confirm(planId: string, expectedRevision: number): Promise<DownloadSnapshot>;
   control(

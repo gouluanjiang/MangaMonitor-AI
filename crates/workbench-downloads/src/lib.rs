@@ -3,7 +3,9 @@
 mod adapter;
 mod fs;
 mod materialize;
+mod presence;
 mod service;
+pub use presence::LocalFiles;
 pub use service::{
     AwaitingIndexReceipt, Control, DownloadPlan, DownloadService, DownloadSnapshot, DownloadTask,
 };

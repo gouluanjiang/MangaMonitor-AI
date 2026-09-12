@@ -5,6 +5,9 @@ import {
   DownloadController,
   DownloadError,
   downloadErrorMessage,
+  downloadTaskLabel,
+  filterDownloadTasks,
+  isDownloadPresent,
   validateDownloadPlan,
   validateDownloadSnapshot,
 } from "../src/download-runtime.ts";
@@ -40,6 +43,7 @@ const task = (overrides = {}) => ({
   errorCode: null,
   allowedActions: ["resume"],
   libraryEntryId: null,
+  localFiles: null,
   updatedAt: 1,
   destinationDisplay: "C:\\Synthetic\\合成单本作品",
   ...overrides,
@@ -62,6 +66,7 @@ test("only complete registered desktop output is accepted as downloaded", () => 
           filesDone: 3,
           allowedActions: [],
           libraryEntryId: entryId,
+          localFiles: "present",
         }),
       ]),
     ).tasks[0].phase,
@@ -83,6 +88,7 @@ test("only complete registered desktop output is accepted as downloaded", () => 
               filesDone: 3,
               allowedActions: [],
               libraryEntryId: entryId,
+              localFiles: "present",
               ...change,
             }),
           ]),
@@ -432,5 +438,161 @@ test("confirmation failure drops the plan without hidden retries or synthetic co
   assert.equal(controller.getState().plan, null);
   assert.equal(calls, 1);
   assert.ok(controller.getState().error);
+  controller.dispose();
+});
+
+const completedTask = (overrides = {}) =>
+  task({
+    phase: "downloaded",
+    filesDone: 3,
+    filesTotal: 3,
+    allowedActions: [],
+    libraryEntryId: entryId,
+    localFiles: "present",
+    ...overrides,
+  });
+
+test("historical completion requires a separate explicit local-file observation", () => {
+  for (const localFiles of [
+    "present",
+    "missing",
+    "incomplete",
+    "unavailable",
+  ]) {
+    const value = validateDownloadSnapshot(
+      snapshot([completedTask({ localFiles })]),
+    ).tasks[0];
+    assert.equal(value.phase, "downloaded");
+    assert.equal(value.filesDone, 3);
+    assert.equal(value.libraryEntryId, entryId);
+    assert.equal(isDownloadPresent(value), localFiles === "present");
+    assert.equal(
+      filterDownloadTasks([value], "downloaded").length,
+      localFiles === "present" ? 1 : 0,
+    );
+    assert.equal(
+      filterDownloadTasks([value], "error").length,
+      localFiles === "present" ? 0 : 1,
+    );
+    assert.equal(filterDownloadTasks([value], "active").length, 0);
+  }
+  for (const localFiles of [null, undefined, "exists", true])
+    assert.throws(
+      () => validateDownloadSnapshot(snapshot([completedTask({ localFiles })])),
+      DownloadError,
+    );
+  assert.throws(
+    () => validateDownloadSnapshot(snapshot([task({ localFiles: "present" })])),
+    DownloadError,
+  );
+  assert.equal(
+    downloadTaskLabel(completedTask({ localFiles: "missing" })),
+    "文件已移除",
+  );
+  assert.equal(
+    downloadTaskLabel(completedTask({ localFiles: "incomplete" })),
+    "文件已变化",
+  );
+  assert.equal(
+    downloadTaskLabel(completedTask({ localFiles: "unavailable" })),
+    "目录不可用",
+  );
+});
+
+test("download reads explicitly distinguish file rechecks from progress-only reads", async () => {
+  const calls = [];
+  const adapter = createDownloadAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return snapshot();
+    },
+  });
+  await adapter.read();
+  await adapter.read(false);
+  await adapter.read(true);
+  assert.deepEqual(
+    calls,
+    [true, false, true].map((recheckFiles) => ({
+      command: "jm_download_read",
+      args: { recheckFiles },
+    })),
+  );
+  await assert.rejects(adapter.read("false"), DownloadError);
+  assert.equal(calls.length, 3);
+});
+
+test("a same-revision recheck changes file filters without rewriting completion history", async () => {
+  let localFiles = "present";
+  const controller = new DownloadController({
+    read: async () => snapshot([completedTask({ localFiles })], 9),
+  });
+  await controller.read();
+  assert.equal(
+    filterDownloadTasks(controller.getState().snapshot.tasks, "downloaded")
+      .length,
+    1,
+  );
+  localFiles = "missing";
+  await controller.read();
+  assert.equal(controller.getState().snapshot.revision, 9);
+  assert.equal(
+    filterDownloadTasks(controller.getState().snapshot.tasks, "downloaded")
+      .length,
+    0,
+  );
+  assert.equal(
+    filterDownloadTasks(controller.getState().snapshot.tasks, "error").length,
+    1,
+  );
+  assert.equal(controller.getState().snapshot.tasks[0].filesDone, 3);
+  assert.equal(controller.getState().snapshot.tasks[0].phase, "downloaded");
+  controller.dispose();
+});
+
+test("timed progress polling never rechecks completed files", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const controller = new DownloadController({
+    read: async (recheckFiles) => {
+      calls.push(recheckFiles);
+      return snapshot([
+        task({ phase: "downloading", allowedActions: ["pause"] }),
+      ]);
+    },
+  });
+  await controller.read();
+  t.mock.timers.tick(1000);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(calls, [true, false]);
+  t.mock.timers.tick(1000);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(calls, [true, false, false]);
+  controller.dispose();
+});
+
+test("an explicit recheck arriving during a progress read is coalesced and not lost", async () => {
+  const gate = pending(),
+    calls = [];
+  const controller = new DownloadController({
+    read: async (recheckFiles) => {
+      calls.push(recheckFiles);
+      return recheckFiles
+        ? snapshot([completedTask({ localFiles: "missing" })], 4)
+        : gate.promise;
+    },
+  });
+  const progress = controller.read(false);
+  const firstRecheck = controller.read(true),
+    duplicateRecheck = controller.read(true);
+  assert.equal(progress, firstRecheck);
+  assert.equal(firstRecheck, duplicateRecheck);
+  assert.deepEqual(calls, [false]);
+  gate.resolve(snapshot([completedTask()], 4));
+  await firstRecheck;
+  assert.deepEqual(calls, [false, true]);
+  assert.equal(controller.getState().snapshot.tasks[0].localFiles, "missing");
   controller.dispose();
 });

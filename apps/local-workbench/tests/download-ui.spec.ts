@@ -1,17 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
-import type { DownloadSnapshot, DownloadTask } from "../src/download-types.ts";
+import type {
+  DownloadLocalFiles,
+  DownloadSnapshot,
+  DownloadTask,
+} from "../src/download-types.ts";
 import type { LibrarySnapshot } from "../src/library-types.ts";
 type Options = {
   root?: boolean;
   existing?: boolean;
   phoneOwned?: boolean;
   failRead?: boolean;
+  completed?: boolean;
 };
 type Hooks = {
   calls: { command: string; args: Record<string, unknown> }[];
   queue: DownloadSnapshot;
   pc: LibrarySnapshot;
   blockedRead: boolean;
+  filePresence: DownloadLocalFiles;
   advance(phase: "error" | "downloaded"): void;
 };
 declare global {
@@ -69,8 +75,8 @@ async function install(page: Page, options: Options = {}) {
       generation: options.root === false ? 0 : 1,
       phase: options.root === false ? "idle" : "complete",
       freshness: options.root === false ? "none" : "cached",
-      items: options.existing ? [entry] : [],
-      visited: options.existing ? 1 : 0,
+      items: options.existing || options.completed ? [entry] : [],
+      visited: options.existing || options.completed ? 1 : 0,
       skipped: 0,
       updatedAt: 1,
       errorCode: null,
@@ -80,9 +86,33 @@ async function install(page: Page, options: Options = {}) {
       calls: [],
       queue: stored
         ? (JSON.parse(stored) as DownloadSnapshot)
-        : { revision: 0, tasks: [] },
+        : options.completed
+          ? {
+              revision: 1,
+              tasks: [
+                {
+                  id: "c".repeat(64),
+                  revision: 1,
+                  source: "JM",
+                  workId: sourceId,
+                  title: "合成单本作品",
+                  phase: "downloaded",
+                  filesDone: 3,
+                  filesTotal: 3,
+                  bytesDone: 300,
+                  errorCode: null,
+                  allowedActions: [],
+                  libraryEntryId: entryId,
+                  localFiles: "present",
+                  updatedAt: 1,
+                  destinationDisplay: "C:\\Synthetic\\合成单本作品",
+                },
+              ],
+            }
+          : { revision: 0, tasks: [] },
       pc,
       blockedRead: Boolean(options.failRead),
+      filePresence: "present",
       advance: () => {},
     });
     const save = () =>
@@ -103,6 +133,7 @@ async function install(page: Page, options: Options = {}) {
           errorCode: phase === "error" ? "SOURCE_TIMEOUT" : null,
           allowedActions: phase === "error" ? ["retry"] : [],
           libraryEntryId: phase === "downloaded" ? entryId : null,
+          localFiles: phase === "downloaded" ? "present" : null,
           updatedAt: 2,
         })),
       };
@@ -218,12 +249,21 @@ async function install(page: Page, options: Options = {}) {
               };
               save();
             }
+            if (args.recheckFiles !== false) {
+              hooks.queue = {
+                ...hooks.queue,
+                tasks: hooks.queue.tasks.map((task) =>
+                  task.phase === "downloaded"
+                    ? { ...task, localFiles: hooks.filePresence }
+                    : task,
+                ),
+              };
+            }
             return clone(hooks.queue);
           }
           if (command === "jm_download_prepare")
             return {
-              planId:
-                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              planId: (hooks.queue.tasks.length ? "d" : "c").repeat(64),
               revision: hooks.queue.revision,
               source: "JM",
               workId: sourceId,
@@ -234,10 +274,15 @@ async function install(page: Page, options: Options = {}) {
               generation: 1,
             };
           if (command === "jm_download_confirm") {
-            if (hooks.queue.tasks.length)
+            if (
+              hooks.queue.tasks.some(
+                (task) =>
+                  task.phase !== "downloaded" || task.localFiles !== "missing",
+              )
+            )
               throw { code: "DOWNLOAD_ALREADY_EXISTS" };
             const task: DownloadTask = {
-              id: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              id: String(args.planId),
               revision: 1,
               source: "JM",
               workId: sourceId,
@@ -249,24 +294,32 @@ async function install(page: Page, options: Options = {}) {
               errorCode: null,
               allowedActions: ["pause"],
               libraryEntryId: null,
+              localFiles: null,
               updatedAt: 1,
               destinationDisplay: "C:\\Synthetic\\合成单本作品",
             };
-            hooks.queue = { revision: 1, tasks: [task] };
+            hooks.queue = {
+              revision: hooks.queue.revision + 1,
+              tasks: [...hooks.queue.tasks, task],
+            };
             save();
             return clone(hooks.queue);
           }
           if (command === "jm_download_control") {
             hooks.queue = {
               revision: hooks.queue.revision + 1,
-              tasks: hooks.queue.tasks.map((task) => ({
-                ...task,
-                revision: task.revision + 1,
-                phase: args.action === "pause" ? "paused" : "downloading",
-                errorCode: null,
-                allowedActions:
-                  args.action === "pause" ? ["resume"] : ["pause"],
-              })),
+              tasks: hooks.queue.tasks.map((task) =>
+                task.id !== args.taskId
+                  ? task
+                  : {
+                      ...task,
+                      revision: task.revision + 1,
+                      phase: args.action === "pause" ? "paused" : "downloading",
+                      errorCode: null,
+                      allowedActions:
+                        args.action === "pause" ? ["resume"] : ["pause"],
+                    },
+              ),
             };
             save();
             return clone(hooks.queue);
@@ -501,5 +554,175 @@ test("unreadable persisted queue is not treated as empty and raw native messages
   });
   await page.getByTestId("download-read").click();
   await expect(page.getByTestId("download-empty")).toBeVisible();
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+});
+
+const oldTaskId = "c".repeat(64);
+const newTaskId = "d".repeat(64);
+
+test("typing a removed work directly rechecks stale presence before deciding whether a PC copy exists", async ({
+  page,
+}) => {
+  await install(page, { completed: true });
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已下载",
+  );
+  const readsBefore = (await calls(page, "jm_download_read")).length;
+  await page.evaluate(() => {
+    window.downloadTest.filePresence = "missing";
+  });
+  await page.getByTestId("download-input").fill("JM123");
+  await page.getByTestId("download-prepare").click();
+  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  expect(
+    (await calls(page, "jm_download_read"))
+      .slice(readsBefore)
+      .map((call) => call.args.recheckFiles),
+  ).toEqual([true]);
+  expect(
+    (await calls(page, "jm_download_prepare")).map((call) => call.args.input),
+  ).toEqual(["123"]);
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+  await page.getByTestId("download-cancel").click();
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "文件已移除",
+  );
+});
+
+test("removed files leave the downloaded filter and require a new plan and confirmation", async ({
+  page,
+}) => {
+  await install(page, { completed: true, phoneOwned: true });
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已下载",
+  );
+  await page.getByTestId("download-filter-downloaded").click();
+  await page.evaluate(() => {
+    window.downloadTest.filePresence = "missing";
+  });
+  await page.getByTestId("download-read").click();
+  await expect(page.getByTestId("download-task-" + oldTaskId)).toHaveCount(0);
+  await page.getByTestId("download-filter-error").click();
+  const oldTask = page.getByTestId("download-task-" + oldTaskId);
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "文件已移除",
+  );
+  await expect(oldTask).toContainText("历史完成：3 / 3");
+  await expect(oldTask).not.toContainText("电脑文件已保存并登记");
+  await expect(page.getByTestId("download-open-" + oldTaskId)).toHaveCount(0);
+  expect(await page.evaluate(() => window.downloadTest.queue.revision)).toBe(1);
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+  await page.getByTestId("download-reprepare-" + oldTaskId).click();
+  await expect(page.getByTestId("download-input")).toHaveValue("123");
+  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  await page.getByTestId("download-cancel").click();
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => window.downloadTest.queue.tasks),
+  ).toHaveLength(1);
+  await page.getByTestId("download-reprepare-" + oldTaskId).click();
+  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await page.getByTestId("download-confirm").click();
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await page.getByTestId("download-filter-all").click();
+  await expect(page.getByTestId("download-phase-" + newTaskId)).toHaveText(
+    "正在下载",
+  );
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "文件已移除",
+  );
+  expect(
+    (await calls(page, "jm_download_confirm")).map((call) => call.args.planId),
+  ).toEqual([newTaskId]);
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+  expect(await calls(page, "library_scan")).toEqual([]);
+  expect(await calls(page, "phone_library_mark")).toEqual([]);
+});
+
+test("changed or inaccessible files keep history without offering old-task retry or file opening", async ({
+  page,
+}) => {
+  await install(page, { completed: true });
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已下载",
+  );
+  for (const [localFiles, label] of [
+    ["incomplete", "文件已变化"],
+    ["unavailable", "目录不可用"],
+  ] as const) {
+    await page.evaluate((localFiles) => {
+      window.downloadTest.filePresence = localFiles;
+    }, localFiles);
+    await page.getByTestId("download-read").click();
+    await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+      label,
+    );
+    await expect(page.getByTestId("download-open-" + oldTaskId)).toHaveCount(0);
+    await expect(page.getByTestId("download-retry-" + oldTaskId)).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByTestId("download-reprepare-" + oldTaskId),
+    ).toHaveCount(0);
+    await expect(page.getByTestId("download-task-" + oldTaskId)).toContainText(
+      "历史完成：3 / 3",
+    );
+  }
+  await expect(page.getByTestId("download-task-" + oldTaskId)).toContainText(
+    "重新选择可访问的保存目录",
+  );
+  await page.getByTestId("download-select-directory-" + oldTaskId).click();
+  await expect(page.getByTestId("library-workbench")).toBeVisible();
+  expect(await calls(page, "jm_download_prepare")).toEqual([]);
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+});
+
+test("entry and focus recheck files only while the queue is active without replaying completion", async ({
+  page,
+}) => {
+  await install(page, { completed: true });
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已下载",
+  );
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  const before = (await calls(page, "jm_download_read")).length;
+  const libraryReads = (await calls(page, "library_read")).length;
+  await page.evaluate(() => {
+    window.downloadTest.filePresence = "missing";
+    window.dispatchEvent(new Event("focus"));
+  });
+  expect(await calls(page, "jm_download_read")).toHaveLength(before);
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "文件已移除",
+  );
+  await page.evaluate(() => {
+    window.downloadTest.filePresence = "present";
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已下载",
+  );
+  expect(
+    (await calls(page, "jm_download_read")).every(
+      (call) => call.args.recheckFiles === true,
+    ),
+  ).toBe(true);
+  expect(await calls(page, "library_read")).toHaveLength(libraryReads);
+  expect(await calls(page, "jm_download_control")).toEqual([]);
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
 });

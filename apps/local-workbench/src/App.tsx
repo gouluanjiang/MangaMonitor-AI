@@ -38,7 +38,10 @@ import {
   usePhoneLibrary,
 } from "./LibraryWorkbench.tsx";
 import { createLibraryAdapter } from "./library-runtime.ts";
-import { createDownloadAdapter } from "./download-runtime.ts";
+import {
+  createDownloadAdapter,
+  isDownloadPresent,
+} from "./download-runtime.ts";
 import {
   NativeDownloads,
   DownloadSettingsPanel,
@@ -396,6 +399,7 @@ export default function App() {
     setLibraryRequestKey((value) => value + 1);
   }
   function openDownloaded(task: DownloadTask) {
+    if (!isDownloadPresent(task)) return;
     setPendingDownloadedWork(task);
     if (!library.snapshot.items.some((item) => item.id === task.libraryEntryId))
       setDownloadLibraryRefresh(true);
@@ -405,6 +409,14 @@ export default function App() {
       return;
     const task = pendingDownloadedWork;
     setPendingDownloadedWork(null);
+    if (
+      !downloads.snapshot.tasks.some(
+        (current) => current.id === task.id && isDownloadPresent(current),
+      )
+    ) {
+      setNotice("当前电脑文件状态已变化，请在下载队列核对。");
+      return;
+    }
     if (!library.snapshot.items.some((item) => item.id === task.libraryEntryId))
       setNotice("这本作品已下载，当前目录尚未读取到对应文件。请核对电脑目录。");
     showDownloadLibrary({
@@ -424,8 +436,9 @@ export default function App() {
     downloadLibraryRefresh,
     library.busy,
     library.snapshot.items,
+    downloads.snapshot.tasks,
   ]);
-  function beginDownload(input: string, work?: SourceWork) {
+  async function beginDownload(input: string, work?: SourceWork) {
     if (work && work.source !== "JM") {
       setNotice("Pica 下载将在后续批次接入。");
       return;
@@ -441,11 +454,49 @@ export default function App() {
       chooseDownloadLibrary();
       return;
     }
+    if (downloads.controller.getState().busy) return;
+    // An earlier queue check may have observed files before this click. Wait
+    // for it, then request one fresh check for this explicit preparation.
+    if (downloads.controller.getState().reading)
+      await downloads.controller.read(false);
+    await downloads.controller.read(true);
+    const currentDownloads = downloads.controller.getState();
+    if (
+      !currentDownloads.ready ||
+      currentDownloads.error ||
+      currentDownloads.busy
+    )
+      return;
+    const currentLibrary = library.controller.getState().snapshot;
+    const currentAccount = accountsRef.current.find(
+      (account) => account.source === "JM",
+    );
+    if (
+      currentAccount?.state !== "connected" ||
+      currentAccount.sessionId !== downloadScope.sessionId ||
+      currentLibrary.rootId !== downloadContext.rootId ||
+      currentLibrary.generation !== downloadContext.generation
+    ) {
+      setNotice("账号或电脑目录已改变，请核对后重新准备下载。");
+      return;
+    }
     const id = work?.workId ?? parseLibraryReference("JM", input)?.workId;
+    const missingEntries = new Set(
+      currentDownloads.snapshot.tasks
+        .filter(
+          (task) =>
+            task.workId === id &&
+            task.phase === "downloaded" &&
+            task.localFiles === "missing",
+        )
+        .map((task) => task.libraryEntryId),
+    );
     const existing = id
-      ? library.snapshot.items.find(
+      ? currentLibrary.items.find(
           (item) =>
-            item.sourceRef?.source === "JM" && item.sourceRef.workId === id,
+            item.sourceRef?.source === "JM" &&
+            item.sourceRef.workId === id &&
+            !missingEntries.has(item.id),
         )
       : undefined;
     if (existing && id) {
@@ -2119,6 +2170,13 @@ export default function App() {
               onOpenAccounts={() => navigate("settings")}
               onConfirmed={() => navigate("queue")}
               onOpenDownloaded={openDownloaded}
+              onReprepare={(task) => {
+                if (
+                  task.phase === "downloaded" &&
+                  task.localFiles === "missing"
+                )
+                  void beginDownload(task.workId);
+              }}
               showFeedback={downloadFeedback}
             />
           )}

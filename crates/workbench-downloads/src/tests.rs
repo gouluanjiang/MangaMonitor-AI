@@ -84,6 +84,411 @@ fn put(f: &Fixture, record: DownloadRecord) {
     f.store.write_downloads(doc.revision, doc.value).unwrap();
 }
 
+// Materialize and index only synthetic, already verified staging. No source
+// request or real-account state is involved in these presence regressions.
+fn complete_for_presence(f: &Fixture, mut value: DownloadRecord) -> DownloadRecord {
+    let (stage, report) = report(f, &value);
+    value.files_done = 2;
+    value.files_total = Some(2);
+    value.bytes_done = report.filesystem_verification.total_bytes;
+    value.staging_report_json = Some(serde_json::to_string(&report).unwrap());
+    materialize::save(&mut value, &report, &stage, &|| Ok(()), &mut |_| Ok(())).unwrap();
+    let indexed = workbench_library::LibraryService::new()
+        .register_completed(
+            &f.store,
+            &value.root.id,
+            value.generation,
+            &value.destination,
+            &workbench_storage::LibraryReference {
+                source: Source::Jm,
+                work_id: value.metadata.work_id.clone(),
+            },
+            2,
+        )
+        .unwrap();
+    value.library_entry_id = Some(
+        indexed
+            .items
+            .iter()
+            .find(|item| item.relative_path == value.destination)
+            .unwrap()
+            .id
+            .clone(),
+    );
+    value.phase = DownloadPhase::Downloaded;
+    value.revision += 1;
+    let mut document = f.store.read_downloads().unwrap();
+    *document
+        .value
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == value.id)
+        .unwrap() = value.clone();
+    f.store
+        .write_downloads(document.revision, document.value)
+        .unwrap();
+    value
+}
+
+fn prepare_same(f: &Fixture) -> Result<DownloadPlan> {
+    let library = f.store.read_library().unwrap();
+    f.service.prepare(
+        &f.store,
+        &library.value.root.as_ref().unwrap().id,
+        library.value.generation,
+        record(f).metadata,
+    )
+}
+
+#[test]
+fn file_status_is_advisory_read_only_and_polling_reuses_only_the_same_revision() {
+    let f = fixture();
+    assert_eq!(f.service.read(&f.store).unwrap().tasks[0].local_files, None);
+    let mut completed = complete_for_presence(&f, record(&f));
+    let view = f.service.read(&f.store).unwrap();
+    assert_eq!(view.tasks[0].local_files, Some(LocalFiles::Present));
+    assert_eq!(
+        serde_json::to_value(&view).unwrap()["tasks"][0]["localFiles"],
+        "present"
+    );
+    let page = f
+        .library
+        .join(&completed.destination)
+        .join("0001-123456/0001.gif");
+    fs::remove_file(&page).unwrap();
+    let before = fs::read(downloads_path(&f)).unwrap();
+    let index_before = f.store.read_library().unwrap();
+    assert_eq!(
+        f.service
+            .read_with_file_check(&f.store, false)
+            .unwrap()
+            .tasks[0]
+            .local_files,
+        Some(LocalFiles::Present),
+        "ordinary polling does not stat media again"
+    );
+    assert_eq!(
+        DownloadService::new()
+            .read_with_file_check(&f.store, false)
+            .unwrap()
+            .tasks[0]
+            .local_files,
+        Some(LocalFiles::Incomplete),
+        "a new completed task is checked even without an explicit refresh"
+    );
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].local_files,
+        Some(LocalFiles::Incomplete)
+    );
+    assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
+    assert_eq!(f.store.read_library().unwrap(), index_before);
+    fs::write(&page, gif()).unwrap();
+    completed.revision += 1;
+    put(&f, completed.clone());
+    assert_eq!(
+        f.service
+            .read_with_file_check(&f.store, false)
+            .unwrap()
+            .tasks[0]
+            .local_files,
+        Some(LocalFiles::Present),
+        "a changed task revision invalidates its cached status"
+    );
+    fs::remove_dir_all(f.library.join(&completed.destination)).unwrap();
+    let before = fs::read(downloads_path(&f)).unwrap();
+    let view = f.service.read(&f.store).unwrap();
+    assert_eq!(view.tasks[0].phase, DownloadPhase::Downloaded);
+    assert_eq!(view.tasks[0].local_files, Some(LocalFiles::Missing));
+    assert!(view.tasks[0].allowed_actions.is_empty());
+    assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
+    assert_eq!(f.store.read_library().unwrap(), index_before);
+}
+
+#[tokio::test]
+async fn deleted_completed_work_requires_a_new_confirmation_then_registers_without_old_identity() {
+    let f = fixture();
+    let old = complete_for_presence(&f, record(&f));
+    fs::remove_dir_all(f.library.join(&old.destination)).unwrap();
+    let index_before = f.store.read_library().unwrap();
+    let downloads_before = f.store.read_downloads().unwrap();
+    let phone_before = f.store.read_phone_library().unwrap();
+    let plan = prepare_same(&f).unwrap();
+    assert_ne!(plan.plan_id, old.id);
+    assert_eq!(
+        f.store.read_library().unwrap(),
+        index_before,
+        "prepare is read-only"
+    );
+    assert_eq!(f.store.read_downloads().unwrap(), downloads_before);
+    assert!(!f.library.join(&old.destination).exists());
+    assert_eq!(
+        f.service
+            .control(&f.store, &old.id, old.revision, Control::Retry)
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_CONTROL_INVALID",
+        "a historical completion cannot reuse its old execution proof"
+    );
+    let queued = f
+        .service
+        .confirm(&f.store, &plan.plan_id, plan.revision)
+        .unwrap();
+    assert_eq!(queued.tasks.len(), 2);
+    assert_eq!(queued.tasks[0].phase, DownloadPhase::Downloaded);
+    assert_eq!(queued.tasks[1].local_files, None);
+    assert!(f.store.read_library().unwrap().value.records.is_empty());
+    let document = f.store.read_downloads().unwrap();
+    assert_eq!(document.value.tasks[0], old);
+    let fresh = document.value.tasks[1].clone();
+    let (_, _, old_command) = adapter::current(&old).unwrap();
+    let (_, _, fresh_command) = adapter::current(&fresh).unwrap();
+    assert_ne!(fresh_command.task_id, old_command.task_id);
+    assert_ne!(fresh_command.command_id, old_command.command_id);
+    assert_ne!(
+        local_executor::plan(&fresh_command).unwrap().staging_subdir,
+        local_executor::plan(&old_command).unwrap().staging_subdir
+    );
+    let old_report: LocalExecutionReport =
+        serde_json::from_str(old.staging_report_json.as_deref().unwrap()).unwrap();
+    let staging = f
+        .store
+        .open_download_workspace()
+        .unwrap()
+        .path()
+        .to_path_buf();
+    assert_eq!(
+        materialize::validate_staging(&fresh, &old_report, &staging)
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_PROOF_INVALID"
+    );
+    assert_eq!(fresh.phase, DownloadPhase::Queued);
+    assert_eq!(fresh.output_identity, None);
+    assert_eq!(fresh.checkpoint_json, None);
+    assert_eq!(fresh.staging_report_json, None);
+    assert!(fresh.output_files.is_empty());
+    assert!(
+        !f.library.join(&fresh.destination).exists(),
+        "confirm never executes"
+    );
+    let mut seeded = fresh.clone();
+    let (_, report) = report(&f, &seeded);
+    seeded.files_done = 2;
+    seeded.files_total = Some(2);
+    seeded.bytes_done = report.filesystem_verification.total_bytes;
+    seeded.staging_report_json = Some(serde_json::to_string(&report).unwrap());
+    let mut document = f.store.read_downloads().unwrap();
+    document.value.tasks[1] = seeded;
+    f.store
+        .write_downloads(document.revision, document.value)
+        .unwrap();
+    let receipt = f
+        .service
+        .run(&f.store, &fresh.id, || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    let indexed = workbench_library::LibraryService::new()
+        .register_completed(
+            &f.store,
+            &receipt.root_id,
+            receipt.generation,
+            &receipt.relative_path,
+            &workbench_storage::LibraryReference {
+                source: Source::Jm,
+                work_id: receipt.work_id.clone(),
+            },
+            receipt.expected_pages,
+        )
+        .unwrap();
+    let entry = indexed
+        .items
+        .iter()
+        .find(|item| item.relative_path == receipt.relative_path)
+        .unwrap();
+    let done = f
+        .service
+        .mark_indexed(&f.store, &receipt, &entry.id)
+        .unwrap();
+    assert_eq!(done.tasks[1].phase, DownloadPhase::Downloaded);
+    assert_eq!(done.tasks[1].local_files, Some(LocalFiles::Present));
+    let new = f.store.read_downloads().unwrap().value.tasks[1].clone();
+    let index = f.store.read_library().unwrap();
+    assert_eq!(index.value.records.len(), 1);
+    assert_eq!(
+        index.value.records[0].identity.as_ref().unwrap().file_key,
+        new.output_identity.unwrap()
+    );
+    assert_eq!(f.store.read_downloads().unwrap().value.tasks[0], old);
+    assert_eq!(f.store.read_phone_library().unwrap(), phone_before);
+}
+
+#[test]
+fn existing_incomplete_and_reappearing_destinations_never_authorize_replacement() {
+    let f = fixture();
+    let old = complete_for_presence(&f, record(&f));
+    assert_eq!(
+        prepare_same(&f).unwrap_err().code,
+        "DOWNLOAD_ALREADY_PRESENT"
+    );
+    let page = f
+        .library
+        .join(&old.destination)
+        .join("0001-123456/0001.gif");
+    fs::write(&page, b"changed-size").unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].local_files,
+        Some(LocalFiles::Incomplete)
+    );
+    assert_eq!(
+        prepare_same(&f).unwrap_err().code,
+        "DOWNLOAD_LOCAL_FILES_INCOMPLETE"
+    );
+    fs::remove_dir_all(f.library.join(&old.destination)).unwrap();
+    let plan = prepare_same(&f).unwrap();
+    let index_before = f.store.read_library().unwrap();
+    let downloads_before = f.store.read_downloads().unwrap();
+    fs::create_dir(f.library.join(&old.destination)).unwrap();
+    let sentinel = f.library.join(&old.destination).join("KEEP");
+    fs::write(&sentinel, b"user file").unwrap();
+    assert!(f
+        .service
+        .confirm(&f.store, &plan.plan_id, plan.revision)
+        .is_err());
+    assert_eq!(f.store.read_library().unwrap(), index_before);
+    assert_eq!(f.store.read_downloads().unwrap(), downloads_before);
+    assert_eq!(fs::read(sentinel).unwrap(), b"user file");
+}
+
+#[test]
+fn an_existing_indexed_alias_still_blocks_when_the_historical_destination_is_missing() {
+    let f = fixture();
+    let old = complete_for_presence(&f, record(&f));
+    let alias = "user renamed work";
+    fs::rename(f.library.join(&old.destination), f.library.join(alias)).unwrap();
+    let mut library = f.store.read_library().unwrap();
+    let row = &mut library.value.records[0];
+    row.item.relative_path = alias.into();
+    row.item.file_name = alias.into();
+    row.item.id = hash(format!("{}\0{alias}", old.root.id).as_bytes());
+    if let Some(cover) = &mut row.cover {
+        cover.relative_path = cover.relative_path.replacen(&old.destination, alias, 1);
+    }
+    f.store
+        .write_library(library.revision, library.value)
+        .unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].local_files,
+        Some(LocalFiles::Missing)
+    );
+    assert_eq!(
+        prepare_same(&f).unwrap_err().code,
+        "DOWNLOAD_ALREADY_PRESENT"
+    );
+    assert!(f.library.join(alias).join("0001-123456/0001.gif").is_file());
+}
+
+#[test]
+fn an_unavailable_or_recreated_root_needs_a_new_picker_identity_before_confirmation() {
+    let f = fixture();
+    let old = complete_for_presence(&f, record(&f));
+    let preserved = f._temp.path().join("preserved old root");
+    fs::rename(&f.library, &preserved).unwrap();
+    let before = f.store.read_downloads().unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].local_files,
+        Some(LocalFiles::Unavailable)
+    );
+    assert!(prepare_same(&f).is_err());
+    fs::create_dir(&f.library).unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].local_files,
+        Some(LocalFiles::Unavailable)
+    );
+    assert_eq!(prepare_same(&f).unwrap_err().code, "DOWNLOAD_ROOT_CHANGED");
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    let mut indexer = workbench_library::LibraryService::new();
+    indexer.choose(&f.store, &f.library).unwrap();
+    let mut library = f.store.read_library().unwrap();
+    library.value.phase = LibraryPhase::Complete;
+    assert_eq!(library.value.root.as_ref().unwrap().id, old.root.id);
+    assert_ne!(
+        library.value.root.as_ref().unwrap().file_key,
+        old.root.file_key
+    );
+    f.store
+        .write_library(library.revision, library.value)
+        .unwrap();
+    let plan = prepare_same(&f).unwrap();
+    let view = f
+        .service
+        .confirm(&f.store, &plan.plan_id, plan.revision)
+        .unwrap();
+    assert_eq!(view.tasks.len(), 2);
+    assert_eq!(view.tasks[0].local_files, Some(LocalFiles::Unavailable));
+    assert_eq!(f.store.read_downloads().unwrap().value.tasks[0], old);
+    assert!(preserved
+        .join(&old.destination)
+        .join("0001-123456/0001.gif")
+        .is_file());
+}
+
+#[test]
+fn manual_unlink_or_reassociation_is_not_removed_by_a_later_download_confirmation() {
+    for replacement in [None, Some("999999")] {
+        let f = fixture();
+        let old = complete_for_presence(&f, record(&f));
+        workbench_library::LibraryService::new()
+            .link(
+                &f.store,
+                &old.root.id,
+                old.generation,
+                old.library_entry_id.as_deref().unwrap(),
+                replacement.map(|id| workbench_storage::LibraryReference {
+                    source: Source::Jm,
+                    work_id: id.into(),
+                }),
+            )
+            .unwrap();
+        fs::remove_dir_all(f.library.join(&old.destination)).unwrap();
+        let before = f.store.read_library().unwrap();
+        let mut metadata = old.metadata.clone();
+        metadata.title = "A different new destination".into();
+        assert_eq!(
+            f.service
+                .prepare(&f.store, &old.root.id, old.generation, metadata)
+                .unwrap_err()
+                .code,
+            "LIBRARY_IDENTITY_CONFLICT"
+        );
+        assert_eq!(f.store.read_library().unwrap(), before);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn redirected_completed_paths_are_unavailable_instead_of_missing() {
+    use std::os::unix::fs::symlink;
+    let f = fixture();
+    let old = complete_for_presence(&f, record(&f));
+    fs::remove_dir_all(f.library.join(&old.destination)).unwrap();
+    let outside = f._temp.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("KEEP"), b"keep").unwrap();
+    symlink(&outside, f.library.join(&old.destination)).unwrap();
+    let before = f.store.read_library().unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[0].local_files,
+        Some(LocalFiles::Unavailable)
+    );
+    assert_eq!(
+        prepare_same(&f).unwrap_err().code,
+        "DOWNLOAD_LOCAL_FILES_UNAVAILABLE"
+    );
+    assert_eq!(f.store.read_library().unwrap(), before);
+    assert_eq!(fs::read(outside.join("KEEP")).unwrap(), b"keep");
+}
+
 #[test]
 fn shared_semantic_validation_reuses_unchanged_values_but_rejects_changed_proof() {
     let f = fixture();

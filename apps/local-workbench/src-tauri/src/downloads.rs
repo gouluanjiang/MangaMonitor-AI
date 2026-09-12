@@ -78,13 +78,18 @@ pub(crate) async fn jm_download_read<R: Runtime>(
     window: WebviewWindow<R>,
     downloads: State<'_, Arc<DesktopDownloads>>,
     store: State<'_, Arc<DesktopStore>>,
+    recheck_files: Option<bool>,
 ) -> Result<DownloadSnapshot, StoreError> {
     require_main(window.label())?;
     let downloads = Arc::clone(downloads.inner());
     let store = open_store(Arc::clone(store.inner())).await?;
-    tauri::async_runtime::spawn_blocking(move || downloads.service.read(&store))
-        .await
-        .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        downloads
+            .service
+            .read_with_file_check(&store, recheck_files.unwrap_or(true))
+    })
+    .await
+    .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?
 }
 
 #[tauri::command]

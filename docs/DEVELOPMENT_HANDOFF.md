@@ -2,7 +2,13 @@
 
 Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
 
-## Current follow-up: upstream-style JM parallel download pipeline (2026-09-12)
+## Current follow-up: removed download files and re-download (2026-09-12)
+
+Before the speed retest, the user reported that externally removed works still appeared downloaded and blocked a new preparation. Read [the file-presence repair](DOWNLOAD_FILE_PRESENCE_2026-09-12.md). Preserve historical completion and separately project current local files as present, missing, incomplete or unavailable. Explicit reads/queue entry/window focus recheck recorded paths and sizes; progress polling reuses process-local results. No full library scan or image-content hashing is added to polling.
+
+Prepare and confirm independently check actual paths. A proven missing completed work can receive a new explicit plan/task; an inaccessible root is not absence. Confirm retires only proven missing same-source private index entries through CAS so existing strict registration accepts the newly created directory. Never reuse old completion/staging proof, overwrite surviving files, alter phone marks or infer deletion from an IO error. Root identity, task/session approval and output proofs remain. All formal validation/builds stay in CI. Deliver a new Dev EXE at 0.3.4 with a local result report, no installer. Both this real deletion/re-download check and the upstream-performance timing remain user acceptance items. Next feature batch remains Pica single-work downloads.
+
+## Previous follow-up: upstream-style JM parallel download pipeline (2026-09-12)
 
 The desktop metadata path also inherited the monitor's random 1–3 second wait before every album/chapter request (3–9 seconds of injected waiting for a single chapter). The explicit desktop download path now selects immediate album/chapter requests through a named JM constructor; ordinary monitor/CLI clients and other API routes retain their pacing. This is a code-path delay calculation, not an end-to-end benchmark.
 

@@ -15,6 +15,12 @@ pub(crate) struct Directory {
     #[cfg(windows)]
     _parents: Vec<File>,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EntryKind {
+    Directory,
+    File(u64),
+    Other,
+}
 fn name(value: &str) -> Result<()> {
     if value.is_empty()
         || value == "."
@@ -40,6 +46,48 @@ fn regular(metadata: &Metadata) -> Result<()> {
     Ok(())
 }
 impl Directory {
+    /// Metadata-only lookup anchored to this verified parent. Only a precise
+    /// missing-name error becomes None; redirection and I/O failures stay errors.
+    pub fn probe(&self, child: &str) -> Result<Option<EntryKind>> {
+        name(child)?;
+        #[cfg(unix)]
+        {
+            use rustix::fs::{statat, AtFlags, FileType};
+            let stat = match statat(&self.file, child, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => stat,
+                Err(rustix::io::Errno::NOENT) => return Ok(None),
+                Err(_) => return Err(error("DOWNLOAD_READ_FAILED")),
+            };
+            let kind = match FileType::from_raw_mode(stat.st_mode) {
+                FileType::Directory => EntryKind::Directory,
+                FileType::RegularFile => EntryKind::File(
+                    u64::try_from(stat.st_size).map_err(|_| error("DOWNLOAD_READ_FAILED"))?,
+                ),
+                FileType::Symlink => return Err(error("DOWNLOAD_UNSAFE_PATH")),
+                _ => EntryKind::Other,
+            };
+            Ok(Some(kind))
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            let metadata = match std::fs::symlink_metadata(self.path.join(child)) {
+                Ok(metadata) => metadata,
+                Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(_) => return Err(error("DOWNLOAD_READ_FAILED")),
+            };
+            if metadata.file_attributes() & 0x400 != 0 || metadata.file_type().is_symlink() {
+                return Err(error("DOWNLOAD_UNSAFE_PATH"));
+            }
+            Ok(Some(if metadata.is_dir() {
+                EntryKind::Directory
+            } else if metadata.is_file() {
+                EntryKind::File(metadata.len())
+            } else {
+                EntryKind::Other
+            }))
+        }
+    }
     pub fn open(path: &Path) -> Result<Self> {
         if !path.is_absolute()
             || path

@@ -94,6 +94,14 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
       new Set(task.allowedActions).size !== task.allowedActions.length
     )
       return invalid();
+    if (
+      task.phase === "downloaded"
+        ? !["present", "missing", "incomplete", "unavailable"].includes(
+            task.localFiles as string,
+          )
+        : task.localFiles !== null
+    )
+      return invalid();
     const filesDone = integer(task.filesDone),
       filesTotal = task.filesTotal === null ? null : integer(task.filesTotal),
       libraryEntryId =
@@ -140,6 +148,7 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
       errorCode,
       allowedActions: task.allowedActions,
       libraryEntryId,
+      localFiles: task.localFiles,
       updatedAt: integer(task.updatedAt),
       destinationDisplay: text(task.destinationDisplay),
     } as DownloadTask;
@@ -174,7 +183,12 @@ export function createDownloadAdapter(
     }
   }
   return {
-    read: async () => validateDownloadSnapshot(await call("jm_download_read")),
+    read: async (recheckFiles = true) => {
+      if (typeof recheckFiles !== "boolean") return invalid();
+      return validateDownloadSnapshot(
+        await call("jm_download_read", { recheckFiles }),
+      );
+    },
     prepare: async (context, input) => {
       const checked = {
         scope: scope(context.scope),
@@ -219,6 +233,10 @@ export function downloadErrorMessage(cause: unknown): string {
       : ((cause as { code?: string })?.code ?? "DOWNLOAD_UNAVAILABLE");
   if (/SESSION|AUTH|ACCOUNT|CREDENTIAL/.test(code))
     return "JM 会话已改变或需要重新登录。请连接 JM 后再试。";
+  if (code === "DOWNLOAD_LOCAL_FILES_INCOMPLETE")
+    return "原目录或文件已变化，请先核对电脑文件。";
+  if (code === "DOWNLOAD_LOCAL_FILES_UNAVAILABLE")
+    return "保存目录或文件暂时无法读取，请检查目录后重新准备。";
   if (code === "LIBRARY_BUSY")
     return "电脑目录正在读取或已暂停读取，请先完成目录读取再准备下载。";
   if (/BUSY/.test(code)) return "当前任务还在处理，请等待它暂停或完成后再试。";
@@ -259,6 +277,28 @@ export const downloadPhaseLabel = (phase: DownloadPhase) =>
     error: "需要处理",
     downloaded: "已下载",
   })[phase];
+export const isDownloadPresent = (task: DownloadTask) =>
+  task.phase === "downloaded" && task.localFiles === "present";
+export const downloadNeedsAttention = (task: DownloadTask) =>
+  task.phase === "error" ||
+  (task.phase === "downloaded" && !isDownloadPresent(task));
+export const downloadTaskLabel = (task: DownloadTask) =>
+  task.phase === "downloaded" && !isDownloadPresent(task)
+    ? ({
+        missing: "文件已移除",
+        incomplete: "文件已变化",
+        unavailable: "目录不可用",
+      }[task.localFiles as "missing" | "incomplete" | "unavailable"] ??
+      "文件状态待核对")
+    : downloadPhaseLabel(task.phase);
+export const filterDownloadTasks = (tasks: DownloadTask[], filter: string) =>
+  tasks.filter(
+    (task) =>
+      filter === "all" ||
+      (filter === "downloaded" && isDownloadPresent(task)) ||
+      (filter === "error" && downloadNeedsAttention(task)) ||
+      (filter === "active" && !["error", "downloaded"].includes(task.phase)),
+  );
 const activeTask = (task: DownloadTask) =>
   ["queued", "downloading", "verifying", "saving"].includes(task.phase) ||
   (["paused", "error"].includes(task.phase) &&
@@ -292,6 +332,8 @@ export class DownloadController {
   private listeners = new Set<(state: DownloadState) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readPromise: Promise<void> | null = null;
+  private readingFiles = false;
+  private pendingRecheck = false;
   private epoch = 0;
   private planEpoch = 0;
   private preparedContext: string | null = null;
@@ -318,29 +360,49 @@ export class DownloadController {
   }
   private schedule() {
     clearTimeout(this.timer);
+    if (this.pendingRecheck && !this.state.busy) {
+      this.timer = setTimeout(() => void this.read(true), 0);
+      return;
+    }
     if (
       !this.state.error &&
       !this.state.busy &&
       this.state.snapshot.tasks.some(activeTask)
     )
-      this.timer = setTimeout(() => void this.read(), 1000);
+      this.timer = setTimeout(() => void this.read(false), 1000);
   }
-  read(): Promise<void> {
-    if (this.readPromise) return this.readPromise;
-    if (this.state.busy) return Promise.resolve();
+  read(recheckFiles = true): Promise<void> {
+    if (this.readPromise) {
+      if (recheckFiles && !this.readingFiles) this.pendingRecheck = true;
+      return this.readPromise;
+    }
+    if (this.state.busy) {
+      if (recheckFiles) this.pendingRecheck = true;
+      return Promise.resolve();
+    }
     clearTimeout(this.timer);
+    if (recheckFiles) this.pendingRecheck = false;
     const epoch = this.epoch;
     this.publish({ reading: true });
     this.readPromise = (async () => {
       try {
-        const next = await this.adapter.read();
-        if (epoch === this.epoch) this.accept(next);
+        let checkFiles = recheckFiles;
+        do {
+          this.readingFiles = checkFiles;
+          const next = await this.adapter.read(checkFiles);
+          if (epoch !== this.epoch) return;
+          this.accept(next);
+          if (!this.pendingRecheck || this.state.busy) break;
+          this.pendingRecheck = false;
+          checkFiles = true;
+        } while (true);
       } catch (cause) {
         if (epoch === this.epoch)
           this.publish({ error: downloadErrorMessage(cause) });
       } finally {
         if (epoch === this.epoch) {
           this.readPromise = null;
+          this.readingFiles = false;
           this.publish({ reading: false });
           this.schedule();
         }
@@ -450,6 +512,8 @@ export class DownloadController {
     this.planEpoch++;
     clearTimeout(this.timer);
     this.readPromise = null;
+    this.readingFiles = false;
+    this.pendingRecheck = false;
     this.listeners.clear();
     this.state = { ...this.state, reading: false, busy: false, plan: null };
   }

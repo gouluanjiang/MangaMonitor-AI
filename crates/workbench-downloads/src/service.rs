@@ -1,5 +1,6 @@
 use crate::{
-    adapter, error, hash, materialize, now, DownloadPhase, JmDownloadMetadata, Result, Source,
+    adapter, error, hash, materialize, now, presence, DownloadPhase, JmDownloadMetadata,
+    LocalFiles, Result, Source,
 };
 use cloud_monitor::{
     isolated_staging_execution::StagingCheckpoint,
@@ -7,15 +8,15 @@ use cloud_monitor::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
 };
 use workbench_storage::{
-    Document, DownloadRecord, DownloadWorkspace, DownloadsDocument, LibraryPhase, WorkbenchStore,
-    MAX_DOWNLOAD_TASKS, MAX_SAFE_INTEGER,
+    Document, DownloadRecord, DownloadWorkspace, DownloadsDocument, LibraryDocument, LibraryPhase,
+    WorkbenchStore, MAX_DOWNLOAD_TASKS, MAX_SAFE_INTEGER,
 };
 
 static PLAN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -56,6 +57,7 @@ pub struct DownloadTask {
     pub library_entry_id: Option<String>,
     pub updated_at: u64,
     pub destination_display: String,
+    pub local_files: Option<LocalFiles>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +89,7 @@ struct Active {
 struct Runtime {
     plans: BTreeMap<String, Prepared>,
     active: Option<Active>,
+    local_files: BTreeMap<String, (u64, LocalFiles)>,
 }
 #[derive(Default)]
 pub struct DownloadService {
@@ -152,19 +155,6 @@ impl DownloadService {
         if document.value.tasks.len() >= MAX_DOWNLOAD_TASKS {
             return Err(error("DOWNLOAD_LIMIT_REACHED"));
         }
-        if library.value.records.iter().any(|r| {
-            r.item
-                .source_ref
-                .as_ref()
-                .is_some_and(|r| r.source == Source::Jm && r.work_id == metadata.work_id)
-        }) || document
-            .value
-            .tasks
-            .iter()
-            .any(|t| t.metadata.work_id == metadata.work_id && t.root.id == root_id)
-        {
-            return Err(error("DOWNLOAD_ALREADY_PRESENT"));
-        }
         let destination = destination(&metadata);
         let updated_at = now()?;
         let sequence = PLAN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -205,14 +195,7 @@ impl DownloadService {
             output_manifest_hash: None,
         };
         record.target_hash = binding(&record)?;
-        let directory = materialize::require_root(&record)?;
-        if directory
-            .names()?
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(&record.destination))
-        {
-            return Err(error("DOWNLOAD_DESTINATION_EXISTS"));
-        }
+        check_new_download(&record, &document.value, &library.value)?;
         if runtime.plans.len() >= 8 {
             runtime.plans.clear();
         }
@@ -256,25 +239,38 @@ impl DownloadService {
             return Err(error("DOWNLOAD_PLAN_STALE"));
         }
         require_library(store, &prepared.record)?;
-        let root = materialize::require_root(&prepared.record)?;
-        if root
-            .names()?
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(&prepared.record.destination))
-        {
-            return Err(error("DOWNLOAD_DESTINATION_EXISTS"));
+        let library = store.read_library_shared()?;
+        let missing = check_new_download(&prepared.record, &document.value, &library.value)?;
+        if !missing.is_empty() {
+            // Only explicitly confirmed, positively absent private index rows
+            // are removed. No selected-root files are changed. A failed later
+            // queue write leaves a corrected index and does not start work.
+            let mut updated = library.value.clone();
+            updated.records.retain(|r| !missing.contains(&r.item.id));
+            updated.updated_at = Some(now()?);
+            store.write_library(library.revision, updated)?;
         }
+        require_library(store, &prepared.record)?;
         document.value.tasks.push(prepared.record.clone());
         let saved = store.write_downloads(document.revision, document.value)?;
         runtime.plans.remove(plan_id);
-        Ok(snapshot(&saved, &runtime, false))
+        Ok(snapshot(&saved, &mut runtime, false, false))
     }
     /// This is a read-only projection. An orphaned running state is displayed
     /// paused; its persisted approval is not executed or silently changed.
     pub fn read(&self, store: &WorkbenchStore) -> Result<DownloadSnapshot> {
-        let runtime = self.lock()?;
+        self.read_with_file_check(store, true)
+    }
+    /// Frequent progress polling may reuse advisory file status. Authorization
+    /// in prepare/confirm always performs fresh checks independently of it.
+    pub fn read_with_file_check(
+        &self,
+        store: &WorkbenchStore,
+        recheck_files: bool,
+    ) -> Result<DownloadSnapshot> {
+        let mut runtime = self.lock()?;
         let document = self.load_shared(store)?;
-        Ok(snapshot(&document, &runtime, true))
+        Ok(snapshot(&document, &mut runtime, true, recheck_files))
     }
     pub fn control(
         &self,
@@ -283,7 +279,7 @@ impl DownloadService {
         expected_revision: u64,
         action: Control,
     ) -> Result<DownloadSnapshot> {
-        let runtime = self.lock()?;
+        let mut runtime = self.lock()?;
         let mut document = self.load(store)?;
         let task = document
             .value
@@ -335,7 +331,7 @@ impl DownloadService {
         task.revision = next(task.revision)?;
         task.updated_at = now()?;
         let saved = store.write_downloads(document.revision, document.value)?;
-        Ok(snapshot(&saved, &runtime, false))
+        Ok(snapshot(&saved, &mut runtime, false, false))
     }
     fn require_run(
         &self,
@@ -654,7 +650,7 @@ impl DownloadService {
             let _ = materialize::cleanup_completed(&completed, &staging);
         }
         self.clear(&expected.task_id, expected.task_revision);
-        self.read(store)
+        self.read_with_file_check(store, false)
     }
     pub fn index_failed(
         &self,
@@ -679,7 +675,7 @@ impl DownloadService {
             Ok(())
         })?;
         self.clear(&expected.task_id, expected.task_revision);
-        self.read(store)
+        self.read_with_file_check(store, false)
     }
     fn clear(&self, id: &str, revision: u64) {
         if let Ok(mut runtime) = self.runtime.lock() {
@@ -800,11 +796,94 @@ fn destination(metadata: &JmDownloadMetadata) -> String {
     }
     name.trim_end_matches([' ', '.']).to_owned()
 }
+/// Returns only matching private index rows whose recorded paths are positively
+/// absent. This never grants adoption of an existing or partially missing tree.
+fn check_new_download(
+    record: &DownloadRecord,
+    downloads: &DownloadsDocument,
+    library: &LibraryDocument,
+) -> Result<BTreeSet<String>> {
+    if library.root.as_ref() != Some(&record.root) || library.generation != record.generation {
+        return Err(error("DOWNLOAD_ROOT_CHANGED"));
+    }
+    if matches!(library.phase, LibraryPhase::Reading | LibraryPhase::Paused) {
+        return Err(error("LIBRARY_BUSY"));
+    }
+    let root = materialize::require_root(record)?;
+    for old in &downloads.tasks {
+        if old.metadata.work_id != record.metadata.work_id || old.root.id != record.root.id {
+            continue;
+        }
+        if old.phase != DownloadPhase::Downloaded {
+            return Err(error("DOWNLOAD_ALREADY_PRESENT"));
+        }
+        // Picking a recreated root authorizes its new identity. A completion
+        // bound to the old identity remains unavailable history, not a duplicate
+        // in this new root. Merely re-reading the old root cannot reach here.
+        if old.root.file_key != record.root.file_key {
+            continue;
+        }
+        match presence::check(old) {
+            LocalFiles::Missing => {}
+            LocalFiles::Present => return Err(error("DOWNLOAD_ALREADY_PRESENT")),
+            LocalFiles::Incomplete => return Err(error("DOWNLOAD_LOCAL_FILES_INCOMPLETE")),
+            LocalFiles::Unavailable => return Err(error("DOWNLOAD_LOCAL_FILES_UNAVAILABLE")),
+        }
+    }
+    let mut missing = BTreeSet::new();
+    for old in &library.records {
+        let matches_reference = old.item.source_ref.as_ref().is_some_and(|reference| {
+            reference.source == Source::Jm && reference.work_id == record.metadata.work_id
+        });
+        let previous_association = downloads.tasks.iter().any(|task| {
+            task.root == record.root
+                && task.metadata.work_id == record.metadata.work_id
+                && task.library_entry_id.as_ref() == Some(&old.item.id)
+        });
+        if !matches_reference {
+            if old.item.relative_path == record.destination
+                || (old.manual_override && previous_association)
+            {
+                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
+            }
+            continue;
+        }
+        if presence::probe_path(&root, &old.item.relative_path)?.is_some() {
+            return Err(error("DOWNLOAD_ALREADY_PRESENT"));
+        }
+        missing.insert(old.item.id.clone());
+    }
+    if root
+        .names()?
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(&record.destination))
+    {
+        return Err(error("DOWNLOAD_DESTINATION_EXISTS"));
+    }
+    materialize::require_root(record)?;
+    Ok(missing)
+}
+
 fn snapshot(
     document: &Document<DownloadsDocument>,
-    runtime: &Runtime,
+    runtime: &mut Runtime,
     restore: bool,
+    recheck_files: bool,
 ) -> DownloadSnapshot {
+    runtime.local_files.retain(|id, (revision, _)| {
+        document.value.tasks.iter().any(|task| {
+            task.id == *id && task.revision == *revision && task.phase == DownloadPhase::Downloaded
+        })
+    });
+    for task in &document.value.tasks {
+        if task.phase == DownloadPhase::Downloaded
+            && (recheck_files || !runtime.local_files.contains_key(&task.id))
+        {
+            runtime
+                .local_files
+                .insert(task.id.clone(), (task.revision, presence::check(task)));
+        }
+    }
     DownloadSnapshot {
         revision: document.revision,
         tasks: document
@@ -849,6 +928,7 @@ fn snapshot(
                     library_entry_id: t.library_entry_id.clone(),
                     updated_at: t.updated_at,
                     destination_display: display(t),
+                    local_files: runtime.local_files.get(&t.id).map(|(_, state)| *state),
                 }
             })
             .collect(),

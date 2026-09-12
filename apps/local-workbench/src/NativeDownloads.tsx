@@ -9,6 +9,10 @@ import {
   DownloadController,
   downloadErrorMessage,
   downloadPhaseLabel,
+  downloadNeedsAttention,
+  downloadTaskLabel,
+  filterDownloadTasks,
+  isDownloadPresent,
 } from "./download-runtime.ts";
 import { Icon } from "./icons.tsx";
 import "./native-downloads.css";
@@ -52,7 +56,11 @@ export function useDownloads(
     );
     if (
       completed.current &&
-      [...next].some((key) => !completed.current!.has(key))
+      state.snapshot.tasks.some(
+        (task) =>
+          isDownloadPresent(task) &&
+          !completed.current!.has(task.id + ":" + task.libraryEntryId),
+      )
     )
       callback.current();
     completed.current = next;
@@ -61,7 +69,7 @@ export function useDownloads(
 }
 export type DownloadsState = ReturnType<typeof useDownloads>;
 export const unfinishedDownloadCount = (tasks: DownloadTask[]) =>
-  tasks.filter((task) => task.phase !== "downloaded").length;
+  tasks.filter((task) => !isDownloadPresent(task)).length;
 export function downloadStatusText(
   downloads: Pick<DownloadsState, "ready" | "snapshot" | "error">,
 ) {
@@ -73,7 +81,7 @@ export function downloadStatusText(
   if (running) return `${downloadPhaseLabel(running.phase)} · ${running.title}`;
   return downloads.snapshot.tasks.some((task) => task.phase === "paused")
     ? "下载已暂停"
-    : downloads.snapshot.tasks.some((task) => task.phase === "error")
+    : downloads.snapshot.tasks.some(downloadNeedsAttention)
       ? "下载任务需要处理"
       : "下载队列就绪";
 }
@@ -222,6 +230,7 @@ export function NativeDownloads({
   onOpenAccounts,
   onConfirmed,
   onOpenDownloaded,
+  onReprepare,
   showFeedback,
 }: {
   downloads: DownloadsState;
@@ -235,18 +244,19 @@ export function NativeDownloads({
   onOpenAccounts(): void;
   onConfirmed(): void;
   onOpenDownloaded(task: DownloadTask): void;
+  onReprepare(task: DownloadTask): void;
   showFeedback: boolean;
 }) {
   const [filter, setFilter] = useState("all");
+  useEffect(() => {
+    if (!active) return;
+    void downloads.controller.read(true);
+    const recheck = () => void downloads.controller.read(true);
+    window.addEventListener("focus", recheck);
+    return () => window.removeEventListener("focus", recheck);
+  }, [active, downloads.controller]);
   const tasks = useMemo(
-    () =>
-      downloads.snapshot.tasks.filter(
-        (task) =>
-          filter === "all" ||
-          (filter === "active" &&
-            !["error", "downloaded"].includes(task.phase)) ||
-          task.phase === filter,
-      ),
+    () => filterDownloadTasks(downloads.snapshot.tasks, filter),
     [downloads.snapshot, filter],
   );
   return (
@@ -365,6 +375,7 @@ export function NativeDownloads({
             <button
               key={value}
               aria-pressed={filter === value}
+              data-testid={"download-filter-" + value}
               className={filter === value ? "active" : ""}
               onClick={() => setFilter(value)}
             >
@@ -376,14 +387,15 @@ export function NativeDownloads({
           {tasks.map((task) => (
             <article
               className={
-                "task-card" + (task.phase === "error" ? " task-error" : "")
+                "task-card" +
+                (downloadNeedsAttention(task) ? " task-error" : "")
               }
               key={task.id}
               data-testid={"download-task-" + task.id}
             >
               <div className="download-task-icon">
                 <Icon
-                  name={task.phase === "downloaded" ? "check" : "download"}
+                  name={isDownloadPresent(task) ? "check" : "download"}
                   size={28}
                 />
               </div>
@@ -397,7 +409,7 @@ export function NativeDownloads({
                     className="status"
                     data-testid={"download-phase-" + task.id}
                   >
-                    {downloadPhaseLabel(task.phase)}
+                    {downloadTaskLabel(task)}
                   </span>
                 </div>
                 <div
@@ -405,7 +417,12 @@ export function NativeDownloads({
                     "progress-track" + (task.phase === "error" ? " error" : "")
                   }
                   role="progressbar"
-                  aria-label={task.title + " 下载图片"}
+                  aria-label={
+                    task.title +
+                    (task.phase === "downloaded"
+                      ? " 历史完成进度"
+                      : " 下载图片")
+                  }
                   aria-valuenow={
                     task.filesTotal === null ? undefined : task.filesDone
                   }
@@ -422,6 +439,7 @@ export function NativeDownloads({
                 </div>
                 <div className="task-bottom">
                   <span>
+                    {task.phase === "downloaded" && "历史完成："}
                     {task.filesDone} / {task.filesTotal ?? "未知"} 张 ·{" "}
                     {task.bytesDone.toLocaleString()} 字节
                   </span>
@@ -448,7 +466,7 @@ export function NativeDownloads({
                             : "重试"}
                       </button>
                     ))}
-                    {task.phase === "downloaded" && (
+                    {isDownloadPresent(task) && (
                       <button
                         className="text-button"
                         data-testid={"download-open-" + task.id}
@@ -457,6 +475,17 @@ export function NativeDownloads({
                         查看电脑文件
                       </button>
                     )}
+                    {task.phase === "downloaded" &&
+                      task.localFiles === "missing" && (
+                        <button
+                          className="text-button"
+                          disabled={downloads.busy || !downloads.ready}
+                          data-testid={"download-reprepare-" + task.id}
+                          onClick={() => onReprepare(task)}
+                        >
+                          重新准备下载
+                        </button>
+                      )}
                   </div>
                 </div>
                 {task.errorCode && (
@@ -474,11 +503,36 @@ export function NativeDownloads({
                       : "正在暂停，当前图片处理结束后可继续。"}
                   </p>
                 )}
-                {task.phase === "downloaded" && (
+                {isDownloadPresent(task) && (
                   <p className="quiet">
                     电脑文件已保存并登记，手机名单未改变。
                   </p>
                 )}
+                {task.phase === "downloaded" &&
+                  task.localFiles === "missing" && (
+                    <p className="quiet">
+                      原保存位置的作品文件已移除，保留历史完成记录。重新下载需要再次确认。
+                    </p>
+                  )}
+                {task.phase === "downloaded" &&
+                  task.localFiles === "incomplete" && (
+                    <p className="quiet">
+                      原目录或文件与这条完成记录不匹配，请核对电脑文件。历史完成记录保留。
+                    </p>
+                  )}
+                {task.phase === "downloaded" &&
+                  task.localFiles === "unavailable" && (
+                    <p className="quiet">
+                      保存目录当前不可用，尚不能确认文件状态。请重新选择可访问的保存目录。
+                      <button
+                        className="text-button"
+                        data-testid={"download-select-directory-" + task.id}
+                        onClick={onChooseLibrary}
+                      >
+                        选择电脑目录
+                      </button>
+                    </p>
+                  )}
               </div>
             </article>
           ))}

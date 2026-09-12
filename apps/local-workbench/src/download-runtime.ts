@@ -7,9 +7,11 @@ import type {
   DownloadPhase,
   DownloadPlan,
   DownloadScope,
+  DownloadSource,
   DownloadSnapshot,
   DownloadTask,
 } from "./download-types.ts";
+import type { AccountSummary } from "./source-types.ts";
 export class DownloadError extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -42,8 +44,11 @@ const opaque = (value: unknown): string =>
     : invalid();
 const rootIdentity = (value: unknown): string =>
   typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : invalid();
-const jmId = (value: unknown): string =>
-  typeof value === "string" && /^[1-9]\d{0,19}$/.test(value)
+const downloadSource = (value: unknown): DownloadSource =>
+  value === "JM" || value === "Pica" ? value : invalid();
+const workId = (source: DownloadSource, value: unknown): string =>
+  typeof value === "string" &&
+  (source === "JM" ? /^[1-9]\d{0,19}$/ : /^[a-f0-9]{24}$/).test(value)
     ? value
     : invalid();
 const actions: DownloadAction[] = ["pause", "resume", "retry"];
@@ -56,23 +61,41 @@ const phases: DownloadPhase[] = [
   "error",
   "downloaded",
 ];
-function scope(value: DownloadScope): DownloadScope {
-  if (value.source !== "JM") return invalid();
-  return { source: "JM", sessionId: opaque(value.sessionId) };
+function scope(value: DownloadScope, allowEmpty = false): DownloadScope {
+  return {
+    source: downloadSource(value.source),
+    sessionId:
+      allowEmpty && value.sessionId === "" ? "" : opaque(value.sessionId),
+  };
 }
+export function getDownloadScope(
+  accounts: AccountSummary[],
+  source: DownloadSource,
+): DownloadScope | null {
+  const account = accounts.find((account) => account.source === source);
+  return account?.state === "connected" && account.sessionId
+    ? { source, sessionId: account.sessionId }
+    : null;
+}
+export const canControlDownload = (
+  task: DownloadTask,
+  action: DownloadAction,
+  current: DownloadScope | null,
+) =>
+  task.allowedActions.includes(action) &&
+  (current === null
+    ? action === "pause"
+    : current.source === task.source &&
+      (action === "pause" || Boolean(current.sessionId)));
 export function validateDownloadPlan(value: unknown): DownloadPlan {
   const raw = record(value);
-  if (
-    raw.source !== "JM" ||
-    !Array.isArray(raw.authors) ||
-    raw.authors.length > 1000
-  )
+  if (!Array.isArray(raw.authors) || raw.authors.length > 1000)
     return invalid();
   return {
     planId: rootIdentity(raw.planId),
     revision: integer(raw.revision),
-    source: "JM",
-    workId: jmId(raw.workId),
+    source: downloadSource(raw.source),
+    workId: workId(downloadSource(raw.source), raw.workId),
     title: text(raw.title),
     authors: raw.authors.map((value) => text(value)),
     destinationDisplay: text(raw.destinationDisplay),
@@ -87,7 +110,6 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
     const task = record(value);
     if (integer(task.revision) === 0) return invalid();
     if (
-      task.source !== "JM" ||
       !phases.includes(task.phase as DownloadPhase) ||
       !Array.isArray(task.allowedActions) ||
       task.allowedActions.some((action) => !actions.includes(action)) ||
@@ -138,8 +160,8 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
     return {
       id: rootIdentity(task.id),
       revision: integer(task.revision),
-      source: "JM",
-      workId: jmId(task.workId),
+      source: downloadSource(task.source),
+      workId: workId(downloadSource(task.source), task.workId),
       title: text(task.title),
       phase: task.phase,
       filesDone,
@@ -199,6 +221,8 @@ export function createDownloadAdapter(
       const plan = validateDownloadPlan(
         await call("jm_download_prepare", checked),
       );
+      if (plan.source !== checked.scope.source)
+        throw new DownloadError("DOWNLOAD_SOURCE_MISMATCH");
       if (
         plan.rootId !== checked.rootId ||
         plan.generation !== checked.generation
@@ -217,7 +241,7 @@ export function createDownloadAdapter(
       if (!actions.includes(action)) return invalid();
       return validateDownloadSnapshot(
         await call("jm_download_control", {
-          scope: scope(current),
+          scope: scope(current, action === "pause"),
           taskId: rootIdentity(taskId),
           expectedRevision: integer(expectedRevision),
           action,
@@ -231,8 +255,10 @@ export function downloadErrorMessage(cause: unknown): string {
     typeof cause === "string"
       ? cause
       : ((cause as { code?: string })?.code ?? "DOWNLOAD_UNAVAILABLE");
-  if (/SESSION|AUTH|ACCOUNT|CREDENTIAL/.test(code))
-    return "JM 会话已改变或需要重新登录。请连接 JM 后再试。";
+  if (/SESSION|AUTH|ACCOUNT|CREDENTIAL|TOKEN/.test(code))
+    return "来源会话已改变或需要重新登录。请连接对应来源的账号后再试。";
+  if (code === "DOWNLOAD_SOURCE_MISMATCH")
+    return "任务来源与当前账号不一致，请使用对应来源的账号。";
   if (code === "DOWNLOAD_LOCAL_FILES_INCOMPLETE")
     return "原目录或文件已变化，请先核对电脑文件。";
   if (code === "DOWNLOAD_LOCAL_FILES_UNAVAILABLE")
@@ -248,6 +274,8 @@ export function downloadErrorMessage(cause: unknown): string {
     return "作品已保存，但电脑文件登记尚未完成。重试会先核对已有结果。";
   if (code === "DOWNLOAD_METADATA_INVALID")
     return "来源作品信息暂时无法确认，请重新读取作品后再试。";
+  if (code === "DOWNLOAD_SOURCE_INCOMPLETE")
+    return "来源目录暂未读取完整，当前下载还不能完成。已保留进度，请稍后重试。";
   if (/STAGING_CHANGED|SOURCE_CHANGED|STAGING_CONFLICT/.test(code))
     return "已有进度或来源内容发生变化，请核对当前任务后重试。";
   if (/EXISTS|DUPLICATE|ALREADY/.test(code))
@@ -261,10 +289,10 @@ export function downloadErrorMessage(cause: unknown): string {
       code,
     )
   )
-    return "请输入有效的 JM 编号或受支持的作品链接。";
+    return "请输入所选来源的有效编号或受支持的作品链接。";
   if (/INCOMPLETE|VERIFY|MANIFEST|PROOF/.test(code))
     return "作品尚未通过完整校验，已保留进度，可按任务提示重试。";
-  if (code === "DESKTOP_REQUIRED") return "请在桌面应用中下载 JM 作品。";
+  if (code === "DESKTOP_REQUIRED") return "请在桌面应用中下载作品。";
   return "下载暂时未能完成。已显示内容会保留，请重新读取或按任务提示重试。";
 }
 export const downloadPhaseLabel = (phase: DownloadPhase) =>
@@ -421,6 +449,8 @@ export class DownloadController {
       await this.readPromise;
       if (epoch !== this.epoch || token !== this.planEpoch) return;
       const plan = await this.adapter.prepare(context, input);
+      if (plan.source !== context.scope.source)
+        throw new DownloadError("DOWNLOAD_SOURCE_MISMATCH");
       if (epoch === this.epoch && token === this.planEpoch) {
         this.preparedContext = contextKey(context);
         this.publish({ plan });
@@ -458,7 +488,10 @@ export class DownloadController {
       if (epoch !== this.epoch) return false;
       if (
         !next.tasks.some(
-          (task) => task.id === plan.planId && task.workId === plan.workId,
+          (task) =>
+            task.id === plan.planId &&
+            task.source === plan.source &&
+            task.workId === plan.workId,
         )
       )
         return invalid();
@@ -479,11 +512,20 @@ export class DownloadController {
     }
   }
   async control(
-    current: DownloadScope,
+    current: DownloadScope | null,
     task: DownloadTask,
     action: DownloadAction,
   ): Promise<void> {
     if (this.state.busy || !task.allowedActions.includes(action)) return;
+    if (!canControlDownload(task, action, current)) {
+      this.publish({
+        error: downloadErrorMessage(
+          current ? "DOWNLOAD_SOURCE_MISMATCH" : "DOWNLOAD_SESSION_REQUIRED",
+        ),
+      });
+      return;
+    }
+    const taskScope = current ?? { source: task.source, sessionId: "" };
     const epoch = this.epoch;
     this.publish({ busy: true, error: "" });
     clearTimeout(this.timer);
@@ -491,11 +533,20 @@ export class DownloadController {
       await this.readPromise;
       if (epoch !== this.epoch) return;
       const next = await this.adapter.control(
-        current,
+        taskScope,
         task.id,
         task.revision,
         action,
       );
+      if (
+        !next.tasks.some(
+          (result) =>
+            result.id === task.id &&
+            result.source === task.source &&
+            result.workId === task.workId,
+        )
+      )
+        return invalid();
       if (epoch === this.epoch) this.accept(next);
     } catch (cause) {
       if (epoch === this.epoch)

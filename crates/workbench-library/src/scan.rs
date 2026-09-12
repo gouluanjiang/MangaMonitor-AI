@@ -554,9 +554,13 @@ impl WorkScan {
         let invalid = || error("LIBRARY_DOWNLOAD_INCOMPLETE");
         let layout = self.managed_layout.as_ref().ok_or_else(invalid)?;
         let manifest = self.managed_manifest.as_ref().ok_or_else(invalid)?;
+        let source = match layout.source.as_str() {
+            "JM" => Source::Jm,
+            "Pica" => Source::Pica,
+            _ => return Err(invalid()),
+        };
         if layout.version != 1
             || layout.layout_version != 1
-            || layout.source != "JM"
             || !(1..=10_000).contains(&layout.expected_pages)
             || !opaque_hash(&layout.task_id)
             || manifest.version != 1
@@ -578,7 +582,7 @@ impl WorkScan {
                 .source_ref
                 .as_ref()
                 .is_none_or(|reference| {
-                    reference.source != Source::Jm || reference.work_id != layout.work_id
+                    reference.source != source || reference.work_id != layout.work_id
                 })
             || self.record.item.page_count != Some(layout.expected_pages)
         {
@@ -600,11 +604,22 @@ impl WorkScan {
             }
             if let Some((chapter, name)) = file.relative_path.split_once('/') {
                 let (order, id) = chapter.split_once('-').ok_or_else(invalid)?;
+                let chapter_id_valid = match source {
+                    Source::Jm => {
+                        !id.is_empty()
+                            && id.bytes().all(|v| v.is_ascii_digit())
+                            && id.parse::<u64>().is_ok_and(|v| v > 0)
+                    }
+                    Source::Pica => {
+                        id.len() == 24
+                            && id
+                                .bytes()
+                                .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
+                    }
+                };
                 if order.is_empty()
                     || !order.bytes().all(|v| v.is_ascii_digit())
-                    || id.is_empty()
-                    || !id.bytes().all(|v| v.is_ascii_digit())
-                    || id.parse::<u64>().ok().is_none_or(|v| v == 0)
+                    || !chapter_id_valid
                     || name.contains('/')
                 {
                     return Err(invalid());
@@ -612,7 +627,13 @@ impl WorkScan {
                 chapters.insert(chapter.to_owned());
                 if name != "章节元数据.json" {
                     let (number, extension) = name.rsplit_once('.').ok_or_else(invalid)?;
-                    if !matches!(extension, "jpg" | "webp" | "gif")
+                    let format_valid = match source {
+                        Source::Jm => matches!(extension, "jpg" | "webp" | "gif"),
+                        Source::Pica => {
+                            matches!(extension, "jpg" | "jpeg" | "png" | "webp" | "gif")
+                        }
+                    };
+                    if !format_valid
                         || number.is_empty()
                         || !number.bytes().all(|v| v.is_ascii_digit())
                         || number.parse::<u64>().ok().is_none_or(|v| v == 0)

@@ -2,11 +2,21 @@
 
 Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
 
-## Current follow-up: removed download files and re-download (2026-09-12)
+## Current position: Pica single-work desktop download batch (2026-09-12)
+
+The user requested the next batch after accepting the JM performance and re-download fixes. Read [the Pica batch report](PICA_SINGLE_DOWNLOAD_BATCH_2026-09-12.md) and [current roadmap](ROADMAP_AFTER_PICA_DOWNLOAD_2026-09-12.md). Pica now enters the same explicit desktop plan, confirmation, isolated execution, compatible new-directory materialization and PC registration path. The user will choose a real acceptance sample later and test personally; do not initiate a real download or interpret synthetic CI as user acceptance.
+
+Preserve old JM ledger/binding behavior, source-scoped control and deduplication, current-session tokens confined to native memory, complete Pica pagination, the 20-image pipeline and original Pica image formats. Phone marks and PC media remain independent. Formal suites/builds remain CI-only, version stays 0.3.4 for Dev delivery, PR #19 stays draft/unmerged and production remains disabled. Exact commit/CI/artifact evidence belongs to the final local delivery report and PR update; no documentation-only duplicate build. Next feature batch after acceptance is batch queue/history and cross-source identity confirmation.
+
+## Accepted position before this batch: JM download follow-ups (2026-09-12)
+
+The user has now confirmed "速度显著提升" and "重新下载也验收完成" for the integrated Dev delivery at head `9e558d251cdc0b5850ef2cd35b5441395e047688`. Record the speed improvement as user-reported real-use acceptance and deletion/re-download as accepted. These two follow-ups have no remaining acceptance action; precise seconds or parity with the upstream downloader were not measured. Existing CI/artifact evidence remains unchanged. This turn updates acceptance documents only, queued for the next necessary code push; no duplicate tests, rebuild, installer or new feature execution. Next feature batch is Pica single-work download.
+
+## Accepted follow-up: removed download files and re-download (2026-09-12)
 
 Before the speed retest, the user reported that externally removed works still appeared downloaded and blocked a new preparation. Read [the file-presence repair](DOWNLOAD_FILE_PRESENCE_2026-09-12.md). Preserve historical completion and separately project current local files as present, missing, incomplete or unavailable. Explicit reads/queue entry/window focus recheck recorded paths and sizes; progress polling reuses process-local results. No full library scan or image-content hashing is added to polling.
 
-Prepare and confirm independently check actual paths. A proven missing completed work can receive a new explicit plan/task; an inaccessible root is not absence. Confirm retires only proven missing same-source private index entries through CAS so existing strict registration accepts the newly created directory. Never reuse old completion/staging proof, overwrite surviving files, alter phone marks or infer deletion from an IO error. Root identity, task/session approval and output proofs remain. All formal validation/builds stay in CI. Deliver a new Dev EXE at 0.3.4 with a local result report, no installer. Both this real deletion/re-download check and the upstream-performance timing remain user acceptance items. Next feature batch remains Pica single-work downloads.
+Prepare and confirm independently check actual paths. A proven missing completed work can receive a new explicit plan/task; an inaccessible root is not absence. Confirm retires only proven missing same-source private index entries through CAS so existing strict registration accepts the newly created directory. Never reuse old completion/staging proof, overwrite surviving files, alter phone marks or infer deletion from an IO error. Root identity, task/session approval and output proofs remain. All formal validation/builds stay in CI. Deliver a new Dev EXE at 0.3.4 with a local result report, no installer. The user accepted deletion/re-download and reported significant speed improvement on the integrated delivery. Next feature batch remains Pica single-work downloads.
 
 ## Previous follow-up: upstream-style JM parallel download pipeline (2026-09-12)
 

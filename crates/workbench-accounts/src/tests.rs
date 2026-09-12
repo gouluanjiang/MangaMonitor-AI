@@ -61,6 +61,7 @@ struct FakeState {
 struct FakeBackend(Arc<FakeState>);
 struct FakeSession {
     source: Source,
+    name: String,
 }
 
 fn credential(source: Source, name: &str) -> StoredCredential {
@@ -103,6 +104,10 @@ fn page(source: Source, favorite: bool) -> SourcePage {
 
 impl SourceBackend for FakeBackend {
     type Session = FakeSession;
+
+    fn pica_download_credential(&self, session: &Self::Session) -> Result<StoredCredential> {
+        Ok(credential(session.source, &session.name))
+    }
     async fn login(
         &self,
         source: Source,
@@ -113,7 +118,10 @@ impl SourceBackend for FakeBackend {
             return Err(AccountError::new("LOGIN_REJECTED"));
         }
         Ok(Authenticated {
-            session: FakeSession { source },
+            session: FakeSession {
+                source,
+                name: username.into(),
+            },
             account: SourceAccount {
                 source,
                 account_id: username.into(),
@@ -1144,6 +1152,78 @@ async fn session_leases_are_revoked_by_logout_and_cannot_revive_after_login() {
         error(service.session_lease(Source::Jm, &first).await),
         "SESSION_CHANGED"
     );
+}
+
+#[tokio::test]
+async fn pica_download_session_is_native_only_source_bound_and_revoked_on_account_change() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let jm_id = login(&service, Source::Jm, "jm-only", false).await;
+    let pica_id = login(&service, Source::Pica, "pica-first", false).await;
+    let jm = service.download_session(Source::Jm, &jm_id).await.unwrap();
+    assert_eq!(jm.source(), Source::Jm);
+    assert!(jm.pica_token().unwrap().is_none());
+    assert_eq!(
+        error(service.download_session(Source::Pica, &jm_id).await),
+        "SESSION_CHANGED"
+    );
+    let first = service
+        .download_session(Source::Pica, &pica_id)
+        .await
+        .unwrap();
+    assert_eq!(first.source(), Source::Pica);
+    assert_eq!(
+        first.pica_token().unwrap(),
+        Some("server-session-pica-first")
+    );
+    assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 0);
+    let next_id = login(&service, Source::Pica, "pica-next", false).await;
+    assert_eq!(error(first.pica_token()), "SESSION_CHANGED");
+    let next = service
+        .download_session(Source::Pica, &next_id)
+        .await
+        .unwrap();
+    assert_eq!(next.pica_token().unwrap(), Some("server-session-pica-next"));
+    service.logout(Source::Pica, Some(&next_id)).await.unwrap();
+    assert_eq!(error(next.pica_token()), "SESSION_CHANGED");
+    assert!(jm.require_current().is_ok());
+    assert_eq!(
+        error(service.download_session(Source::Pica, &next_id).await),
+        "SESSION_CHANGED"
+    );
+}
+
+#[tokio::test]
+async fn restored_pica_download_lease_observes_external_credential_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let vault = SharedVault::default();
+    let first = service(&root, FakeBackend::default(), vault.clone());
+    login(&first, Source::Pica, "remembered", true).await;
+    drop(first);
+    let restored = service(&root, FakeBackend::default(), vault.clone());
+    let status = restored.accounts(false).await;
+    let pica_id = status
+        .iter()
+        .find(|v| v.source == Source::Pica)
+        .unwrap()
+        .session_id
+        .as_deref()
+        .unwrap();
+    let lease = restored
+        .download_session(Source::Pica, pica_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        lease.pica_token().unwrap(),
+        Some("server-session-remembered")
+    );
+    vault.delete(Source::Pica).unwrap();
+    assert_eq!(
+        error(restored.download_session(Source::Pica, pica_id).await),
+        "SESSION_CHANGED"
+    );
+    assert_eq!(error(lease.pica_token()), "SESSION_CHANGED");
 }
 
 #[tokio::test]

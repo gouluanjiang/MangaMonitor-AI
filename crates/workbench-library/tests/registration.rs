@@ -594,3 +594,161 @@ fn targeted_registration_also_requires_the_managed_completion_marker() {
     assert_eq!(state.items[0].source_ref, Some(reference("123")));
     assert_eq!(state.items[0].page_count, Some(2));
 }
+
+fn managed_pica_work(root: &Path) -> serde_json::Value {
+    use sha2::{Digest, Sha256};
+    let id = "0123456789abcdef01234567";
+    let chapter_id = "fedcba987654321001234567";
+    let directory = root.join("pica work");
+    let chapter = format!("0001-{chapter_id}");
+    fs::create_dir_all(directory.join(&chapter)).unwrap();
+    let marker = serde_json::json!({"version":1,"source":"Pica","workId":id,"expectedPages":4,"layoutVersion":1,"taskId":"a".repeat(64)});
+    let metadata = serde_json::json!({"id":id,"title":"Synthetic Pica work","author":"Synthetic author","pagesCount":4,"tags":[],"chapterInfos":[{"chapterId":chapter_id,"imageCount":4}]});
+    fs::write(
+        directory.join("_mangamonitor-layout.json"),
+        serde_json::to_vec(&marker).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        directory.join("元数据.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    fs::write(directory.join(format!("{chapter}/章节元数据.json")), b"{}").unwrap();
+    let mut cover = Cursor::new(Vec::new());
+    DynamicImage::new_rgb8(2, 3)
+        .write_to(&mut cover, ImageFormat::Jpeg)
+        .unwrap();
+    fs::write(directory.join("cover.jpg"), cover.into_inner()).unwrap();
+    let mut paths = vec![
+        "_mangamonitor-layout.json".to_owned(),
+        "元数据.json".into(),
+        "cover.jpg".into(),
+        format!("{chapter}/章节元数据.json"),
+    ];
+    for (index, (extension, format)) in [
+        ("jpeg", ImageFormat::Jpeg),
+        ("png", ImageFormat::Png),
+        ("webp", ImageFormat::WebP),
+        ("gif", ImageFormat::Gif),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(2, 3)
+            .write_to(&mut bytes, format)
+            .unwrap();
+        let path = format!("{chapter}/{:03}.{extension}", index + 1);
+        fs::write(directory.join(&path), bytes.into_inner()).unwrap();
+        paths.push(path);
+    }
+    let files: Vec<_> = paths.into_iter().map(|path| {
+        let bytes = fs::read(directory.join(&path)).unwrap();
+        serde_json::json!({"relativePath":path,"sizeBytes":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes))})
+    }).collect();
+    serde_json::json!({"version":1,"origin":"manual","taskId":"a".repeat(64),"approvalRevision":1,"targetHash":"b".repeat(64),"source":"Pica","workId":id,"rootId":"c".repeat(64),"generation":1,"layoutVersion":1,"files":files})
+}
+
+#[test]
+fn pica_managed_original_formats_register_and_rescan_without_changing_phone_or_files() {
+    let mut fixture = fixture();
+    let manifest = managed_pica_work(fixture.media.path());
+    write_final(fixture.media.path(), "pica work", &manifest);
+    let phone_before = fixture.store.read_phone_library().unwrap();
+    let reference = LibraryReference {
+        source: Source::Pica,
+        work_id: "0123456789abcdef01234567".into(),
+    };
+    let state = fixture
+        .service
+        .register_completed(
+            &fixture.store,
+            fixture.initial.root_id.as_deref().unwrap(),
+            fixture.initial.generation,
+            "pica work",
+            &reference,
+            4,
+        )
+        .unwrap();
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].source_ref, Some(reference.clone()));
+    assert_eq!(state.items[0].page_count, Some(4));
+    let rescanned = rescan(&mut fixture);
+    assert_eq!(rescanned.phase, LibraryPhase::Complete);
+    assert_eq!(rescanned.items[0].source_ref, Some(reference));
+    assert_eq!(fixture.store.read_phone_library().unwrap(), phone_before);
+    use sha2::{Digest, Sha256};
+    for file in manifest["files"].as_array().unwrap() {
+        let bytes = fs::read(
+            fixture
+                .media
+                .path()
+                .join("pica work")
+                .join(file["relativePath"].as_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&bytes)),
+            file["sha256"].as_str().unwrap()
+        );
+    }
+}
+
+#[test]
+fn pica_managed_partial_or_cross_source_completion_is_not_indexed() {
+    for variant in ["missing page", "wrong source", "wrong chapter id"] {
+        let mut fixture = fixture();
+        let mut manifest = managed_pica_work(fixture.media.path());
+        match variant {
+            "missing page" => fs::remove_file(
+                fixture
+                    .media
+                    .path()
+                    .join("pica work/0001-fedcba987654321001234567/002.png"),
+            )
+            .unwrap(),
+            "wrong source" => manifest["source"] = "JM".into(),
+            "wrong chapter id" => {
+                let directory = fixture.media.path().join("pica work");
+                fs::rename(
+                    directory.join("0001-fedcba987654321001234567"),
+                    directory.join("0001-123"),
+                )
+                .unwrap();
+                for file in manifest["files"].as_array_mut().unwrap() {
+                    let path = file["relativePath"]
+                        .as_str()
+                        .unwrap()
+                        .replace("0001-fedcba987654321001234567", "0001-123");
+                    file["relativePath"] = path.into();
+                }
+            }
+            _ => unreachable!(),
+        }
+        write_final(fixture.media.path(), "pica work", &manifest);
+        let reference = LibraryReference {
+            source: Source::Pica,
+            work_id: "0123456789abcdef01234567".into(),
+        };
+        let before = persisted(&fixture);
+        assert!(
+            fixture
+                .service
+                .register_completed(
+                    &fixture.store,
+                    fixture.initial.root_id.as_deref().unwrap(),
+                    fixture.initial.generation,
+                    "pica work",
+                    &reference,
+                    4
+                )
+                .is_err(),
+            "{variant}"
+        );
+        assert_eq!(persisted(&fixture), before);
+        let state = rescan(&mut fixture);
+        assert!(state.items.is_empty(), "{variant}");
+        assert_eq!(state.phase, LibraryPhase::Error, "{variant}");
+    }
+}

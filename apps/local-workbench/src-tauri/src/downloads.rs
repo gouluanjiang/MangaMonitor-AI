@@ -5,18 +5,18 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tauri::{Runtime, State, WebviewWindow};
-use workbench_accounts::{QueryKind, SessionLease, Source};
+use workbench_accounts::{DownloadSession, QueryKind, Source};
 use workbench_downloads::{
     Control, DownloadPlan, DownloadService, DownloadSnapshot, JmDownloadMetadata,
 };
 use workbench_storage::{LibraryReference, Source as LibrarySource, StoreError, WorkbenchStore};
 
 /// Session bindings are deliberately process-local. A reopened task needs an
-/// explicit continue action under the currently authenticated JM session.
+/// explicit continue action under the currently authenticated source session.
 #[derive(Default)]
 pub(crate) struct DesktopDownloads {
     service: DownloadService,
-    plans: Mutex<HashMap<String, SessionLease>>,
+    plans: Mutex<HashMap<String, DownloadSession>>,
 }
 
 #[derive(Deserialize)]
@@ -30,18 +30,26 @@ fn error(code: &'static str) -> StoreError {
     StoreError { code }
 }
 
-fn parse_input(input: &str) -> Result<String, StoreError> {
+fn parse_input(source: Source, input: &str) -> Result<String, StoreError> {
     let trimmed = input.trim();
-    let normalized = if trimmed
-        .get(..2)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("JM"))
+    let normalized = if source == Source::Jm
+        && trimmed
+            .get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("JM"))
         && trimmed[2..].bytes().all(|c| c.is_ascii_digit())
     {
         &trimmed[2..]
     } else {
         trimmed
     };
-    workbench_sources::parse_work_id(Source::Jm, normalized).map_err(|e| error(e.code))
+    workbench_sources::parse_work_id(source, normalized).map_err(|e| error(e.code))
+}
+
+fn storage_source(source: Source) -> LibrarySource {
+    match source {
+        Source::Jm => LibrarySource::Jm,
+        Source::Pica => LibrarySource::Pica,
+    }
 }
 
 fn live_execution_allowed() -> Result<(), StoreError> {
@@ -61,14 +69,11 @@ async fn open_store(state: Arc<DesktopStore>) -> Result<Arc<WorkbenchStore>, Sto
 async fn lease(
     accounts: Arc<accounts::DesktopAccounts>,
     scope: &DownloadScope,
-) -> Result<SessionLease, StoreError> {
-    if scope.source != Source::Jm {
-        return Err(error("DOWNLOAD_SOURCE_UNSUPPORTED"));
-    }
+) -> Result<DownloadSession, StoreError> {
     accounts::service(accounts)
         .await
         .map_err(|e| error(e.code))?
-        .session_lease(Source::Jm, &scope.session_id)
+        .download_session(scope.source, &scope.session_id)
         .await
         .map_err(|e| error(e.code))
 }
@@ -106,14 +111,14 @@ pub(crate) async fn jm_download_prepare<R: Runtime>(
 ) -> Result<DownloadPlan, StoreError> {
     require_main(window.label())?;
     live_execution_allowed()?;
-    let work_id = parse_input(&input)?;
+    let work_id = parse_input(scope.source, &input)?;
     let session = lease(Arc::clone(accounts.inner()), &scope).await?;
     let account_service = accounts::service(Arc::clone(accounts.inner()))
         .await
         .map_err(|e| error(e.code))?;
     let detail = account_service
         .query(
-            Source::Jm,
+            scope.source,
             &scope.session_id,
             QueryKind::Detail,
             &work_id,
@@ -128,7 +133,7 @@ pub(crate) async fn jm_download_prepare<R: Runtime>(
         .items
         .into_iter()
         .next()
-        .filter(|w| w.source == Source::Jm && w.work_id == work_id)
+        .filter(|w| w.source == scope.source && w.work_id == work_id)
         .ok_or(error("DOWNLOAD_METADATA_INVALID"))?;
     let metadata = JmDownloadMetadata {
         work_id: work.work_id,
@@ -141,9 +146,13 @@ pub(crate) async fn jm_download_prepare<R: Runtime>(
     let store = open_store(Arc::clone(store.inner())).await?;
     tauri::async_runtime::spawn_blocking(move || {
         session.require_current().map_err(|e| error(e.code))?;
-        let plan = downloads
-            .service
-            .prepare(&store, &root_id, generation, metadata)?;
+        let plan = downloads.service.prepare_for_source(
+            &store,
+            &root_id,
+            generation,
+            storage_source(scope.source),
+            metadata,
+        )?;
         let mut plans = downloads
             .plans
             .lock()
@@ -165,16 +174,21 @@ fn launch(
     store: Arc<WorkbenchStore>,
     library_state: Arc<library::DesktopLibrary>,
     task_id: String,
-    session: SessionLease,
+    session: DownloadSession,
 ) {
     tauri::async_runtime::spawn_blocking(move || {
         tauri::async_runtime::block_on(async move {
-            let result = downloads
-                .service
-                .run(&store, &task_id, move || {
-                    session.require_current().map_err(|e| error(e.code))
-                })
-                .await;
+            let result = match session.pica_token() {
+                Ok(token) => {
+                    downloads
+                        .service
+                        .run_with_token(&store, &task_id, token, || {
+                            session.require_current().map_err(|e| error(e.code))
+                        })
+                        .await
+                }
+                Err(problem) => Err(error(problem.code)),
+            };
             let Ok(Some(receipt)) = result else {
                 return;
             };
@@ -185,7 +199,7 @@ fn launch(
                 return;
             }
             let reference = LibraryReference {
-                source: LibrarySource::Jm,
+                source: receipt.source,
                 work_id: receipt.work_id.clone(),
             };
             let root_id = receipt.root_id.clone();
@@ -266,7 +280,7 @@ pub(crate) async fn jm_download_confirm<R: Runtime>(
         let task_id = snapshot
             .tasks
             .iter()
-            .find(|task| task.id == plan_id)
+            .find(|task| task.id == plan_id && task.source == storage_source(session.source()))
             .map(|task| task.id.clone())
             .ok_or(error("DOWNLOAD_TASK_MISSING"))?;
         worker_downloads
@@ -318,6 +332,13 @@ pub(crate) async fn jm_download_control<R: Runtime>(
     let worker_store = Arc::clone(&store);
     let worker_id = task_id.clone();
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        require_task_scope(
+            &worker_downloads.service,
+            &worker_store,
+            &worker_id,
+            expected_revision,
+            scope.source,
+        )?;
         worker_downloads
             .service
             .control(&worker_store, &worker_id, expected_revision, action)
@@ -337,13 +358,26 @@ pub(crate) async fn jm_download_control<R: Runtime>(
     Ok(snapshot)
 }
 
+fn require_task_scope(
+    service: &DownloadService,
+    store: &WorkbenchStore,
+    task_id: &str,
+    expected_revision: u64,
+    source: Source,
+) -> Result<(), StoreError> {
+    if service.task_source(store, task_id, expected_revision)? != storage_source(source) {
+        return Err(error("DOWNLOAD_SOURCE_MISMATCH"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn manual_jm_prefix_is_normalized_without_accepting_arbitrary_paths_or_hosts() {
         for input in ["JM123", "jm123", " 123 "] {
-            assert_eq!(parse_input(input).unwrap(), "123");
+            assert_eq!(parse_input(Source::Jm, input).unwrap(), "123");
         }
         for input in [
             "JM",
@@ -351,7 +385,86 @@ mod tests {
             "C:/private/123",
             "https://example.invalid/album/123",
         ] {
-            assert!(parse_input(input).is_err());
+            assert!(parse_input(Source::Jm, input).is_err());
         }
+    }
+
+    #[test]
+    fn manual_pica_input_is_normalized_and_remains_bound_to_its_source() {
+        let id = "0123456789abcdef01234567";
+        for input in [
+            id.to_owned(),
+            format!(" {id} "),
+            format!("https://picaapi.picacomic.com/comics/{id}"),
+        ] {
+            assert_eq!(parse_input(Source::Pica, &input).unwrap(), id);
+        }
+        for input in [
+            "JM123",
+            "123",
+            "C:/private/0123456789abcdef01234567",
+            "https://example.invalid/comics/0123456789abcdef01234567",
+        ] {
+            assert!(parse_input(Source::Pica, input).is_err());
+        }
+        assert!(parse_input(Source::Jm, id).is_err());
+    }
+
+    #[test]
+    fn queue_control_checks_the_tasks_source_and_revision_even_for_pause() {
+        let temp = tempfile::tempdir().unwrap();
+        let media = temp.path().join("media");
+        std::fs::create_dir(&media).unwrap();
+        let store = WorkbenchStore::open(temp.path().join("app")).unwrap();
+        let mut library = workbench_library::LibraryService::new();
+        let mut state = library.choose(&store, &media).unwrap();
+        while state.phase == workbench_library::LibraryPhase::Reading {
+            state = library
+                .scan(
+                    &store,
+                    state.root_id.as_deref().unwrap(),
+                    state.generation,
+                    workbench_library::ScanAction::Next,
+                )
+                .unwrap();
+        }
+        let service = DownloadService::new();
+        let plan = service
+            .prepare_for_source(
+                &store,
+                state.root_id.as_deref().unwrap(),
+                state.generation,
+                LibrarySource::Pica,
+                JmDownloadMetadata {
+                    work_id: "0123456789abcdef01234567".into(),
+                    title: "Synthetic source-bound task".into(),
+                    authors: vec![],
+                    tags: vec![],
+                    description: None,
+                },
+            )
+            .unwrap();
+        let queue = service
+            .confirm(&store, &plan.plan_id, plan.revision)
+            .unwrap();
+        let task = &queue.tasks[0];
+        let before = serde_json::to_value(store.read_downloads().unwrap()).unwrap();
+        assert_eq!(
+            require_task_scope(&service, &store, &task.id, task.revision, Source::Jm)
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_SOURCE_MISMATCH"
+        );
+        assert!(
+            require_task_scope(&service, &store, &task.id, task.revision, Source::Pica).is_ok()
+        );
+        assert!(
+            require_task_scope(&service, &store, &task.id, task.revision + 1, Source::Pica)
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::to_value(store.read_downloads().unwrap()).unwrap(),
+            before
+        );
     }
 }

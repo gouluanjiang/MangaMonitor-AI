@@ -1,4 +1,4 @@
-use crate::{error, Result};
+use crate::{error, source_key, Result};
 use cloud_monitor::{
     assistant_task_gate::{self, GateLedger},
     executor_handoff::{self, ExecutorCommand},
@@ -12,7 +12,7 @@ pub(crate) fn current(record: &DownloadRecord) -> Result<(State, GateLedger, Exe
     // Manual authority is represented only as a pending task. No matcher entry,
     // scope certificate, source catalog, or PROVEN_NEW evidence is synthesized.
     let target = Target {
-        source_key: format!("jm:{}", record.metadata.work_id),
+        source_key: format!("{}:{}", source_key(record.source), record.metadata.work_id),
         author: record.metadata.authors.join(", "),
         title: record.metadata.title.clone(),
         version: Default::default(),

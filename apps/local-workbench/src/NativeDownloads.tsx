@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   DownloadAdapter,
   DownloadContext,
-  DownloadScope,
+  DownloadContexts,
+  DownloadSource,
   DownloadTask,
 } from "./download-types.ts";
 import {
@@ -13,14 +14,18 @@ import {
   downloadTaskLabel,
   filterDownloadTasks,
   isDownloadPresent,
+  getDownloadScope,
+  canControlDownload,
 } from "./download-runtime.ts";
+import { sourceLabel } from "./source-types.ts";
+import type { AccountSummary } from "./source-types.ts";
 import { Icon } from "./icons.tsx";
 import "./native-downloads.css";
 
 export function useDownloads(
   adapter: DownloadAdapter,
   enabled: boolean,
-  context: DownloadContext | null,
+  contexts: DownloadContexts,
   onDownloaded: () => void,
 ) {
   const [controller] = useState(() => new DownloadController(adapter));
@@ -28,13 +33,7 @@ export function useDownloads(
   const completed = useRef<Set<string> | null>(null),
     callback = useRef(onDownloaded);
   callback.current = onDownloaded;
-  const contextIdentity = context
-    ? JSON.stringify([
-        context.scope.sessionId,
-        context.rootId,
-        context.generation,
-      ])
-    : "";
+  const contextIdentity = JSON.stringify([contexts.JM, contexts.Pica]);
   useEffect(() => {
     controller.cancelPlan();
   }, [controller, contextIdentity]);
@@ -123,8 +122,8 @@ function DownloadConfirmation({
         </button>
       </div>
       <h3 data-testid="download-plan-title">{plan.title}</h3>
-      <p>
-        JM · {plan.workId}
+      <p data-testid="download-plan-source">
+        {sourceLabel(plan.source)} · {plan.workId}
         {plan.authors.length ? " · " + plan.authors.join("、") : ""}
       </p>
       <p className="source-muted">保存位置</p>
@@ -135,7 +134,12 @@ function DownloadConfirmation({
         {plan.destinationDisplay}
       </p>
       <p>
-        同一时间只下载一本。保存为作品文件夹，包含元数据、封面、章节目录和四位页码图片。
+        同一时间只下载一本。保存为作品文件夹，包含元数据、封面、章节目录和图片。
+      </p>
+      <p>
+        {plan.source === "Pica"
+          ? "哔咔保留原图格式。"
+          : "JM 图片保存为 JPEG 格式。"}
       </p>
       <p>
         完成后显示电脑“已下载”。手机名单保持原样，之后传到手机时电脑副本继续保留。
@@ -176,9 +180,10 @@ export function DownloadSettingsPanel({
 }) {
   return (
     <section className="settings-card" aria-labelledby="native-download-title">
-      <h2 id="native-download-title">JM 单本下载</h2>
+      <h2 id="native-download-title">单本下载</h2>
       <p className="settings-copy">
-        在来源详情或下载队列输入 JM 编号，核对标题与保存目录后确认。
+        从 JM
+        或哔咔来源详情进入，或在下载队列选择来源并输入编号，核对标题与保存目录后确认。
       </p>
       <dl className="settings-facts">
         <div>
@@ -201,10 +206,6 @@ export function DownloadSettingsPanel({
           <dt>下载临时文件</dt>
           <dd>完成后清理下载临时文件，电脑作品副本继续保留。</dd>
         </div>
-        <div>
-          <dt>Pica 下载</dt>
-          <dd>安排在后续批次</dd>
-        </div>
       </dl>
       <p role="status" className="settings-help">
         {downloadStatusText(downloads)}
@@ -221,8 +222,10 @@ export function DownloadSettingsPanel({
 export function NativeDownloads({
   downloads,
   active,
-  context,
-  scope,
+  contexts,
+  accounts,
+  selectedSource,
+  onSourceChange,
   input,
   onInputChange,
   onPrepare,
@@ -235,8 +238,10 @@ export function NativeDownloads({
 }: {
   downloads: DownloadsState;
   active: boolean;
-  context: DownloadContext | null;
-  scope: DownloadScope | null;
+  contexts: DownloadContexts;
+  accounts: AccountSummary[];
+  selectedSource: DownloadSource;
+  onSourceChange(source: DownloadSource): void;
   input: string;
   onInputChange(value: string): void;
   onPrepare(): void;
@@ -248,6 +253,8 @@ export function NativeDownloads({
   showFeedback: boolean;
 }) {
   const [filter, setFilter] = useState("all");
+  const scope = getDownloadScope(accounts, selectedSource);
+  const context = contexts[selectedSource];
   useEffect(() => {
     if (!active) return;
     void downloads.controller.read(true);
@@ -264,7 +271,7 @@ export function NativeDownloads({
       {downloads.plan && (
         <DownloadConfirmation
           downloads={downloads}
-          context={context}
+          context={contexts[downloads.plan.source]}
           onConfirmed={onConfirmed}
         />
       )}
@@ -291,7 +298,7 @@ export function NativeDownloads({
                 {unfinishedDownloadCount(downloads.snapshot.tasks)}
               </span>
             </h1>
-            <p>确认一本 JM，完整保存到电脑。Pica 下载将在后续批次接入。</p>
+            <p>选择 JM 或哔咔作品，确认后完整保存到电脑。</p>
           </div>
         </div>
         <form
@@ -301,14 +308,29 @@ export function NativeDownloads({
             onPrepare();
           }}
         >
-          <label htmlFor="jm-download-input">JM 编号或作品链接</label>
+          <label htmlFor="download-source">下载来源</label>
+          <select
+            id="download-source"
+            data-testid="download-source"
+            value={selectedSource}
+            disabled={downloads.busy}
+            onChange={(event) =>
+              onSourceChange(event.target.value as DownloadSource)
+            }
+          >
+            <option value="JM">JM</option>
+            <option value="Pica">哔咔</option>
+          </select>
+          <label htmlFor="source-download-input">
+            {sourceLabel(selectedSource)} 编号或作品链接
+          </label>
           <div className="source-actions">
             <input
-              id="jm-download-input"
+              id="source-download-input"
               data-testid="download-input"
               value={input}
               maxLength={2048}
-              placeholder="JM 编号或作品链接"
+              placeholder={sourceLabel(selectedSource) + " 编号或作品链接"}
               onChange={(event) => onInputChange(event.target.value)}
             />
             <button
@@ -322,7 +344,7 @@ export function NativeDownloads({
         </form>
         {!scope && (
           <p className="source-notice">
-            请先连接 JM 账号。
+            请先连接{sourceLabel(selectedSource)}账号。
             <button className="text-button" onClick={onOpenAccounts}>
               打开账号设置
             </button>
@@ -403,7 +425,9 @@ export function NativeDownloads({
                 <div className="task-title-row">
                   <div>
                     <h3>{task.title}</h3>
-                    <span className="quiet">JM · {task.workId}</span>
+                    <span className="quiet">
+                      {sourceLabel(task.source)} · {task.workId}
+                    </span>
                   </div>
                   <span
                     className="status"
@@ -448,15 +472,21 @@ export function NativeDownloads({
                       <button
                         key={action}
                         className="text-button"
-                        disabled={downloads.busy || !scope}
+                        disabled={
+                          downloads.busy ||
+                          !canControlDownload(
+                            task,
+                            action,
+                            getDownloadScope(accounts, task.source),
+                          )
+                        }
                         data-testid={`download-${action}-${task.id}`}
                         onClick={() => {
-                          if (scope)
-                            void downloads.controller.control(
-                              scope,
-                              task,
-                              action,
-                            );
+                          void downloads.controller.control(
+                            getDownloadScope(accounts, task.source),
+                            task,
+                            action,
+                          );
                         }}
                       >
                         {action === "pause"
@@ -493,6 +523,12 @@ export function NativeDownloads({
                     {downloadErrorMessage(task.errorCode)}
                   </p>
                 )}
+                {!getDownloadScope(accounts, task.source) &&
+                  task.allowedActions.some((action) => action !== "pause") && (
+                    <p className="quiet">
+                      请连接{sourceLabel(task.source)}账号后继续或重试。
+                    </p>
+                  )}
                 <p className="download-destination quiet">
                   {task.destinationDisplay}
                 </p>
@@ -541,7 +577,7 @@ export function NativeDownloads({
           <div className="empty-state" data-testid="download-empty">
             <Icon name="download" size={32} />
             <h2>这里暂时没有任务</h2>
-            <p>输入一本 JM 编号，或在 JM 来源详情中选择下载到电脑。</p>
+            <p>选择来源后输入作品编号，或在来源详情中选择下载到电脑。</p>
           </div>
         )}
       </div>

@@ -96,6 +96,12 @@ impl SourceSession {
         self.source
     }
 
+    /// Native-only transfer to an explicitly confirmed desktop worker. This
+    /// secret has no renderer/serialization path and grants no task authority.
+    pub fn pica_download_credential(&self) -> Option<StoredCredential> {
+        (self.source == Source::Pica).then(|| self.credential.clone())
+    }
+
     fn remember_covers(
         &self,
         works: impl IntoIterator<Item = (String, Option<String>)>,

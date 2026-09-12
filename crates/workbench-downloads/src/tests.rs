@@ -24,6 +24,9 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[path = "pica_tests.rs"]
+mod pica_tests;
+
 struct Fixture {
     _temp: TempDir,
     store: WorkbenchStore,
@@ -978,6 +981,35 @@ struct Core {
     descriptors: SourceMediaDescriptorSet,
 }
 fn core(record: &DownloadRecord) -> Core {
+    let media = (1..=2)
+        .map(|n| MediaDescriptor {
+            image_index: n,
+            source_media_id: format!("{n:03}.gif"),
+            request_url: format!("https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/{n:03}.gif"),
+            source_format: "gif".into(),
+            transform: "NONE".into(),
+            transform_parameter: 0,
+            relative_path: format!("chapters/000001-123456/{n:06}.gif"),
+        })
+        .collect();
+    core_for_chapters(
+        record,
+        vec![MediaChapterDescriptors {
+            chapter_id: "123456".into(),
+            chapter_order: 1,
+            jm_scramble_id: Some(200_000),
+            media,
+        }],
+        None,
+        None,
+    )
+}
+fn core_for_chapters(
+    record: &DownloadRecord,
+    chapters: Vec<MediaChapterDescriptors>,
+    chapter_pagination: Option<cloud_monitor::source_completion::PaginationProof>,
+    image_pagination: Option<cloud_monitor::source_completion::PaginationProof>,
+) -> Core {
     let (_, _, command) = adapter::current(record).unwrap();
     let plan = local_executor::plan(&command).unwrap();
     let request = source_bridge_request::build(&plan).unwrap();
@@ -994,14 +1026,17 @@ fn core(record: &DownloadRecord) -> Core {
         completion_contract_version: request.completion_contract_version,
         scope: request.scope.clone(),
         source_enumeration_complete: true,
-        chapter_pagination: None,
-        expected_chapter_count: 1,
-        chapters: vec![PreflightChapter {
-            chapter_id: "123456".into(),
-            chapter_order: 1,
-            expected_images: 2,
-            image_pagination: None,
-        }],
+        chapter_pagination,
+        expected_chapter_count: chapters.len() as u64,
+        chapters: chapters
+            .iter()
+            .map(|chapter| PreflightChapter {
+                chapter_id: chapter.chapter_id.clone(),
+                chapter_order: chapter.chapter_order,
+                expected_images: chapter.media.len() as u64,
+                image_pagination: image_pagination.clone(),
+            })
+            .collect(),
         image_bytes_downloaded: false,
         staging_written: false,
     };
@@ -1016,8 +1051,8 @@ fn core(record: &DownloadRecord) -> Core {
         source: request.source.clone(),
         source_work_id: request.source_work_id.clone(),
         preflight_hash: proof.preflight_hash.clone(),
-        expected_chapter_count: 1,
-        expected_content_units: 2,
+        expected_chapter_count: proof.expected_chapter_count,
+        expected_content_units: proof.expected_content_units,
         staging_subdir: plan.staging_subdir.clone(),
         write_scope: "COMMAND_OWNED_STAGING_ONLY".into(),
         current_state_binding_hash: "state-generation".into(),
@@ -1032,17 +1067,6 @@ fn core(record: &DownloadRecord) -> Core {
         replacement_authorized: false,
         physical_delete_authorized: false,
     };
-    let media = (1..=2)
-        .map(|n| MediaDescriptor {
-            image_index: n,
-            source_media_id: format!("{n:03}.gif"),
-            request_url: format!("https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/{n:03}.gif"),
-            source_format: "gif".into(),
-            transform: "NONE".into(),
-            transform_parameter: 0,
-            relative_path: format!("chapters/000001-123456/{n:06}.gif"),
-        })
-        .collect();
     let descriptors = SourceMediaDescriptorSet {
         schema_version: 1,
         command_id: authorization.command_id.clone(),
@@ -1053,16 +1077,11 @@ fn core(record: &DownloadRecord) -> Core {
         source: authorization.source.clone(),
         source_work_id: authorization.source_work_id.clone(),
         preflight_hash: authorization.preflight_hash.clone(),
-        expected_chapter_count: 1,
-        expected_content_units: 2,
+        expected_chapter_count: proof.expected_chapter_count,
+        expected_content_units: proof.expected_content_units,
         staging_subdir: authorization.staging_subdir.clone(),
         write_scope: authorization.write_scope.clone(),
-        chapters: vec![MediaChapterDescriptors {
-            chapter_id: "123456".into(),
-            chapter_order: 1,
-            jm_scramble_id: Some(200_000),
-            media,
-        }],
+        chapters,
         image_download_authorized: true,
         staging_write_authorized: true,
         inventory_mutation_authorized: false,

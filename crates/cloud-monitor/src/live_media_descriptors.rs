@@ -337,7 +337,11 @@ where
             let token = pica_token
                 .filter(|value| !value.trim().is_empty())
                 .ok_or("PICA_LIVE_MEDIA_TOKEN_REQUIRED")?;
-            let mut client = pica_adapter::PicaClient::new(token.to_owned())?;
+            let mut client = if download {
+                pica_adapter::PicaClient::new_for_download(token.to_owned())?
+            } else {
+                pica_adapter::PicaClient::new(token.to_owned())?
+            };
             let mut enumerations = Vec::with_capacity(preflight.chapters.len());
             for chapter in &preflight.chapters {
                 let expected_pagination = chapter

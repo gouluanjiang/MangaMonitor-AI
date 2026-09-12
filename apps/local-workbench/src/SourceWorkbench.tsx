@@ -1323,20 +1323,11 @@ export function SourceWorkbench({
                 <button
                   type="button"
                   className="button primary"
-                  disabled={
-                    detail.source !== "JM" ||
-                    !onDownload ||
-                    !downloadReady ||
-                    downloadBusy
-                  }
+                  disabled={!onDownload || !downloadReady || downloadBusy}
                   data-testid="source-download"
                   onClick={() => onDownload?.(detail)}
                 >
-                  {detail.source === "Pica"
-                    ? "Pica 下载后续批次接入"
-                    : downloadBusy
-                      ? "正在准备下载…"
-                      : "下载到电脑"}
+                  {downloadBusy ? "正在准备下载…" : "下载到电脑"}
                 </button>
                 <button
                   type="button"
@@ -1797,7 +1788,7 @@ export function SourceWorkbench({
                     : complete
                       ? "已读取完整范围"
                       : "范围尚未读全，已读取页面不代表全部作品"}{" "}
-                  · 手机名单与电脑文件分别核对；JM 下载从详情单本确认
+                  · 手机名单与电脑文件分别核对；下载从详情单本确认
                 </p>
               )}
               {grid(visible)}

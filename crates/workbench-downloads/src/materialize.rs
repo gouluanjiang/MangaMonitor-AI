@@ -17,7 +17,7 @@ use std::{
     io::{BufReader, Cursor, Read, Write},
     path::Path,
 };
-use workbench_storage::{DownloadFile, DownloadRecord, MAX_DOWNLOAD_FILES};
+use workbench_storage::{DownloadFile, DownloadRecord, Source, MAX_DOWNLOAD_FILES};
 
 pub(crate) fn require_root(record: &DownloadRecord) -> Result<Directory> {
     let directory = Directory::open(Path::new(&record.root.path))?;
@@ -43,7 +43,7 @@ pub(crate) fn validate_staging(
         || report.task_revision != command.task_revision
         || report.target_hash != command.target_hash
         || report.source_work_id != record.metadata.work_id
-        || report.source != "jm"
+        || report.source != crate::source_key(record.source)
         || !report.staging_execution_completed
     {
         return Err(error("DOWNLOAD_PROOF_INVALID"));
@@ -166,10 +166,14 @@ fn layout(
         let order = order
             .parse::<u64>()
             .map_err(|_| error("DOWNLOAD_PROOF_INVALID"))?;
-        let id_number = id
-            .parse::<i64>()
-            .map_err(|_| error("DOWNLOAD_PROOF_INVALID"))?;
-        if id_number <= 0 {
+        let chapter_reference = workbench_storage::LibraryReference {
+            source: record.source,
+            work_id: id.into(),
+        };
+        if order == 0
+            || !chapter_reference.is_valid()
+            || (record.source == Source::Jm && !id.parse::<i64>().is_ok_and(|id| id > 0))
+        {
             return Err(error("DOWNLOAD_PROOF_INVALID"));
         }
         let (number, extension) = parts[2]
@@ -179,17 +183,32 @@ fn layout(
             .parse::<u64>()
             .map_err(|_| error("DOWNLOAD_PROOF_INVALID"))?;
         let expected_static_format = if record.jpeg_output { "jpg" } else { "webp" };
-        if (extension != expected_static_format && extension != "gif") || number == 0 {
+        let format_valid = match record.source {
+            Source::Jm => extension == expected_static_format || extension == "gif",
+            Source::Pica => {
+                !record.jpeg_output && matches!(extension, "jpg" | "jpeg" | "png" | "webp" | "gif")
+            }
+        };
+        if !format_valid || number == 0 {
             return Err(error("DOWNLOAD_PROOF_INVALID"));
         }
-        let directory = format!("{order:04}-{id}");
+        let (directory, filename) = match record.source {
+            Source::Jm => (
+                format!("{order:04}-{id}"),
+                format!("{number:04}.{extension}"),
+            ),
+            Source::Pica => (
+                format!("{order:03}-{id}"),
+                format!("{number:03}.{extension}"),
+            ),
+        };
         let chapter = chapters
             .entry(directory.clone())
             .or_insert((order, id.into(), 0));
         chapter.2 += 1;
         result.push(Output {
             file: DownloadFile {
-                relative_path: format!("{directory}/{number:04}.{extension}"),
+                relative_path: format!("{directory}/{filename}"),
                 size_bytes: artifact.size_bytes,
                 sha256: artifact.sha256.clone(),
             },
@@ -200,21 +219,70 @@ fn layout(
     if chapters.len() > 200 {
         return Err(error("DOWNLOAD_LIMIT_REACHED"));
     }
-    let infos: Vec<_> = chapters.values().map(|(order, id, count)| json!({"chapterId":id.parse::<i64>().unwrap_or_default(), "chapterTitle":id, "order":order, "imageCount":count,"isPdfExported":false,"isCbzExported":false})).collect();
+    let infos: Vec<_> = chapters
+        .values()
+        .map(|(order, id, count)| chapter_metadata(record.source, *order, id, *count))
+        .collect();
     let metadata = &record.metadata;
-    result.push(generated("元数据.json", json_bytes(&json!({"id":metadata.work_id.parse::<i64>().map_err(|_| error("DOWNLOAD_METADATA_INVALID"))?, "name":metadata.title, "author":metadata.authors, "tags":metadata.tags, "description":metadata.description.as_deref().unwrap_or(""), "chapterInfos":infos,
+    let comic_metadata = match record.source {
+        Source::Jm => {
+            json!({"id":metadata.work_id.parse::<i64>().map_err(|_| error("DOWNLOAD_METADATA_INVALID"))?, "name":metadata.title, "author":metadata.authors, "tags":metadata.tags, "description":metadata.description.as_deref().unwrap_or(""), "chapterInfos":infos,
         "addtime":"","total_views":"","likes":"","series_id":"","comment_total":"","works":[],"actors":[],"related_list":[],"liked":false,"is_favorite":false,"is_aids":false,
-        "mangaMonitor":{"layoutVersion":1,"origin":"manual","coverOrigin":"first-verified-page","compatibilityPlaceholders":["addtime","total_views","likes","series_id","comment_total","works","actors","related_list","liked","is_favorite","is_aids"]}}))?));
+        "mangaMonitor":{"layoutVersion":1,"origin":"manual","coverOrigin":"first-verified-page","compatibilityPlaceholders":["addtime","total_views","likes","series_id","comment_total","works","actors","related_list","liked","is_favorite","is_aids"]}})
+        }
+        Source::Pica => pica_metadata(record, artifacts.len(), &infos),
+    };
+    result.push(generated("元数据.json", json_bytes(&comic_metadata)?));
     result.push(generated(
         "cover.jpg",
         fallback_cover(stage, &artifacts[0].relative_path)?,
     ));
     for (directory, (order, id, count)) in chapters {
-        result.push(generated(&format!("{directory}/章节元数据.json"), json_bytes(&json!({"chapterId":id.parse::<i64>().map_err(|_| error("DOWNLOAD_METADATA_INVALID"))?,"chapterTitle":id,"order":order,"imageCount":count,"isPdfExported":false,"isCbzExported":false}))?));
+        result.push(generated(
+            &format!("{directory}/章节元数据.json"),
+            json_bytes(&chapter_metadata(record.source, order, &id, count))?,
+        ));
     }
-    result.push(generated("_mangamonitor-layout.json", json_bytes(&json!({"version":1,"source":"JM","workId":metadata.work_id,"expectedPages":artifacts.len(),"layoutVersion":1,"taskId":record.id}))?));
+    result.push(generated("_mangamonitor-layout.json", json_bytes(&json!({"version":1,"source":record.source,"workId":metadata.work_id,"expectedPages":artifacts.len(),"layoutVersion":1,"taskId":record.id}))?));
     result.sort_by(|a, b| a.file.relative_path.cmp(&b.file.relative_path));
     Ok(result)
+}
+
+fn chapter_metadata(source: Source, order: u64, id: &str, count: usize) -> serde_json::Value {
+    match source {
+        Source::Jm => {
+            json!({"chapterId":id.parse::<i64>().unwrap_or_default(),"chapterTitle":id,"order":order,"imageCount":count,"isPdfExported":false,"isCbzExported":false})
+        }
+        Source::Pica => {
+            json!({"chapterId":id,"chapterTitle":id,"order":order,"imageCount":count,"isDownloaded":true})
+        }
+    }
+}
+
+fn pica_metadata(
+    record: &DownloadRecord,
+    pages: usize,
+    chapters: &[serde_json::Value],
+) -> serde_json::Value {
+    let metadata = &record.metadata;
+    // These neutral compatibility fields are not source observations. The
+    // pinned upstream Comic has required fields without serde defaults.
+    json!({
+        "id":metadata.work_id,"title":metadata.title,"author":metadata.authors.join(", "),
+        "pagesCount":pages,"chapterCount":chapters.len(),"chapterInfos":chapters,
+        "description":metadata.description.as_deref().unwrap_or(""),"tags":metadata.tags,
+        "downloaded":true,"isDownloaded":true,
+        "thumb":{"originalName":"cover.jpg","path":"cover.jpg","fileServer":""},
+        "finished":false,"categories":[],"likesCount":0,"chineseTeam":"",
+        "updatedAt":"1970-01-01T00:00:00Z","createdAt":"","allowDownload":false,
+        "viewsCount":0,"isLiked":false,"commentsCount":0,
+        "creator":{"id":"","gender":"","name":"","title":"","verified":null,
+            "exp":0,"level":0,"characters":[],"avatar":{"originalName":"","path":"","fileServer":""},
+            "slogan":"","role":"","character":""},
+        "mangaMonitor":{"layoutVersion":1,"origin":"manual","coverOrigin":"first-verified-page",
+            "compatibilityPlaceholders":["finished","categories","likesCount","chineseTeam","updatedAt",
+                "createdAt","allowDownload","viewsCount","isLiked","commentsCount","creator","thumb.fileServer","chapterInfos.chapterTitle"]}
+    })
 }
 
 fn verify_file(directory: &Directory, name: &str, expected: &DownloadFile) -> Result<()> {
@@ -278,7 +346,7 @@ pub(crate) fn verify_output(record: &DownloadRecord) -> Result<()> {
 }
 fn manifest(record: &DownloadRecord) -> Result<Vec<u8>> {
     json_bytes(
-        &json!({"version":1,"origin":"manual","taskId":record.id,"approvalRevision":record.approval_revision,"targetHash":record.target_hash,"source":"JM","workId":record.metadata.work_id,"rootId":record.root.id,"generation":record.generation,"layoutVersion":1,"files":record.output_files}),
+        &json!({"version":1,"origin":"manual","taskId":record.id,"approvalRevision":record.approval_revision,"targetHash":record.target_hash,"source":record.source,"workId":record.metadata.work_id,"rootId":record.root.id,"generation":record.generation,"layoutVersion":1,"files":record.output_files}),
     )
 }
 

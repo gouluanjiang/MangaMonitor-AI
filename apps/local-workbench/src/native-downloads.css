@@ -9,7 +9,8 @@
   margin-bottom: 12px;
   color: var(--muted);
 }
-.native-download-add input {
+.native-download-add input,
+.native-download-add select {
   flex: 1;
   min-width: 180px;
   border: 1px solid var(--line, #35303d);
@@ -17,6 +18,9 @@
   padding: 12px 14px;
   background: #17141c;
   color: inherit;
+}
+.native-download-add select {
+  margin-bottom: 16px;
 }
 .native-downloads .source-actions {
   flex-wrap: wrap;

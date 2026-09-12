@@ -29,12 +29,17 @@ pub struct JmDownloadMetadata {
 }
 impl JmDownloadMetadata {
     pub fn is_valid(&self) -> bool {
+        self.is_valid_for(Source::Jm)
+    }
+    /// The legacy name/API remains usable by JM callers. Pica uses the same
+    /// sanitized display fields with its own canonical source identity.
+    pub fn is_valid_for(&self, source: Source) -> bool {
         crate::LibraryReference {
-            source: Source::Jm,
+            source,
             work_id: self.work_id.clone(),
         }
         .is_valid()
-            && self.work_id.parse::<i64>().is_ok_and(|id| id > 0)
+            && (source != Source::Jm || self.work_id.parse::<i64>().is_ok_and(|id| id > 0))
             && text(&self.title, 500)
             && self.authors.len() <= 100
             && self.authors.iter().all(|v| text(v, 200))
@@ -71,6 +76,9 @@ pub struct DownloadFile {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DownloadRecord {
     pub id: String,
+    /// Records created before Pica support retain their exact JM interpretation.
+    #[serde(default = "default_source", skip_serializing_if = "is_jm")]
+    pub source: Source,
     pub origin: String,
     pub revision: u64,
     pub approval_revision: u64,
@@ -94,6 +102,12 @@ pub struct DownloadRecord {
     pub output_identity: Option<String>,
     pub output_files: Vec<DownloadFile>,
     pub output_manifest_hash: Option<String>,
+}
+const fn default_source() -> Source {
+    Source::Jm
+}
+fn is_jm(source: &Source) -> bool {
+    *source == Source::Jm
 }
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -141,7 +155,8 @@ impl ValidatedDocument for DownloadsDocument {
                 || t.root.path.len() > 32768
                 || t.root.path.chars().any(char::is_control)
                 || t.generation > MAX_SAFE_INTEGER
-                || !t.metadata.is_valid()
+                || !t.metadata.is_valid_for(t.source)
+                || (t.source == Source::Pica && t.jpeg_output)
                 || !crate::library_relative_path_is_valid(&t.destination)
                 || t.destination.contains('/')
                 || t.destination.encode_utf16().count() > 180

@@ -14,7 +14,7 @@ use std::{
     },
 };
 use tokio::sync::{Mutex, OnceCell, Semaphore};
-use workbench_credentials::{StoredCredential, Vault};
+use workbench_credentials::{CredentialKind, StoredCredential, Vault};
 use workbench_sources::FavoritePageRequest;
 use zeroize::Zeroizing;
 
@@ -32,6 +32,32 @@ impl SessionLease {
         } else {
             Err(AccountError::new("SESSION_CHANGED"))
         }
+    }
+}
+
+/// A process-local source session for an explicitly initiated desktop download.
+/// It cannot be serialized. The credential is zeroized when all worker/plan
+/// copies are dropped; logout permanently revokes its lease.
+#[derive(Clone)]
+pub struct DownloadSession {
+    source: Source,
+    lease: SessionLease,
+    pica_credential: Option<StoredCredential>,
+}
+
+impl DownloadSession {
+    pub fn source(&self) -> Source {
+        self.source
+    }
+
+    pub fn require_current(&self) -> Result<()> {
+        self.lease.require_current()
+    }
+
+    /// Borrow only for metadata requests; never pass to media-byte transports.
+    pub fn pica_token(&self) -> Result<Option<&str>> {
+        self.require_current()?;
+        Ok(self.pica_credential.as_ref().map(StoredCredential::secret))
     }
 }
 
@@ -338,6 +364,36 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
         Ok(slot.lease.clone())
+    }
+
+    /// Acquires the token and lease under the same account generation. This is
+    /// not an IPC command and does not initiate network requests or downloads.
+    pub async fn download_session(
+        &self,
+        source: Source,
+        session_id: &str,
+    ) -> Result<DownloadSession> {
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
+        slot.lease.require_current()?;
+        let pica_credential = if source == Source::Pica {
+            let session = slot
+                .session
+                .as_ref()
+                .ok_or(AccountError::new("SESSION_CHANGED"))?;
+            let credential = self.backend.pica_download_credential(session)?;
+            if credential.kind() != CredentialKind::SessionToken {
+                return Err(AccountError::new("DOWNLOAD_SOURCE_UNSUPPORTED"));
+            }
+            Some(credential)
+        } else {
+            None
+        };
+        Ok(DownloadSession {
+            source,
+            lease: slot.lease.clone(),
+            pica_credential,
+        })
     }
 
     fn finish<T>(&self, slot: &mut Slot<B::Session>, result: Result<T>) -> Result<T> {

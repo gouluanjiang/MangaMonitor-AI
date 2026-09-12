@@ -8,6 +8,8 @@ import {
   downloadTaskLabel,
   filterDownloadTasks,
   isDownloadPresent,
+  getDownloadScope,
+  canControlDownload,
   validateDownloadPlan,
   validateDownloadSnapshot,
 } from "../src/download-runtime.ts";
@@ -199,7 +201,7 @@ test("adapter forwards only the explicit typed JM preparation and control fields
   const count = calls.length;
   await assert.rejects(
     adapter.prepare(
-      { ...context, scope: { source: "Pica", sessionId: "Pica" } },
+      { ...context, scope: { source: "Unknown", sessionId: "Pica" } },
       "123",
     ),
     DownloadError,
@@ -594,5 +596,172 @@ test("an explicit recheck arriving during a progress read is coalesced and not l
   await firstRecheck;
   assert.deepEqual(calls, [false, true]);
   assert.equal(controller.getState().snapshot.tasks[0].localFiles, "missing");
+  controller.dispose();
+});
+
+const picaId = "0123456789abcdef01234567";
+const picaContext = {
+  ...context,
+  scope: { source: "Pica", sessionId: "synthetic-Pica" },
+};
+const picaPlan = (overrides = {}) =>
+  plan({ source: "Pica", workId: picaId, ...overrides });
+const picaTask = (overrides = {}) =>
+  task({ source: "Pica", workId: picaId, ...overrides });
+
+test("Pica identities are lowercase 24-hex strings and never accept JM numeric identities", () => {
+  assert.equal(validateDownloadPlan(picaPlan()).workId, picaId);
+  assert.equal(
+    validateDownloadSnapshot(snapshot([picaTask()])).tasks[0].source,
+    "Pica",
+  );
+  for (const workId of [
+    "123",
+    picaId.toUpperCase(),
+    picaId + "f",
+    "../" + picaId,
+  ]) {
+    assert.throws(
+      () => validateDownloadPlan(picaPlan({ workId })),
+      DownloadError,
+    );
+    assert.throws(
+      () => validateDownloadSnapshot(snapshot([picaTask({ workId })])),
+      DownloadError,
+    );
+  }
+  assert.throws(
+    () => validateDownloadPlan(plan({ workId: picaId })),
+    DownloadError,
+  );
+  assert.throws(
+    () => validateDownloadSnapshot(snapshot([task({ source: "Other" })])),
+    DownloadError,
+  );
+});
+
+test("Pica preparation keeps the existing IPC shape and rejects a valid plan from another source", async () => {
+  const calls = [];
+  let response = picaPlan();
+  const adapter = createDownloadAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return response;
+    },
+  });
+  const input = `https://picaapi.picacomic.com/comics/${picaId}`;
+  await adapter.prepare(
+    {
+      ...picaContext,
+      path: "never sent",
+      scope: { ...picaContext.scope, token: "never sent" },
+    },
+    input,
+  );
+  assert.deepEqual(calls, [
+    { command: "jm_download_prepare", args: { ...picaContext, input } },
+  ]);
+  response = plan();
+  await assert.rejects(adapter.prepare(picaContext, picaId), DownloadError);
+});
+
+test("download scopes never fall back to the other source account", () => {
+  assert.match(downloadErrorMessage("PICA_TOKEN_MISSING"), /对应来源的账号/);
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_SOURCE_INCOMPLETE"),
+    /来源目录暂未读取完整/,
+  );
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_SOURCE_MISMATCH"),
+    /任务来源与当前账号不一致/,
+  );
+  const accounts = [
+    { source: "JM", state: "connected", sessionId: "JM-session" },
+    { source: "Pica", state: "expired", sessionId: "old-Pica-session" },
+  ];
+  assert.deepEqual(getDownloadScope(accounts, "JM"), {
+    source: "JM",
+    sessionId: "JM-session",
+  });
+  assert.equal(getDownloadScope(accounts, "Pica"), null);
+  assert.equal(getDownloadScope(accounts.slice(0, 1), "Pica"), null);
+  accounts[1].state = "connected";
+  assert.deepEqual(getDownloadScope(accounts, "Pica"), {
+    source: "Pica",
+    sessionId: "old-Pica-session",
+  });
+});
+
+test("mixed-source controls bind each task to its own source and permit only pause without a session", async () => {
+  const calls = [];
+  const controller = new DownloadController({
+    control: async (...args) => {
+      calls.push(args);
+      return snapshot([
+        picaTask({ phase: "paused", allowedActions: ["resume"] }),
+      ]);
+    },
+  });
+  await controller.control(context.scope, picaTask(), "resume");
+  await controller.control(null, picaTask(), "resume");
+  assert.equal(calls.length, 0);
+  assert.equal(canControlDownload(picaTask(), "resume", context.scope), false);
+  await controller.control(picaContext.scope, picaTask(), "resume");
+  const running = picaTask({ phase: "downloading", allowedActions: ["pause"] });
+  await controller.control(context.scope, running, "pause");
+  assert.equal(calls.length, 1);
+  await controller.control(null, running, "pause");
+  assert.deepEqual(
+    calls.map((call) => [call[0], call[3]]),
+    [
+      [picaContext.scope, "resume"],
+      [{ source: "Pica", sessionId: "" }, "pause"],
+    ],
+  );
+  controller.dispose();
+  const adapterCalls = [];
+  const adapter = createDownloadAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      adapterCalls.push({ command, args });
+      return snapshot([picaTask()]);
+    },
+  });
+  await adapter.control(
+    { source: "Pica", sessionId: "" },
+    running.id,
+    1,
+    "pause",
+  );
+  await assert.rejects(
+    adapter.control({ source: "Pica", sessionId: "" }, running.id, 1, "retry"),
+    DownloadError,
+  );
+  assert.equal(adapterCalls.length, 1);
+  assert.deepEqual(adapterCalls[0].args.scope, {
+    source: "Pica",
+    sessionId: "",
+  });
+});
+
+test("changing source invalidates a Pica confirmation and a wrong-source result never completes it", async () => {
+  let confirms = 0;
+  const controller = new DownloadController({
+    prepare: async () => picaPlan(),
+    confirm: async () => {
+      confirms++;
+      return snapshot([task()]);
+    },
+  });
+  await controller.prepare(picaContext, picaId);
+  assert.equal(await controller.confirm(context), false);
+  assert.equal(confirms, 0);
+  await controller.prepare(picaContext, picaId);
+  assert.equal(await controller.confirm(picaContext), false);
+  assert.equal(confirms, 1);
+  assert.equal(controller.getState().snapshot.tasks.length, 0);
+  assert.equal(controller.getState().plan, null);
+  assert.ok(controller.getState().error);
   controller.dispose();
 });

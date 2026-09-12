@@ -41,6 +41,7 @@ import { createLibraryAdapter } from "./library-runtime.ts";
 import {
   createDownloadAdapter,
   isDownloadPresent,
+  getDownloadScope,
 } from "./download-runtime.ts";
 import {
   NativeDownloads,
@@ -51,7 +52,8 @@ import {
 } from "./NativeDownloads.tsx";
 import type {
   DownloadContext,
-  DownloadScope,
+  DownloadContexts,
+  DownloadSource,
   DownloadTask,
 } from "./download-types.ts";
 import { parseLibraryReference } from "./library-model.ts";
@@ -59,7 +61,7 @@ import { createPhoneLibraryAdapter } from "./phone-library-runtime.ts";
 import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
 import { boundSourceCache } from "./source-memory.ts";
-import { sources, sourceWorkKey } from "./source-types.ts";
+import { sources, sourceWorkKey, sourceLabel } from "./source-types.ts";
 import type {
   AccountSummary,
   Source,
@@ -165,6 +167,7 @@ function Dialog({
 
 export default function App() {
   const [downloadInput, setDownloadInput] = useState("");
+  const [downloadSource, setDownloadSource] = useState<DownloadSource>("JM");
   const [downloadFeedback, setDownloadFeedback] = useState(false);
   const [downloadLibraryRefresh, setDownloadLibraryRefresh] = useState(false);
   const [pendingDownloadedWork, setPendingDownloadedWork] =
@@ -190,23 +193,24 @@ export default function App() {
   const [accountsError, setAccountsError] = useState("");
   const accountsRef = useRef(accounts);
   accountsRef.current = accounts;
-  const jmAccount = accounts.find((account) => account.source === "JM");
-  const downloadScope: DownloadScope | null =
-    jmAccount?.state === "connected" && jmAccount.sessionId
-      ? { source: "JM", sessionId: jmAccount.sessionId }
-      : null;
-  const downloadContext: DownloadContext | null =
-    downloadScope && library.snapshot.rootId
+  const contextForSource = (source: DownloadSource): DownloadContext | null => {
+    const scope = getDownloadScope(accounts, source);
+    return scope && library.snapshot.rootId
       ? {
-          scope: downloadScope,
+          scope,
           rootId: library.snapshot.rootId,
           generation: library.snapshot.generation,
         }
       : null;
+  };
+  const downloadContexts: DownloadContexts = {
+    JM: contextForSource("JM"),
+    Pica: contextForSource("Pica"),
+  };
   const downloads = useDownloads(
     downloadAdapter,
     persistence.native,
-    downloadContext,
+    downloadContexts,
     () => setDownloadLibraryRefresh(true),
   );
   useEffect(() => {
@@ -420,7 +424,7 @@ export default function App() {
     if (!library.snapshot.items.some((item) => item.id === task.libraryEntryId))
       setNotice("这本作品已下载，当前目录尚未读取到对应文件。请核对电脑目录。");
     showDownloadLibrary({
-      source: "JM",
+      source: task.source,
       workId: task.workId,
       title: task.title,
       authors: [],
@@ -438,15 +442,29 @@ export default function App() {
     library.snapshot.items,
     downloads.snapshot.tasks,
   ]);
-  async function beginDownload(input: string, work?: SourceWork) {
-    if (work && work.source !== "JM") {
-      setNotice("Pica 下载将在后续批次接入。");
-      return;
-    }
+  async function beginDownload(
+    input: string,
+    work?: SourceWork,
+    requestedSource: DownloadSource = work?.source ?? downloadSource,
+  ) {
+    const downloadScope = getDownloadScope(
+      accountsRef.current,
+      requestedSource,
+    );
+    const startingLibrary = library.controller.getState().snapshot;
+    const downloadContext: DownloadContext | null =
+      downloadScope && startingLibrary.rootId
+        ? {
+            scope: downloadScope,
+            rootId: startingLibrary.rootId,
+            generation: startingLibrary.generation,
+          }
+        : null;
+    setDownloadSource(requestedSource);
     setDownloadInput(input);
     setDownloadFeedback(true);
     if (!downloadScope) {
-      setNotice("请先连接 JM 账号。");
+      setNotice(`请先连接${sourceLabel(requestedSource)}账号。`);
       navigate("settings");
       return;
     }
@@ -469,7 +487,7 @@ export default function App() {
       return;
     const currentLibrary = library.controller.getState().snapshot;
     const currentAccount = accountsRef.current.find(
-      (account) => account.source === "JM",
+      (account) => account.source === requestedSource,
     );
     if (
       currentAccount?.state !== "connected" ||
@@ -480,11 +498,13 @@ export default function App() {
       setNotice("账号或电脑目录已改变，请核对后重新准备下载。");
       return;
     }
-    const id = work?.workId ?? parseLibraryReference("JM", input)?.workId;
+    const id =
+      work?.workId ?? parseLibraryReference(requestedSource, input)?.workId;
     const missingEntries = new Set(
       currentDownloads.snapshot.tasks
         .filter(
           (task) =>
+            task.source === requestedSource &&
             task.workId === id &&
             task.phase === "downloaded" &&
             task.localFiles === "missing",
@@ -494,7 +514,7 @@ export default function App() {
     const existing = id
       ? currentLibrary.items.find(
           (item) =>
-            item.sourceRef?.source === "JM" &&
+            item.sourceRef?.source === requestedSource &&
             item.sourceRef.workId === id &&
             !missingEntries.has(item.id),
         )
@@ -502,7 +522,7 @@ export default function App() {
     if (existing && id) {
       setNotice("电脑已有该作品副本，请先核对电脑文件。");
       showDownloadLibrary({
-        source: "JM",
+        source: requestedSource,
         workId: id,
         title: existing.title,
         authors: existing.authors,
@@ -2161,8 +2181,14 @@ export default function App() {
             <NativeDownloads
               downloads={downloads}
               active={page === "queue"}
-              context={downloadContext}
-              scope={downloadScope}
+              contexts={downloadContexts}
+              accounts={accounts}
+              selectedSource={downloadSource}
+              onSourceChange={(source) => {
+                downloads.controller.cancelPlan();
+                setDownloadSource(source);
+                setDownloadInput("");
+              }}
               input={downloadInput}
               onInputChange={setDownloadInput}
               onPrepare={() => beginDownload(downloadInput)}
@@ -2175,7 +2201,7 @@ export default function App() {
                   task.phase === "downloaded" &&
                   task.localFiles === "missing"
                 )
-                  void beginDownload(task.workId);
+                  void beginDownload(task.workId, undefined, task.source);
               }}
               showFeedback={downloadFeedback}
             />
@@ -2251,11 +2277,11 @@ export default function App() {
           </span>
           <span>
             {sourceActive
-              ? "手机名单与电脑文件核对 · JM 单本下载"
+              ? "手机名单与电脑文件核对 · 单本下载"
               : libraryActive
                 ? "电脑文件保留 · 手机由你手动转入"
                 : persistence.native
-                  ? "JM 单本下载 · Pica 下载后续接入"
+                  ? "JM / 哔咔单本下载"
                   : "示例数据 · 尚未连接下载器"}
           </span>
         </footer>

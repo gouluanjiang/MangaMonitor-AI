@@ -17,6 +17,10 @@ pub struct Authenticated<S> {
 pub trait SourceBackend: Send + Sync + 'static {
     type Session: Send + Sync + 'static;
 
+    fn pica_download_credential(&self, _session: &Self::Session) -> Result<StoredCredential> {
+        Err(AccountError::new("DOWNLOAD_SOURCE_UNSUPPORTED"))
+    }
+
     fn login(
         &self,
         source: Source,
@@ -59,6 +63,12 @@ pub trait SourceBackend: Send + Sync + 'static {
 
 impl SourceBackend for WorkbenchSources {
     type Session = SourceSession;
+
+    fn pica_download_credential(&self, session: &Self::Session) -> Result<StoredCredential> {
+        session
+            .pica_download_credential()
+            .ok_or(AccountError::new("DOWNLOAD_SOURCE_UNSUPPORTED"))
+    }
 
     async fn login(
         &self,

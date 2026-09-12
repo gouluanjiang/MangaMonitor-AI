@@ -1,5 +1,6 @@
+export type DownloadSource = "JM" | "Pica";
 export interface DownloadScope {
-  source: "JM";
+  source: DownloadSource;
   sessionId: string;
 }
 export interface DownloadContext {
@@ -7,10 +8,11 @@ export interface DownloadContext {
   rootId: string;
   generation: number;
 }
+export type DownloadContexts = Record<DownloadSource, DownloadContext | null>;
 export interface DownloadPlan {
   planId: string;
   revision: number;
-  source: "JM";
+  source: DownloadSource;
   workId: string;
   title: string;
   authors: string[];
@@ -32,7 +34,7 @@ export type DownloadPhase =
 export interface DownloadTask {
   id: string;
   revision: number;
-  source: "JM";
+  source: DownloadSource;
   workId: string;
   title: string;
   phase: DownloadPhase;

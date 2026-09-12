@@ -69,6 +69,7 @@ pub struct DownloadSnapshot {
 pub struct AwaitingIndexReceipt {
     pub task_id: String,
     pub task_revision: u64,
+    pub source: Source,
     pub root_id: String,
     pub generation: u64,
     pub relative_path: String,
@@ -132,7 +133,17 @@ impl DownloadService {
         generation: u64,
         metadata: JmDownloadMetadata,
     ) -> Result<DownloadPlan> {
-        if !metadata.is_valid() {
+        self.prepare_for_source(store, root_id, generation, Source::Jm, metadata)
+    }
+    pub fn prepare_for_source(
+        &self,
+        store: &WorkbenchStore,
+        root_id: &str,
+        generation: u64,
+        source: Source,
+        metadata: JmDownloadMetadata,
+    ) -> Result<DownloadPlan> {
+        if !metadata.is_valid_for(source) {
             return Err(error("DOWNLOAD_METADATA_INVALID"));
         }
         let mut runtime = self.lock()?;
@@ -155,7 +166,7 @@ impl DownloadService {
         if document.value.tasks.len() >= MAX_DOWNLOAD_TASKS {
             return Err(error("DOWNLOAD_LIMIT_REACHED"));
         }
-        let destination = destination(&metadata);
+        let destination = destination(source, &metadata);
         let updated_at = now()?;
         let sequence = PLAN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let id = hash(
@@ -171,7 +182,8 @@ impl DownloadService {
             .as_bytes(),
         );
         let mut record = DownloadRecord {
-            jpeg_output: true,
+            source,
+            jpeg_output: source == Source::Jm,
             id: id.clone(),
             origin: "manual".into(),
             revision: 1,
@@ -202,7 +214,7 @@ impl DownloadService {
         let plan = DownloadPlan {
             plan_id: id.clone(),
             revision: document.revision,
-            source: Source::Jm,
+            source,
             work_id: record.metadata.work_id.clone(),
             title: record.metadata.title.clone(),
             authors: record.metadata.authors.clone(),
@@ -271,6 +283,26 @@ impl DownloadService {
         let mut runtime = self.lock()?;
         let document = self.load_shared(store)?;
         Ok(snapshot(&document, &mut runtime, true, recheck_files))
+    }
+    /// Native session selection must use the same control revision as the
+    /// subsequent command. This exposes no token, path, or mutable task data.
+    pub fn task_source(
+        &self,
+        store: &WorkbenchStore,
+        task_id: &str,
+        expected_revision: u64,
+    ) -> Result<Source> {
+        let document = self.load_shared(store)?;
+        let task = document
+            .value
+            .tasks
+            .iter()
+            .find(|task| task.id == task_id)
+            .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
+        if task.revision != expected_revision {
+            return Err(error("DOWNLOAD_TASK_STALE"));
+        }
+        Ok(task.source)
     }
     pub fn control(
         &self,
@@ -463,6 +495,16 @@ impl DownloadService {
         task_id: &str,
         current_scope: impl Fn() -> Result<()> + Send + Sync,
     ) -> Result<Option<AwaitingIndexReceipt>> {
+        self.run_with_token(store, task_id, None, current_scope)
+            .await
+    }
+    pub async fn run_with_token(
+        &self,
+        store: &WorkbenchStore,
+        task_id: &str,
+        pica_token: Option<&str>,
+        current_scope: impl Fn() -> Result<()> + Send + Sync,
+    ) -> Result<Option<AwaitingIndexReceipt>> {
         current_scope()?;
         let (initial, path) = {
             let mut runtime = self.lock()?;
@@ -479,6 +521,19 @@ impl DownloadService {
                 .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
             if record.phase != DownloadPhase::Queued {
                 return Err(error("DOWNLOAD_CONTROL_INVALID"));
+            }
+            match (record.source, pica_token) {
+                (Source::Jm, Some(_)) => return Err(error("DOWNLOAD_SOURCE_MISMATCH")),
+                (Source::Pica, None) => return Err(error("DOWNLOAD_SOURCE_TOKEN_REQUIRED")),
+                (Source::Pica, Some(token))
+                    if token.is_empty()
+                        || token.len() > 8192
+                        || token.trim() != token
+                        || token.chars().any(char::is_control) =>
+                {
+                    return Err(error("DOWNLOAD_SOURCE_TOKEN_INVALID"));
+                }
+                _ => {}
             }
             require_library(store, &record)?;
             let workspace = store.open_download_workspace()?;
@@ -501,6 +556,7 @@ impl DownloadService {
             current_scope()?;
             let current = self.require_run(store, task_id, revision)?;
             if current.target_hash != initial.target_hash
+                || current.source != initial.source
                 || current.approval_revision != initial.approval_revision
                 || current.jpeg_output != initial.jpeg_output
             {
@@ -530,7 +586,7 @@ impl DownloadService {
                     &ledger,
                     &command,
                     &path,
-                    None,
+                    pica_token,
                     None,
                     || {
                         let current = require_record().map_err(|e| e.code.to_string())?;
@@ -627,7 +683,7 @@ impl DownloadService {
                 && r.item
                     .source_ref
                     .as_ref()
-                    .is_some_and(|r| r.source == Source::Jm && r.work_id == expected.work_id)
+                    .is_some_and(|r| r.source == expected.source && r.work_id == expected.work_id)
                 && r.item.page_count == Some(expected.expected_pages)
         });
         if !found {
@@ -710,10 +766,11 @@ fn next(value: u64) -> Result<u64> {
 }
 fn binding(record: &DownloadRecord) -> Result<String> {
     serde_json::to_vec(&(
-        if record.jpeg_output {
-            "manual-JM-layout-v1-jpeg"
-        } else {
-            "manual-JM-layout-v1"
+        match (record.source, record.jpeg_output) {
+            (Source::Jm, true) => "manual-JM-layout-v1-jpeg",
+            (Source::Jm, false) => "manual-JM-layout-v1",
+            (Source::Pica, false) => "manual-Pica-layout-v1",
+            (Source::Pica, true) => return Err(error("DOWNLOAD_DOCUMENT_INVALID")),
         },
         &record.root,
         record.generation,
@@ -760,6 +817,7 @@ fn receipt(record: &DownloadRecord) -> Result<AwaitingIndexReceipt> {
     Ok(AwaitingIndexReceipt {
         task_id: record.id.clone(),
         task_revision: record.revision,
+        source: record.source,
         root_id: record.root.id.clone(),
         generation: record.generation,
         relative_path: record.destination.clone(),
@@ -777,8 +835,8 @@ fn display(record: &DownloadRecord) -> String {
         .to_string_lossy()
         .into_owned()
 }
-fn destination(metadata: &JmDownloadMetadata) -> String {
-    let mut name = format!("[JM{}] ", metadata.work_id);
+fn destination(source: Source, metadata: &JmDownloadMetadata) -> String {
+    let mut name = format!("[{}{}] ", crate::source_label(source), metadata.work_id);
     for character in metadata.title.chars() {
         let character = if character.is_control()
             || matches!(
@@ -811,7 +869,10 @@ fn check_new_download(
     }
     let root = materialize::require_root(record)?;
     for old in &downloads.tasks {
-        if old.metadata.work_id != record.metadata.work_id || old.root.id != record.root.id {
+        if old.source != record.source
+            || old.metadata.work_id != record.metadata.work_id
+            || old.root.id != record.root.id
+        {
             continue;
         }
         if old.phase != DownloadPhase::Downloaded {
@@ -833,10 +894,11 @@ fn check_new_download(
     let mut missing = BTreeSet::new();
     for old in &library.records {
         let matches_reference = old.item.source_ref.as_ref().is_some_and(|reference| {
-            reference.source == Source::Jm && reference.work_id == record.metadata.work_id
+            reference.source == record.source && reference.work_id == record.metadata.work_id
         });
         let previous_association = downloads.tasks.iter().any(|task| {
             task.root == record.root
+                && task.source == record.source
                 && task.metadata.work_id == record.metadata.work_id
                 && task.library_entry_id.as_ref() == Some(&old.item.id)
         });
@@ -916,7 +978,7 @@ fn snapshot(
                 DownloadTask {
                     id: t.id.clone(),
                     revision: t.revision,
-                    source: Source::Jm,
+                    source: t.source,
                     work_id: t.metadata.work_id.clone(),
                     title: t.metadata.title.clone(),
                     phase,
@@ -936,6 +998,15 @@ fn snapshot(
 }
 fn classify(code: &str) -> crate::StoreError {
     match code {
+        "HTTP_401" | "API_CODE_401" | "SESSION_EXPIRED" => error("SESSION_EXPIRED"),
+        "SESSION_CHANGED" => error("SESSION_CHANGED"),
+        "PICA_PAGINATION_CHANGED" => error("DOWNLOAD_SOURCE_CHANGED"),
+        "PICA_PAGINATION_INVALID"
+        | "PICA_PAGINATION_INCOMPLETE"
+        | "INCOMPLETE_CHAPTER_PAGINATION"
+        | "PICA_PREFLIGHT_CHAPTER_PAGINATION_INCOMPLETE"
+        | "PICA_PREFLIGHT_IMAGE_PAGINATION_INCOMPLETE"
+        | "SOURCE_PREFLIGHT_ENUMERATION_INCOMPLETE" => error("DOWNLOAD_SOURCE_INCOMPLETE"),
         "DOWNLOAD_PAUSED" => error("DOWNLOAD_PAUSED"),
         "DOWNLOAD_ROOT_CHANGED" => error("DOWNLOAD_ROOT_CHANGED"),
         "DOWNLOAD_LIMIT_REACHED" => error("DOWNLOAD_LIMIT_REACHED"),

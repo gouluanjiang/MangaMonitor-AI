@@ -3,14 +3,20 @@ import type {
   DownloadLocalFiles,
   DownloadSnapshot,
   DownloadTask,
+  DownloadPlan,
+  DownloadSource,
 } from "../src/download-types.ts";
 import type { LibrarySnapshot } from "../src/library-types.ts";
+import type { AccountSummary } from "../src/source-types.ts";
 type Options = {
   root?: boolean;
   existing?: boolean;
   phoneOwned?: boolean;
   failRead?: boolean;
   completed?: boolean;
+  fixtureSource?: DownloadSource;
+  wrongPlanSource?: boolean;
+  mixedQueue?: boolean;
 };
 type Hooks = {
   calls: { command: string; args: Record<string, unknown> }[];
@@ -18,6 +24,7 @@ type Hooks = {
   pc: LibrarySnapshot;
   blockedRead: boolean;
   filePresence: DownloadLocalFiles;
+  accounts: AccountSummary[];
   advance(phase: "error" | "downloaded"): void;
 };
 declare global {
@@ -50,12 +57,16 @@ async function install(page: Page, options: Options = {}) {
       entryId = "b".repeat(64),
       sourceId = "123",
       picaId = "0123456789abcdef01234567";
+    const fixtureSource = options.fixtureSource ?? "JM";
+    const fixtureTitle =
+      fixtureSource === "JM" ? "合成单本作品" : "合成 Pica 作品";
+    const fixtureId = fixtureSource === "JM" ? sourceId : picaId;
     const entry = {
       id: entryId,
-      relativePath: "合成单本作品",
-      fileName: "合成单本作品",
+      relativePath: fixtureTitle,
+      fileName: fixtureTitle,
       format: "directory" as const,
-      title: "合成单本作品",
+      title: fixtureTitle,
       authors: ["合成作者"],
       description: null,
       tags: [],
@@ -65,7 +76,7 @@ async function install(page: Page, options: Options = {}) {
       coverAvailable: false,
       state: "indexed" as const,
       errorCode: null,
-      sourceRef: { source: "JM" as const, workId: sourceId },
+      sourceRef: { source: fixtureSource, workId: fixtureId },
       identityEvidence: "metadata" as const,
     };
     const pc: LibrarySnapshot = {
@@ -93,9 +104,9 @@ async function install(page: Page, options: Options = {}) {
                 {
                   id: "c".repeat(64),
                   revision: 1,
-                  source: "JM",
-                  workId: sourceId,
-                  title: "合成单本作品",
+                  source: fixtureSource,
+                  workId: fixtureId,
+                  title: fixtureTitle,
                   phase: "downloaded",
                   filesDone: 3,
                   filesTotal: 3,
@@ -105,7 +116,7 @@ async function install(page: Page, options: Options = {}) {
                   libraryEntryId: entryId,
                   localFiles: "present",
                   updatedAt: 1,
-                  destinationDisplay: "C:\\Synthetic\\合成单本作品",
+                  destinationDisplay: "C:\\Synthetic\\" + fixtureTitle,
                 },
               ],
             }
@@ -113,8 +124,38 @@ async function install(page: Page, options: Options = {}) {
       pc,
       blockedRead: Boolean(options.failRead),
       filePresence: "present",
+      accounts: (["JM", "Pica"] as const).map((source) => ({
+        source,
+        sessionId: "session-" + source,
+        accountId: "account-" + source,
+        displayName: "合成账号",
+        state: "connected",
+        remembered: false,
+        errorCode: null,
+      })),
       advance: () => {},
     });
+    if (!stored && options.mixedQueue)
+      hooks.queue = {
+        revision: 1,
+        tasks: (["JM", "Pica"] as const).map((source, index) => ({
+          id: (index === 0 ? "c" : "d").repeat(64),
+          revision: 1,
+          source,
+          workId: source === "JM" ? sourceId : picaId,
+          title: source === "JM" ? "合成单本作品" : "合成 Pica 作品",
+          phase: index === 0 ? "paused" : "error",
+          filesDone: 1,
+          filesTotal: 3,
+          bytesDone: 100,
+          errorCode: index === 0 ? null : "SOURCE_TIMEOUT",
+          allowedActions: index === 0 ? ["resume"] : ["retry"],
+          libraryEntryId: null,
+          localFiles: null,
+          updatedAt: 1,
+          destinationDisplay: "C:\\Synthetic\\" + source,
+        })),
+      };
     const save = () =>
       localStorage.setItem(
         "synthetic.jm.download.queue",
@@ -123,25 +164,37 @@ async function install(page: Page, options: Options = {}) {
     hooks.advance = (phase) => {
       hooks.queue = {
         revision: hooks.queue.revision + 1,
-        tasks: hooks.queue.tasks.map((task) => ({
-          ...task,
-          revision: task.revision + 1,
-          phase,
-          filesDone: phase === "downloaded" ? 3 : 1,
-          filesTotal: 3,
-          bytesDone: phase === "downloaded" ? 300 : 100,
-          errorCode: phase === "error" ? "SOURCE_TIMEOUT" : null,
-          allowedActions: phase === "error" ? ["retry"] : [],
-          libraryEntryId: phase === "downloaded" ? entryId : null,
-          localFiles: phase === "downloaded" ? "present" : null,
-          updatedAt: 2,
-        })),
+        tasks: hooks.queue.tasks.map((task) =>
+          task.phase === "downloaded"
+            ? task
+            : {
+                ...task,
+                revision: task.revision + 1,
+                phase,
+                filesDone: phase === "downloaded" ? 3 : 1,
+                filesTotal: 3,
+                bytesDone: phase === "downloaded" ? 300 : 100,
+                errorCode: phase === "error" ? "SOURCE_TIMEOUT" : null,
+                allowedActions: phase === "error" ? ["retry"] : [],
+                libraryEntryId: phase === "downloaded" ? entryId : null,
+                localFiles: phase === "downloaded" ? "present" : null,
+                updatedAt: 2,
+              },
+        ),
       };
       if (phase === "downloaded")
         hooks.pc = {
           ...hooks.pc,
           revision: hooks.pc.revision + 1,
-          items: [entry],
+          items: hooks.queue.tasks
+            .filter((task) => task.phase === "downloaded")
+            .map((task) => ({
+              ...entry,
+              title: task.title,
+              fileName: task.title,
+              relativePath: task.title,
+              sourceRef: { source: task.source, workId: task.workId },
+            })),
           visited: 1,
         };
       save();
@@ -163,15 +216,6 @@ async function install(page: Page, options: Options = {}) {
         },
       },
     };
-    const accounts = ["JM", "Pica"].map((source) => ({
-      source,
-      sessionId: "session-" + source,
-      accountId: "account-" + source,
-      displayName: "合成账号",
-      state: "connected",
-      remembered: false,
-      errorCode: null,
-    }));
     const sourceWork = (source: string) => ({
       source,
       workId: source === "JM" ? sourceId : picaId,
@@ -185,6 +229,7 @@ async function install(page: Page, options: Options = {}) {
       coverAvailable: false,
     });
     let restored = false;
+    let preparedPlan: DownloadPlan | null = null;
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
@@ -193,12 +238,12 @@ async function install(page: Page, options: Options = {}) {
           if (command === "read_preferences") return clone(preferences);
           if (command === "read_booklists")
             return { revision: 0, value: { version: 1, lists: [] } };
-          if (command === "source_accounts") return clone(accounts);
+          if (command === "source_accounts") return clone(hooks.accounts);
           if (command === "library_read") return clone(hooks.pc);
           if (command === "phone_library_read")
             return {
               revision: 0,
-              importedNames: options.phoneOwned ? ["合成单本作品.zip"] : [],
+              importedNames: options.phoneOwned ? [fixtureTitle + ".zip"] : [],
               importedAt: options.phoneOwned ? 1 : null,
               importFileName: options.phoneOwned ? "合成手机名单.txt" : null,
               manualEntries: [],
@@ -261,19 +306,35 @@ async function install(page: Page, options: Options = {}) {
             }
             return clone(hooks.queue);
           }
-          if (command === "jm_download_prepare")
-            return {
+          if (command === "jm_download_prepare") {
+            const requestedSource = (args.scope as { source: DownloadSource })
+              .source;
+            const source = options.wrongPlanSource
+              ? requestedSource === "JM"
+                ? "Pica"
+                : "JM"
+              : requestedSource;
+            const title = source === "JM" ? "合成单本作品" : "合成 Pica 作品";
+            preparedPlan = {
               planId: (hooks.queue.tasks.length ? "d" : "c").repeat(64),
               revision: hooks.queue.revision,
-              source: "JM",
-              workId: sourceId,
-              title: "合成单本作品",
+              source,
+              workId: source === "JM" ? sourceId : picaId,
+              title,
               authors: ["合成作者"],
-              destinationDisplay: "C:\\Synthetic\\合成单本作品",
+              destinationDisplay: "C:\\Synthetic\\" + title,
               rootId,
               generation: 1,
             };
+            return clone(preparedPlan);
+          }
           if (command === "jm_download_confirm") {
+            if (
+              !preparedPlan ||
+              preparedPlan.planId !== args.planId ||
+              preparedPlan.revision !== args.expectedRevision
+            )
+              throw { code: "DOWNLOAD_PLAN_STALE" };
             if (
               hooks.queue.tasks.some(
                 (task) =>
@@ -284,9 +345,9 @@ async function install(page: Page, options: Options = {}) {
             const task: DownloadTask = {
               id: String(args.planId),
               revision: 1,
-              source: "JM",
-              workId: sourceId,
-              title: "合成单本作品",
+              source: preparedPlan.source,
+              workId: preparedPlan.workId,
+              title: preparedPlan.title,
               phase: "downloading",
               filesDone: 0,
               filesTotal: null,
@@ -296,7 +357,7 @@ async function install(page: Page, options: Options = {}) {
               libraryEntryId: null,
               localFiles: null,
               updatedAt: 1,
-              destinationDisplay: "C:\\Synthetic\\合成单本作品",
+              destinationDisplay: preparedPlan.destinationDisplay,
             };
             hooks.queue = {
               revision: hooks.queue.revision + 1,
@@ -306,6 +367,25 @@ async function install(page: Page, options: Options = {}) {
             return clone(hooks.queue);
           }
           if (command === "jm_download_control") {
+            const target = hooks.queue.tasks.find(
+              (task) => task.id === args.taskId,
+            );
+            const scope = args.scope as {
+              source: DownloadSource;
+              sessionId: string;
+            };
+            if (!target || target.source !== scope.source)
+              throw { code: "DOWNLOAD_SOURCE_MISMATCH" };
+            if (
+              args.action !== "pause" &&
+              !hooks.accounts.some(
+                (account) =>
+                  account.source === target.source &&
+                  account.state === "connected" &&
+                  account.sessionId === scope.sessionId,
+              )
+            )
+              throw { code: "DOWNLOAD_SESSION_REQUIRED" };
             hooks.queue = {
               revision: hooks.queue.revision + 1,
               tasks: hooks.queue.tasks.map((task) =>
@@ -520,7 +600,7 @@ test("an exact existing PC reference opens its copy instead of creating another 
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
 });
 
-test("JM source detail prepares one plan while Pica download remains unavailable", async ({
+test("JM and Pica source details prepare only their own source without creating a task on cancel", async ({
   page,
 }) => {
   await install(page);
@@ -528,13 +608,29 @@ test("JM source detail prepares one plan while Pica download remains unavailable
   await page.getByTestId("source-open-JM:123").click();
   await page.getByTestId("source-download").click();
   await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect(page.getByTestId("download-plan-source")).toContainText(
+    "JM · 123",
+  );
   await page.getByTestId("download-cancel").click();
   await page.getByTestId("source-detail-back").click();
   await page.getByTestId("source-tab-Pica").click();
   await page.getByTestId("source-open-Pica:0123456789abcdef01234567").click();
-  await expect(page.getByTestId("source-download")).toBeDisabled();
-  await expect(page.getByTestId("source-download")).toContainText("后续批次");
-  expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
+  await expect(page.getByTestId("source-download")).toBeEnabled();
+  await page.getByTestId("source-download").click();
+  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect(page.getByTestId("download-plan-source")).toContainText(
+    "哔咔 · 0123456789abcdef01234567",
+  );
+  await expect(page.getByTestId("download-plan-title")).toHaveText(
+    "合成 Pica 作品",
+  );
+  await page.getByTestId("download-cancel").click();
+  expect(
+    (await calls(page, "jm_download_prepare")).map((call) => call.args.scope),
+  ).toEqual([
+    { source: "JM", sessionId: "session-JM" },
+    { source: "Pica", sessionId: "session-Pica" },
+  ]);
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
 });
 
@@ -726,3 +822,219 @@ test("entry and focus recheck files only while the queue is active without repla
   expect(await calls(page, "jm_download_control")).toEqual([]);
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
 });
+
+const picaWorkId = "0123456789abcdef01234567";
+
+test("manual Pica selection preserves the official link and only confirmed completion updates PC files", async ({
+  page,
+}) => {
+  await install(page, { fixtureSource: "Pica", phoneOwned: true });
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-input").fill("JM123");
+  await page.getByTestId("download-source").selectOption("Pica");
+  await expect(page.getByTestId("download-input")).toHaveValue("");
+  const input = `https://picaapi.picacomic.com/comics/${picaWorkId}`;
+  await page.getByTestId("download-input").fill(input);
+  await page.getByTestId("download-prepare").click();
+  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect(page.getByTestId("download-plan-source")).toContainText(
+    `哔咔 · ${picaWorkId}`,
+  );
+  await expect(page.getByTestId("download-confirmation")).toContainText(
+    "哔咔保留原图格式",
+  );
+  expect((await calls(page, "jm_download_prepare"))[0].args).toEqual({
+    scope: { source: "Pica", sessionId: "session-Pica" },
+    input,
+    rootId: "a".repeat(64),
+    generation: 1,
+  });
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect(await page.evaluate(() => window.downloadTest.pc.items)).toEqual([]);
+  await page.getByTestId("download-confirm").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "正在下载",
+  );
+  await expect(page.getByTestId("download-task-" + oldTaskId)).toContainText(
+    `哔咔 · ${picaWorkId}`,
+  );
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
+  await page.reload();
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已暂停",
+  );
+  await expect(page.getByTestId("download-source")).toHaveValue("JM");
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  await page.getByTestId("download-resume-" + oldTaskId).click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "正在下载",
+  );
+  expect((await calls(page, "jm_download_control"))[0].args.scope).toEqual({
+    source: "Pica",
+    sessionId: "session-Pica",
+  });
+  await page.evaluate(() => window.downloadTest.advance("downloaded"));
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已下载",
+  );
+  await expect
+    .poll(async () => (await calls(page, "library_read")).length)
+    .toBeGreaterThan(1);
+  await page.getByTestId("download-open-" + oldTaskId).click();
+  await expect(page.getByTestId("library-detail-stock")).toHaveText(
+    "已入库 · 手机名单",
+  );
+  expect(
+    await page.evaluate(() => window.downloadTest.pc.items[0].sourceRef),
+  ).toEqual({ source: "Pica", workId: picaWorkId });
+  expect(await calls(page, "library_scan")).toEqual([]);
+  expect(await calls(page, "phone_library_mark")).toEqual([]);
+});
+
+test("a Pica preparation returning a JM plan cannot show a confirmation or create a task", async ({
+  page,
+}) => {
+  await install(page, { wrongPlanSource: true });
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-source").selectOption("Pica");
+  await page.getByTestId("download-input").fill(picaWorkId);
+  await page.getByTestId("download-prepare").click();
+  await expect(page.getByTestId("download-error")).toBeVisible();
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect(await page.evaluate(() => window.downloadTest.queue.tasks)).toEqual(
+    [],
+  );
+});
+
+test("mixed queue controls use each task account regardless of the source selector and logout still permits pause", async ({
+  page,
+}) => {
+  await install(page, { mixedQueue: true });
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-source").selectOption("Pica");
+  await page.getByTestId("download-resume-" + oldTaskId).click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "正在下载",
+  );
+  await page.getByTestId("download-pause-" + oldTaskId).click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "已暂停",
+  );
+  await page.getByTestId("download-source").selectOption("JM");
+  await page.getByTestId("download-retry-" + newTaskId).click();
+  await expect(page.getByTestId("download-phase-" + newTaskId)).toHaveText(
+    "正在下载",
+  );
+  expect(
+    (await calls(page, "jm_download_control")).map((call) => [
+      call.args.scope,
+      call.args.action,
+    ]),
+  ).toEqual([
+    [{ source: "JM", sessionId: "session-JM" }, "resume"],
+    [{ source: "JM", sessionId: "session-JM" }, "pause"],
+    [{ source: "Pica", sessionId: "session-Pica" }, "retry"],
+  ]);
+  await page.evaluate(() => {
+    window.downloadTest.accounts = window.downloadTest.accounts.map(
+      (account) =>
+        account.source === "Pica"
+          ? {
+              ...account,
+              state: "disconnected",
+              sessionId: null,
+              accountId: null,
+              displayName: null,
+            }
+          : account,
+    );
+  });
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("accounts-reload").click();
+  await expect(page.getByTestId("account-connect-Pica")).toHaveText(
+    "连接哔咔账号",
+  );
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-pause-" + newTaskId)).toBeEnabled();
+  await page.getByTestId("download-pause-" + newTaskId).click();
+  await expect(page.getByTestId("download-phase-" + newTaskId)).toHaveText(
+    "已暂停",
+  );
+  await expect(page.getByTestId("download-resume-" + newTaskId)).toBeDisabled();
+  await expect(page.getByTestId("download-resume-" + oldTaskId)).toBeEnabled();
+  expect((await calls(page, "jm_download_control")).at(-1)?.args.scope).toEqual(
+    { source: "Pica", sessionId: "" },
+  );
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+});
+
+test("Pica missing-file reprepare selects the original task source and creates a separate confirmed attempt", async ({
+  page,
+}) => {
+  await install(page, {
+    completed: true,
+    fixtureSource: "Pica",
+    phoneOwned: true,
+  });
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-source")).toHaveValue("JM");
+  await page.evaluate(() => {
+    window.downloadTest.filePresence = "missing";
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "文件已移除",
+  );
+  await page.getByTestId("download-reprepare-" + oldTaskId).click();
+  await expect(page.getByTestId("download-source")).toHaveValue("Pica");
+  await expect(page.getByTestId("download-input")).toHaveValue(picaWorkId);
+  await expect(page.getByTestId("download-plan-source")).toContainText(
+    `哔咔 · ${picaWorkId}`,
+  );
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  await page.getByTestId("download-confirm").click();
+  await expect(page.getByTestId("download-phase-" + newTaskId)).toHaveText(
+    "正在下载",
+  );
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "文件已移除",
+  );
+  expect((await calls(page, "jm_download_prepare"))[0].args.scope).toEqual({
+    source: "Pica",
+    sessionId: "session-Pica",
+  });
+  expect(
+    (await calls(page, "jm_download_confirm")).map((call) => call.args.planId),
+  ).toEqual([newTaskId]);
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+});
+
+for (const fixtureSource of ["JM", "Pica"] as const)
+  test(`Pica preparation distinguishes an existing ${fixtureSource} PC reference`, async ({
+    page,
+  }) => {
+    await install(page, { existing: true, fixtureSource });
+    await page.getByTestId("nav-queue").click();
+    await page.getByTestId("download-source").selectOption("Pica");
+    await page.getByTestId("download-input").fill(picaWorkId);
+    await page.getByTestId("download-prepare").click();
+    if (fixtureSource === "JM") {
+      await expect(page.getByTestId("download-plan-source")).toContainText(
+        "哔咔",
+      );
+      await page.getByTestId("download-cancel").click();
+    } else {
+      await expect(page.getByTestId("library-detail")).toBeVisible();
+      await expect(page.getByTestId("library-reference")).toContainText(
+        `Pica · ${picaWorkId}`,
+      );
+    }
+    expect(await calls(page, "jm_download_prepare")).toHaveLength(
+      fixtureSource === "JM" ? 1 : 0,
+    );
+    expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  });

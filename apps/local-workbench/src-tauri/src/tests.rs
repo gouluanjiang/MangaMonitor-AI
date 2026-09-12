@@ -417,12 +417,20 @@ fn download_commands_require_the_main_packaged_window() {
             json!({"scope":{"source":"JM","sessionId":"stale"},"input":"123","rootId":"a".repeat(64),"generation":1}),
         ),
         (
+            "jm_download_prepare",
+            json!({"scope":{"source":"Pica","sessionId":"stale"},"input":"0123456789abcdef01234567","rootId":"a".repeat(64),"generation":1}),
+        ),
+        (
             "jm_download_confirm",
             json!({"planId":"a".repeat(64),"expectedRevision":1}),
         ),
         (
             "jm_download_control",
             json!({"scope":{"source":"JM","sessionId":"stale"},"taskId":"a".repeat(64),"expectedRevision":1,"action":"pause"}),
+        ),
+        (
+            "jm_download_control",
+            json!({"scope":{"source":"Pica","sessionId":""},"taskId":"a".repeat(64),"expectedRevision":1,"action":"pause"}),
         ),
     ] {
         assert!(
@@ -487,6 +495,25 @@ fn unknown_download_plan_never_creates_a_task_and_ci_refuses_live_execution() {
     assert_eq!(
         invoke(&main, "jm_download_read", json!({})).unwrap()["tasks"],
         json!([])
+    );
+}
+
+#[test]
+fn pica_prepare_never_reads_a_live_source_in_ci_or_without_a_current_account() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let expected = if std::env::var("GITHUB_ACTIONS").is_ok_and(|v| v.eq_ignore_ascii_case("true"))
+    {
+        "DOWNLOAD_LIVE_EXECUTION_DISABLED_IN_CI"
+    } else {
+        "SESSION_CHANGED"
+    };
+    let before = invoke(&main, "jm_download_read", json!({})).unwrap();
+    let problem = invoke(&main, "jm_download_prepare", json!({"scope":{"source":"Pica","sessionId":"not-a-session"},"input":"0123456789abcdef01234567","rootId":"a".repeat(64),"generation":1})).unwrap_err();
+    assert_eq!(problem, json!({"code":expected}));
+    assert_eq!(
+        invoke(&main, "jm_download_read", json!({})).unwrap(),
+        before
     );
 }
 

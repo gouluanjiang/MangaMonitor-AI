@@ -91,11 +91,17 @@ fn unknown_metadata_is_not_invented_as_false_or_zero() {
     assert!(item.authors.is_empty());
     assert!(!item.cover_available);
     assert!(protocol::work(Source::Pica, &json!({"_id":PICA_ID}), false).is_err());
-    assert_eq!(protocol::work(
-        Source::Pica,
-        &json!({"_id":PICA_ID,"title":"T","pagesCount":-1}),
-        false
-    ).unwrap().0.page_count, None);
+    assert_eq!(
+        protocol::work(
+            Source::Pica,
+            &json!({"_id":PICA_ID,"title":"T","pagesCount":-1}),
+            false
+        )
+        .unwrap()
+        .0
+        .page_count,
+        None
+    );
 }
 
 #[test]
@@ -490,6 +496,10 @@ async fn login_and_restore_validate_profile_and_never_return_passwords() {
         .unwrap();
     assert_eq!(login.credential.kind(), CredentialKind::SessionToken);
     assert_eq!(login.credential.secret(), "fixture-token");
+    assert_eq!(
+        login.session.pica_download_credential().unwrap().secret(),
+        "fixture-token"
+    );
     assert_eq!(
         sources
             .restore(Source::Pica, &login.credential)
@@ -1401,7 +1411,8 @@ fn pica_negative_page_count_is_unknown_without_relaxing_other_counts() {
 #[test]
 fn identical_pica_favorite_records_keep_source_entry_count_but_conflicts_stay_invalid() {
     let record = json!({"_id":PICA_ID,"title":"T","pagesCount":-7});
-    let page = json!({"comics":{"page":1,"pages":1,"limit":20,"total":2,"docs":[record.clone(),record]}});
+    let page =
+        json!({"comics":{"page":1,"pages":1,"limit":20,"total":2,"docs":[record.clone(),record]}});
     let (accepted, _) = protocol::page(Source::Pica, &page, 1, true).unwrap();
     assert_eq!(accepted.items.len(), 2);
     assert_eq!(accepted.total, Some(2));
@@ -1421,7 +1432,9 @@ fn identical_pica_favorite_records_keep_source_entry_count_but_conflicts_stay_in
 #[tokio::test]
 async fn pica_favorites_register_negative_count_and_identical_duplicates_without_more_requests() {
     let record = json!({"_id":PICA_ID,"title":"T","pagesCount":-7,"thumb":{"fileServer":"https://storage1.picacomic.com","path":"cover/test.jpg"}});
-    let sources = scripted(vec![Ok(json!({"comics":{"page":1,"pages":1,"limit":20,"total":2,"docs":[record.clone(),record]}}))]);
+    let sources = scripted(vec![Ok(
+        json!({"comics":{"page":1,"pages":1,"limit":20,"total":2,"docs":[record.clone(),record]}}),
+    )]);
     let session = session(Source::Pica);
     let page = sources
         .favorites(

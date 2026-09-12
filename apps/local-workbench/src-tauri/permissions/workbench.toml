@@ -22,6 +22,16 @@ commands.allow = [
   "source_cover",
   "source_following",
   "source_follow",
+  "discovery_read",
+  "discovery_start",
+  "discovery_cancel",
+  "completeness_read",
+  "completeness_start",
+  "completeness_cancel",
+  "completeness_settings_read",
+  "completeness_family_confirm",
+  "completeness_family_unlink",
+  "completeness_language_set",
 ]
 
 [[permission]]

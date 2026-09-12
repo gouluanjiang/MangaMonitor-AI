@@ -74,7 +74,7 @@ interface SourceCoverProps {
   retryVersion?: number;
   resolveMissing?: boolean;
 }
-function SourceCover({
+export function SourceCover({
   adapter,
   scope,
   work,

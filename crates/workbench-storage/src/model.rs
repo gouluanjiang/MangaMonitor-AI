@@ -203,7 +203,7 @@ impl ValidatedDocument for Booklists {
 
 pub const MAX_FOLLOWED_ACCOUNTS: usize = 20;
 pub const MAX_FOLLOWED_WORKS_PER_ACCOUNT: usize = 500;
-pub const MAX_FOLLOWED_AUTHORS_PER_ACCOUNT: usize = 200;
+pub const MAX_FOLLOWED_AUTHORS_PER_ACCOUNT: usize = 1000;
 pub const MAX_FOLLOWING_NAME_CHARACTERS: usize = 200;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

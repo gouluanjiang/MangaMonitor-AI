@@ -46,6 +46,11 @@ struct Scheduled<T> {
     task_id: String,
     revision: u64,
     session: T,
+    check: Option<Arc<AdmissionCheck>>,
+}
+pub(crate) struct AdmissionCheck {
+    pub before_work: Box<dyn Fn() -> Result<(), StoreError> + Send + Sync>,
+    pub while_running: Box<dyn Fn() -> Result<(), StoreError> + Send + Sync>,
 }
 /// One driver processes the complete work lifecycle, including PC registration,
 /// before taking the next item. Sessions and pending admissions are never saved.
@@ -116,7 +121,7 @@ fn storage_source(source: Source) -> LibrarySource {
     }
 }
 
-fn live_execution_allowed() -> Result<(), StoreError> {
+pub(crate) fn live_execution_allowed() -> Result<(), StoreError> {
     if std::env::var("GITHUB_ACTIONS").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
         Err(error("DOWNLOAD_LIVE_EXECUTION_DISABLED_IN_CI"))
     } else {
@@ -423,6 +428,7 @@ async fn run_one(
     let task_id = scheduled.task_id;
     let revision = scheduled.revision;
     let session = scheduled.session;
+    let check = scheduled.check;
     let token = require_task_scope(
         &downloads.service,
         &store,
@@ -430,13 +436,22 @@ async fn run_one(
         revision,
         session.source(),
     )
-    .and_then(|()| session.pica_token().map_err(|problem| error(problem.code)));
+    .and_then(|()| {
+        if let Some(check) = &check {
+            (check.before_work)()?;
+        }
+        session.pica_token().map_err(|problem| error(problem.code))
+    });
     let result = match token {
         Ok(token) => {
             downloads
                 .service
                 .run_selected_with_token(&store, &task_id, revision, token, || {
-                    session.require_current().map_err(|e| error(e.code))
+                    session.require_current().map_err(|e| error(e.code))?;
+                    if let Some(check) = &check {
+                        (check.while_running)()?;
+                    }
+                    Ok(())
                 })
                 .await
         }
@@ -520,6 +535,7 @@ fn scheduled_tasks(
                 task_id: id.clone(),
                 revision: task.revision,
                 session: session.clone(),
+                check: None,
             })
         })
         .collect()
@@ -781,6 +797,64 @@ fn require_task_scope(
     Ok(())
 }
 
+/// Only the native completeness controller calls this after deriving a Chinese
+/// replacement from the current phone/PC/family evidence. Uses the same FIFO,
+/// immutable plan and add-only materializer as reviewed manual downloads.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn enqueue_translation(
+    downloads: Arc<DesktopDownloads>,
+    store_state: Arc<DesktopStore>,
+    library_state: Arc<library::DesktopLibrary>,
+    session: DownloadSession,
+    metadata: JmDownloadMetadata,
+    root_id: String,
+    generation: u64,
+    check: Arc<AdmissionCheck>,
+) -> Result<(), StoreError> {
+    live_execution_allowed()?;
+    let store = open_store(Arc::clone(&store_state)).await?;
+    let worker = Arc::clone(&downloads);
+    let worker_store = Arc::clone(&store);
+    let starts = tauri::async_runtime::spawn_blocking(move || {
+        let mut scheduler = worker
+            .scheduler
+            .lock()
+            .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        session.require_current().map_err(|e| error(e.code))?;
+        (check.before_work)()?;
+        let plan = worker.service.prepare_for_source(
+            &worker_store,
+            &root_id,
+            generation,
+            storage_source(session.source()),
+            metadata,
+        )?;
+        let admitted = (|| {
+            session.require_current().map_err(|e| error(e.code))?;
+            (check.before_work)()?;
+            let snapshot = worker
+                .service
+                .confirm(&worker_store, &plan.plan_id, plan.revision)?;
+            let mut scheduled =
+                scheduled_tasks(&snapshot, std::slice::from_ref(&plan.plan_id), &session)?;
+            for task in &mut scheduled {
+                task.check = Some(Arc::clone(&check));
+            }
+            Ok::<_, StoreError>(scheduler.enqueue(scheduled))
+        })();
+        if admitted.is_err() {
+            let _ = worker.service.discard_plans(&[plan.plan_id]);
+        }
+        admitted
+    })
+    .await
+    .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))??;
+    if starts {
+        launch(downloads, store_state, store, library_state);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,6 +863,7 @@ mod tests {
             task_id: id.into(),
             revision,
             session: "synthetic memory lease",
+            check: None,
         }
     }
     #[test]

@@ -3,6 +3,8 @@
 //! Library root paths are stored only as private metadata selected by the native picker.
 mod background;
 mod cache;
+mod completeness;
+mod discovery;
 mod downloads;
 mod library;
 mod matches;
@@ -12,6 +14,8 @@ mod store;
 
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
 pub use cache::{AccountCache, CacheEntry};
+pub use completeness::*;
+pub use discovery::*;
 pub use downloads::*;
 pub use library::*;
 pub use matches::*;

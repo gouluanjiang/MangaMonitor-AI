@@ -117,6 +117,7 @@ impl<S> Slot<S> {
 }
 
 pub struct AccountService<B: SourceBackend, V: Vault> {
+    pub(crate) discovery: Arc<crate::discovery::DiscoveryControl>,
     backend: B,
     vault: Arc<V>,
     root: PathBuf,
@@ -130,6 +131,7 @@ pub struct AccountService<B: SourceBackend, V: Vault> {
 impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     pub fn new(backend: B, vault: V, app_data_root: PathBuf) -> Self {
         Self {
+            discovery: Arc::new(crate::discovery::DiscoveryControl::default()),
             backend,
             vault: Arc::new(vault),
             root: app_data_root,
@@ -364,6 +366,96 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
         Ok(slot.lease.clone())
+    }
+
+    /// Captures both verified identities together. It performs no remote IO.
+    pub(crate) async fn discovery_context(
+        &self,
+        scopes: Vec<crate::DiscoveryScope>,
+    ) -> Result<crate::discovery::DiscoveryContext> {
+        let scopes = crate::discovery::canonical_scopes(scopes)?;
+        let mut jm = self.slot(Source::Jm).lock().await;
+        let mut pica = self.slot(Source::Pica).lock().await;
+        self.require_scope(&mut jm, &scopes[0].session_id)?;
+        self.require_scope(&mut pica, &scopes[1].session_id)?;
+        let identities = [(&*jm, &scopes[0]), (&*pica, &scopes[1])].map(
+            |(slot, scope)| -> Result<crate::discovery::DiscoveryIdentity> {
+                Ok(crate::discovery::DiscoveryIdentity {
+                    scope: scope.clone(),
+                    account_key: account_key(
+                        scope.source,
+                        &slot
+                            .account
+                            .as_ref()
+                            .ok_or(AccountError::new("AUTH_REQUIRED"))?
+                            .account_id,
+                    ),
+                    lease: slot.lease.clone(),
+                    fingerprint: slot.saved_fingerprint,
+                })
+            },
+        );
+        let [jm_identity, pica_identity] = identities;
+        let root = self.root.clone();
+        let following = tokio::task::spawn_blocking(move || {
+            crate::discovery::discovery_store_io(|| {
+                workbench_storage::WorkbenchStore::open(&root)?.read_following()
+            })
+        })
+        .await
+        .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
+        .map_err(|error| AccountError::new(error.code))?;
+        self.check_saved(&mut jm)?;
+        self.check_saved(&mut pica)?;
+        Ok(crate::discovery::DiscoveryContext::new(
+            [jm_identity?, pica_identity?],
+            self.root.clone(),
+            following,
+        ))
+    }
+
+    /// Independent of the source request locks, including external vault changes.
+    pub(crate) fn discovery_validate_context(
+        &self,
+        context: &crate::discovery::DiscoveryContext,
+    ) -> Result<()> {
+        for identity in &context.identities {
+            identity.lease.require_current()?;
+            let current = self
+                .vault
+                .load(identity.scope.source)
+                .map_err(|error| AccountError::new(error.code))?;
+            if current.as_ref().map(fingerprint) != identity.fingerprint {
+                identity.lease.0.store(false, Ordering::Release);
+                return Err(AccountError::new("SESSION_CHANGED"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Keep account generations ordered through one fixed, cancellable metadata write.
+    pub(crate) async fn discovery_commit(
+        &self,
+        context: &crate::discovery::DiscoveryContext,
+        run_id: &str,
+        document: workbench_storage::Document<workbench_storage::DiscoveryDocument>,
+    ) -> Result<workbench_storage::Document<workbench_storage::DiscoveryDocument>> {
+        let mut jm = self.slot(Source::Jm).lock().await;
+        let mut pica = self.slot(Source::Pica).lock().await;
+        self.require_scope(&mut jm, &context.identities[0].scope.session_id)?;
+        self.require_scope(&mut pica, &context.identities[1].scope.session_id)?;
+        self.discovery_validate_context(context)?;
+        let control = Arc::clone(&self.discovery);
+        let captured = context.clone();
+        let run_id = run_id.to_owned();
+        let saved = tokio::task::spawn_blocking(move || {
+            control.commit(&run_id, &captured, document.revision, document.value)
+        })
+        .await
+        .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))??;
+        self.check_saved(&mut jm)?;
+        self.check_saved(&mut pica)?;
+        Ok(saved)
     }
 
     /// Acquires the token and lease under the same account generation. This is
@@ -843,6 +935,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         .await
         .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))??;
         self.check_saved(&mut slot)?;
+        self.discovery.following_changed(document.revision);
         Ok(following_snapshot(source, session_id, &key, document))
     }
 }

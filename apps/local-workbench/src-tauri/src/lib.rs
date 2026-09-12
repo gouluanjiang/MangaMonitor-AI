@@ -1,4 +1,6 @@
 mod accounts;
+mod completeness;
+mod discovery;
 mod downloads;
 mod library;
 mod matches;
@@ -155,6 +157,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .manage(Arc::new(library::DesktopLibrary::default()))
         .manage(Arc::new(downloads::DesktopDownloads::default()))
+        .manage(Arc::new(completeness::DesktopCompleteness::default()))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_preferences,
@@ -162,6 +165,16 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             read_booklists,
             write_booklists,
             choose_background,
+            discovery::discovery_read,
+            discovery::discovery_start,
+            discovery::discovery_cancel,
+            completeness::completeness_read,
+            completeness::completeness_start,
+            completeness::completeness_cancel,
+            completeness::completeness_settings_read,
+            completeness::completeness_family_confirm,
+            completeness::completeness_family_unlink,
+            completeness::completeness_language_set,
             downloads::jm_download_prepare,
             downloads::jm_download_confirm,
             downloads::jm_download_read,

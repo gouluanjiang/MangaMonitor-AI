@@ -2,6 +2,12 @@
 
 Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
 
+## Current batch: followed-author library completeness and Chinese PC copies
+
+The user accepted queue/history/manual matches at `481dc1a4952fbf3d2e8c7910c8673d4639467667`. This supersedes the pending-acceptance statement below. Read [this batch report](AUTHOR_COMPLETENESS_BATCH_2026-09-12.md) and [current roadmap](ROADMAP_AFTER_AUTHOR_COMPLETENESS_2026-09-12.md).
+
+The requirements discussion is complete: check the followed-author union on both JM/Pica, retain old missing works without a date cutoff, count any Chinese phone version as complete, and automatically download a confirmed Japanese-phone-to-Chinese replacement into the PC library during an explicit user-started check. Phone transfer/replacement remains manual; retain PC files. Ordinary missing works remain explicitly selected manual downloads. Cross-source identity and language uncertainty require review. Do not resume the discarded first-scan-baseline or cloud-import designs. Formal checks/builds remain CI-only; exact final evidence is in the new local delivery report and PR #19. Real author/completeness/download acceptance remains for the user. Keep 0.3.4 Dev, no installer, draft/unmerged PR and production disabled.
+
 ## Current batch: sequential queue, completed history and manual source matches (2026-09-12)
 
 The user accepted the Pica repair at `5a15875745379021b6b02b508200eab34dc51803` and requested the next development stage. Pica single-work acceptance is now complete. Read [the current batch report](BATCH_QUEUE_AND_MATCHING_2026-09-12.md) and [the updated roadmap](ROADMAP_AFTER_BATCH_QUEUE_2026-09-12.md).

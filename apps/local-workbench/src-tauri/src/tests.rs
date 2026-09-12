@@ -2,6 +2,62 @@ use super::*;
 use serde_json::{json, Value};
 use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 
+#[test]
+fn completion_commands_keep_main_origin_and_typed_authority_boundaries() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let other = window(&app, "secondary");
+    let scopes = json!([{"source":"JM","sessionId":"synthetic-jm"},{"source":"Pica","sessionId":"synthetic-pica"}]);
+    let commands = [
+        ("discovery_read", json!({"scopes":scopes})),
+        ("discovery_start", json!({"scopes":scopes,"authors":[]})),
+        ("discovery_cancel", json!({"runId":"a".repeat(64)})),
+        (
+            "completeness_read",
+            json!({"scopes":scopes,"recheckFiles":false}),
+        ),
+        (
+            "completeness_start",
+            json!({"scopes":scopes,"authors":[],"automatic":true,"rootId":"b".repeat(64),"generation":1}),
+        ),
+        ("completeness_cancel", json!({"runId":"a".repeat(64)})),
+        ("completeness_settings_read", json!({})),
+        (
+            "completeness_family_confirm",
+            json!({"revision":0,"members":[{"kind":"source","reference":{"source":"JM","workId":"123"}},{"kind":"phone","name":"Synthetic"}]}),
+        ),
+        (
+            "completeness_family_unlink",
+            json!({"revision":0,"familyId":"c".repeat(64)}),
+        ),
+        (
+            "completeness_language_set",
+            json!({"revision":0,"member":{"kind":"source","reference":{"source":"JM","workId":"123"}},"language":"chinese"}),
+        ),
+    ];
+    for (command, body) in commands {
+        assert!(invoke(&other, command, body.clone()).is_err(), "{command}");
+        assert!(
+            invoke_from(&main, "https://example.invalid", command, body).is_err(),
+            "{command}"
+        );
+    }
+    let settings = invoke(&main, "completeness_settings_read", json!({})).unwrap();
+    assert_eq!(settings, json!({"revision":0,"families":[],"languages":[]}));
+    let before = invoke(&main, "jm_download_read", json!({})).unwrap();
+    assert!(invoke(&main, "completeness_read", json!({"scopes":scopes})).is_err());
+    assert!(invoke(
+        &main,
+        "completeness_start",
+        json!({"scopes":scopes,"authors":[],"automatic":true,"rootId":null,"generation":0})
+    )
+    .is_err());
+    assert_eq!(
+        invoke(&main, "jm_download_read", json!({})).unwrap(),
+        before
+    );
+}
+
 fn fixture() -> (tempfile::TempDir, tauri::App<MockRuntime>) {
     let root = tempfile::tempdir().unwrap();
     let app = app_with_root(Ok(root.path().to_owned()));

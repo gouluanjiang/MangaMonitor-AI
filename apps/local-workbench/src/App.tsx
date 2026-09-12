@@ -31,6 +31,7 @@ import type { DocumentSnapshot } from "./persistence.ts";
 import "./booklists.css";
 import { AccountSettings } from "./AccountSettings.tsx";
 import { SourceWorkbench } from "./SourceWorkbench.tsx";
+import { CompletionPanel } from "./CompletionPanel.tsx";
 import {
   LibraryWorkbench,
   LibrarySettingsPanel,
@@ -99,12 +100,19 @@ const labels: Record<TaskStage, string> = {
   error: "需要处理",
 };
 type Page =
-  "library" | "favorites" | "discovery" | "queue" | "authors" | "settings";
+  | "library"
+  | "favorites"
+  | "discovery"
+  | "completion"
+  | "queue"
+  | "authors"
+  | "settings";
 type Filter = "all" | "owned" | "ready" | "review";
 const pageNames: Record<Page, string> = {
   library: "漫画库",
   favorites: "在线收藏",
   discovery: "发现",
+  completion: "作者作品补全",
   queue: "下载队列",
   authors: "关注",
   settings: "设置",
@@ -2030,32 +2038,35 @@ export default function App() {
               ["discovery", "discover"],
               ["queue", "download"],
               ["authors", "people"],
+              ["completion", "discover"],
             ] as const
-          ).map(([value, icon]) => (
-            <button
-              key={value}
-              data-testid={`nav-${value}`}
-              className={`nav-item ${page === value ? "active" : ""}`}
-              aria-current={page === value ? "page" : undefined}
-              aria-label={pageNames[value]}
-              title={pageNames[value]}
-              onClick={() => navigate(value)}
-            >
-              <Icon name={icon} size={19} />
-              <span className="nav-tooltip">{pageNames[value]}</span>
-              {value === "queue" &&
-                (persistence.native
-                  ? unfinishedDownloadCount(downloads.snapshot.tasks)
-                  : unfinished) > 0 && (
-                  <span className="nav-count">
-                    {persistence.native
-                      ? unfinishedDownloadCount(downloads.snapshot.tasks)
-                      : unfinished}
-                  </span>
-                )}
-              {value === "discovery" && <span className="nav-dot" />}
-            </button>
-          ))}
+          )
+            .filter(([value]) => persistence.native || value !== "completion")
+            .map(([value, icon]) => (
+              <button
+                key={value}
+                data-testid={`nav-${value}`}
+                className={`nav-item ${page === value ? "active" : ""}`}
+                aria-current={page === value ? "page" : undefined}
+                aria-label={pageNames[value]}
+                title={pageNames[value]}
+                onClick={() => navigate(value)}
+              >
+                <Icon name={icon} size={19} />
+                <span className="nav-tooltip">{pageNames[value]}</span>
+                {value === "queue" &&
+                  (persistence.native
+                    ? unfinishedDownloadCount(downloads.snapshot.tasks)
+                    : unfinished) > 0 && (
+                    <span className="nav-count">
+                      {persistence.native
+                        ? unfinishedDownloadCount(downloads.snapshot.tasks)
+                        : unfinished}
+                    </span>
+                  )}
+                {value === "discovery" && <span className="nav-dot" />}
+              </button>
+            ))}
         </nav>
         <div className="sidebar-bottom">
           <button
@@ -2258,6 +2269,19 @@ export default function App() {
               }}
             />
           )}
+          {persistence.native && page === "completion" && (
+            <CompletionPanel
+              accounts={accounts}
+              sourceAdapter={sourceAdapter}
+              library={library.snapshot}
+              phone={phoneLibrary.snapshot}
+              density={appearance.density}
+              onOpenWork={openSourceWork}
+              onDownload={(work) => void beginDownload(work.workId, work)}
+              onOpenLibrary={() => navigate("library")}
+              onOpenAccounts={() => navigate("settings")}
+            />
+          )}
           {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
@@ -2311,7 +2335,9 @@ export default function App() {
               searchHost={sourceSearchHost}
             />
           )}
-          {sourceActive || libraryActive
+          {sourceActive ||
+          libraryActive ||
+          (persistence.native && page === "completion")
             ? null
             : currentWork
               ? renderDetail(currentWork)

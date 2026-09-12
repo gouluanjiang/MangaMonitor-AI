@@ -12,6 +12,33 @@ use workbench_library::{
 use workbench_storage::{Source, WorkbenchStore, PRIVATE_DIRECTORY};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
+#[test]
+fn completion_refresh_invalidates_deleted_known_copy_without_reading_new_files() {
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let mut service = LibraryService::new();
+    let name = "[JM123] Synthetic [Chinese].zip";
+    archive(&root.path().join(name), &[("1.png", &image_bytes())]);
+    let initial = service.choose(&store, root.path()).unwrap();
+    let complete = finish(&mut service, &store, initial);
+    assert_eq!(complete.items.len(), 1);
+    assert_eq!(complete.items[0].state, LibraryItemState::Indexed);
+    assert_eq!(
+        service.recheck_known_entries(&store).unwrap().revision,
+        complete.revision
+    );
+    fs::remove_file(root.path().join(name)).unwrap();
+    fs::write(root.path().join("new-unscanned.zip"), b"unread content").unwrap();
+    let refreshed = service.recheck_known_entries(&store).unwrap();
+    assert_eq!(refreshed.items.len(), 1);
+    assert_eq!(refreshed.items[0].state, LibraryItemState::Unreadable);
+    assert_eq!(
+        fs::read(root.path().join("new-unscanned.zip")).unwrap(),
+        b"unread content"
+    );
+}
+
 fn image_bytes() -> Vec<u8> {
     let mut output = Cursor::new(Vec::new());
     DynamicImage::new_rgb8(24, 32)
@@ -70,6 +97,35 @@ fn jm_work(root: &Path, name: &str) {
     fs::write(work.join("chapter-01/001.jpg"), image_bytes()).unwrap();
     fs::write(work.join("chapter-01/002.jpg"), image_bytes()).unwrap();
     fs::write(work.join("元数据.json"), br#"{"id":123,"name":"Synthetic JM title","author":["Author"],"tags":["tag"],"chapterInfos":[{"chapterId":456,"chapterTitle":"One","order":1}]}"#).unwrap();
+}
+
+#[test]
+fn translation_reuse_checks_nested_missing_page_without_importing_siblings() {
+    let app = TempDir::new().unwrap();
+    let media = TempDir::new().unwrap();
+    jm_work(media.path(), "Known translation");
+    let store = WorkbenchStore::open(app.path()).unwrap();
+    let mut service = LibraryService::new();
+    let selected = service.choose(&store, media.path()).unwrap();
+    let complete = finish(&mut service, &store, selected);
+    let id = complete.items[0].id.clone();
+    assert_eq!(
+        service
+            .verify_known_copies(&store, std::slice::from_ref(&id))
+            .unwrap()
+            .items[0]
+            .state,
+        LibraryItemState::Indexed
+    );
+    fs::remove_file(media.path().join("Known translation/chapter-01/001.jpg")).unwrap();
+    jm_work(media.path(), "Unscanned sibling");
+    let checked = service.verify_known_copies(&store, &[id]).unwrap();
+    assert_eq!(checked.items.len(), 1);
+    assert_eq!(checked.items[0].state, LibraryItemState::Unreadable);
+    assert!(media
+        .path()
+        .join("Known translation/chapter-01/002.jpg")
+        .is_file());
 }
 
 #[test]

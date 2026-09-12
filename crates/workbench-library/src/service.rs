@@ -36,6 +36,107 @@ impl LibraryService {
         Ok(snapshot(document, live))
     }
 
+    /// Explicit completeness refresh: check only previously indexed entries,
+    /// without enumerating new media or decoding covers. Changed/missing files
+    /// lose positive PC evidence until the user refreshes the library scan.
+    pub fn recheck_known_entries(&mut self, store: &WorkbenchStore) -> Result<LibrarySnapshot> {
+        let mut document = store.read_library()?;
+        let Some(saved) = document.value.root.as_ref() else {
+            return Ok(snapshot(document, false));
+        };
+        if document.value.phase != LibraryPhase::Complete {
+            return Err(error("COMPLETENESS_LIBRARY_NOT_READY"));
+        }
+        let root = Root::restore(saved)?;
+        let mut changed = false;
+        for record in &mut document.value.records {
+            if record.item.state != crate::LibraryItemState::Indexed {
+                continue;
+            }
+            let matches = match root.node(&record.item.relative_path) {
+                Ok(Node::File(file)) if record.item.format != LibraryFormat::Directory => {
+                    paths::identity(&file.file).ok().as_ref() == record.identity.as_ref()
+                }
+                Ok(Node::Directory(directory))
+                    if record.item.format == LibraryFormat::Directory =>
+                {
+                    paths::identity(&directory.file).ok().as_ref() == record.identity.as_ref()
+                }
+                _ => false,
+            };
+            if !matches || record.identity.is_none() {
+                record.item.state = crate::LibraryItemState::Unreadable;
+                record.item.error_code = Some("LIBRARY_FILE_CHANGED".into());
+                record.item.cover_available = false;
+                record.cover = None;
+                changed = true;
+            }
+        }
+        root.verify()?;
+        if changed {
+            document = store.write_library(document.revision, document.value)?;
+        }
+        Ok(snapshot(document, false))
+    }
+
+    /// Before reusing a translated PC copy, verify that specific known work.
+    /// This never walks unrelated works or imports newly discovered siblings.
+    pub fn verify_known_copies(
+        &mut self,
+        store: &WorkbenchStore,
+        ids: &[String],
+    ) -> Result<LibrarySnapshot> {
+        if ids.len() > MAX_LIBRARY_ITEMS || ids.iter().any(|id| !library_hash_is_valid(id)) {
+            return Err(error("LIBRARY_ENTRY_MISSING"));
+        }
+        let mut document = store.read_library()?;
+        if ids.is_empty() {
+            return Ok(snapshot(document, false));
+        }
+        if document.value.phase != LibraryPhase::Complete {
+            return Err(error("COMPLETENESS_LIBRARY_NOT_READY"));
+        }
+        let root = Root::restore(
+            document
+                .value
+                .root
+                .as_ref()
+                .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
+        )?;
+        let ids: std::collections::HashSet<_> = ids.iter().collect();
+        let mut changed = false;
+        for record in &mut document.value.records {
+            if !ids.contains(&record.item.id)
+                || record.item.state != crate::LibraryItemState::Indexed
+            {
+                continue;
+            }
+            let valid = if record.item.format == LibraryFormat::Directory {
+                completed_directory(&root, &record.item.relative_path).is_ok_and(
+                    |(current, _, _)| {
+                        current.item.page_count == record.item.page_count
+                            && current.item.bytes == record.item.bytes
+                            && current.identity == record.identity
+                    },
+                )
+            } else {
+                verify_record(&root, record).is_ok()
+            };
+            if !valid {
+                record.item.state = crate::LibraryItemState::Unreadable;
+                record.item.error_code = Some("LIBRARY_FILE_CHANGED".into());
+                record.item.cover_available = false;
+                record.cover = None;
+                changed = true;
+            }
+        }
+        root.verify()?;
+        if changed {
+            document = store.write_library(document.revision, document.value)?;
+        }
+        Ok(snapshot(document, false))
+    }
+
     /// The path comes exclusively from the native folder picker, never IPC.
     pub fn choose(&mut self, store: &WorkbenchStore, path: &Path) -> Result<LibrarySnapshot> {
         let previous = store.read_library()?;

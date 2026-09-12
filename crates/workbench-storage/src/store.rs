@@ -25,7 +25,7 @@ const MAX_DOWNLOADS_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PREFERENCES_BYTES: usize = 12 * 1024 * 1024;
 const MAX_BOOKLISTS_BYTES: usize = 5 * 1024 * 1024;
 // Covers all permitted scopes and maximum-length UTF-8 names without truncation.
-const MAX_FOLLOWING_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_FOLLOWING_BYTES: usize = 32 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -237,6 +237,31 @@ impl WorkbenchStore {
             .lock()
             .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
         let _file = self.acquire_lock()?;
+        self.write_validated_unlocked(name, maximum, expected_revision, value)
+    }
+
+    /// Caller holds both local_lock and the fixed cross-process file lock.
+    pub(crate) fn write_unlocked<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        maximum: usize,
+        expected_revision: u64,
+        value: T,
+    ) -> Result<Document<T>> {
+        if expected_revision > MAX_SAFE_INTEGER {
+            return Err(StoreError::new("VALIDATION_FAILED"));
+        }
+        value.validate()?;
+        self.write_validated_unlocked(name, maximum, expected_revision, value)
+    }
+
+    fn write_validated_unlocked<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        maximum: usize,
+        expected_revision: u64,
+        value: T,
+    ) -> Result<Document<T>> {
         // A write never substitutes defaults for an unreadable or unsupported document.
         let current = self.read_shared_unlocked::<T>(name, maximum)?;
         if current.revision != expected_revision {
@@ -294,7 +319,7 @@ impl WorkbenchStore {
         Ok(guard)
     }
 
-    fn read_unlocked<T: ValidatedDocument>(
+    pub(crate) fn read_unlocked<T: ValidatedDocument>(
         &self,
         name: &str,
         maximum: usize,

@@ -1222,7 +1222,7 @@ test("multiple queued works pause and resume explicitly under one source after r
     .poll(async () => (await calls(page, "jm_download_resume_many")).length)
     .toBe(1);
   expect((await calls(page, "jm_download_resume_many"))[0].args).toEqual({
-    scope: { source: "JM", sessionId: "synthetic-JM" },
+    scope: { source: "JM", sessionId: "session-JM" },
     tasks: [
       { taskId: "7b".padStart(64, "0"), expectedRevision: 2 },
       { taskId: "7c".padStart(64, "0"), expectedRevision: 2 },

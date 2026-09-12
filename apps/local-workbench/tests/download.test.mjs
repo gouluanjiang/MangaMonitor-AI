@@ -13,6 +13,32 @@ import {
   validateDownloadPlan,
   validateDownloadSnapshot,
 } from "../src/download-runtime.ts";
+
+test("media failures distinguish transport, redirects and invalid images without exposing raw errors", () => {
+  for (const [code, expected] of [
+    ["DOWNLOAD_MEDIA_TIMEOUT", /响应超时/],
+    ["DOWNLOAD_MEDIA_NETWORK_ERROR", /无法连接图片服务器/],
+    ["DOWNLOAD_MEDIA_ADDRESS_UNSUPPORTED", /暂不支持的图片地址/],
+    ["DOWNLOAD_MEDIA_REDIRECT_FAILED", /跳转地址异常/],
+    ["DOWNLOAD_MEDIA_ACCESS_DENIED", /图片服务器拒绝访问/],
+    ["DOWNLOAD_MEDIA_UNAVAILABLE", /图片暂时不可用/],
+    ["DOWNLOAD_MEDIA_RATE_LIMITED", /暂时限制请求/],
+    ["DOWNLOAD_MEDIA_SERVER_ERROR", /图片服务器暂时出错/],
+    ["DOWNLOAD_MEDIA_EMPTY", /返回了空内容/],
+    ["DOWNLOAD_MEDIA_TOO_LARGE", /超过当前支持的大小/],
+    ["DOWNLOAD_MEDIA_IMAGE_INVALID", /无法解码或格式不符/],
+  ]) {
+    const message = downloadErrorMessage({ code });
+    assert.match(message, expected);
+    assert.match(message, /保留/);
+    assert.doesNotMatch(message, /重新登录/);
+  }
+  const unsafe = "PICA_MEDIA_HTTP_403: https://private.invalid/?token=secret";
+  assert.doesNotMatch(
+    downloadErrorMessage({ code: unsafe }),
+    /private|secret|https:/,
+  );
+});
 const rootId = "a".repeat(64),
   entryId = "b".repeat(64);
 const context = {

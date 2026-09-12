@@ -259,6 +259,28 @@ export function downloadErrorMessage(cause: unknown): string {
     return "来源会话已改变或需要重新登录。请连接对应来源的账号后再试。";
   if (code === "DOWNLOAD_SOURCE_MISMATCH")
     return "任务来源与当前账号不一致，请使用对应来源的账号。";
+  if (code === "DOWNLOAD_MEDIA_TIMEOUT")
+    return "图片服务器响应超时，已保留进度，请稍后重试。";
+  if (code === "DOWNLOAD_MEDIA_NETWORK_ERROR")
+    return "暂时无法连接图片服务器，已保留进度，请检查网络后重试。";
+  if (code === "DOWNLOAD_MEDIA_ADDRESS_UNSUPPORTED")
+    return "来源返回了暂不支持的图片地址，已保留进度，请反馈此问题。";
+  if (code === "DOWNLOAD_MEDIA_REDIRECT_FAILED")
+    return "图片服务器的跳转地址异常，已保留进度，请稍后重试。";
+  if (code === "DOWNLOAD_MEDIA_ACCESS_DENIED")
+    return "图片服务器拒绝访问，已保留进度，请稍后重试。";
+  if (code === "DOWNLOAD_MEDIA_UNAVAILABLE")
+    return "来源图片暂时不可用，已保留进度，请稍后重试。";
+  if (code === "DOWNLOAD_MEDIA_RATE_LIMITED")
+    return "图片服务器暂时限制请求，请稍候再重试，已有进度会保留。";
+  if (code === "DOWNLOAD_MEDIA_SERVER_ERROR")
+    return "图片服务器暂时出错，已保留进度，请稍后重试。";
+  if (code === "DOWNLOAD_MEDIA_EMPTY")
+    return "图片服务器返回了空内容，已保留进度，请稍后重试。";
+  if (code === "DOWNLOAD_MEDIA_TOO_LARGE")
+    return "来源图片超过当前支持的大小，已保留进度，请反馈此问题。";
+  if (code === "DOWNLOAD_MEDIA_IMAGE_INVALID")
+    return "来源返回的图片无法解码或格式不符，已保留进度，请稍后重试。";
   if (code === "DOWNLOAD_LOCAL_FILES_INCOMPLETE")
     return "原目录或文件已变化，请先核对电脑文件。";
   if (code === "DOWNLOAD_LOCAL_FILES_UNAVAILABLE")

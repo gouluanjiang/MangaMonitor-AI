@@ -2,6 +2,10 @@
 
 Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
 
+## Current follow-up: Pica media redirect repair (2026-09-12)
+
+The first real Pica download acceptance failed before saving an image. Read [the redirect repair](PICA_DOWNLOAD_REDIRECT_FIX_2026-09-12.md): a bounded, user-task-specific metadata/header diagnostic verified an HTTP 301 to the same storage origin, then 200 JPEG; no media body was read or library changed. The old exact transport rejected the redirect and hid the cause behind DOWNLOAD_FAILED. Desktop resumable Pica now supports at most two validated same-origin /static/ hops, with a fresh coordinator authorization before every physical GET and unchanged descriptor/checkpoint bindings. Error messages now distinguish media failures. Do not call Pica real acceptance complete until the user retries successfully. Formal checks/builds are CI-only; exact evidence and the repaired 0.3.4 Dev executable belong in the delivery report and PR #19. No installer, production enablement or next feature batch is included.
+
 ## Current position: Pica single-work desktop download batch (2026-09-12)
 
 The user requested the next batch after accepting the JM performance and re-download fixes. Read [the Pica batch report](PICA_SINGLE_DOWNLOAD_BATCH_2026-09-12.md) and [current roadmap](ROADMAP_AFTER_PICA_DOWNLOAD_2026-09-12.md). Pica now enters the same explicit desktop plan, confirmation, isolated execution, compatible new-directory materialization and PC registration path. The user will choose a real acceptance sample later and test personally; do not initiate a real download or interpret synthetic CI as user acceptance.

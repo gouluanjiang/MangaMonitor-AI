@@ -53,6 +53,8 @@ Do **not** dynamically trust domains discovered from remote pages without a sepa
 
 ### Safety differences deliberately preserved
 
+- The 2026-09-12 desktop Pica acceptance repair adds a bounded same-origin redirect loop after a task-specific header check showed 301 then 200 JPEG. Automatic redirects remain disabled; every initial/redirect GET must receive a fresh authorization from the staging coordinator, at most two redirects are allowed, and original descriptor/checkpoint identity remains unchanged. See `PICA_DOWNLOAD_REDIRECT_FIX_2026-09-12.md`. This is not arbitrary-domain trust or retry/failover authority; JM and the legacy exact-transfer entry remain unchanged.
+
 - Upstream GUI code is optimized for interactive downloading; MangaMonitor-AI requires complete pagination evidence and rejects missing/intermediate pages instead of silently aggregating partial results.
 - MangaMonitor-AI does not interpret ordinary HTTP/auth/network failures as proof that a work is unavailable.
 - API credentials never enter the media-byte client; media URLs are host/path constrained and redirects are disabled.

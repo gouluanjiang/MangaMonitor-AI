@@ -418,6 +418,47 @@ fn source_failures_keep_actionable_codes_without_returning_raw_errors() {
         ("API_CODE_401", "SESSION_EXPIRED"),
         ("SESSION_EXPIRED", "SESSION_EXPIRED"),
         ("SESSION_CHANGED", "SESSION_CHANGED"),
+        ("PICA_MEDIA_FETCH_TIMEOUT", "DOWNLOAD_MEDIA_TIMEOUT"),
+        (
+            "PICA_MEDIA_FETCH_CONNECT_ERROR",
+            "DOWNLOAD_MEDIA_NETWORK_ERROR",
+        ),
+        (
+            "PICA_MEDIA_FETCH_TRANSPORT_ERROR",
+            "DOWNLOAD_MEDIA_NETWORK_ERROR",
+        ),
+        (
+            "INVALID_PICA_MEDIA_URL",
+            "DOWNLOAD_MEDIA_ADDRESS_UNSUPPORTED",
+        ),
+        (
+            "PICA_MEDIA_REDIRECT_REJECTED",
+            "DOWNLOAD_MEDIA_REDIRECT_FAILED",
+        ),
+        (
+            "PICA_MEDIA_REDIRECT_LOCATION_INVALID",
+            "DOWNLOAD_MEDIA_REDIRECT_FAILED",
+        ),
+        ("PICA_MEDIA_REDIRECT_LOOP", "DOWNLOAD_MEDIA_REDIRECT_FAILED"),
+        (
+            "PICA_MEDIA_REDIRECT_LIMIT",
+            "DOWNLOAD_MEDIA_REDIRECT_FAILED",
+        ),
+        ("PICA_MEDIA_HTTP_401", "DOWNLOAD_MEDIA_ACCESS_DENIED"),
+        ("PICA_MEDIA_HTTP_403", "DOWNLOAD_MEDIA_ACCESS_DENIED"),
+        ("PICA_MEDIA_HTTP_404", "DOWNLOAD_MEDIA_UNAVAILABLE"),
+        ("PICA_MEDIA_HTTP_429", "DOWNLOAD_MEDIA_RATE_LIMITED"),
+        ("PICA_MEDIA_HTTP_503", "DOWNLOAD_MEDIA_SERVER_ERROR"),
+        ("PICA_MEDIA_RESPONSE_EMPTY", "DOWNLOAD_MEDIA_EMPTY"),
+        ("PICA_MEDIA_RESPONSE_TOO_LARGE", "DOWNLOAD_MEDIA_TOO_LARGE"),
+        (
+            "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED",
+            "DOWNLOAD_MEDIA_IMAGE_INVALID",
+        ),
+        (
+            "MEDIA_TRANSFER_AUTHORIZATION_GENERATION_CHANGED",
+            "DOWNLOAD_SOURCE_CHANGED",
+        ),
         ("PICA_PAGINATION_CHANGED", "DOWNLOAD_SOURCE_CHANGED"),
         ("PICA_PAGINATION_INVALID", "DOWNLOAD_SOURCE_INCOMPLETE"),
         ("PICA_PAGINATION_INCOMPLETE", "DOWNLOAD_SOURCE_INCOMPLETE"),
@@ -430,6 +471,7 @@ fn source_failures_keep_actionable_codes_without_returning_raw_errors() {
             "DOWNLOAD_FAILED",
         ),
         ("HTTP_401: raw response body", "DOWNLOAD_FAILED"),
+        ("PICA_MEDIA_HTTP_403: private response", "DOWNLOAD_FAILED"),
     ] {
         assert_eq!(classify(incoming).code, expected);
     }

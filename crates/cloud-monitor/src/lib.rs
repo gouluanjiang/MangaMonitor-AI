@@ -32,6 +32,7 @@ mod local_library_import;
 pub mod local_library_import_gate;
 pub mod local_task_completion;
 pub mod matcher_m2;
+mod media_request_guard;
 pub(crate) mod media_validation;
 pub mod monitor;
 mod parallel_media_processing;

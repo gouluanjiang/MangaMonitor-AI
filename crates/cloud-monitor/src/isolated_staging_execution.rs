@@ -11,6 +11,7 @@ use crate::{
     filesystem_verifier::{self, FilesystemVerification},
     image_download_authorization::ImageDownloadAuthorization,
     local_executor::LocalExecutionPlan,
+    media_request_guard::GrantRequests,
     source_bridge_request,
     source_completion::{
         self, ChapterCompletion, SourceCompletionProof, SourceCompletionTranscript,
@@ -29,7 +30,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     pin::Pin,
-    task::Poll,
+    task::{Context, Poll},
 };
 
 pub const ISOLATED_STAGING_EXECUTION_SCHEMA_VERSION: u64 = 1;
@@ -196,6 +197,20 @@ struct PendingMedia<F> {
     started: bool,
 }
 
+fn poll_request_grants(
+    requests: &mut Option<GrantRequests>,
+    authorization: &ImageDownloadAuthorization,
+    reauthorize: &mut impl FnMut() -> Result<ImageDownloadAuthorization, String>,
+    context: &mut Context<'_>,
+) -> Result<(), String> {
+    if let Some(requests) = requests {
+        requests.poll_current(context, || {
+            exact_authorization_generation(authorization, reauthorize()?)
+        })?;
+    }
+    Ok(())
+}
+
 /// The pinned GUI downloader defaults to 20 image lifecycles. A slot covers
 /// fetching, processing and the bounded result until ordered persistence.
 pub const MAX_CONCURRENT_MEDIA: usize = 20;
@@ -225,6 +240,7 @@ where
         },
         reauthorize,
         progress,
+        None,
     )
     .await
 }
@@ -242,6 +258,7 @@ pub(crate) async fn execute_resumable_with_verified_fetcher<
     mut fetch: Fetch,
     reauthorize: Reauthorize,
     progress: Progress,
+    requests: GrantRequests,
 ) -> Result<IsolatedStagingExecutionResult, String>
 where
     Fetch: FnMut(MediaDescriptor) -> FetchFuture,
@@ -259,6 +276,7 @@ where
         },
         reauthorize,
         progress,
+        Some(requests),
     )
     .await
 }
@@ -270,6 +288,7 @@ async fn execute_resumable_pipeline<Fetch, FetchFuture, Reauthorize, Progress>(
     mut fetch: Fetch,
     mut reauthorize: Reauthorize,
     mut progress: Progress,
+    mut requests: Option<GrantRequests>,
 ) -> Result<IsolatedStagingExecutionResult, String>
 where
     Fetch: FnMut(MediaDescriptor) -> FetchFuture,
@@ -371,6 +390,7 @@ where
                     });
                 }
                 let processed = poll_fn(|cx| {
+                    poll_request_grants(&mut requests, authorization, &mut reauthorize, cx)?;
                     for pending in &mut pending_fetches {
                         if pending.result.is_none() {
                             if !pending.started {
@@ -605,6 +625,92 @@ mod verified_media_tests {
             VerifiedMedia::validate(descriptor, media).err().as_deref(),
             Some("PROCESSED_MEDIA_INVALID_IMAGE_BYTES")
         );
+    }
+
+    #[tokio::test]
+    async fn a_redirect_cannot_reuse_authorization_after_pause_or_generation_change() {
+        use std::{cell::Cell, time::Duration};
+        use tokio::time::timeout;
+
+        let authorization = ImageDownloadAuthorization {
+            schema_version: 1,
+            command_id: "EXEC_guard_fixture".into(),
+            task_id: "TASK_guard_fixture".into(),
+            work_id: "WORK_guard_fixture".into(),
+            task_revision: 1,
+            target_hash: "target".into(),
+            source: "pica".into(),
+            source_work_id: "0123456789abcdef01234567".into(),
+            preflight_hash: "preflight".into(),
+            expected_chapter_count: 1,
+            expected_content_units: 1,
+            staging_subdir: "commands/EXEC_guard_fixture".into(),
+            write_scope: "COMMAND_OWNED_STAGING_ONLY".into(),
+            current_state_binding_hash: "initial-state".into(),
+            current_gate_ledger_hash: "initial-gate".into(),
+            live_preflight_generation_verified: true,
+            image_download_authorized: true,
+            staging_write_authorized: true,
+            reusable_permit: false,
+            inventory_mutation_authorized: false,
+            task_completion_authorized: false,
+            promotion_authorized: false,
+            replacement_authorized: false,
+            physical_delete_authorized: false,
+        };
+
+        // The first synthetic GET responds with a redirect. Before the second
+        // GET, exercise all three current-state failure routes on the actual
+        // coordinator helper, rather than letting the worker compare a cache.
+        for failure in ["state", "task", "pause"] {
+            let (guard, requests) = crate::media_request_guard::channel(MAX_CONCURRENT_MEDIA);
+            let mut requests = Some(requests);
+            let performed = Cell::new(0);
+            let operation = async {
+                guard.require_current().await?;
+                performed.set(1);
+                guard.require_current().await?;
+                performed.set(2);
+                Ok::<_, String>(())
+            };
+            tokio::pin!(operation);
+            let mut current = || {
+                let mut current = authorization.clone();
+                if performed.get() != 0 {
+                    match failure {
+                        "state" => current.current_state_binding_hash = "replaced-state".into(),
+                        "task" => current.task_revision += 1,
+                        "pause" => return Err("DOWNLOAD_PAUSED".into()),
+                        _ => unreachable!(),
+                    }
+                }
+                Ok(current)
+            };
+            let error = timeout(
+                Duration::from_secs(5),
+                poll_fn(|cx| {
+                    poll_request_grants(&mut requests, &authorization, &mut current, cx)?;
+                    operation.as_mut().poll(cx)
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap_err();
+            let expected = if failure == "pause" {
+                "DOWNLOAD_PAUSED"
+            } else {
+                "MEDIA_TRANSFER_AUTHORIZATION_GENERATION_CHANGED"
+            };
+            assert_eq!(error, expected);
+            assert_eq!(performed.get(), 1);
+            assert_eq!(
+                timeout(Duration::from_secs(5), operation)
+                    .await
+                    .unwrap()
+                    .unwrap_err(),
+                expected
+            );
+        }
     }
 }
 

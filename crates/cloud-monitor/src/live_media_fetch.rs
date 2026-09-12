@@ -14,6 +14,7 @@ use crate::{
     },
     jm_media_transform,
     live_media_transport::{JmTransport, PicaTransport},
+    media_request_guard::{self, RequestGuard},
     media_validation,
     parallel_media_processing::MediaProcessor,
     source_media_descriptors::{self, MediaDescriptor, SourceMediaDescriptorSet},
@@ -49,10 +50,16 @@ impl LiveFetcher {
         self,
         descriptor: MediaDescriptor,
         processor: Arc<MediaProcessor>,
+        guard: RequestGuard,
     ) -> Result<VerifiedMedia, String> {
         let (source, bytes) = match &self {
             Self::Jm(fetcher) => ("jm", fetcher.fetch_exact(&descriptor.request_url).await?),
-            Self::Pica(fetcher) => ("pica", fetcher.fetch_exact(&descriptor.request_url).await?),
+            Self::Pica(fetcher) => (
+                "pica",
+                fetcher
+                    .fetch_with_redirects(&descriptor.request_url, || guard.require_current())
+                    .await?,
+            ),
         };
         // Same upstream division of work: async GET, independent CPU job,
         // await result. The job never receives a path or filesystem authority.
@@ -187,19 +194,23 @@ where
     let fetcher = LiveFetcher::new(&context.authorization.source)?;
     let processor = Arc::new(MediaProcessor::new());
     let processing = Arc::clone(&processor);
+    let (guard, requests) =
+        media_request_guard::channel(isolated_staging_execution::MAX_CONCURRENT_MEDIA);
     let result = isolated_staging_execution::execute_resumable_with_verified_fetcher(
         context,
         resume,
         move |descriptor| {
             let fetcher = fetcher.clone();
             let processor = Arc::clone(&processing);
+            let guard = guard.clone();
             tracked_media_task(
                 Arc::clone(&processor),
-                fetcher.fetch_parallel(descriptor, processor),
+                fetcher.fetch_parallel(descriptor, processor, guard),
             )
         },
         reauthorize,
         progress,
+        requests,
     )
     .await;
     // AbortOnDrop cancels residual async requests before reaching here. A CPU
@@ -244,7 +255,7 @@ mod tests {
         future::Future,
         io::Cursor,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             mpsc,
         },
         time::Duration,
@@ -464,6 +475,80 @@ mod tests {
             .await
             .unwrap()
             .expect("drain must include the aborted inner fetch task");
+    }
+
+    #[tokio::test]
+    async fn pausing_before_a_redirect_get_cancels_and_drains_the_tracked_request() {
+        let processor = Arc::new(MediaProcessor::new());
+        let (guard, mut requests) =
+            media_request_guard::channel(isolated_staging_execution::MAX_CONCURRENT_MEDIA);
+        let performed = Arc::new(AtomicUsize::new(0));
+        let worker_performed = performed.clone();
+        let (dropped, was_dropped) = oneshot::channel();
+        let mut task = Box::pin(tracked_media_task(processor.clone(), async move {
+            let _drop = TaskDropSignal(Some(dropped));
+            guard.require_current().await?;
+            worker_performed.fetch_add(1, Ordering::AcqRel);
+            // The synthetic first response is a redirect; no second GET may
+            // start after the coordinator observes a paused download task.
+            guard.require_current().await?;
+            worker_performed.fetch_add(1, Ordering::AcqRel);
+            Ok(())
+        }));
+        let error = timeout(
+            TASK_TEST_TIMEOUT,
+            std::future::poll_fn(|cx| {
+                requests.poll_current(cx, || {
+                    if performed.load(Ordering::Acquire) == 0 {
+                        Ok(())
+                    } else {
+                        Err("DOWNLOAD_PAUSED".into())
+                    }
+                })?;
+                task.as_mut().poll(cx)
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(error, "DOWNLOAD_PAUSED");
+        drop(task);
+        drop(requests);
+        timeout(TASK_TEST_TIMEOUT, processor.drain()).await.unwrap();
+        timeout(TASK_TEST_TIMEOUT, was_dropped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(performed.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_tracked_request_waiting_for_its_first_grant_does_not_hang_drain() {
+        let processor = Arc::new(MediaProcessor::new());
+        let (guard, _requests) =
+            media_request_guard::channel(isolated_staging_execution::MAX_CONCURRENT_MEDIA);
+        let (entered, started) = oneshot::channel();
+        let (dropped, was_dropped) = oneshot::channel();
+        let performed = Arc::new(AtomicBool::new(false));
+        let worker_performed = performed.clone();
+        let task = tokio::spawn(tracked_media_task(processor.clone(), async move {
+            let _drop = TaskDropSignal(Some(dropped));
+            let _ = entered.send(());
+            guard.require_current().await?;
+            worker_performed.store(true, Ordering::Release);
+            Ok(())
+        }));
+        timeout(TASK_TEST_TIMEOUT, started).await.unwrap().unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        // The receiver remains alive. Cancellation itself must drop the guard
+        // wait and the tracked task, without needing a grant or channel close.
+        timeout(TASK_TEST_TIMEOUT, processor.drain()).await.unwrap();
+        timeout(TASK_TEST_TIMEOUT, was_dropped)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!performed.load(Ordering::Acquire));
     }
 
     #[tokio::test]

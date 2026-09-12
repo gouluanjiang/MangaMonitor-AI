@@ -4,6 +4,8 @@ Updated 2026-09-12. This document separates the current continuation from histor
 
 ## Current follow-up: upstream-style JM parallel download pipeline (2026-09-12)
 
+The desktop metadata path also inherited the monitor's random 1–3 second wait before every album/chapter request (3–9 seconds of injected waiting for a single chapter). The explicit desktop download path now selects immediate album/chapter requests through a named JM constructor; ordinary monitor/CLI clients and other API routes retain their pacing. This is a code-path delay calculation, not an end-to-end benchmark.
+
 The user retested the JPEG/two-request revision: faster, but still substantially slower than jmcomic-downloader. They explicitly removed the low-computer-load constraint for this download optimization. Read [the current performance follow-up](JM_UPSTREAM_PERFORMANCE_2026-09-12.md): 20 independent async image lifecycles, separate CPU processing/validation/hash, exact-byte parsed snapshots for private library/download documents, and cancellation that drains actual CPU work before worker release. This follows the pinned upstream scheduling structure using the existing Tokio pool. Ordered durable files/checkpoints, old WEBP tasks, JPG/GIF output and existing-directory protection remain. No installer/version bump. Formal validation and Dev builds stay in CI without duplicate local suites; real timing still requires the user's retest. Next feature batch remains Pica single-work download.
 
 ## Previous follow-up: JM JPEG output and two requests (2026-09-12)

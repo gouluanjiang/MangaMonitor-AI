@@ -287,7 +287,7 @@ where
 
     let (plan, request) = prepare_current(initial_state, initial_ledger, command)?;
 
-    let live = live_source_preflight::run_live(
+    let live = live_source_preflight::run_for_download(
         initial_state,
         initial_ledger,
         command,
@@ -299,7 +299,7 @@ where
     .await?;
 
     let authorization = reauthorize_image(&mut reload, command, &plan, &request, &live)?;
-    let mut descriptors = live_media_descriptors::run_live(
+    let mut descriptors = live_media_descriptors::run_for_download(
         &authorization,
         &live.evidence,
         &live.proof,

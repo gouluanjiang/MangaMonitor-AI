@@ -15,7 +15,9 @@ use crate::{
         self, MediaChapterDescriptors, MediaDescriptor, SourceMediaDescriptorSet,
         SOURCE_MEDIA_DESCRIPTOR_SCHEMA_VERSION,
     },
-    source_preflight::{SourcePreflightEvidence, SourcePreflightProof, SOURCE_PREFLIGHT_SCHEMA_VERSION},
+    source_preflight::{
+        SourcePreflightEvidence, SourcePreflightProof, SOURCE_PREFLIGHT_SCHEMA_VERSION,
+    },
 };
 use jm_adapter::media_descriptors::{JmChapterMediaEnumeration, IMAGE_DOMAIN};
 use pica_adapter::media_descriptors::PicaChapterMediaEnumeration;
@@ -109,9 +111,8 @@ fn validate_before_source_reads(
         return Err("LIVE_MEDIA_PREFLIGHT_SCOPE_MISMATCH".into());
     }
     match authorization.source.as_str() {
-        "jm"
-            if evidence.upstream_commit == jm_adapter::UPSTREAM_COMMIT
-                && preflight.upstream_commit == jm_adapter::UPSTREAM_COMMIT => {}
+        "jm" if evidence.upstream_commit == jm_adapter::UPSTREAM_COMMIT
+            && preflight.upstream_commit == jm_adapter::UPSTREAM_COMMIT => {}
         "pica"
             if evidence.upstream_commit == pica_adapter::UPSTREAM_COMMIT
                 && preflight.upstream_commit == pica_adapter::UPSTREAM_COMMIT => {}
@@ -170,8 +171,7 @@ fn build_jm_set(
         }
         let mut media = Vec::with_capacity(live.media.len());
         for (offset, item) in live.media.iter().enumerate() {
-            let image_index =
-                u64::try_from(offset + 1).map_err(|_| "LIVE_MEDIA_INDEX_OVERFLOW")?;
+            let image_index = u64::try_from(offset + 1).map_err(|_| "LIVE_MEDIA_INDEX_OVERFLOW")?;
             let (transform, transform_parameter) = match item.source_format.as_str() {
                 "gif" if item.block_num == 0 => ("NONE", 0),
                 "webp" => ("JM_SCRAMBLE_BLOCKS", item.block_num),
@@ -230,8 +230,7 @@ fn build_pica_set(
         }
         let mut media = Vec::with_capacity(live.media.len());
         for (offset, item) in live.media.iter().enumerate() {
-            let image_index =
-                u64::try_from(offset + 1).map_err(|_| "LIVE_MEDIA_INDEX_OVERFLOW")?;
+            let image_index = u64::try_from(offset + 1).map_err(|_| "LIVE_MEDIA_INDEX_OVERFLOW")?;
             media.push(MediaDescriptor {
                 image_index,
                 source_media_id: item.media_id.clone(),
@@ -266,6 +265,49 @@ pub async fn run_live<Reauthorize>(
     evidence: &SourcePreflightEvidence,
     preflight: &SourcePreflightProof,
     pica_token: Option<&str>,
+    reauthorize: Reauthorize,
+) -> Result<SourceMediaDescriptorSet, String>
+where
+    Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
+{
+    run_with_pacing(
+        authorization,
+        evidence,
+        preflight,
+        pica_token,
+        false,
+        reauthorize,
+    )
+    .await
+}
+
+pub(crate) async fn run_for_download<Reauthorize>(
+    authorization: &ImageDownloadAuthorization,
+    evidence: &SourcePreflightEvidence,
+    preflight: &SourcePreflightProof,
+    pica_token: Option<&str>,
+    reauthorize: Reauthorize,
+) -> Result<SourceMediaDescriptorSet, String>
+where
+    Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
+{
+    run_with_pacing(
+        authorization,
+        evidence,
+        preflight,
+        pica_token,
+        true,
+        reauthorize,
+    )
+    .await
+}
+
+async fn run_with_pacing<Reauthorize>(
+    authorization: &ImageDownloadAuthorization,
+    evidence: &SourcePreflightEvidence,
+    preflight: &SourcePreflightProof,
+    pica_token: Option<&str>,
+    download: bool,
     mut reauthorize: Reauthorize,
 ) -> Result<SourceMediaDescriptorSet, String>
 where
@@ -275,7 +317,11 @@ where
 
     let descriptors = match authorization.source.as_str() {
         "jm" => {
-            let mut client = jm_adapter::JmClient::new(jm_adapter::DEFAULT_DOMAIN)?;
+            let mut client = if download {
+                jm_adapter::JmClient::new_for_download(jm_adapter::DEFAULT_DOMAIN)?
+            } else {
+                jm_adapter::JmClient::new(jm_adapter::DEFAULT_DOMAIN)?
+            };
             let mut enumerations = Vec::with_capacity(preflight.chapters.len());
             for chapter in &preflight.chapters {
                 let live = client
@@ -326,10 +372,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        source_completion::PaginationProof,
-        source_preflight::PreflightChapter,
-    };
+    use crate::{source_completion::PaginationProof, source_preflight::PreflightChapter};
     use jm_adapter::media_descriptors::JmMediaItem;
     use pica_adapter::media_descriptors::PicaMediaItem;
 

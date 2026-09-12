@@ -93,8 +93,15 @@ fn base_evidence(request: &SourceBridgeRequest) -> SourcePreflightEvidence {
     }
 }
 
-async fn enumerate_jm(request: &SourceBridgeRequest) -> Result<SourcePreflightEvidence, String> {
-    let mut client = jm_adapter::JmClient::new(jm_adapter::DEFAULT_DOMAIN)?;
+async fn enumerate_jm(
+    request: &SourceBridgeRequest,
+    download: bool,
+) -> Result<SourcePreflightEvidence, String> {
+    let mut client = if download {
+        jm_adapter::JmClient::new_for_download(jm_adapter::DEFAULT_DOMAIN)?
+    } else {
+        jm_adapter::JmClient::new(jm_adapter::DEFAULT_DOMAIN)?
+    };
     let chapters = client.preflight_chapters(&request.source_work_id).await?;
     let expected_chapter_count =
         u64::try_from(chapters.len()).map_err(|_| "JM_PREFLIGHT_CHAPTER_COUNT_OVERFLOW")?;
@@ -174,14 +181,11 @@ async fn enumerate_pica(
 async fn enumerate_source(
     request: &SourceBridgeRequest,
     pica_token: Option<&str>,
+    download: bool,
 ) -> Result<SourcePreflightEvidence, String> {
     match request.source.as_str() {
-        "jm" => enumerate_jm(request).await,
-        "pica" => enumerate_pica(
-            request,
-            pica_token.ok_or("PICA_PREFLIGHT_TOKEN_REQUIRED")?,
-        )
-        .await,
+        "jm" => enumerate_jm(request, download).await,
+        "pica" => enumerate_pica(request, pica_token.ok_or("PICA_PREFLIGHT_TOKEN_REQUIRED")?).await,
         _ => Err("UNSUPPORTED_LIVE_SOURCE_PREFLIGHT_SOURCE".into()),
     }
 }
@@ -265,7 +269,33 @@ where
         command,
         plan,
         request,
-        || enumerate_source(request, pica_token),
+        || enumerate_source(request, pica_token, false),
+        reload,
+    )
+    .await
+}
+
+/// Same authorization and evidence boundary for an explicit desktop download;
+/// only JM album/chapter request pacing differs from the monitor default.
+pub(crate) async fn run_for_download<Reload>(
+    state: &State,
+    ledger: &GateLedger,
+    command: &ExecutorCommand,
+    plan: &LocalExecutionPlan,
+    request: &SourceBridgeRequest,
+    pica_token: Option<&str>,
+    reload: Reload,
+) -> Result<LiveSourcePreflightResult, String>
+where
+    Reload: FnOnce() -> Result<(State, GateLedger), String>,
+{
+    run_with_enumerator(
+        state,
+        ledger,
+        command,
+        plan,
+        request,
+        || enumerate_source(request, pica_token, true),
         reload,
     )
     .await
@@ -329,7 +359,11 @@ mod tests {
             }],
         };
         let target_hash = target_hash(&task);
-        let digest = hash(&(task.task_id.as_str(), task.task_revision, target_hash.as_str()));
+        let digest = hash(&(
+            task.task_id.as_str(),
+            task.task_revision,
+            target_hash.as_str(),
+        ));
         let command = ExecutorCommand {
             schema_version: 1,
             command_id: format!("EXEC_{}", &digest[..20]),

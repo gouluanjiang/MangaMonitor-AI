@@ -79,6 +79,9 @@ pub struct DownloadRecord {
     pub generation: u64,
     pub metadata: JmDownloadMetadata,
     pub destination: String,
+    /// Old saved tasks retain their original WEBP policy and checkpoint hashes.
+    #[serde(default)]
+    pub jpeg_output: bool,
     pub phase: DownloadPhase,
     pub files_done: u64,
     pub files_total: Option<u64>,

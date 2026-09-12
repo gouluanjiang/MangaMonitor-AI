@@ -178,7 +178,8 @@ fn layout(
         let number = number
             .parse::<u64>()
             .map_err(|_| error("DOWNLOAD_PROOF_INVALID"))?;
-        if !matches!(extension, "webp" | "gif") || number == 0 {
+        let expected_static_format = if record.jpeg_output { "jpg" } else { "webp" };
+        if (extension != expected_static_format && extension != "gif") || number == 0 {
             return Err(error("DOWNLOAD_PROOF_INVALID"));
         }
         let directory = format!("{order:04}-{id}");

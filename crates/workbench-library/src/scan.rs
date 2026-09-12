@@ -612,7 +612,7 @@ impl WorkScan {
                 chapters.insert(chapter.to_owned());
                 if name != "章节元数据.json" {
                     let (number, extension) = name.rsplit_once('.').ok_or_else(invalid)?;
-                    if !matches!(extension, "webp" | "gif")
+                    if !matches!(extension, "jpg" | "webp" | "gif")
                         || number.is_empty()
                         || !number.bytes().all(|v| v.is_ascii_digit())
                         || number.parse::<u64>().ok().is_none_or(|v| v == 0)

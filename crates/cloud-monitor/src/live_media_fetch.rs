@@ -57,7 +57,7 @@ fn validate_supported_fetch_scope(descriptors: &SourceMediaDescriptorSet) -> Res
             ) {
                 ("pica", _, "NONE", 0) => {}
                 ("jm", "gif", "NONE", 0) => {}
-                ("jm", "webp", "JM_SCRAMBLE_BLOCKS", _) => {}
+                ("jm", "webp", "JM_SCRAMBLE_BLOCKS" | "JM_SCRAMBLE_BLOCKS_JPEG", _) => {}
                 _ => return Err("LIVE_MEDIA_FETCH_TRANSFORM_NOT_SUPPORTED".into()),
             }
         }
@@ -73,8 +73,14 @@ fn process_downloaded_bytes(
     if bytes.is_empty() {
         return Err("LIVE_MEDIA_SOURCE_FORMAT_MISMATCH".into());
     }
-    media_validation::validate(&descriptor.source_format, &bytes)
-        .map_err(|_| "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED")?;
+    let direct_jpeg = source == "jm"
+        && descriptor.source_format == "webp"
+        && descriptor.transform == "JM_SCRAMBLE_BLOCKS_JPEG";
+    // The direct JPEG transform performs the same bounded source decode itself.
+    if !direct_jpeg {
+        media_validation::validate(&descriptor.source_format, &bytes)
+            .map_err(|_| "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED")?;
+    }
 
     let bytes = match source {
         "jm" => jm_media_transform::apply(
@@ -93,8 +99,11 @@ fn process_downloaded_bytes(
         _ => return Err("UNSUPPORTED_LIVE_MEDIA_FETCH_SOURCE".into()),
     };
 
-    media_validation::validate(&descriptor.source_format, &bytes)
-        .map_err(|_| "LIVE_MEDIA_PROCESSED_IMAGE_DECODE_FAILED")?;
+    if !direct_jpeg {
+        media_validation::validate(descriptor.stored_format(), &bytes)
+            .map_err(|_| "LIVE_MEDIA_PROCESSED_IMAGE_DECODE_FAILED")?;
+    }
+    // The staging boundary independently decodes output before accepting bytes.
 
     Ok(ProcessedMedia {
         source_media_id: descriptor.source_media_id.clone(),
@@ -130,9 +139,10 @@ where
     )?;
     validate_supported_fetch_scope(context.descriptors)?;
     let fetcher = LiveFetcher::new(&context.authorization.source)?;
-    isolated_staging_execution::execute_resumable_with_fetcher(
+    isolated_staging_execution::execute_resumable_with_prefetch(
         context,
         resume,
+        2,
         move |descriptor| {
             let fetcher = fetcher.clone();
             async move { fetcher.fetch_processed(descriptor).await }
@@ -272,6 +282,37 @@ mod tests {
                 .bytes,
             bytes
         );
+    }
+
+    #[test]
+    fn direct_jpeg_is_reencoded_once_with_zero_or_positive_scramble() {
+        let mut source = RgbImage::new(48, 64);
+        for (x, y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = Rgb([((x * 3 + y) % 200) as u8, 40, if y < 32 { 20 } else { 180 }]);
+        }
+        let mut original = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(source.clone())
+            .write_to(&mut original, ImageFormat::WebP)
+            .unwrap();
+        for blocks in [0, 2] {
+            let media = descriptor("webp", "JM_SCRAMBLE_BLOCKS_JPEG", blocks);
+            validate_supported_fetch_scope(&descriptor_set("jm", media.clone())).unwrap();
+            let result =
+                process_downloaded_bytes("jm", &media, original.get_ref().clone()).unwrap();
+            assert_eq!(
+                image::guess_format(&result.bytes).unwrap(),
+                ImageFormat::Jpeg
+            );
+            assert_eq!(result.source_format, "webp");
+            let image = media_validation::decode("jpg", &result.bytes)
+                .unwrap()
+                .into_rgb8();
+            assert_eq!(image.dimensions(), source.dimensions());
+            let expected_top = if blocks == 0 { 20_i16 } else { 180 };
+            assert!((i16::from(image.get_pixel(20, 10)[2]) - expected_top).abs() < 15);
+        }
+        let media = descriptor("webp", "JM_SCRAMBLE_BLOCKS_JPEG", 0);
+        assert!(process_downloaded_bytes("jm", &media, b"RIFF1234WEBPbroken".to_vec()).is_err());
     }
 
     #[test]

@@ -23,10 +23,13 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::VecDeque,
     fs::{self, Metadata, OpenOptions},
-    future::Future,
+    future::{poll_fn, Future},
     io::Write,
     path::{Path, PathBuf},
+    pin::Pin,
+    task::Poll,
 };
 
 pub const ISOLATED_STAGING_EXECUTION_SCHEMA_VERSION: u64 = 1;
@@ -174,6 +177,32 @@ fn verify_checkpoint_tree(
 pub async fn execute_resumable_with_fetcher<Fetch, FetchFuture, Reauthorize, Progress>(
     context: IsolatedStagingExecutionContext<'_>,
     resume: Option<&StagingCheckpoint>,
+    fetch: Fetch,
+    reauthorize: Reauthorize,
+    progress: Progress,
+) -> Result<IsolatedStagingExecutionResult, String>
+where
+    Fetch: FnMut(MediaDescriptor) -> FetchFuture,
+    FetchFuture: Future<Output = Result<ProcessedMedia, String>>,
+    Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
+    Progress: FnMut(&StagingCheckpoint) -> Result<(), String>,
+{
+    execute_resumable_with_prefetch(context, resume, 1, fetch, reauthorize, progress).await
+}
+
+struct PendingMedia<F> {
+    future: Pin<Box<F>>,
+    result: Option<Result<ProcessedMedia, String>>,
+    started: bool,
+}
+
+/// At most two in-flight images, polled on the caller's one worker. No spawned
+/// jobs survive pause/error; decoding and checkpoint/file writes remain serial.
+/// Ordered persistence keeps the existing exact-prefix recovery contract.
+pub async fn execute_resumable_with_prefetch<Fetch, FetchFuture, Reauthorize, Progress>(
+    context: IsolatedStagingExecutionContext<'_>,
+    resume: Option<&StagingCheckpoint>,
+    prefetch: usize,
     mut fetch: Fetch,
     mut reauthorize: Reauthorize,
     mut progress: Progress,
@@ -184,6 +213,9 @@ where
     Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
     Progress: FnMut(&StagingCheckpoint) -> Result<(), String>,
 {
+    if !(1..=2).contains(&prefetch) {
+        return Err("STAGING_PREFETCH_LIMIT_INVALID".into());
+    }
     let IsolatedStagingExecutionContext {
         staging_root,
         plan,
@@ -249,7 +281,8 @@ where
             Err(_) => return Err("STAGING_CHAPTER_DIRECTORY_CREATE_FAILED".into()),
         }
         let mut paths = Vec::new();
-        for descriptor in &chapter.media {
+        let mut pending_fetches: VecDeque<PendingMedia<FetchFuture>> = VecDeque::new();
+        for (offset, descriptor) in chapter.media.iter().enumerate() {
             exact_authorization_generation(authorization, reauthorize()?)?;
             if completed >= checkpoint.artifacts.len() {
                 if let Some(pending) = checkpoint.pending.clone() {
@@ -262,7 +295,44 @@ where
                         continue;
                     }
                 }
-                let processed = fetch(descriptor.clone()).await?;
+                while pending_fetches.len() < prefetch {
+                    let Some(next) = chapter.media.get(offset + pending_fetches.len()) else {
+                        break;
+                    };
+                    exact_authorization_generation(authorization, reauthorize()?)?;
+                    pending_fetches.push_back(PendingMedia {
+                        future: Box::pin(fetch(next.clone())),
+                        result: None,
+                        started: false,
+                    });
+                }
+                let processed = poll_fn(|cx| {
+                    for pending in &mut pending_fetches {
+                        if pending.result.is_none() {
+                            if !pending.started {
+                                let current = reauthorize().and_then(|current| {
+                                    exact_authorization_generation(authorization, current)
+                                });
+                                if let Err(error) = current {
+                                    return Poll::Ready(Err(error));
+                                }
+                                pending.started = true;
+                            }
+                            if let Poll::Ready(result) = pending.future.as_mut().poll(cx) {
+                                pending.result = Some(result);
+                            }
+                        }
+                        if let Some(Err(error)) = &pending.result {
+                            return Poll::Ready(Err(error.clone()));
+                        }
+                    }
+                    match pending_fetches.front_mut().and_then(|p| p.result.take()) {
+                        Some(result) => Poll::Ready(result),
+                        None => Poll::Pending,
+                    }
+                })
+                .await?;
+                pending_fetches.pop_front();
                 exact_processed_binding(descriptor, &processed)?;
                 exact_authorization_generation(authorization, reauthorize()?)?;
                 let pending = StagedArtifact {
@@ -449,7 +519,7 @@ fn exact_processed_binding(
     if processed.bytes.is_empty() {
         return Err("PROCESSED_MEDIA_INVALID_IMAGE_BYTES".into());
     }
-    crate::media_validation::validate(&descriptor.source_format, &processed.bytes)
+    crate::media_validation::validate(descriptor.stored_format(), &processed.bytes)
         .map_err(|_| "PROCESSED_MEDIA_INVALID_IMAGE_BYTES")?;
     Ok(())
 }

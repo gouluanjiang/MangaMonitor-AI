@@ -160,6 +160,7 @@ impl DownloadService {
             .as_bytes(),
         );
         let mut record = DownloadRecord {
+            jpeg_output: true,
             id: id.clone(),
             origin: "manual".into(),
             revision: 1,
@@ -475,10 +476,18 @@ impl DownloadService {
             retained: false,
         };
         let revision = initial.revision;
-        let require = || {
+        let require_record = || {
             current_scope()?;
-            self.require_run(store, task_id, revision).map(|_| ())
+            let current = self.require_run(store, task_id, revision)?;
+            if current.target_hash != initial.target_hash
+                || current.approval_revision != initial.approval_revision
+                || current.jpeg_output != initial.jpeg_output
+            {
+                return Err(error("DOWNLOAD_TASK_STALE"));
+            }
+            Ok(current)
         };
+        let require = || require_record().map(|_| ());
         let result = async {
             let mut record = self.update_run(store, task_id, revision, |t| {
                 t.phase = DownloadPhase::Downloading;
@@ -495,7 +504,7 @@ impl DownloadService {
                     .transpose()
                     .map_err(|_| error("DOWNLOAD_DOCUMENT_INVALID"))?;
                 let (state, ledger, command) = adapter::current(&record)?;
-                let report = local_execution_orchestrator::execute_live_resumable(
+                let report = local_execution_orchestrator::execute_live_resumable_with_output(
                     &state,
                     &ledger,
                     &command,
@@ -503,15 +512,13 @@ impl DownloadService {
                     None,
                     None,
                     || {
-                        require().map_err(|e| e.code.to_string())?;
-                        let current = self
-                            .require_run(store, task_id, revision)
-                            .map_err(|e| e.code.to_string())?;
+                        let current = require_record().map_err(|e| e.code.to_string())?;
                         let (s, g, _) =
                             adapter::current(&current).map_err(|e| e.code.to_string())?;
                         Ok((s, g))
                     },
                     resume.as_ref(),
+                    record.jpeg_output,
                     |checkpoint| {
                         if checkpoint.pending.is_some() || checkpoint.artifacts.is_empty() {
                             require().map_err(|e| e.code.to_string())?;
@@ -682,7 +689,11 @@ fn next(value: u64) -> Result<u64> {
 }
 fn binding(record: &DownloadRecord) -> Result<String> {
     serde_json::to_vec(&(
-        "manual-JM-layout-v1",
+        if record.jpeg_output {
+            "manual-JM-layout-v1-jpeg"
+        } else {
+            "manual-JM-layout-v1"
+        },
         &record.root,
         record.generation,
         &record.metadata,

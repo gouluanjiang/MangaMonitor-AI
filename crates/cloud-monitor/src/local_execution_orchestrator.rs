@@ -233,8 +233,42 @@ pub async fn execute_live_resumable<Reload, Progress>(
     staging_root: &Path,
     pica_token: Option<&str>,
     completed_at: Option<&str>,
+    reload: Reload,
+    resume: Option<&crate::isolated_staging_execution::StagingCheckpoint>,
+    progress: Progress,
+) -> Result<LocalExecutionReport, String>
+where
+    Reload: FnMut() -> Result<(State, GateLedger), String>,
+    Progress: FnMut(&crate::isolated_staging_execution::StagingCheckpoint) -> Result<(), String>,
+{
+    execute_live_resumable_with_output(
+        initial_state,
+        initial_ledger,
+        command,
+        staging_root,
+        pica_token,
+        completed_at,
+        reload,
+        resume,
+        false,
+        progress,
+    )
+    .await
+}
+
+/// The desktop caller binds this policy to the confirmed task and reloads it at
+/// every authorization point. The legacy entry point always retains WEBP.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_live_resumable_with_output<Reload, Progress>(
+    initial_state: &State,
+    initial_ledger: &GateLedger,
+    command: &ExecutorCommand,
+    staging_root: &Path,
+    pica_token: Option<&str>,
+    completed_at: Option<&str>,
     mut reload: Reload,
     resume: Option<&crate::isolated_staging_execution::StagingCheckpoint>,
+    jpeg_output: bool,
     progress: Progress,
 ) -> Result<LocalExecutionReport, String>
 where
@@ -265,7 +299,7 @@ where
     .await?;
 
     let authorization = reauthorize_image(&mut reload, command, &plan, &request, &live)?;
-    let descriptors = live_media_descriptors::run_live(
+    let mut descriptors = live_media_descriptors::run_live(
         &authorization,
         &live.evidence,
         &live.proof,
@@ -274,6 +308,9 @@ where
     )
     .await?;
 
+    if jpeg_output {
+        crate::source_media_descriptors::jm_jpeg_output(&mut descriptors)?;
+    }
     let context = IsolatedStagingExecutionContext {
         staging_root,
         plan: &plan,

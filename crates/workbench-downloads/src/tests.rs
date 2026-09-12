@@ -91,21 +91,28 @@ fn gif() -> Vec<u8> {
     bytes.into_inner()
 }
 fn report(f: &Fixture, record: &DownloadRecord) -> (PathBuf, LocalExecutionReport) {
+    report_with_images(f, record, &[("gif", gif()), ("gif", gif())])
+}
+fn report_with_images(
+    f: &Fixture,
+    record: &DownloadRecord,
+    pages: &[(&str, Vec<u8>)],
+) -> (PathBuf, LocalExecutionReport) {
     let workspace = f.store.open_download_workspace().unwrap();
     let staging = workspace.path().to_path_buf();
     let (state, ledger, command) = adapter::current(record).unwrap();
     let plan = local_executor::plan(&command).unwrap();
     let root = staging.join(&plan.staging_subdir);
     fs::create_dir_all(root.join("chapters/000001-123456")).unwrap();
-    let bytes = gif();
     let mut artifacts = Vec::new();
-    for number in 1..=2 {
-        let path = format!("chapters/000001-123456/{number:06}.gif");
-        fs::write(root.join(&path), &bytes).unwrap();
+    for (index, (extension, bytes)) in pages.iter().enumerate() {
+        let number = index + 1;
+        let path = format!("chapters/000001-123456/{number:06}.{extension}");
+        fs::write(root.join(&path), bytes).unwrap();
         artifacts.push(StagedArtifact {
             relative_path: path,
             size_bytes: bytes.len() as u64,
-            sha256: hash(&bytes),
+            sha256: hash(bytes),
         });
     }
     let source_completion = SourceCompletionProof {
@@ -127,8 +134,8 @@ fn report(f: &Fixture, record: &DownloadRecord) -> (PathBuf, LocalExecutionRepor
             source_enumeration_complete: true,
             all_scheduled_downloads_joined: true,
             downloader_reported_full_completion: true,
-            expected_content_units: 2,
-            completed_content_units: 2,
+            expected_content_units: pages.len() as u64,
+            completed_content_units: pages.len() as u64,
             failed_content_units: 0,
             artifacts,
         },
@@ -789,5 +796,245 @@ fn completed_temporary_cleanup_is_exact_idempotent_and_leaves_final_work() {
         .library
         .join(&value.destination)
         .join("0001-123456/0001.gif")
+        .is_file());
+}
+
+fn static_image(format: image::ImageFormat) -> Vec<u8> {
+    let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(3, 4, |x, y| {
+        image::Rgb([(x * 70) as u8, (y * 50) as u8, 90])
+    }));
+    let mut bytes = Cursor::new(Vec::new());
+    image.write_to(&mut bytes, format).unwrap();
+    let bytes = bytes.into_inner();
+    assert_eq!(image::guess_format(&bytes).unwrap(), format);
+    assert_eq!(image::load_from_memory(&bytes).unwrap().width(), 3);
+    bytes
+}
+
+fn downloads_path(f: &Fixture) -> PathBuf {
+    f._temp
+        .path()
+        .join("private")
+        .join(workbench_storage::PRIVATE_DIRECTORY)
+        .join("downloads.json")
+}
+
+#[test]
+fn new_jpeg_and_unchanged_gif_pages_materialize_and_register_as_one_complete_work() {
+    let f = fixture();
+    let mut value = record(&f);
+    assert!(
+        value.jpeg_output,
+        "new approvals select the JPEG output policy"
+    );
+    let jpeg = static_image(image::ImageFormat::Jpeg);
+    let original_gif = gif();
+    let pages = [("jpg", jpeg.clone()), ("gif", original_gif.clone())];
+    let (stage, report) = report_with_images(&f, &value, &pages);
+    let phone_before = f.store.read_phone_library().unwrap();
+    materialize::save(&mut value, &report, &stage, &|| Ok(()), &mut |_| Ok(())).unwrap();
+    materialize::verify_output(&value).unwrap();
+    let root = f.library.join(&value.destination);
+    assert_eq!(fs::read(root.join("0001-123456/0001.jpg")).unwrap(), jpeg);
+    assert_eq!(
+        fs::read(root.join("0001-123456/0002.gif")).unwrap(),
+        original_gif
+    );
+    assert!(!root.join("0001-123456/0001.webp").exists());
+    assert!(!root.join("0001-123456/0002.jpg").exists());
+    let mut library = workbench_library::LibraryService::new();
+    let snapshot = library
+        .register_completed(
+            &f.store,
+            &value.root.id,
+            value.generation,
+            &value.destination,
+            &workbench_storage::LibraryReference {
+                source: Source::Jm,
+                work_id: value.metadata.work_id.clone(),
+            },
+            2,
+        )
+        .unwrap();
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.items[0].page_count, Some(2));
+    assert_eq!(
+        snapshot.items[0].source_ref.as_ref().unwrap().work_id,
+        "123456"
+    );
+    assert_eq!(snapshot.items[0].error_code, None);
+    assert!(snapshot.items[0].cover_available);
+    assert_eq!(f.store.read_phone_library().unwrap(), phone_before);
+}
+
+#[tokio::test]
+async fn legacy_webp_task_without_profile_field_reopens_and_finishes_its_saved_report() {
+    let f = fixture();
+    let mut value = record(&f);
+    value.jpeg_output = false;
+    // Freeze the pre-JPEG binding contract independently of the current helper.
+    value.target_hash = hash(
+        &serde_json::to_vec(&(
+            "manual-JM-layout-v1",
+            &value.root,
+            value.generation,
+            &value.metadata,
+            &value.destination,
+            value.approval_revision,
+        ))
+        .unwrap(),
+    );
+    let original_target = value.target_hash.clone();
+    assert_eq!(binding(&value).unwrap(), original_target);
+    let webp = static_image(image::ImageFormat::WebP);
+    let (stage, report) = report_with_images(&f, &value, &[("webp", webp.clone()), ("gif", gif())]);
+    value.files_done = 2;
+    value.files_total = Some(2);
+    value.bytes_done = report.filesystem_verification.total_bytes;
+    value.staging_report_json = Some(serde_json::to_string(&report).unwrap());
+    value.phase = DownloadPhase::Paused;
+    put(&f, value);
+    let path = downloads_path(&f);
+    let mut old_document: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    old_document["value"]["tasks"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("jpegOutput");
+    fs::write(&path, serde_json::to_vec(&old_document).unwrap()).unwrap();
+    let before_read = fs::read(&path).unwrap();
+    let restarted = DownloadService::new();
+    assert_eq!(
+        restarted.read(&f.store).unwrap().tasks[0].phase,
+        DownloadPhase::Paused
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before_read,
+        "opening does not migrate or execute an old task"
+    );
+    assert!(!record(&f).jpeg_output);
+    assert_eq!(record(&f).target_hash, original_target);
+    assert!(fs::read_dir(&f.library).unwrap().next().is_none());
+    restarted
+        .control(&f.store, &f.id, 1, Control::Resume)
+        .unwrap();
+    let receipt = restarted
+        .run(&f.store, &f.id, || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.expected_pages, 2);
+    let root = f.library.join(&receipt.relative_path);
+    assert_eq!(fs::read(root.join("0001-123456/0001.webp")).unwrap(), webp);
+    assert!(!root.join("0001-123456/0001.jpg").exists());
+    let mut library = workbench_library::LibraryService::new();
+    let snapshot = library
+        .register_completed(
+            &f.store,
+            &receipt.root_id,
+            receipt.generation,
+            &receipt.relative_path,
+            &workbench_storage::LibraryReference {
+                source: Source::Jm,
+                work_id: receipt.work_id.clone(),
+            },
+            receipt.expected_pages,
+        )
+        .unwrap();
+    let done = restarted
+        .mark_indexed(&f.store, &receipt, &snapshot.items[0].id)
+        .unwrap();
+    assert_eq!(done.tasks[0].phase, DownloadPhase::Downloaded);
+    assert!(!record(&f).jpeg_output);
+    assert_eq!(record(&f).target_hash, original_target);
+    assert_eq!(fs::read(root.join("0001-123456/0001.webp")).unwrap(), webp);
+    assert!(!stage.join(report.staging_subdir).exists());
+}
+
+#[test]
+fn changing_a_saved_output_profile_without_its_approval_binding_is_rejected_without_writes() {
+    for original_profile in [false, true] {
+        let f = fixture();
+        let mut value = record(&f);
+        value.jpeg_output = original_profile;
+        value.target_hash = binding(&value).unwrap();
+        put(&f, value.clone());
+        value.jpeg_output = !original_profile;
+        put(&f, value);
+        let before = fs::read(downloads_path(&f)).unwrap();
+        assert_eq!(
+            f.service.read(&f.store).unwrap_err().code,
+            "DOWNLOAD_DOCUMENT_INVALID"
+        );
+        assert_eq!(
+            f.service
+                .control(&f.store, &f.id, 1, Control::Pause)
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_DOCUMENT_INVALID"
+        );
+        assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
+        assert!(fs::read_dir(&f.library).unwrap().next().is_none());
+    }
+}
+
+#[test]
+fn materialization_rejects_static_formats_outside_the_approved_profile() {
+    for jpeg_output in [false, true] {
+        let f = fixture();
+        let mut value = record(&f);
+        value.jpeg_output = jpeg_output;
+        value.target_hash = binding(&value).unwrap();
+        let (extension, format) = if jpeg_output {
+            ("webp", image::ImageFormat::WebP)
+        } else {
+            ("jpg", image::ImageFormat::Jpeg)
+        };
+        let bytes = static_image(format);
+        let (stage, report) =
+            report_with_images(&f, &value, &[(extension, bytes.clone()), ("gif", gif())]);
+        let staged_page = stage
+            .join(&report.staging_subdir)
+            .join(format!("chapters/000001-123456/000001.{extension}"));
+        let before = f.store.read_downloads().unwrap();
+        assert_eq!(
+            materialize::save(&mut value, &report, &stage, &|| Ok(()), &mut |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_PROOF_INVALID"
+        );
+        assert_eq!(f.store.read_downloads().unwrap(), before);
+        assert_eq!(fs::read(staged_page).unwrap(), bytes);
+        assert!(fs::read_dir(&f.library).unwrap().next().is_none());
+    }
+}
+
+#[test]
+fn approval_for_another_output_profile_cannot_reuse_an_old_staging_receipt() {
+    let f = fixture();
+    let mut value = record(&f);
+    let original_private_hash = value.target_hash.clone();
+    let (stage, report) = report_with_images(
+        &f,
+        &value,
+        &[
+            ("jpg", static_image(image::ImageFormat::Jpeg)),
+            ("gif", gif()),
+        ],
+    );
+    value.jpeg_output = false;
+    value.target_hash = binding(&value).unwrap();
+    assert_ne!(value.target_hash, original_private_hash);
+    assert_eq!(
+        materialize::save(&mut value, &report, &stage, &|| Ok(()), &mut |_| Ok(()))
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_PROOF_INVALID"
+    );
+    assert!(fs::read_dir(&f.library).unwrap().next().is_none());
+    assert!(stage
+        .join(report.staging_subdir)
+        .join("chapters/000001-123456/000001.jpg")
         .is_file());
 }

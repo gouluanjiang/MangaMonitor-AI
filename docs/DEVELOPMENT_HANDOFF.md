@@ -1,6 +1,10 @@
 # Active development handoff
 
-Updated 2026-09-11. This document separates the current continuation from historical milestone reports.
+Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
+
+## Current follow-up: JM JPEG output and bounded download concurrency (2026-09-12)
+
+The user accepted all previous JM single-download functional checks, then reported a same-work/fresh-download speed gap and requested output matching their existing JPG library. Read [the JPEG/performance follow-up](JM_JPEG_PERFORMANCE_2026-09-12.md). New tasks encode directly to JPEG (GIF unchanged); old saved WEBP tasks keep their original policy. Media futures are bounded to two and processed on one worker, with ordered checkpoint/file writes and no background tasks surviving cancellation. Existing output, phone data and PC copies remain. CI and a new Dev executable are the delivery path; no installer/version bump. Do not claim instrumented timing improvement until the user retests this revision. The next feature batch remains Pica single-work downloads.
 
 ## Current batch: explicit JM single-work desktop downloads (2026-09-11)
 

@@ -192,14 +192,78 @@ where
 
 struct PendingMedia<F> {
     future: Pin<Box<F>>,
-    result: Option<Result<ProcessedMedia, String>>,
+    result: Option<Result<PipelineMedia, String>>,
     started: bool,
 }
 
-/// At most two in-flight images, polled on the caller's one worker. No spawned
-/// jobs survive pause/error; decoding and checkpoint/file writes remain serial.
-/// Ordered persistence keeps the existing exact-prefix recovery contract.
+/// The pinned GUI downloader defaults to 20 image lifecycles. A slot covers
+/// fetching, processing and the bounded result until ordered persistence.
+pub const MAX_CONCURRENT_MEDIA: usize = 20;
+
+/// Untrusted/test fetchers still cross the full image-validation boundary.
 pub async fn execute_resumable_with_prefetch<Fetch, FetchFuture, Reauthorize, Progress>(
+    context: IsolatedStagingExecutionContext<'_>,
+    resume: Option<&StagingCheckpoint>,
+    prefetch: usize,
+    mut fetch: Fetch,
+    reauthorize: Reauthorize,
+    progress: Progress,
+) -> Result<IsolatedStagingExecutionResult, String>
+where
+    Fetch: FnMut(MediaDescriptor) -> FetchFuture,
+    FetchFuture: Future<Output = Result<ProcessedMedia, String>>,
+    Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
+    Progress: FnMut(&StagingCheckpoint) -> Result<(), String>,
+{
+    execute_resumable_pipeline(
+        context,
+        resume,
+        prefetch,
+        move |descriptor| {
+            let future = fetch(descriptor);
+            async move { future.await.map(PipelineMedia::Unchecked) }
+        },
+        reauthorize,
+        progress,
+    )
+    .await
+}
+
+/// Live processing performs the full decode validation and hash on CPU workers,
+/// then transfers an immutable, non-serializable result across this boundary.
+pub(crate) async fn execute_resumable_with_verified_fetcher<
+    Fetch,
+    FetchFuture,
+    Reauthorize,
+    Progress,
+>(
+    context: IsolatedStagingExecutionContext<'_>,
+    resume: Option<&StagingCheckpoint>,
+    mut fetch: Fetch,
+    reauthorize: Reauthorize,
+    progress: Progress,
+) -> Result<IsolatedStagingExecutionResult, String>
+where
+    Fetch: FnMut(MediaDescriptor) -> FetchFuture,
+    FetchFuture: Future<Output = Result<VerifiedMedia, String>>,
+    Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
+    Progress: FnMut(&StagingCheckpoint) -> Result<(), String>,
+{
+    execute_resumable_pipeline(
+        context,
+        resume,
+        MAX_CONCURRENT_MEDIA,
+        move |descriptor| {
+            let future = fetch(descriptor);
+            async move { future.await.map(PipelineMedia::Verified) }
+        },
+        reauthorize,
+        progress,
+    )
+    .await
+}
+
+async fn execute_resumable_pipeline<Fetch, FetchFuture, Reauthorize, Progress>(
     context: IsolatedStagingExecutionContext<'_>,
     resume: Option<&StagingCheckpoint>,
     prefetch: usize,
@@ -209,11 +273,11 @@ pub async fn execute_resumable_with_prefetch<Fetch, FetchFuture, Reauthorize, Pr
 ) -> Result<IsolatedStagingExecutionResult, String>
 where
     Fetch: FnMut(MediaDescriptor) -> FetchFuture,
-    FetchFuture: Future<Output = Result<ProcessedMedia, String>>,
+    FetchFuture: Future<Output = Result<PipelineMedia, String>>,
     Reauthorize: FnMut() -> Result<ImageDownloadAuthorization, String>,
     Progress: FnMut(&StagingCheckpoint) -> Result<(), String>,
 {
-    if !(1..=2).contains(&prefetch) {
+    if !(1..=MAX_CONCURRENT_MEDIA).contains(&prefetch) {
         return Err("STAGING_PREFETCH_LIMIT_INVALID".into());
     }
     let IsolatedStagingExecutionContext {
@@ -333,12 +397,12 @@ where
                 })
                 .await?;
                 pending_fetches.pop_front();
-                exact_processed_binding(descriptor, &processed)?;
+                let processed = processed.verify(descriptor)?;
                 exact_authorization_generation(authorization, reauthorize()?)?;
                 let pending = StagedArtifact {
                     relative_path: descriptor.relative_path.clone(),
-                    size_bytes: processed.bytes.len() as u64,
-                    sha256: sha256_bytes(&processed.bytes),
+                    size_bytes: processed.media.bytes.len() as u64,
+                    sha256: processed.sha256,
                 };
                 if checkpoint
                     .pending
@@ -350,7 +414,7 @@ where
                 checkpoint.pending = Some(pending.clone());
                 progress(&checkpoint)?;
                 exact_authorization_generation(authorization, reauthorize()?)?;
-                write_pending_file(&command_root, &pending, &processed.bytes)?;
+                write_pending_file(&command_root, &pending, &processed.media.bytes)?;
                 checkpoint.artifacts.push(pending);
                 checkpoint.pending = None;
                 progress(&checkpoint)?;
@@ -443,6 +507,115 @@ pub struct ProcessedMedia {
     pub applied_transform: String,
     pub applied_transform_parameter: u64,
     pub bytes: Vec<u8>,
+}
+
+/// Only validate() can create this value. Its byte buffer, descriptor and hash
+/// cannot be changed by live-fetch callers, or forged through JSON/IPC.
+pub(crate) struct VerifiedMedia {
+    descriptor: MediaDescriptor,
+    media: ProcessedMedia,
+    sha256: String,
+}
+
+impl VerifiedMedia {
+    pub(crate) fn validate(
+        descriptor: MediaDescriptor,
+        media: ProcessedMedia,
+    ) -> Result<Self, String> {
+        exact_processed_binding(&descriptor, &media)?;
+        let sha256 = sha256_bytes(&media.bytes);
+        Ok(Self {
+            descriptor,
+            media,
+            sha256,
+        })
+    }
+}
+
+enum PipelineMedia {
+    Unchecked(ProcessedMedia),
+    Verified(VerifiedMedia),
+}
+
+#[cfg(test)]
+mod verified_media_tests {
+    use super::*;
+
+    fn fixture() -> (MediaDescriptor, ProcessedMedia) {
+        let descriptor = MediaDescriptor {
+            image_index: 1,
+            source_media_id: "001.webp".into(),
+            request_url: "https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/001.webp".into(),
+            source_format: "webp".into(),
+            transform: "JM_SCRAMBLE_BLOCKS_JPEG".into(),
+            transform_parameter: 0,
+            relative_path: "chapters/000001-123456/000001.jpg".into(),
+        };
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([12, 34, 56])))
+            .write_to(&mut bytes, image::ImageFormat::Jpeg)
+            .unwrap();
+        let media = ProcessedMedia {
+            source_media_id: descriptor.source_media_id.clone(),
+            request_url: descriptor.request_url.clone(),
+            source_format: descriptor.source_format.clone(),
+            applied_transform: descriptor.transform.clone(),
+            applied_transform_parameter: descriptor.transform_parameter,
+            bytes: bytes.into_inner(),
+        };
+        (descriptor, media)
+    }
+
+    #[test]
+    fn worker_verified_result_cannot_be_rebound_to_a_different_page_or_path() {
+        for change_path in [false, true] {
+            let (descriptor, media) = fixture();
+            let verified = VerifiedMedia::validate(descriptor.clone(), media).unwrap();
+            let mut other = descriptor;
+            if change_path {
+                other.relative_path.push_str(".other");
+            } else {
+                other.image_index += 1;
+            }
+            assert_eq!(
+                PipelineMedia::Verified(verified)
+                    .verify(&other)
+                    .err()
+                    .as_deref(),
+                Some("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH")
+            );
+        }
+        let (descriptor, media) = fixture();
+        let expected_hash = sha256_bytes(&media.bytes);
+        let verified = VerifiedMedia::validate(descriptor.clone(), media).unwrap();
+        assert_eq!(
+            PipelineMedia::Verified(verified)
+                .verify(&descriptor)
+                .unwrap()
+                .sha256,
+            expected_hash
+        );
+    }
+
+    #[test]
+    fn worker_verification_still_rejects_invalid_encoded_output() {
+        let (descriptor, mut media) = fixture();
+        media.bytes = b"not a jpeg".to_vec();
+        assert_eq!(
+            VerifiedMedia::validate(descriptor, media).err().as_deref(),
+            Some("PROCESSED_MEDIA_INVALID_IMAGE_BYTES")
+        );
+    }
+}
+
+impl PipelineMedia {
+    fn verify(self, descriptor: &MediaDescriptor) -> Result<VerifiedMedia, String> {
+        match self {
+            Self::Unchecked(media) => VerifiedMedia::validate(descriptor.clone(), media),
+            Self::Verified(media) if &media.descriptor == descriptor => Ok(media),
+            Self::Verified(_) => Err("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH".into()),
+        }
+    }
 }
 
 /// Serialize-only diagnostic result. This is evidence, not a reusable authority.

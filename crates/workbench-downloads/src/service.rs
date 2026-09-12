@@ -10,7 +10,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
 };
 use workbench_storage::{
@@ -91,6 +91,7 @@ struct Runtime {
 #[derive(Default)]
 pub struct DownloadService {
     runtime: Mutex<Runtime>,
+    validated_downloads: Mutex<Option<Arc<Document<DownloadsDocument>>>>,
 }
 impl DownloadService {
     pub fn new() -> Self {
@@ -100,6 +101,26 @@ impl DownloadService {
         self.runtime
             .lock()
             .map_err(|_| error("DOWNLOAD_WORKER_BUSY"))
+    }
+    fn load_shared(&self, store: &WorkbenchStore) -> Result<Arc<Document<DownloadsDocument>>> {
+        // The store rereads exact bytes before returning this Arc. Identity here
+        // only avoids repeating semantic checks on that same immutable value.
+        let document = store.read_downloads_shared()?;
+        let mut validated = self
+            .validated_downloads
+            .lock()
+            .map_err(|_| error("DOWNLOAD_DOCUMENT_INVALID"))?;
+        if !validated
+            .as_ref()
+            .is_some_and(|previous| Arc::ptr_eq(previous, &document))
+        {
+            validate_downloads(&document)?;
+            *validated = Some(Arc::clone(&document));
+        }
+        Ok(document)
+    }
+    fn load(&self, store: &WorkbenchStore) -> Result<Document<DownloadsDocument>> {
+        self.load_shared(store).map(Arc::unwrap_or_clone)
     }
     pub fn prepare(
         &self,
@@ -112,8 +133,8 @@ impl DownloadService {
             return Err(error("DOWNLOAD_METADATA_INVALID"));
         }
         let mut runtime = self.lock()?;
-        let document = load(store)?;
-        let library = store.read_library()?;
+        let document = self.load_shared(store)?;
+        let library = store.read_library_shared()?;
         let root = library
             .value
             .root
@@ -229,7 +250,7 @@ impl DownloadService {
             .plans
             .get(plan_id)
             .ok_or(error("DOWNLOAD_PLAN_STALE"))?;
-        let mut document = load(store)?;
+        let mut document = self.load(store)?;
         if document.revision != expected_revision || prepared.document_revision != expected_revision
         {
             return Err(error("DOWNLOAD_PLAN_STALE"));
@@ -252,7 +273,8 @@ impl DownloadService {
     /// paused; its persisted approval is not executed or silently changed.
     pub fn read(&self, store: &WorkbenchStore) -> Result<DownloadSnapshot> {
         let runtime = self.lock()?;
-        Ok(snapshot(&load(store)?, &runtime, true))
+        let document = self.load_shared(store)?;
+        Ok(snapshot(&document, &runtime, true))
     }
     pub fn control(
         &self,
@@ -262,7 +284,7 @@ impl DownloadService {
         action: Control,
     ) -> Result<DownloadSnapshot> {
         let runtime = self.lock()?;
-        let mut document = load(store)?;
+        let mut document = self.load(store)?;
         let task = document
             .value
             .tasks
@@ -329,10 +351,11 @@ impl DownloadService {
         {
             return Err(error("DOWNLOAD_PAUSED"));
         }
-        let task = load(store)?
+        let document = self.load_shared(store)?;
+        let task = document
             .value
             .tasks
-            .into_iter()
+            .iter()
             .find(|t| t.id == id)
             .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
         if task.revision != revision
@@ -343,8 +366,8 @@ impl DownloadService {
         {
             return Err(error("DOWNLOAD_PAUSED"));
         }
-        require_library(store, &task)?;
-        Ok(task)
+        require_library(store, task)?;
+        Ok(task.clone())
     }
     fn update_run(
         &self,
@@ -354,7 +377,7 @@ impl DownloadService {
         mutate: impl FnOnce(&mut DownloadRecord) -> Result<()>,
     ) -> Result<DownloadRecord> {
         let _runtime = self.lock()?;
-        let mut document = load(store)?;
+        let mut document = self.load(store)?;
         let task = document
             .value
             .tasks
@@ -389,7 +412,7 @@ impl DownloadService {
         {
             return Err(error("DOWNLOAD_PAUSED"));
         }
-        let mut document = load(store)?;
+        let mut document = self.load(store)?;
         let task = document
             .value
             .tasks
@@ -450,11 +473,13 @@ impl DownloadService {
             if runtime.active.is_some() {
                 return Err(error("DOWNLOAD_WORKER_BUSY"));
             }
-            let record = load(store)?
+            let record = self
+                .load_shared(store)?
                 .value
                 .tasks
-                .into_iter()
+                .iter()
                 .find(|t| t.id == task_id)
+                .cloned()
                 .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
             if record.phase != DownloadPhase::Queued {
                 return Err(error("DOWNLOAD_CONTROL_INVALID"));
@@ -599,7 +624,7 @@ impl DownloadService {
             retained: false,
         };
         self.validate_receipt(store, expected)?;
-        let library = store.read_library()?;
+        let library = store.read_library_shared()?;
         let found = library.value.records.iter().any(|r| {
             r.item.id == library_entry_id
                 && r.item.relative_path == expected.relative_path
@@ -703,8 +728,7 @@ fn binding(record: &DownloadRecord) -> Result<String> {
     .map(|bytes| hash(&bytes))
     .map_err(|_| error("DOWNLOAD_DOCUMENT_INVALID"))
 }
-fn load(store: &WorkbenchStore) -> Result<Document<DownloadsDocument>> {
-    let document = store.read_downloads()?;
+fn validate_downloads(document: &Document<DownloadsDocument>) -> Result<()> {
     for record in &document.value.tasks {
         if record.target_hash != binding(record)? {
             return Err(error("DOWNLOAD_DOCUMENT_INVALID"));
@@ -718,10 +742,10 @@ fn load(store: &WorkbenchStore) -> Result<Document<DownloadsDocument>> {
                 .map_err(|_| error("DOWNLOAD_DOCUMENT_INVALID"))?;
         }
     }
-    Ok(document)
+    Ok(())
 }
 fn require_library(store: &WorkbenchStore, record: &DownloadRecord) -> Result<()> {
-    let library = store.read_library()?;
+    let library = store.read_library_shared()?;
     if matches!(
         library.value.phase,
         LibraryPhase::Reading | LibraryPhase::Paused

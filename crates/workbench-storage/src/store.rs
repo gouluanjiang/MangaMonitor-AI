@@ -1,15 +1,17 @@
 use crate::{
-    model::ValidatedDocument, AccountFollowing, Booklists, LibraryDocument, PhoneLibraryDocument,
-    Result, StoreError, WorkbenchPreferences, MAX_LIBRARY_DOCUMENT_BYTES, MAX_SAFE_INTEGER,
+    model::ValidatedDocument, AccountFollowing, Booklists, DownloadsDocument, LibraryDocument,
+    PhoneLibraryDocument, Result, StoreError, WorkbenchPreferences, MAX_LIBRARY_DOCUMENT_BYTES,
+    MAX_SAFE_INTEGER,
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    any::Any,
     fs::{self, File, Metadata, OpenOptions, TryLockError},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
 };
 
@@ -17,6 +19,9 @@ pub const PRIVATE_DIRECTORY: &str = "workbench-preview-v1";
 const PREFERENCES: &str = "preferences.json";
 const BOOKLISTS: &str = "booklists.json";
 const FOLLOWING: &str = "following.json";
+const LIBRARY: &str = "library.json";
+const DOWNLOADS: &str = "downloads.json";
+const MAX_DOWNLOADS_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PREFERENCES_BYTES: usize = 12 * 1024 * 1024;
 const MAX_BOOKLISTS_BYTES: usize = 5 * 1024 * 1024;
 // Covers all permitted scopes and maximum-length UTF-8 names without truncation.
@@ -28,6 +33,29 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub struct Document<T> {
     pub revision: u64,
     pub value: T,
+}
+
+struct CachedDocument {
+    bytes: Box<[u8]>,
+    document: Arc<dyn Any + Send + Sync>,
+}
+
+/// At most one bounded raw document and one validated snapshot per fixed slot.
+/// This caches parsing only: every hit still reads and compares the whole file.
+#[derive(Default)]
+struct DocumentCache {
+    library: Option<CachedDocument>,
+    downloads: Option<CachedDocument>,
+}
+
+impl DocumentCache {
+    fn slot(&mut self, name: &str) -> Option<&mut Option<CachedDocument>> {
+        match name {
+            LIBRARY => Some(&mut self.library),
+            DOWNLOADS => Some(&mut self.downloads),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -67,6 +95,8 @@ impl Drop for StoreFileLock {
 pub struct WorkbenchStore {
     pub(crate) root: PathBuf,
     pub(crate) local_lock: Mutex<()>,
+    // Acquired only while local_lock is held. No filesystem handles are cached.
+    document_cache: Mutex<DocumentCache>,
     // Windows handles keep ancestors from being renamed/replaced while the store is open.
     _directory_handles: Vec<File>,
 }
@@ -78,6 +108,7 @@ impl WorkbenchStore {
         Ok(Self {
             root,
             local_lock: Mutex::new(()),
+            document_cache: Mutex::new(DocumentCache::default()),
             _directory_handles: directory_handles,
         })
     }
@@ -122,7 +153,18 @@ impl WorkbenchStore {
 
     /// Fixed private document; callers cannot select a filename or output directory.
     pub fn read_library(&self) -> Result<Document<LibraryDocument>> {
-        self.read("library.json", MAX_LIBRARY_DOCUMENT_BYTES)
+        self.read(LIBRARY, MAX_LIBRARY_DOCUMENT_BYTES)
+    }
+
+    /// Reuses a validated snapshot only after an exact bounded file-byte match.
+    /// Call again at each authorization point; an Arc is not a current-state lease.
+    pub fn read_library_shared(&self) -> Result<Arc<Document<LibraryDocument>>> {
+        self.read_shared(LIBRARY, MAX_LIBRARY_DOCUMENT_BYTES)
+    }
+
+    /// Fixed private ledger; never restores or starts execution by reading it.
+    pub fn read_downloads_shared(&self) -> Result<Arc<Document<DownloadsDocument>>> {
+        self.read_shared(DOWNLOADS, MAX_DOWNLOADS_BYTES)
     }
 
     pub fn write_library(
@@ -131,7 +173,7 @@ impl WorkbenchStore {
         value: LibraryDocument,
     ) -> Result<Document<LibraryDocument>> {
         self.write(
-            "library.json",
+            LIBRARY,
             MAX_LIBRARY_DOCUMENT_BYTES,
             expected_revision,
             value,
@@ -166,6 +208,19 @@ impl WorkbenchStore {
         self.read_unlocked(name, maximum)
     }
 
+    fn read_shared<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        maximum: usize,
+    ) -> Result<Arc<Document<T>>> {
+        let _local = self
+            .local_lock
+            .lock()
+            .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+        let _file = self.acquire_lock()?;
+        self.read_shared_unlocked(name, maximum)
+    }
+
     pub(crate) fn write<T: ValidatedDocument>(
         &self,
         name: &str,
@@ -183,7 +238,7 @@ impl WorkbenchStore {
             .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
         let _file = self.acquire_lock()?;
         // A write never substitutes defaults for an unreadable or unsupported document.
-        let current: Document<T> = self.read_unlocked(name, maximum)?;
+        let current = self.read_shared_unlocked::<T>(name, maximum)?;
         if current.revision != expected_revision {
             return Err(StoreError::new("REVISION_CONFLICT"));
         }
@@ -202,11 +257,18 @@ impl WorkbenchStore {
         if bytes.len() > maximum {
             return Err(StoreError::new("DOCUMENT_TOO_LARGE"));
         }
-        self.atomic_replace(name, &bytes)?;
-        Ok(Document {
+        if let Err(error) = self.atomic_replace(name, &bytes) {
+            self.forget_document(name);
+            return Err(error);
+        }
+        let document = Document {
             revision,
             value: envelope.value,
-        })
+        };
+        if matches!(name, LIBRARY | DOWNLOADS) {
+            self.remember_document(name, bytes, Arc::new(document.clone()));
+        }
+        Ok(document)
     }
 
     pub(crate) fn acquire_lock(&self) -> Result<StoreFileLock> {
@@ -237,15 +299,40 @@ impl WorkbenchStore {
         name: &str,
         maximum: usize,
     ) -> Result<Document<T>> {
+        self.read_shared_unlocked(name, maximum)
+            .map(Arc::unwrap_or_clone)
+    }
+
+    fn read_shared_unlocked<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        maximum: usize,
+    ) -> Result<Arc<Document<T>>> {
+        let result = self.load_shared_unlocked(name, maximum);
+        if result.is_err() {
+            self.forget_document(name);
+        }
+        result
+    }
+
+    fn load_shared_unlocked<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        maximum: usize,
+    ) -> Result<Arc<Document<T>>> {
         check_directory_tree(&self.root)?;
         let path = self.root.join(name);
         if check_optional_regular(&path)?.is_none() {
-            return Ok(Document {
+            self.forget_document(name);
+            return Ok(Arc::new(Document {
                 revision: 0,
                 value: T::default(),
-            });
+            }));
         }
         let bytes = read_regular_bounded(&path, maximum)?;
+        if let Some(document) = self.cached_document(name, &bytes) {
+            return Ok(document);
+        }
         let probe: SchemaProbe =
             serde_json::from_slice(&bytes).map_err(|_| StoreError::new("DOCUMENT_CORRUPT"))?;
         if probe.schema_version > 1 || probe.value.version > 1 {
@@ -260,10 +347,62 @@ impl WorkbenchStore {
         {
             return Err(StoreError::new("DOCUMENT_CORRUPT"));
         }
-        Ok(Document {
+        let document = Arc::new(Document {
             revision: envelope.revision,
             value: envelope.value,
-        })
+        });
+        self.remember_document(name, bytes, Arc::clone(&document));
+        Ok(document)
+    }
+
+    fn cached_document<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        bytes: &[u8],
+    ) -> Option<Arc<Document<T>>> {
+        if !matches!(name, LIBRARY | DOWNLOADS) {
+            return None;
+        }
+        // A poisoned optional cache is a miss, never permission to reuse data.
+        let mut cache = self.document_cache.lock().ok()?;
+        let cached = cache.slot(name)?.as_ref()?;
+        if cached.bytes.as_ref() != bytes {
+            return None;
+        }
+        Arc::clone(&cached.document).downcast::<Document<T>>().ok()
+    }
+
+    fn remember_document<T: ValidatedDocument>(
+        &self,
+        name: &str,
+        bytes: Vec<u8>,
+        document: Arc<Document<T>>,
+    ) {
+        if !matches!(name, LIBRARY | DOWNLOADS) {
+            return;
+        }
+        let Ok(mut cache) = self.document_cache.lock() else {
+            return;
+        };
+        let Some(slot) = cache.slot(name) else {
+            return;
+        };
+        *slot = Some(CachedDocument {
+            bytes: bytes.into_boxed_slice(),
+            document,
+        });
+    }
+
+    fn forget_document(&self, name: &str) {
+        if !matches!(name, LIBRARY | DOWNLOADS) {
+            return;
+        }
+        let Ok(mut cache) = self.document_cache.lock() else {
+            return;
+        };
+        if let Some(slot) = cache.slot(name) {
+            *slot = None;
+        }
     }
 
     fn atomic_replace(&self, name: &str, bytes: &[u8]) -> Result<()> {
@@ -498,6 +637,71 @@ pub(crate) fn read_regular_bounded(path: &Path, maximum: usize) -> Result<Vec<u8
     check_directory_tree(parent)?;
     check_optional_regular(path)?.ok_or(StoreError::new("STORE_READ_FAILED"))?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod shared_cache_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use tempfile::TempDir;
+
+    static VALIDATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Default, Deserialize, Serialize)]
+    struct CountedDocument {
+        version: u32,
+        count: u32,
+    }
+
+    impl ValidatedDocument for CountedDocument {
+        fn validate(&self) -> Result<()> {
+            VALIDATIONS.fetch_add(1, Ordering::SeqCst);
+            if self.version != 1 {
+                return Err(StoreError::new("VALIDATION_FAILED"));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn writes_publish_validated_snapshots_and_cas_hits_do_not_revalidate_old_bytes() {
+        let directory = TempDir::new().unwrap();
+        let store = WorkbenchStore::open(directory.path()).unwrap();
+        let before = VALIDATIONS.load(Ordering::SeqCst);
+        store
+            .write(
+                LIBRARY,
+                1024,
+                0,
+                CountedDocument {
+                    version: 1,
+                    count: 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
+        let first = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
+        let same = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
+
+        store
+            .write(
+                LIBRARY,
+                1024,
+                1,
+                CountedDocument {
+                    version: 1,
+                    count: 2,
+                },
+            )
+            .unwrap();
+        let next = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
+        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 2);
+        assert_eq!(next.value.count, 2);
+        assert_eq!(first.value.count, 1);
+        assert!(!Arc::ptr_eq(&first, &next));
+    }
 }
 
 #[cfg(all(test, unix))]

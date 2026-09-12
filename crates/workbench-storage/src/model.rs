@@ -4,7 +4,9 @@ use std::collections::HashSet;
 
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
-pub(crate) trait ValidatedDocument: Default + Serialize + for<'de> Deserialize<'de> {
+pub(crate) trait ValidatedDocument:
+    Clone + Default + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static
+{
     fn validate(&self) -> Result<()>;
 }
 

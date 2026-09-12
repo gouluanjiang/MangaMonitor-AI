@@ -10,12 +10,15 @@ use crate::{
     image_download_authorization::ImageDownloadAuthorization,
     isolated_staging_execution::{
         self, IsolatedStagingExecutionContext, IsolatedStagingExecutionResult, ProcessedMedia,
+        VerifiedMedia,
     },
     jm_media_transform,
     live_media_transport::{JmTransport, PicaTransport},
     media_validation,
+    parallel_media_processing::MediaProcessor,
     source_media_descriptors::{self, MediaDescriptor, SourceMediaDescriptorSet},
 };
+use std::sync::Arc;
 
 pub const LIVE_MEDIA_FETCH_SCHEMA_VERSION: u64 = 1;
 
@@ -41,6 +44,49 @@ impl LiveFetcher {
         };
         process_downloaded_bytes(source, &descriptor, bytes)
     }
+
+    async fn fetch_parallel(
+        self,
+        descriptor: MediaDescriptor,
+        processor: Arc<MediaProcessor>,
+    ) -> Result<VerifiedMedia, String> {
+        let (source, bytes) = match &self {
+            Self::Jm(fetcher) => ("jm", fetcher.fetch_exact(&descriptor.request_url).await?),
+            Self::Pica(fetcher) => ("pica", fetcher.fetch_exact(&descriptor.request_url).await?),
+        };
+        // Same upstream division of work: async GET, independent CPU job,
+        // await result. The job never receives a path or filesystem authority.
+        processor
+            .process(move || {
+                let media = process_downloaded_bytes(source, &descriptor, bytes)?;
+                VerifiedMedia::validate(descriptor, media)
+            })
+            .await
+    }
+}
+
+struct MediaTask<T>(tokio::task::JoinHandle<Result<T, String>>);
+impl<T> Drop for MediaTask<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn tracked_media_task<T, F>(processor: Arc<MediaProcessor>, future: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T, String>> + Send + 'static,
+{
+    // Called on the fetch future's first poll, immediately after the staging
+    // coordinator rechecks authorization. Dropping it aborts the GET task.
+    let lifetime = processor.track();
+    let mut task = MediaTask(tokio::spawn(async move {
+        let _lifetime = lifetime;
+        future.await
+    }));
+    (&mut task.0)
+        .await
+        .map_err(|_| "LIVE_MEDIA_TASK_FAILED".to_owned())?
 }
 
 /// A6.14B enables exactly the pinned JM block unscramble for WEBP descriptors.
@@ -139,18 +185,28 @@ where
     )?;
     validate_supported_fetch_scope(context.descriptors)?;
     let fetcher = LiveFetcher::new(&context.authorization.source)?;
-    isolated_staging_execution::execute_resumable_with_prefetch(
+    let processor = Arc::new(MediaProcessor::new());
+    let processing = Arc::clone(&processor);
+    let result = isolated_staging_execution::execute_resumable_with_verified_fetcher(
         context,
         resume,
-        2,
         move |descriptor| {
             let fetcher = fetcher.clone();
-            async move { fetcher.fetch_processed(descriptor).await }
+            let processor = Arc::clone(&processing);
+            tracked_media_task(
+                Arc::clone(&processor),
+                fetcher.fetch_parallel(descriptor, processor),
+            )
         },
         reauthorize,
         progress,
     )
-    .await
+    .await;
+    // AbortOnDrop cancels residual async requests before reaching here. A CPU
+    // closure may already be running, so retain the owning download worker
+    // until both request tasks and real processing closures have exited.
+    processor.drain().await;
+    result
 }
 
 pub async fn execute_live<Reauthorize>(
@@ -184,7 +240,28 @@ where
 mod tests {
     use super::*;
     use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
-    use std::io::Cursor;
+    use std::{
+        future::Future,
+        io::Cursor,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+        time::Duration,
+    };
+    use tokio::{sync::oneshot, time::timeout};
+
+    const TASK_TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+    struct TaskDropSignal(Option<oneshot::Sender<()>>);
+
+    impl Drop for TaskDropSignal {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
 
     fn valid_image(format: ImageFormat) -> Vec<u8> {
         let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([12, 34, 56])));
@@ -366,5 +443,85 @@ mod tests {
             process_downloaded_bytes("pica", &media, b"<html>error</html>".to_vec()).unwrap_err(),
             "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED"
         );
+    }
+
+    #[tokio::test]
+    async fn dropping_tracked_task_cancels_pending_fetch_and_drains_its_guard() {
+        let processor = Arc::new(MediaProcessor::new());
+        let (entered, started) = oneshot::channel();
+        let (dropped, was_dropped) = oneshot::channel();
+        let receiver = tokio::spawn(tracked_media_task(processor.clone(), async move {
+            let _drop = TaskDropSignal(Some(dropped));
+            let _ = entered.send(());
+            std::future::pending::<Result<(), String>>().await
+        }));
+        timeout(TASK_TEST_TIMEOUT, started).await.unwrap().unwrap();
+
+        receiver.abort();
+        assert!(receiver.await.unwrap_err().is_cancelled());
+        timeout(TASK_TEST_TIMEOUT, processor.drain()).await.unwrap();
+        timeout(TASK_TEST_TIMEOUT, was_dropped)
+            .await
+            .unwrap()
+            .expect("drain must include the aborted inner fetch task");
+    }
+
+    #[tokio::test]
+    async fn dropping_tracked_task_still_drains_its_dispatched_cpu_closure() {
+        let processor = Arc::new(MediaProcessor::new());
+        let processing = processor.clone();
+        let (entered, started) = oneshot::channel();
+        let (release, held) = mpsc::channel();
+        let completed = Arc::new(AtomicBool::new(false));
+        let worker_completed = completed.clone();
+        let receiver = tokio::spawn(tracked_media_task(processor.clone(), async move {
+            processing
+                .process(move || {
+                    let _ = entered.send(());
+                    held.recv_timeout(TASK_TEST_TIMEOUT)
+                        .map_err(|_| "synthetic CPU release missing".to_owned())?;
+                    worker_completed.store(true, Ordering::Release);
+                    Ok(7)
+                })
+                .await
+        }));
+        timeout(TASK_TEST_TIMEOUT, started).await.unwrap().unwrap();
+
+        receiver.abort();
+        assert!(receiver.await.unwrap_err().is_cancelled());
+        assert!(timeout(Duration::from_millis(25), processor.drain())
+            .await
+            .is_err());
+        assert!(!completed.load(Ordering::Acquire));
+        release.send(()).unwrap();
+        timeout(TASK_TEST_TIMEOUT, processor.drain()).await.unwrap();
+        assert!(completed.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tracked_task_progresses_while_coordinator_stops_polling_its_wrapper() {
+        let processor = Arc::new(MediaProcessor::new());
+        let (release, held) = oneshot::channel();
+        let (completed, completion) = mpsc::channel();
+        let mut request = Box::pin(tracked_media_task(processor.clone(), async move {
+            held.await.map_err(|_| "synthetic fetch release missing")?;
+            completed
+                .send(())
+                .map_err(|_| "synthetic completion receiver missing")?;
+            Ok(9)
+        }));
+        std::future::poll_fn(|context| {
+            assert!(request.as_mut().poll(context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        release.send(()).unwrap();
+        // Model a coordinator performing synchronous work: no wrapper polling
+        // happens here, but the independently spawned async task must progress.
+        completion
+            .recv_timeout(TASK_TEST_TIMEOUT)
+            .expect("fetch task must progress independently of wrapper polling");
+        assert_eq!(request.await.unwrap(), 9);
+        timeout(TASK_TEST_TIMEOUT, processor.drain()).await.unwrap();
     }
 }

@@ -2,7 +2,11 @@
 
 Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
 
-## Current follow-up: JM JPEG output and bounded download concurrency (2026-09-12)
+## Current follow-up: upstream-style JM parallel download pipeline (2026-09-12)
+
+The user retested the JPEG/two-request revision: faster, but still substantially slower than jmcomic-downloader. They explicitly removed the low-computer-load constraint for this download optimization. Read [the current performance follow-up](JM_UPSTREAM_PERFORMANCE_2026-09-12.md): 20 independent async image lifecycles, separate CPU processing/validation/hash, exact-byte parsed snapshots for private library/download documents, and cancellation that drains actual CPU work before worker release. This follows the pinned upstream scheduling structure using the existing Tokio pool. Ordered durable files/checkpoints, old WEBP tasks, JPG/GIF output and existing-directory protection remain. No installer/version bump. Formal validation and Dev builds stay in CI without duplicate local suites; real timing still requires the user's retest. Next feature batch remains Pica single-work download.
+
+## Previous follow-up: JM JPEG output and two requests (2026-09-12)
 
 The user accepted all previous JM single-download functional checks, then reported a same-work/fresh-download speed gap and requested output matching their existing JPG library. Read [the JPEG/performance follow-up](JM_JPEG_PERFORMANCE_2026-09-12.md). New tasks encode directly to JPEG (GIF unchanged); old saved WEBP tasks keep their original policy. Media futures are bounded to two and processed on one worker, with ordered checkpoint/file writes and no background tasks surviving cancellation. Existing output, phone data and PC copies remain. CI and a new Dev executable are the delivery path; no installer/version bump. Do not claim instrumented timing improvement until the user retests this revision. The next feature batch remains Pica single-work downloads.
 

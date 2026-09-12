@@ -83,6 +83,39 @@ fn put(f: &Fixture, record: DownloadRecord) {
     doc.value.tasks[0] = record;
     f.store.write_downloads(doc.revision, doc.value).unwrap();
 }
+
+#[test]
+fn shared_semantic_validation_reuses_unchanged_values_but_rejects_changed_proof() {
+    let f = fixture();
+    let first = f.service.load_shared(&f.store).unwrap();
+    assert!(Arc::ptr_eq(
+        &first,
+        &f.service.load_shared(&f.store).unwrap()
+    ));
+
+    let mut altered = first.value.clone();
+    // Valid JSON at the storage layer, but not a valid typed staging checkpoint.
+    altered.tasks[0].checkpoint_json = Some("{}".into());
+    let saved = f.store.write_downloads(first.revision, altered).unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap_err().code,
+        "DOWNLOAD_DOCUMENT_INVALID"
+    );
+    f.store
+        .write_downloads(saved.revision, first.value.clone())
+        .unwrap();
+    let restored = f.service.load_shared(&f.store).unwrap();
+    assert!(!Arc::ptr_eq(&first, &restored));
+    assert_eq!(restored.value, first.value);
+
+    let mut altered = restored.value.clone();
+    altered.tasks[0].metadata.title = "Changed after authorization".into();
+    f.store.write_downloads(restored.revision, altered).unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap_err().code,
+        "DOWNLOAD_DOCUMENT_INVALID"
+    );
+}
 fn gif() -> Vec<u8> {
     let image =
         image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(2, 2, image::Rgb([30, 60, 90])));

@@ -8,6 +8,7 @@ export default defineConfig({
     "**/source-ui.spec.ts",
     "**/library-ui.spec.ts",
     "**/download-ui.spec.ts",
+    "**/completion-ui.spec.ts",
   ],
   outputDir: "test-results",
   fullyParallel: false,

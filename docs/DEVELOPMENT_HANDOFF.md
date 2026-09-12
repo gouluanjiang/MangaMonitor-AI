@@ -2,9 +2,15 @@
 
 Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
 
-## Current follow-up: Pica media redirect repair (2026-09-12)
+## Current batch: sequential queue, completed history and manual source matches (2026-09-12)
 
-The first real Pica download acceptance failed before saving an image. Read [the redirect repair](PICA_DOWNLOAD_REDIRECT_FIX_2026-09-12.md): a bounded, user-task-specific metadata/header diagnostic verified an HTTP 301 to the same storage origin, then 200 JPEG; no media body was read or library changed. The old exact transport rejected the redirect and hid the cause behind DOWNLOAD_FAILED. Desktop resumable Pica now supports at most two validated same-origin /static/ hops, with a fresh coordinator authorization before every physical GET and unchanged descriptor/checkpoint bindings. Error messages now distinguish media failures. Do not call Pica real acceptance complete until the user retries successfully. Formal checks/builds are CI-only; exact evidence and the repaired 0.3.4 Dev executable belong in the delivery report and PR #19. No installer, production enablement or next feature batch is included.
+The user accepted the Pica repair at `5a15875745379021b6b02b508200eab34dc51803` and requested the next development stage. Pica single-work acceptance is now complete. Read [the current batch report](BATCH_QUEUE_AND_MATCHING_2026-09-12.md) and [the updated roadmap](ROADMAP_AFTER_BATCH_QUEUE_2026-09-12.md).
+
+This batch adds up to 50 explicitly reviewed works per batch, FIFO single-work scheduling, appending during active progress, whole-queue pause and per-source explicit resume. Completed history can be organized without altering PC files/index or phone records; compact original identity evidence remains. Independent one-to-one JM/Pica manual matches affect inventory projections only and can be removed. Existing 20-image execution, source/root/session/task approval, final verification and add-only output remain; no cloud real downloads or restart-time automatic execution. New functionality remains pending user real acceptance. Exact CI/Dev artifact evidence belongs in the final local delivery report and PR #19; local edits/formatting/review are not repeated formal suites. Keep 0.3.4 Dev, no new installer, draft/unmerged PR, production disabled and updater frozen. Next feature batch after acceptance is author discovery / existing monitor results integration.
+
+## Accepted follow-up: Pica media redirect repair (2026-09-12)
+
+The first real Pica download acceptance failed before saving an image. Read [the redirect repair](PICA_DOWNLOAD_REDIRECT_FIX_2026-09-12.md): a bounded, user-task-specific metadata/header diagnostic verified an HTTP 301 to the same storage origin, then 200 JPEG; no media body was read or library changed. The old exact transport rejected the redirect and hid the cause behind DOWNLOAD_FAILED. Desktop resumable Pica now supports at most two validated same-origin /static/ hops, with a fresh coordinator authorization before every physical GET and unchanged descriptor/checkpoint bindings. Error messages now distinguish media failures. The user has now successfully retested and accepted this repair. Formal checks/builds ran in CI; exact evidence and the repaired 0.3.4 Dev executable are recorded in the prior delivery report and PR #19.
 
 ## Current position: Pica single-work desktop download batch (2026-09-12)
 

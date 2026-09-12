@@ -5,6 +5,7 @@ import type {
   DownloadTask,
   DownloadPlan,
   DownloadSource,
+  DownloadBatchPlan,
 } from "../src/download-types.ts";
 import type { LibrarySnapshot } from "../src/library-types.ts";
 import type { AccountSummary } from "../src/source-types.ts";
@@ -17,6 +18,7 @@ type Options = {
   fixtureSource?: DownloadSource;
   wrongPlanSource?: boolean;
   mixedQueue?: boolean;
+  batchWorks?: boolean;
 };
 type Hooks = {
   calls: { command: string; args: Record<string, unknown> }[];
@@ -230,6 +232,7 @@ async function install(page: Page, options: Options = {}) {
     });
     let restored = false;
     let preparedPlan: DownloadPlan | null = null;
+    let preparedBatch: DownloadBatchPlan | null = null;
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
@@ -240,6 +243,8 @@ async function install(page: Page, options: Options = {}) {
             return { revision: 0, value: { version: 1, lists: [] } };
           if (command === "source_accounts") return clone(hooks.accounts);
           if (command === "library_read") return clone(hooks.pc);
+          if (command === "source_matches_read")
+            return { revision: 0, pairs: [] };
           if (command === "phone_library_read")
             return {
               revision: 0,
@@ -267,9 +272,19 @@ async function install(page: Page, options: Options = {}) {
             return {
               source: args.source,
               sessionId: args.sessionId,
-              items: [sourceWork(String(args.source))],
+              items:
+                options.batchWorks && args.kind !== "detail"
+                  ? [
+                      sourceWork(String(args.source)),
+                      {
+                        ...sourceWork(String(args.source)),
+                        workId: "124",
+                        title: "合成批量作品 124",
+                      },
+                    ]
+                  : [sourceWork(String(args.source))],
               page: 1,
-              total: 1,
+              total: options.batchWorks && args.kind !== "detail" ? 2 : 1,
               pages: 1,
               hasMore: false,
               folders: [],
@@ -327,6 +342,122 @@ async function install(page: Page, options: Options = {}) {
               generation: 1,
             };
             return clone(preparedPlan);
+          }
+          if (command === "jm_download_batch_prepare") {
+            const seen = new Set<string>();
+            const plans: DownloadPlan[] = [],
+              issues: DownloadBatchPlan["issues"] = [];
+            for (const input of args.inputs as string[]) {
+              const id = input.replace(/^JM/i, "");
+              if (seen.has(id)) {
+                issues.push({ input, errorCode: "DOWNLOAD_BATCH_DUPLICATE" });
+                continue;
+              }
+              seen.add(id);
+              plans.push({
+                planId: Number(id).toString(16).padStart(64, "0"),
+                revision: hooks.queue.revision,
+                source: "JM",
+                workId: id,
+                title: "合成批量作品 " + id,
+                authors: ["合成作者"],
+                destinationDisplay: "C:\\Synthetic\\" + id,
+                rootId,
+                generation: 1,
+              });
+            }
+            preparedBatch = { batchId: "e".repeat(64), plans, issues };
+            return clone(preparedBatch);
+          }
+          if (command === "jm_download_batch_confirm") {
+            if (!preparedBatch || preparedBatch.batchId !== args.batchId)
+              throw { code: "DOWNLOAD_PLAN_STALE" };
+            const tasks: DownloadTask[] = preparedBatch.plans.map(
+              (plan, index) => ({
+                id: plan.planId,
+                revision: 1,
+                source: plan.source,
+                workId: plan.workId,
+                title: plan.title,
+                phase: index === 0 ? "downloading" : "queued",
+                filesDone: 0,
+                filesTotal: null,
+                bytesDone: 0,
+                errorCode: null,
+                allowedActions: ["pause"],
+                libraryEntryId: null,
+                localFiles: null,
+                updatedAt: 1,
+                destinationDisplay: plan.destinationDisplay,
+              }),
+            );
+            hooks.queue = {
+              revision: hooks.queue.revision + 1,
+              tasks: [...hooks.queue.tasks, ...tasks],
+            };
+            save();
+            return clone(hooks.queue);
+          }
+          if (
+            command === "jm_download_pause_all" ||
+            command === "jm_download_resume_many"
+          ) {
+            const ids = new Set(
+              ((args.tasks ?? []) as { taskId: string }[]).map(
+                (task) => task.taskId,
+              ),
+            );
+            hooks.queue = {
+              revision: hooks.queue.revision + 1,
+              tasks: hooks.queue.tasks.map((task) => {
+                if (
+                  command === "jm_download_pause_all" &&
+                  ["queued", "downloading", "verifying"].includes(task.phase)
+                )
+                  return {
+                    ...task,
+                    revision: task.revision + 1,
+                    phase: "paused",
+                    allowedActions: ["resume"],
+                  };
+                if (command === "jm_download_resume_many" && ids.has(task.id))
+                  return {
+                    ...task,
+                    revision: task.revision + 1,
+                    phase: "queued",
+                    allowedActions: ["pause"],
+                  };
+                return task;
+              }),
+            };
+            save();
+            return clone(hooks.queue);
+          }
+          if (command === "jm_download_history_remove") {
+            const requests = args.tasks as {
+              taskId: string;
+              expectedRevision: number;
+            }[];
+            if (
+              !requests.every((request) =>
+                hooks.queue.tasks.some(
+                  (task) =>
+                    task.id === request.taskId &&
+                    task.revision === request.expectedRevision &&
+                    task.phase === "downloaded",
+                ),
+              )
+            )
+              throw { code: "DOWNLOAD_TASK_STALE" };
+            hooks.queue = {
+              revision: hooks.queue.revision + 1,
+              tasks: hooks.queue.tasks.filter(
+                (task) =>
+                  !requests.some((request) => request.taskId === task.id),
+              ),
+            };
+            save();
+            return clone(hooks.queue);
           }
           if (command === "jm_download_confirm") {
             if (
@@ -1038,3 +1169,98 @@ for (const fixtureSource of ["JM", "Pica"] as const)
     );
     expect(await calls(page, "jm_download_confirm")).toEqual([]);
   });
+
+test("batch review excludes duplicates and cancellation never queues tasks", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-input").fill("JM123\nJM124\nJM123");
+  await page.getByTestId("download-prepare").click();
+  await expect(page.getByTestId("download-batch-confirmation")).toBeVisible();
+  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  await expect(page.getByTestId("download-batch-issues")).toContainText(
+    "JM123",
+  );
+  await expect(page.getByTestId("download-batch-confirmation")).toContainText(
+    "C:\\Synthetic\\124",
+  );
+  await page.getByTestId("download-batch-cancel").click();
+  expect(await calls(page, "jm_download_batch_confirm")).toEqual([]);
+  await expect(page.getByTestId("download-empty")).toBeVisible();
+});
+
+test("multiple queued works pause and resume explicitly under one source after restart", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-input").fill("JM123\nJM124");
+  await page.getByTestId("download-prepare").click();
+  await page.getByTestId("download-batch-confirm").click();
+  await expect(
+    page.getByTestId("download-phase-" + "7b".padStart(64, "0")),
+  ).toHaveText("正在下载");
+  await expect(
+    page.getByTestId("download-phase-" + "7c".padStart(64, "0")),
+  ).toHaveText("等待下载");
+  await page.getByTestId("download-pause-all").click();
+  await expect(page.getByTestId("download-resume-many-JM")).toHaveText(
+    "继续JM 2 本",
+  );
+  await page.reload();
+  await page.getByTestId("nav-queue").click();
+  expect(await calls(page, "jm_download_resume_many")).toEqual([]);
+  await expect(
+    page.getByTestId("download-phase-" + "7b".padStart(64, "0")),
+  ).toHaveText("已暂停");
+  await page.getByTestId("download-resume-many-JM").click();
+  expect((await calls(page, "jm_download_resume_many"))[0].args).toEqual({
+    scope: { source: "JM", sessionId: "synthetic-JM" },
+    tasks: [
+      { taskId: "7b".padStart(64, "0"), expectedRevision: 2 },
+      { taskId: "7c".padStart(64, "0"), expectedRevision: 2 },
+    ],
+  });
+});
+
+test("completed history filtering and removal preserve PC entries", async ({
+  page,
+}) => {
+  await install(page, { completed: true });
+  const before = await page.evaluate(() =>
+    JSON.stringify(window.downloadTest.pc),
+  );
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-filter-history").click();
+  await page.getByTestId("download-history-query").fill("123");
+  await page.getByTestId("download-history-clear").click();
+  await expect(page.getByTestId("download-history-confirmation")).toContainText(
+    "电脑漫画文件、电脑索引和手机名单会保留",
+  );
+  await page.getByTestId("download-history-confirm").click();
+  await expect(page.getByTestId("download-empty")).toBeVisible();
+  expect(
+    await page.evaluate(() => JSON.stringify(window.downloadTest.pc)),
+  ).toBe(before);
+  expect(await calls(page, "jm_download_history_remove")).toHaveLength(1);
+});
+
+test("favorite multi-selection opens reviewed batch before any download", async ({
+  page,
+}) => {
+  await install(page, { batchWorks: true });
+  await page.getByTestId("nav-favorites").click();
+  await expect(page.getByTestId("source-card-JM:124")).toBeVisible();
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-all").click();
+  await page.getByTestId("source-batch-download").click();
+  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  expect(
+    (await calls(page, "jm_download_batch_prepare"))[0].args.inputs,
+  ).toEqual(["123", "124"]);
+  expect(await calls(page, "jm_download_batch_confirm")).toEqual([]);
+  await page.getByTestId("download-batch-confirm").click();
+  await expect(page.getByTestId("native-downloads")).toBeVisible();
+  expect(await calls(page, "jm_download_batch_confirm")).toHaveLength(1);
+});

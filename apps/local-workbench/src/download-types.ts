@@ -20,6 +20,15 @@ export interface DownloadPlan {
   rootId: string;
   generation: number;
 }
+export interface DownloadBatchPlan {
+  batchId: string | null;
+  plans: DownloadPlan[];
+  issues: { input: string; errorCode: string }[];
+}
+export interface DownloadTaskRevision {
+  taskId: string;
+  expectedRevision: number;
+}
 export type DownloadAction = "pause" | "resume" | "retry";
 export type DownloadLocalFiles =
   "present" | "missing" | "incomplete" | "unavailable";
@@ -56,6 +65,17 @@ export interface DownloadAdapter {
   read(recheckFiles?: boolean): Promise<DownloadSnapshot>;
   prepare(context: DownloadContext, input: string): Promise<DownloadPlan>;
   confirm(planId: string, expectedRevision: number): Promise<DownloadSnapshot>;
+  prepareBatch(
+    context: DownloadContext,
+    inputs: string[],
+  ): Promise<DownloadBatchPlan>;
+  confirmBatch(batchId: string): Promise<DownloadSnapshot>;
+  pauseAll(): Promise<DownloadSnapshot>;
+  resumeMany(
+    scope: DownloadScope,
+    tasks: DownloadTaskRevision[],
+  ): Promise<DownloadSnapshot>;
+  removeHistory(tasks: DownloadTaskRevision[]): Promise<DownloadSnapshot>;
   control(
     scope: DownloadScope,
     taskId: string,

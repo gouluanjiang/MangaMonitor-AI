@@ -161,10 +161,10 @@ test("plan identities retain twenty digit JM strings and reject malformed bindin
 });
 
 test("native queue and task identity bounds match storage", () => {
-  const tasks = Array.from({ length: 50 }, (_, index) =>
+  const tasks = Array.from({ length: 500 }, (_, index) =>
     task({ id: (index + 1).toString(16).padStart(64, "0") }),
   );
-  assert.equal(validateDownloadSnapshot(snapshot(tasks)).tasks.length, 50);
+  assert.equal(validateDownloadSnapshot(snapshot(tasks)).tasks.length, 500);
   assert.throws(
     () => validateDownloadSnapshot(snapshot([...tasks, task()])),
     DownloadError,

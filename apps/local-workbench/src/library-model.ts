@@ -4,6 +4,8 @@ import type {
   LibrarySnapshot,
 } from "./library-types.ts";
 import type { Source } from "./source-types.ts";
+import type { SourceMatchPair } from "./source-matches-types.ts";
+import { createSourceAliasResolver } from "./source-matches-model.ts";
 
 export const normalizeLibraryText = (value: string) =>
   value.normalize("NFKC").toLocaleLowerCase().trim();
@@ -57,15 +59,17 @@ export interface LibraryMatch {
 }
 type SourceIdentity = { source: Source; workId: string; title: string };
 const key = (ref: LibraryReference) => ref.source + ":" + ref.workId;
-export function createLibraryMatcher(snapshot: LibrarySnapshot | undefined) {
+export function createLibraryMatcher(
+  snapshot: LibrarySnapshot | undefined,
+  pairs: SourceMatchPair[] = [],
+) {
   const refs = new Map<string, LibraryItem[]>();
   const titles = new Map<string, LibraryItem[]>();
+  const aliases = createSourceAliasResolver(pairs);
   for (const item of snapshot?.items ?? []) {
     if (item.sourceRef)
-      refs.set(key(item.sourceRef), [
-        ...(refs.get(key(item.sourceRef)) ?? []),
-        item,
-      ]);
+      for (const reference of aliases(item.sourceRef))
+        refs.set(key(reference), [...(refs.get(key(reference)) ?? []), item]);
     const title = normalizeLibraryText(item.title);
     if (title) titles.set(title, [...(titles.get(title) ?? []), item]);
   }

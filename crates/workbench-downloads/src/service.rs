@@ -15,8 +15,9 @@ use std::{
     },
 };
 use workbench_storage::{
-    Document, DownloadRecord, DownloadWorkspace, DownloadsDocument, LibraryDocument, LibraryPhase,
-    WorkbenchStore, MAX_DOWNLOAD_TASKS, MAX_SAFE_INTEGER,
+    Document, DownloadHistoryEvidence, DownloadRecord, DownloadWorkspace, DownloadsDocument,
+    LibraryDocument, LibraryPhase, WorkbenchStore, MAX_DOWNLOAD_BATCH,
+    MAX_DOWNLOAD_HISTORY_EVIDENCE, MAX_DOWNLOAD_TASKS, MAX_SAFE_INTEGER,
 };
 
 static PLAN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -39,6 +40,17 @@ pub struct DownloadPlan {
     pub destination_display: String,
     pub root_id: String,
     pub generation: u64,
+}
+#[derive(Clone, Debug)]
+pub struct PreparedSelection {
+    pub plan_id: String,
+    pub expected_revision: u64,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskSelection {
+    pub task_id: String,
+    pub expected_revision: u64,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +102,9 @@ struct Active {
 struct Runtime {
     plans: BTreeMap<String, Prepared>,
     active: Option<Active>,
+    /// Only this process's explicit confirmations/continues enter this map.
+    /// Durable queued records alone never authorize restart-time networking.
+    queued: BTreeMap<String, u64>,
     local_files: BTreeMap<String, (u64, LocalFiles)>,
 }
 #[derive(Default)]
@@ -208,8 +223,8 @@ impl DownloadService {
         };
         record.target_hash = binding(&record)?;
         check_new_download(&record, &document.value, &library.value)?;
-        if runtime.plans.len() >= 8 {
-            runtime.plans.clear();
+        if runtime.plans.len() >= 256 {
+            return Err(error("DOWNLOAD_PLAN_LIMIT_REACHED"));
         }
         let plan = DownloadPlan {
             plan_id: id.clone(),
@@ -237,22 +252,67 @@ impl DownloadService {
         plan_id: &str,
         expected_revision: u64,
     ) -> Result<DownloadSnapshot> {
+        self.confirm_many(
+            store,
+            &[PreparedSelection {
+                plan_id: plan_id.into(),
+                expected_revision,
+            }],
+        )
+    }
+    pub fn discard_plans(&self, ids: &[String]) -> Result<()> {
         let mut runtime = self.lock()?;
-        if runtime.active.is_some() {
-            return Err(error("DOWNLOAD_WORKER_BUSY"));
+        for id in ids {
+            runtime.plans.remove(id);
         }
-        let prepared = runtime
-            .plans
-            .get(plan_id)
-            .ok_or(error("DOWNLOAD_PLAN_STALE"))?;
+        Ok(())
+    }
+    /// All selections are validated before the single durable queue write.
+    /// A plan token is immutable; unrelated task progress may advance the
+    /// document revision, so conflicts are freshly checked against that value.
+    pub fn confirm_many(
+        &self,
+        store: &WorkbenchStore,
+        selections: &[PreparedSelection],
+    ) -> Result<DownloadSnapshot> {
+        if selections.is_empty() || selections.len() > MAX_DOWNLOAD_BATCH {
+            return Err(error("DOWNLOAD_BATCH_LIMIT"));
+        }
+        let mut runtime = self.lock()?;
         let mut document = self.load(store)?;
-        if document.revision != expected_revision || prepared.document_revision != expected_revision
-        {
-            return Err(error("DOWNLOAD_PLAN_STALE"));
+        if document.value.tasks.len() + selections.len() > MAX_DOWNLOAD_TASKS {
+            return Err(error("DOWNLOAD_LIMIT_REACHED"));
         }
-        require_library(store, &prepared.record)?;
         let library = store.read_library_shared()?;
-        let missing = check_new_download(&prepared.record, &document.value, &library.value)?;
+        let mut ids = BTreeSet::new();
+        let mut records = Vec::with_capacity(selections.len());
+        let mut missing = BTreeSet::new();
+        for selection in selections {
+            if !ids.insert(&selection.plan_id) {
+                return Err(error("DOWNLOAD_BATCH_DUPLICATE"));
+            }
+            let prepared = runtime
+                .plans
+                .get(&selection.plan_id)
+                .ok_or(error("DOWNLOAD_PLAN_STALE"))?;
+            if prepared.document_revision != selection.expected_revision {
+                return Err(error("DOWNLOAD_PLAN_STALE"));
+            }
+            let record = &prepared.record;
+            if records.first().is_some_and(|first: &DownloadRecord| {
+                first.source != record.source
+                    || first.root != record.root
+                    || first.generation != record.generation
+            }) {
+                return Err(error("DOWNLOAD_SOURCE_MISMATCH"));
+            }
+            require_library(store, record)?;
+            missing.extend(check_new_download(record, &document.value, &library.value)?);
+            // Appending to the candidate also detects duplicate canonical works
+            // inside this batch, before any durable task is created.
+            document.value.tasks.push(record.clone());
+            records.push(record.clone());
+        }
         if !missing.is_empty() {
             // Only explicitly confirmed, positively absent private index rows
             // are removed. No selected-root files are changed. A failed later
@@ -262,11 +322,15 @@ impl DownloadService {
             updated.updated_at = Some(now()?);
             store.write_library(library.revision, updated)?;
         }
-        require_library(store, &prepared.record)?;
-        document.value.tasks.push(prepared.record.clone());
+        for record in &records {
+            require_library(store, record)?;
+        }
         let saved = store.write_downloads(document.revision, document.value)?;
-        runtime.plans.remove(plan_id);
-        Ok(snapshot(&saved, &mut runtime, false, false))
+        for record in records {
+            runtime.plans.remove(&record.id);
+            runtime.queued.insert(record.id, record.revision);
+        }
+        Ok(snapshot(&saved, &mut runtime, false))
     }
     /// This is a read-only projection. An orphaned running state is displayed
     /// paused; its persisted approval is not executed or silently changed.
@@ -282,7 +346,7 @@ impl DownloadService {
     ) -> Result<DownloadSnapshot> {
         let mut runtime = self.lock()?;
         let document = self.load_shared(store)?;
-        Ok(snapshot(&document, &mut runtime, true, recheck_files))
+        Ok(snapshot(&document, &mut runtime, recheck_files))
     }
     /// Native session selection must use the same control revision as the
     /// subsequent command. This exposes no token, path, or mutable task data.
@@ -337,12 +401,13 @@ impl DownloadService {
                 task.phase = DownloadPhase::Paused;
             }
             Control::Resume | Control::Retry => {
-                // Never enqueue a second worker while a cancelled in-flight GET
-                // is still unwinding. The caller can explicitly resume afterward.
-                if runtime.active.is_some() {
+                // Other tasks may join the queue while the current worker runs.
+                // This same task cannot restart before its old worker unwinds.
+                if active {
                     return Err(error("DOWNLOAD_WORKER_BUSY"));
                 }
                 let orphan = !active
+                    && runtime.queued.get(&task.id) != Some(&task.revision)
                     && matches!(
                         task.phase,
                         DownloadPhase::Queued
@@ -362,8 +427,162 @@ impl DownloadService {
         }
         task.revision = next(task.revision)?;
         task.updated_at = now()?;
+        let revision = task.revision;
         let saved = store.write_downloads(document.revision, document.value)?;
-        Ok(snapshot(&saved, &mut runtime, false, false))
+        if action == Control::Pause {
+            runtime.queued.remove(task_id);
+        } else {
+            runtime.queued.insert(task_id.into(), revision);
+        }
+        Ok(snapshot(&saved, &mut runtime, false))
+    }
+    /// Stops all admitted waiting work and invalidates active media epochs.
+    /// Final saving/index registration is allowed to finish; no next task starts.
+    pub fn pause_all(&self, store: &WorkbenchStore) -> Result<DownloadSnapshot> {
+        let mut runtime = self.lock()?;
+        let mut document = self.load(store)?;
+        let mut changed = false;
+        for task in &mut document.value.tasks {
+            if matches!(
+                task.phase,
+                DownloadPhase::Queued | DownloadPhase::Downloading | DownloadPhase::Verifying
+            ) {
+                task.phase = DownloadPhase::Paused;
+                task.revision = next(task.revision)?;
+                task.updated_at = now()?;
+                changed = true;
+            }
+        }
+        if changed {
+            document = store.write_downloads(document.revision, document.value)?;
+        }
+        runtime.queued.clear();
+        Ok(snapshot(&document, &mut runtime, false))
+    }
+    /// Reopening never starts a queue. An explicit source-bound selection of
+    /// paused tasks creates new control epochs and process-local admissions.
+    pub fn resume_many(
+        &self,
+        store: &WorkbenchStore,
+        source: Source,
+        selections: &[TaskSelection],
+    ) -> Result<DownloadSnapshot> {
+        validate_selections(selections)?;
+        let mut runtime = self.lock()?;
+        let mut document = self.load(store)?;
+        for selection in selections {
+            let task = selected_task(&mut document.value, selection)?;
+            if task.source != source {
+                return Err(error("DOWNLOAD_SOURCE_MISMATCH"));
+            }
+            if runtime
+                .active
+                .as_ref()
+                .is_some_and(|a| a.task_id == task.id)
+            {
+                return Err(error("DOWNLOAD_WORKER_BUSY"));
+            }
+            let orphan = runtime.queued.get(&task.id) != Some(&task.revision)
+                && matches!(
+                    task.phase,
+                    DownloadPhase::Queued
+                        | DownloadPhase::Downloading
+                        | DownloadPhase::Verifying
+                        | DownloadPhase::Saving
+                );
+            if task.phase != DownloadPhase::Paused && !orphan {
+                return Err(error("DOWNLOAD_CONTROL_INVALID"));
+            }
+            require_library(store, task)?;
+            task.phase = DownloadPhase::Queued;
+            task.error_code = None;
+            task.revision = next(task.revision)?;
+            task.updated_at = now()?;
+        }
+        let saved = store.write_downloads(document.revision, document.value)?;
+        for selection in selections {
+            let task = saved
+                .value
+                .tasks
+                .iter()
+                .find(|t| t.id == selection.task_id)
+                .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
+            runtime.queued.insert(task.id.clone(), task.revision);
+        }
+        Ok(snapshot(&saved, &mut runtime, false))
+    }
+    /// Removes only completed display/history records. Compact identity evidence
+    /// remains private, and neither library document nor any media file is written.
+    pub fn remove_history(
+        &self,
+        store: &WorkbenchStore,
+        selections: &[TaskSelection],
+    ) -> Result<DownloadSnapshot> {
+        validate_selections(selections)?;
+        let mut runtime = self.lock()?;
+        let mut document = self.load(store)?;
+        let mut evidence = Vec::with_capacity(selections.len());
+        for selection in selections {
+            let task = selected_task(&mut document.value, selection)?;
+            if task.phase != DownloadPhase::Downloaded
+                || runtime
+                    .active
+                    .as_ref()
+                    .is_some_and(|a| a.task_id == task.id)
+            {
+                return Err(error("DOWNLOAD_HISTORY_NOT_COMPLETED"));
+            }
+            evidence.push(DownloadHistoryEvidence {
+                source: task.source,
+                work_id: task.metadata.work_id.clone(),
+                root: task.root.clone(),
+                destination: task.destination.clone(),
+                library_entry_id: task
+                    .library_entry_id
+                    .clone()
+                    .ok_or(error("DOWNLOAD_DOCUMENT_INVALID"))?,
+            });
+        }
+        for item in evidence {
+            if !document.value.history_evidence.contains(&item) {
+                document.value.history_evidence.push(item);
+            }
+        }
+        if document.value.history_evidence.len() > MAX_DOWNLOAD_HISTORY_EVIDENCE {
+            return Err(error("DOWNLOAD_HISTORY_LIMIT_REACHED"));
+        }
+        document.value.tasks.retain(|task| {
+            !selections
+                .iter()
+                .any(|selection| selection.task_id == task.id)
+        });
+        let saved = store.write_downloads(document.revision, document.value)?;
+        Ok(snapshot(&saved, &mut runtime, false))
+    }
+    /// Session/root errors before the executor acquired its worker still need a
+    /// visible retryable result. A newer pause/resume epoch is never overwritten.
+    pub fn fail_queued(
+        &self,
+        store: &WorkbenchStore,
+        task_id: &str,
+        expected_revision: u64,
+        code: &'static str,
+    ) -> Result<()> {
+        let mut runtime = self.lock()?;
+        let mut document = self.load(store)?;
+        let Some(task) = document.value.tasks.iter_mut().find(|t| t.id == task_id) else {
+            return Ok(());
+        };
+        if task.revision == expected_revision && task.phase == DownloadPhase::Queued {
+            task.phase = DownloadPhase::Error;
+            task.error_code = Some(code.into());
+            task.updated_at = now()?;
+            store.write_downloads(document.revision, document.value)?;
+        }
+        if runtime.queued.get(task_id) == Some(&expected_revision) {
+            runtime.queued.remove(task_id);
+        }
+        Ok(())
     }
     fn require_run(
         &self,
@@ -505,6 +724,34 @@ impl DownloadService {
         pica_token: Option<&str>,
         current_scope: impl Fn() -> Result<()> + Send + Sync,
     ) -> Result<Option<AwaitingIndexReceipt>> {
+        self.run_bound(store, task_id, None, pica_token, current_scope)
+            .await
+    }
+    pub async fn run_selected_with_token(
+        &self,
+        store: &WorkbenchStore,
+        task_id: &str,
+        expected_revision: u64,
+        pica_token: Option<&str>,
+        current_scope: impl Fn() -> Result<()> + Send + Sync,
+    ) -> Result<Option<AwaitingIndexReceipt>> {
+        self.run_bound(
+            store,
+            task_id,
+            Some(expected_revision),
+            pica_token,
+            current_scope,
+        )
+        .await
+    }
+    async fn run_bound(
+        &self,
+        store: &WorkbenchStore,
+        task_id: &str,
+        expected_revision: Option<u64>,
+        pica_token: Option<&str>,
+        current_scope: impl Fn() -> Result<()> + Send + Sync,
+    ) -> Result<Option<AwaitingIndexReceipt>> {
         current_scope()?;
         let (initial, path) = {
             let mut runtime = self.lock()?;
@@ -519,8 +766,14 @@ impl DownloadService {
                 .find(|t| t.id == task_id)
                 .cloned()
                 .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
+            if expected_revision.is_some_and(|revision| revision != record.revision) {
+                return Err(error("DOWNLOAD_TASK_STALE"));
+            }
             if record.phase != DownloadPhase::Queued {
                 return Err(error("DOWNLOAD_CONTROL_INVALID"));
+            }
+            if runtime.queued.get(task_id) != Some(&record.revision) {
+                return Err(error("DOWNLOAD_RESUME_REQUIRED"));
             }
             match (record.source, pica_token) {
                 (Source::Jm, Some(_)) => return Err(error("DOWNLOAD_SOURCE_MISMATCH")),
@@ -538,6 +791,7 @@ impl DownloadService {
             require_library(store, &record)?;
             let workspace = store.open_download_workspace()?;
             let path = workspace.path().to_path_buf();
+            runtime.queued.remove(task_id);
             runtime.active = Some(Active {
                 task_id: task_id.into(),
                 revision: record.revision,
@@ -764,6 +1018,33 @@ fn next(value: u64) -> Result<u64> {
         .filter(|v| *v <= MAX_SAFE_INTEGER)
         .ok_or(error("REVISION_EXHAUSTED"))
 }
+fn validate_selections(selections: &[TaskSelection]) -> Result<()> {
+    if selections.is_empty() || selections.len() > MAX_DOWNLOAD_BATCH {
+        return Err(error("DOWNLOAD_BATCH_LIMIT"));
+    }
+    let mut ids = BTreeSet::new();
+    if selections
+        .iter()
+        .any(|selection| !ids.insert(&selection.task_id))
+    {
+        return Err(error("DOWNLOAD_BATCH_DUPLICATE"));
+    }
+    Ok(())
+}
+fn selected_task<'a>(
+    document: &'a mut DownloadsDocument,
+    selection: &TaskSelection,
+) -> Result<&'a mut DownloadRecord> {
+    let task = document
+        .tasks
+        .iter_mut()
+        .find(|task| task.id == selection.task_id)
+        .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
+    if task.revision != selection.expected_revision {
+        return Err(error("DOWNLOAD_TASK_STALE"));
+    }
+    Ok(task)
+}
 fn binding(record: &DownloadRecord) -> Result<String> {
     serde_json::to_vec(&(
         match (record.source, record.jpeg_output) {
@@ -891,6 +1172,18 @@ fn check_new_download(
             LocalFiles::Unavailable => return Err(error("DOWNLOAD_LOCAL_FILES_UNAVAILABLE")),
         }
     }
+    for old in &downloads.history_evidence {
+        if old.source == record.source
+            && old.work_id == record.metadata.work_id
+            && old.root.id == record.root.id
+            && old.root.file_key == record.root.file_key
+            && presence::probe_path(&root, &old.destination)?.is_some()
+        {
+            // Clearing history cannot turn an existing original directory into
+            // a new work when the upstream title or a manual association changes.
+            return Err(error("DOWNLOAD_ALREADY_PRESENT"));
+        }
+    }
     let mut missing = BTreeSet::new();
     for old in &library.records {
         let matches_reference = old.item.source_ref.as_ref().is_some_and(|reference| {
@@ -901,6 +1194,11 @@ fn check_new_download(
                 && task.source == record.source
                 && task.metadata.work_id == record.metadata.work_id
                 && task.library_entry_id.as_ref() == Some(&old.item.id)
+        }) || downloads.history_evidence.iter().any(|task| {
+            task.root == record.root
+                && task.source == record.source
+                && task.work_id == record.metadata.work_id
+                && task.library_entry_id == old.item.id
         });
         if !matches_reference {
             if old.item.relative_path == record.destination
@@ -929,9 +1227,13 @@ fn check_new_download(
 fn snapshot(
     document: &Document<DownloadsDocument>,
     runtime: &mut Runtime,
-    restore: bool,
     recheck_files: bool,
 ) -> DownloadSnapshot {
+    runtime.queued.retain(|id, revision| {
+        document.value.tasks.iter().any(|task| {
+            task.id == *id && task.revision == *revision && task.phase == DownloadPhase::Queued
+        })
+    });
     runtime.local_files.retain(|id, (revision, _)| {
         document.value.tasks.iter().any(|task| {
             task.id == *id && task.revision == *revision && task.phase == DownloadPhase::Downloaded
@@ -954,8 +1256,8 @@ fn snapshot(
             .iter()
             .map(|t| {
                 let active = runtime.active.as_ref().is_some_and(|a| a.task_id == t.id);
-                let phase = if restore
-                    && !active
+                let phase = if !active
+                    && runtime.queued.get(&t.id) != Some(&t.revision)
                     && matches!(
                         t.phase,
                         DownloadPhase::Queued

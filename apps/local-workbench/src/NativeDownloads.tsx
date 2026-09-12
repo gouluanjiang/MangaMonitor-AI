@@ -5,6 +5,7 @@ import type {
   DownloadContexts,
   DownloadSource,
   DownloadTask,
+  DownloadPlan,
 } from "./download-types.ts";
 import {
   DownloadController,
@@ -88,10 +89,12 @@ function DownloadConfirmation({
   downloads,
   context,
   onConfirmed,
+  inventoryHint,
 }: {
   downloads: DownloadsState;
   context: DownloadContext | null;
   onConfirmed(): void;
+  inventoryHint?(plan: DownloadPlan): string | null;
 }) {
   const dialog = useRef<HTMLDialogElement>(null),
     plan = downloads.plan;
@@ -122,6 +125,9 @@ function DownloadConfirmation({
         </button>
       </div>
       <h3 data-testid="download-plan-title">{plan.title}</h3>
+      {inventoryHint?.(plan) && (
+        <p className="source-notice">{inventoryHint(plan)}</p>
+      )}
       <p data-testid="download-plan-source">
         {sourceLabel(plan.source)} · {plan.workId}
         {plan.authors.length ? " · " + plan.authors.join("、") : ""}
@@ -171,6 +177,179 @@ function DownloadConfirmation({
     </dialog>
   );
 }
+function BatchDownloadConfirmation({
+  downloads,
+  contexts,
+  onConfirmed,
+  inventoryHint,
+}: {
+  downloads: DownloadsState;
+  contexts: DownloadContexts;
+  onConfirmed(): void;
+  inventoryHint?(plan: DownloadPlan): string | null;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null),
+    batch = downloads.batchPlan;
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  if (!batch) return null;
+  const context = batch.plans[0] ? contexts[batch.plans[0].source] : null;
+  return (
+    <dialog
+      ref={dialog}
+      className="dialog download-confirmation"
+      data-testid="download-batch-confirmation"
+      aria-label="确认批量下载到电脑"
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!downloads.busy) downloads.controller.cancelPlan();
+      }}
+    >
+      <div className="dialog-heading">
+        <h2>确认批量下载到电脑</h2>
+        <button
+          className="icon-button"
+          aria-label="关闭批量下载确认"
+          disabled={downloads.busy}
+          onClick={() => downloads.controller.cancelPlan()}
+        >
+          <Icon name="close" />
+        </button>
+      </div>
+      <p>
+        可加入 {batch.plans.length} 本
+        {batch.issues.length > 0 && ` · 跳过 ${batch.issues.length} 项`}
+        。按下方顺序依次下载，已有任务先执行。
+      </p>
+      <div className="download-batch-preview">
+        <ol>
+          {batch.plans.map((plan) => (
+            <li key={plan.planId} data-testid="download-batch-plan">
+              <strong>{plan.title}</strong>
+              <p>
+                {sourceLabel(plan.source)} · {plan.workId}
+                {plan.authors.length ? " · " + plan.authors.join("、") : ""}
+              </p>
+              <p className="download-destination quiet">
+                {plan.destinationDisplay}
+              </p>
+              {inventoryHint?.(plan) && (
+                <p className="source-notice">{inventoryHint(plan)}</p>
+              )}
+            </li>
+          ))}
+        </ol>
+        {batch.issues.length > 0 && (
+          <div data-testid="download-batch-issues">
+            <h3>未加入的项目</h3>
+            {batch.issues.map((issue, index) => (
+              <p className="source-notice" key={index}>
+                <span className="download-destination">{issue.input}</span>
+                <br />
+                {downloadErrorMessage(issue.errorCode)}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+      <p>
+        保存为作品文件夹。JM 静态图片使用
+        JPG，哔咔保留原图格式。手机名单由你手动更新，电脑副本继续保留。
+      </p>
+      <div className="dialog-actions">
+        <button
+          className="button secondary"
+          data-testid="download-batch-cancel"
+          disabled={downloads.busy}
+          onClick={() => downloads.controller.cancelPlan()}
+        >
+          取消
+        </button>
+        <button
+          className="button primary"
+          data-testid="download-batch-confirm"
+          disabled={downloads.busy || !context || !batch.batchId}
+          onClick={() => {
+            if (context)
+              void downloads.controller.confirmBatch(context).then((done) => {
+                if (done) onConfirmed();
+              });
+          }}
+        >
+          {downloads.busy ? "正在确认…" : `确认加入 ${batch.plans.length} 本`}
+        </button>
+      </div>
+    </dialog>
+  );
+}
+function HistoryConfirmation({
+  downloads,
+  tasks,
+  onClose,
+}: {
+  downloads: DownloadsState;
+  tasks: DownloadTask[];
+  onClose(): void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="dialog download-confirmation"
+      data-testid="download-history-confirmation"
+      aria-label="整理下载历史"
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!downloads.busy) onClose();
+      }}
+    >
+      <div className="dialog-heading">
+        <h2>整理下载历史</h2>
+      </div>
+      <p>
+        从队列移除以下 {tasks.length}{" "}
+        条完成记录。电脑漫画文件、电脑索引和手机名单会保留。
+      </p>
+      {downloads.error && (
+        <p role="alert" className="source-notice">
+          {downloads.error}
+        </p>
+      )}
+      <ul className="download-batch-preview">
+        {tasks.map((task) => (
+          <li key={task.id}>
+            {task.title} · {sourceLabel(task.source)} {task.workId}
+          </li>
+        ))}
+      </ul>
+      <div className="dialog-actions">
+        <button
+          className="button secondary"
+          disabled={downloads.busy}
+          onClick={onClose}
+        >
+          取消
+        </button>
+        <button
+          className="button primary"
+          data-testid="download-history-confirm"
+          disabled={downloads.busy}
+          onClick={() =>
+            void downloads.controller.removeHistory(tasks).then((done) => {
+              if (done) onClose();
+            })
+          }
+        >
+          移除记录，保留文件
+        </button>
+      </div>
+    </dialog>
+  );
+}
 export function DownloadSettingsPanel({
   downloads,
   onOpenQueue,
@@ -180,15 +359,15 @@ export function DownloadSettingsPanel({
 }) {
   return (
     <section className="settings-card" aria-labelledby="native-download-title">
-      <h2 id="native-download-title">单本下载</h2>
+      <h2 id="native-download-title">下载队列</h2>
       <p className="settings-copy">
-        从 JM
-        或哔咔来源详情进入，或在下载队列选择来源并输入编号，核对标题与保存目录后确认。
+        从 JM 或哔咔来源详情进入，也可以多选收藏或每行粘贴一个编号。每批最多 50
+        本，核对后依次下载。
       </p>
       <dl className="settings-facts">
         <div>
           <dt>当前执行方式</dt>
-          <dd>同一时间只下载一本</dd>
+          <dd>多本依次下载，同一时间处理一本</dd>
         </div>
         <div>
           <dt>保存格式</dt>
@@ -235,6 +414,7 @@ export function NativeDownloads({
   onOpenDownloaded,
   onReprepare,
   showFeedback,
+  inventoryHint,
 }: {
   downloads: DownloadsState;
   active: boolean;
@@ -251,8 +431,14 @@ export function NativeDownloads({
   onOpenDownloaded(task: DownloadTask): void;
   onReprepare(task: DownloadTask): void;
   showFeedback: boolean;
+  inventoryHint?(plan: DownloadPlan): string | null;
 }) {
   const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [queueSource, setQueueSource] = useState<DownloadSource | "all">("all");
+  const [historySelection, setHistorySelection] = useState<
+    DownloadTask[] | null
+  >(null);
   const scope = getDownloadScope(accounts, selectedSource);
   const context = contexts[selectedSource];
   useEffect(() => {
@@ -263,16 +449,33 @@ export function NativeDownloads({
     return () => window.removeEventListener("focus", recheck);
   }, [active, downloads.controller]);
   const tasks = useMemo(
-    () => filterDownloadTasks(downloads.snapshot.tasks, filter),
-    [downloads.snapshot, filter],
+    () =>
+      filterDownloadTasks(downloads.snapshot.tasks, filter, query, queueSource),
+    [downloads.snapshot, filter, query, queueSource],
   );
   return (
     <>
+      {downloads.batchPlan && (
+        <BatchDownloadConfirmation
+          downloads={downloads}
+          contexts={contexts}
+          onConfirmed={onConfirmed}
+          inventoryHint={inventoryHint}
+        />
+      )}
+      {historySelection && (
+        <HistoryConfirmation
+          downloads={downloads}
+          tasks={historySelection}
+          onClose={() => setHistorySelection(null)}
+        />
+      )}
       {downloads.plan && (
         <DownloadConfirmation
           downloads={downloads}
           context={contexts[downloads.plan.source]}
           onConfirmed={onConfirmed}
+          inventoryHint={inventoryHint}
         />
       )}
       {!active && showFeedback && downloads.error && (
@@ -298,7 +501,7 @@ export function NativeDownloads({
                 {unfinishedDownloadCount(downloads.snapshot.tasks)}
               </span>
             </h1>
-            <p>选择 JM 或哔咔作品，确认后完整保存到电脑。</p>
+            <p>多选收藏或粘贴作品编号，确认后依次完整保存到电脑。</p>
           </div>
         </div>
         <form
@@ -325,12 +528,16 @@ export function NativeDownloads({
             {sourceLabel(selectedSource)} 编号或作品链接
           </label>
           <div className="source-actions">
-            <input
+            <textarea
               id="source-download-input"
               data-testid="download-input"
               value={input}
-              maxLength={2048}
-              placeholder={sourceLabel(selectedSource) + " 编号或作品链接"}
+              maxLength={102400}
+              rows={3}
+              placeholder={
+                sourceLabel(selectedSource) +
+                " 编号或作品链接，每行一个，最多 50 本"
+              }
               onChange={(event) => onInputChange(event.target.value)}
             />
             <button
@@ -342,6 +549,10 @@ export function NativeDownloads({
             </button>
           </div>
         </form>
+        <p className="quiet">
+          每批最多 50
+          本；重复编号或无法读取的作品会在确认前列出。同一时间处理一本，失败的任务保留进度，队列继续处理后续作品。
+        </p>
         {!scope && (
           <p className="source-notice">
             请先连接{sourceLabel(selectedSource)}账号。
@@ -378,6 +589,47 @@ export function NativeDownloads({
             {downloads.reading ? "正在读取…" : "重新读取队列"}
           </button>
         </div>
+        <div className="source-actions download-queue-controls">
+          <button
+            className="button secondary"
+            data-testid="download-pause-all"
+            disabled={
+              downloads.busy ||
+              !downloads.snapshot.tasks.some((task) =>
+                ["queued", "downloading", "verifying", "saving"].includes(
+                  task.phase,
+                ),
+              )
+            }
+            onClick={() => void downloads.controller.pauseAll()}
+          >
+            暂停队列
+          </button>
+          {(["JM", "Pica"] as const).map((source) => {
+            const current = getDownloadScope(accounts, source);
+            const resumable = downloads.snapshot.tasks
+              .filter(
+                (task) =>
+                  task.source === source &&
+                  task.allowedActions.includes("resume"),
+              )
+              .slice(0, 50);
+            return (
+              <button
+                key={source}
+                className="button secondary"
+                data-testid={`download-resume-many-${source}`}
+                disabled={downloads.busy || !current || !resumable.length}
+                onClick={() => {
+                  if (current)
+                    void downloads.controller.resumeMany(current, resumable);
+                }}
+              >
+                继续{sourceLabel(source)} {resumable.length} 本
+              </button>
+            );
+          })}
+        </div>
         {downloads.error && (
           <p
             role="alert"
@@ -393,6 +645,7 @@ export function NativeDownloads({
             ["active", "进行中"],
             ["error", "需要处理"],
             ["downloaded", "已下载"],
+            ["history", "完成历史"],
           ].map(([value, label]) => (
             <button
               key={value}
@@ -404,6 +657,37 @@ export function NativeDownloads({
               {label}
             </button>
           ))}
+        </div>
+        <div className="download-history-toolbar source-actions">
+          <input
+            aria-label="筛选下载任务"
+            data-testid="download-history-query"
+            placeholder="搜索队列中的标题或编号"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <select
+            aria-label="筛选队列来源"
+            data-testid="download-history-source"
+            value={queueSource}
+            onChange={(event) =>
+              setQueueSource(event.target.value as DownloadSource | "all")
+            }
+          >
+            <option value="all">全部来源</option>
+            <option value="JM">JM</option>
+            <option value="Pica">哔咔</option>
+          </select>
+          {filter === "history" && (
+            <button
+              className="text-button"
+              data-testid="download-history-clear"
+              disabled={downloads.busy || !tasks.length}
+              onClick={() => setHistorySelection(tasks.slice(0, 50))}
+            >
+              整理当前筛选结果（{Math.min(tasks.length, 50)} 条）
+            </button>
+          )}
         </div>
         <div className="task-list">
           {tasks.map((task) => (
@@ -503,6 +787,16 @@ export function NativeDownloads({
                         onClick={() => onOpenDownloaded(task)}
                       >
                         查看电脑文件
+                      </button>
+                    )}
+                    {task.phase === "downloaded" && (
+                      <button
+                        className="text-button"
+                        data-testid={`download-history-remove-${task.id}`}
+                        disabled={downloads.busy}
+                        onClick={() => setHistorySelection([task])}
+                      >
+                        移除历史记录
                       </button>
                     )}
                     {task.phase === "downloaded" &&

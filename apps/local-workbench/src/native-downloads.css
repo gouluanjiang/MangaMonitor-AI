@@ -10,6 +10,7 @@
   color: var(--muted);
 }
 .native-download-add input,
+.native-download-add textarea,
 .native-download-add select {
   flex: 1;
   min-width: 180px;
@@ -18,6 +19,39 @@
   padding: 12px 14px;
   background: #17141c;
   color: inherit;
+}
+.native-download-add textarea {
+  resize: vertical;
+  font: inherit;
+}
+.download-batch-preview {
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.download-batch-preview li {
+  margin-bottom: 12px;
+}
+.download-batch-preview p {
+  margin: 5px 0;
+}
+.download-queue-controls,
+.download-history-toolbar {
+  margin: 16px 0;
+  gap: 12px;
+}
+.download-history-toolbar input,
+.download-history-toolbar select {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #17141c;
+  color: inherit;
+  font: inherit;
+}
+.download-history-toolbar input {
+  flex: 1;
+  min-width: 160px;
 }
 .native-download-add select {
   margin-bottom: 16px;

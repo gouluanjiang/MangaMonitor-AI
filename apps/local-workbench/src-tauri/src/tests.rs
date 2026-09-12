@@ -413,6 +413,32 @@ fn download_commands_require_the_main_packaged_window() {
         ("jm_download_read", json!({})),
         ("jm_download_read", json!({"recheckFiles": false})),
         (
+            "jm_download_batch_prepare",
+            json!({"scope":{"source":"JM","sessionId":"stale"},"inputs":["123","124"],"rootId":"a".repeat(64),"generation":1}),
+        ),
+        (
+            "jm_download_batch_confirm",
+            json!({"batchId":"a".repeat(64)}),
+        ),
+        ("jm_download_pause_all", json!({})),
+        (
+            "jm_download_resume_many",
+            json!({"scope":{"source":"JM","sessionId":"stale"},"tasks":[{"taskId":"a".repeat(64),"expectedRevision":1}]}),
+        ),
+        (
+            "jm_download_history_remove",
+            json!({"tasks":[{"taskId":"a".repeat(64),"expectedRevision":1}]}),
+        ),
+        ("source_matches_read", json!({})),
+        (
+            "source_matches_confirm",
+            json!({"revision":0,"jm":{"source":"JM","workId":"123","title":"Synthetic JM"},"pica":{"source":"Pica","workId":"0123456789abcdef01234567","title":"Synthetic Pica"}}),
+        ),
+        (
+            "source_matches_unlink",
+            json!({"revision":1,"pairId":"a".repeat(64)}),
+        ),
+        (
             "jm_download_prepare",
             json!({"scope":{"source":"JM","sessionId":"stale"},"input":"123","rootId":"a".repeat(64),"generation":1}),
         ),
@@ -468,6 +494,67 @@ fn reading_empty_download_queue_never_creates_media_or_changes_phone_inventory()
         phone
     );
     assert_eq!(invoke(&main, "library_read", json!({})).unwrap(), library);
+    assert!(!root
+        .path()
+        .join(workbench_storage::PRIVATE_DIRECTORY)
+        .join("download-staging-v1")
+        .exists());
+}
+
+#[test]
+fn manual_source_match_ipc_roundtrip_preserves_both_libraries_and_downloads() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let phone = invoke(&main, "phone_library_read", json!({})).unwrap();
+    let pc = invoke(&main, "library_read", json!({})).unwrap();
+    let queue = invoke(&main, "jm_download_read", json!({})).unwrap();
+    assert_eq!(
+        invoke(&main, "source_matches_read", json!({})).unwrap(),
+        json!({"revision":0,"pairs":[]})
+    );
+    let pair = invoke(&main, "source_matches_confirm", json!({"revision":0,"jm":{"source":"JM","workId":"123","title":"Synthetic JM"},"pica":{"source":"Pica","workId":"0123456789abcdef01234567","title":"Synthetic Pica"}})).unwrap();
+    assert_eq!(pair["pairs"][0]["evidence"], json!("manual"));
+    assert_eq!(
+        invoke(&main, "source_matches_read", json!({})).unwrap(),
+        pair
+    );
+    let removed = invoke(
+        &main,
+        "source_matches_unlink",
+        json!({"revision":pair["revision"],"pairId":pair["pairs"][0]["id"]}),
+    )
+    .unwrap();
+    assert_eq!(removed["pairs"], json!([]));
+    assert_eq!(
+        invoke(&main, "phone_library_read", json!({})).unwrap(),
+        phone
+    );
+    assert_eq!(invoke(&main, "library_read", json!({})).unwrap(), pc);
+    assert_eq!(invoke(&main, "jm_download_read", json!({})).unwrap(), queue);
+}
+
+#[test]
+fn unapproved_batch_never_enters_queue_or_creates_staging() {
+    let (root, app) = fixture();
+    let main = window(&app, "main");
+    assert!(invoke(
+        &main,
+        "jm_download_batch_confirm",
+        json!({"batchId":"a".repeat(64)})
+    )
+    .is_err());
+    let snapshot = invoke(&main, "jm_download_pause_all", json!({})).unwrap();
+    assert_eq!(snapshot["tasks"], json!([]));
+    assert!(invoke(
+        &main,
+        "jm_download_history_remove",
+        json!({"tasks":[{"taskId":"a".repeat(64),"expectedRevision":1}]})
+    )
+    .is_err());
+    assert_eq!(
+        invoke(&main, "jm_download_read", json!({})).unwrap()["tasks"],
+        json!([])
+    );
     assert!(!root
         .path()
         .join(workbench_storage::PRIVATE_DIRECTORY)

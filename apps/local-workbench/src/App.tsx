@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { works, activeFixture } from "./catalog.ts";
 import {
@@ -42,6 +42,8 @@ import {
   createDownloadAdapter,
   isDownloadPresent,
   getDownloadScope,
+  parseDownloadInputs,
+  downloadErrorMessage,
 } from "./download-runtime.ts";
 import {
   NativeDownloads,
@@ -59,6 +61,9 @@ import type {
 import { parseLibraryReference } from "./library-model.ts";
 import { createPhoneLibraryAdapter } from "./phone-library-runtime.ts";
 import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
+import { createSourceMatchesAdapter } from "./source-matches-runtime.ts";
+import { useSourceMatches } from "./SourceMatchesPanel.tsx";
+import { createInventoryMatcher } from "./phone-library-model.ts";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
 import { boundSourceCache } from "./source-memory.ts";
 import { sources, sourceWorkKey, sourceLabel } from "./source-types.ts";
@@ -72,6 +77,7 @@ const sourceAdapter = createSourceAdapter();
 const libraryAdapter = createLibraryAdapter();
 const downloadAdapter = createDownloadAdapter();
 const phoneLibraryAdapter = createPhoneLibraryAdapter();
+const sourceMatchesAdapter = createSourceMatchesAdapter();
 const persistence = createWorkbenchPersistence({ fixture: activeFixture });
 const workReference = (work: Work): WorkReference => ({
   source: work.source,
@@ -175,6 +181,27 @@ export default function App() {
   const [libraryNavigationKey, setLibraryNavigationKey] = useState(0);
   const library = useLibrary(libraryAdapter, persistence.native);
   const phoneLibrary = usePhoneLibrary(phoneLibraryAdapter, persistence.native);
+  const sourceMatches = useSourceMatches(
+    sourceMatchesAdapter,
+    persistence.native,
+  );
+  const downloadInventory = useMemo(
+    () =>
+      createInventoryMatcher(
+        library.snapshot,
+        phoneLibrary.snapshot,
+        phoneLibrary.ready,
+        sourceMatches.snapshot.pairs,
+        sourceMatches.ready,
+      ),
+    [
+      library.snapshot,
+      phoneLibrary.snapshot,
+      phoneLibrary.ready,
+      sourceMatches.snapshot.pairs,
+      sourceMatches.ready,
+    ],
+  );
   const [requestedLibraryWork, setRequestedLibraryWork] =
     useState<SourceWork | null>(null);
   const [libraryRequestKey, setLibraryRequestKey] = useState(0);
@@ -473,6 +500,13 @@ export default function App() {
       return;
     }
     if (downloads.controller.getState().busy) return;
+    let inputs: string[];
+    try {
+      inputs = parseDownloadInputs(input);
+    } catch (cause) {
+      setNotice(downloadErrorMessage(cause));
+      return;
+    }
     // An earlier queue check may have observed files before this click. Wait
     // for it, then request one fresh check for this explicit preparation.
     if (downloads.controller.getState().reading)
@@ -496,6 +530,10 @@ export default function App() {
       currentLibrary.generation !== downloadContext.generation
     ) {
       setNotice("账号或电脑目录已改变，请核对后重新准备下载。");
+      return;
+    }
+    if (inputs.length > 1) {
+      void downloads.controller.prepareBatch(downloadContext, inputs);
       return;
     }
     const id =
@@ -2174,6 +2212,7 @@ export default function App() {
               }}
               onAddToBooklists={openSourceBooklistPicker}
               externalWork={requestedLibraryWork}
+              pairs={sourceMatches.snapshot.pairs}
               requestKey={libraryRequestKey}
             />
           )}
@@ -2204,12 +2243,34 @@ export default function App() {
                   void beginDownload(task.workId, undefined, task.source);
               }}
               showFeedback={downloadFeedback}
+              inventoryHint={(plan) => {
+                const match = downloadInventory(plan);
+                if (match.kind === "owned")
+                  return "手机名单中已入库，本次仍可下载电脑副本。";
+                if (
+                  match.kind === "downloaded" &&
+                  match.items.some(
+                    (item) => item.sourceRef?.source !== plan.source,
+                  )
+                )
+                  return "已确认的另一来源版本在电脑中存在。继续确认会再保存当前来源的副本。";
+                return null;
+              }}
             />
           )}
           {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
               onDownload={(work) => beginDownload(work.workId, work)}
+              onDownloadMany={(selected) => {
+                if (selected.length)
+                  void beginDownload(
+                    selected.map((work) => work.workId).join("\n"),
+                    undefined,
+                    selected[0].source,
+                  );
+              }}
+              matches={sourceMatches}
               downloadReady={downloads.ready}
               downloadBusy={downloads.busy}
               librarySnapshot={library.snapshot}
@@ -2277,11 +2338,11 @@ export default function App() {
           </span>
           <span>
             {sourceActive
-              ? "手机名单与电脑文件核对 · 单本下载"
+              ? "手机名单与电脑文件核对 · 批量下载"
               : libraryActive
                 ? "电脑文件保留 · 手机由你手动转入"
                 : persistence.native
-                  ? "JM / 哔咔单本下载"
+                  ? "JM / 哔咔下载队列"
                   : "示例数据 · 尚未连接下载器"}
           </span>
         </footer>

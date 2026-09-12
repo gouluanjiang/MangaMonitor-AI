@@ -17,6 +17,7 @@ import {
   filterLibraryItems,
   normalizeLibraryText,
   parseLibraryReference,
+  createLibraryMatcher,
 } from "./library-model.ts";
 import { getLibraryCoverCache } from "./library-cover-cache.ts";
 import type {
@@ -418,6 +419,7 @@ function LibraryDetail({
   onBack,
   onAddToBooklists,
   externalWork,
+  pairs = [],
 }: {
   item: LibraryItem;
   library: LibraryState;
@@ -425,6 +427,7 @@ function LibraryDetail({
   onBack(): void;
   onAddToBooklists(refs: LibraryReference[]): Promise<boolean>;
   externalWork?: SourceWork | null;
+  pairs?: import("./source-matches-types.ts").SourceMatchPair[];
 }) {
   const [source, setSource] = useState<"JM" | "Pica">(
     externalWork?.source ?? item.sourceRef?.source ?? "JM",
@@ -434,7 +437,7 @@ function LibraryDetail({
   );
   const [notice, setNotice] = useState("");
   const ref = parseLibraryReference(source, input);
-  const owned = createPhoneItemMatcher(phone.snapshot)(item) === "owned";
+  const owned = createPhoneItemMatcher(phone.snapshot, pairs)(item) === "owned";
   const marks = phone.snapshot.manualEntries.filter(
     (entry) =>
       (entry.reference === null &&
@@ -645,6 +648,7 @@ export function LibraryWorkbench({
   onBooklists,
   onAddToBooklists,
   externalWork,
+  pairs = [],
   requestKey = 0,
 }: {
   library: LibraryState;
@@ -656,6 +660,7 @@ export function LibraryWorkbench({
   onBooklists(): void;
   onAddToBooklists(refs: LibraryReference[]): Promise<boolean>;
   externalWork?: SourceWork | null;
+  pairs?: import("./source-matches-types.ts").SourceMatchPair[];
   requestKey?: number;
 }) {
   const [tab, setTab] = useState<"pc" | "phone">("pc"),
@@ -686,8 +691,8 @@ export function LibraryWorkbench({
     [phone.snapshot, query],
   );
   const itemStatus = useMemo(
-    () => createPhoneItemMatcher(phone.snapshot),
-    [phone.snapshot],
+    () => createPhoneItemMatcher(phone.snapshot, pairs),
+    [phone.snapshot, pairs],
   );
   const detail = library.snapshot.items.find((item) => item.id === detailId);
   useEffect(() => {
@@ -696,11 +701,8 @@ export function LibraryWorkbench({
   useEffect(() => {
     if (!externalWork || requestKey === 0) return;
     setTab("pc");
-    const exact = library.snapshot.items.find(
-      (item) =>
-        item.sourceRef?.source === externalWork.source &&
-        item.sourceRef?.workId === externalWork.workId,
-    );
+    const match = createLibraryMatcher(library.snapshot, pairs)(externalWork);
+    const exact = match.kind === "exact" ? match.items[0] : undefined;
     setDetailId(exact?.id ?? null);
   }, [requestKey]);
   useLayoutEffect(() => {
@@ -752,6 +754,7 @@ export function LibraryWorkbench({
           item={detail}
           library={library}
           phone={phone}
+          pairs={pairs}
           onBack={back}
           onAddToBooklists={onAddToBooklists}
           externalWork={externalWork}

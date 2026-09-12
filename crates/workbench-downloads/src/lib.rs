@@ -1,5 +1,5 @@
-//! Explicitly approved single-work JM/Pica downloads. No production inventory or
-//! phone-library mutation, background scheduling, overwrite, or deletion.
+//! Explicitly approved JM/Pica desktop download queues. No production inventory,
+//! phone-library mutation, restart-time network execution, overwrite, or deletion.
 mod adapter;
 mod fs;
 mod materialize;
@@ -8,6 +8,7 @@ mod service;
 pub use presence::LocalFiles;
 pub use service::{
     AwaitingIndexReceipt, Control, DownloadPlan, DownloadService, DownloadSnapshot, DownloadTask,
+    PreparedSelection, TaskSelection,
 };
 pub use workbench_storage::{DownloadPhase, JmDownloadMetadata, Source, StoreError};
 pub type DownloadMetadata = JmDownloadMetadata;

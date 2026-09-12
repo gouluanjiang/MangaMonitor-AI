@@ -192,6 +192,8 @@ async function installMock(page: Page, options: Options = {}) {
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           hooks.calls.push({ command, args: clone(args) });
           if (command === "jm_download_read") return { revision: 0, tasks: [] };
+          if (command === "source_matches_read")
+            return { revision: 0, pairs: [] };
           if (command === "read_preferences") return clone(preferences);
           if (command === "read_booklists") return clone(booklists);
           if (command === "write_preferences") {

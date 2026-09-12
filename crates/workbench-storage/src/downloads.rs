@@ -14,7 +14,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const MAX_DOWNLOAD_TASKS: usize = 50;
+pub const MAX_DOWNLOAD_TASKS: usize = 500;
+pub const MAX_DOWNLOAD_BATCH: usize = 50;
+pub const MAX_DOWNLOAD_HISTORY_EVIDENCE: usize = 20_000;
 // The existing library scanner counts the one root cover toward its 10k limit.
 pub const MAX_DOWNLOAD_FILES: usize = 9_999;
 
@@ -109,17 +111,32 @@ const fn default_source() -> Source {
 fn is_jm(source: &Source) -> bool {
     *source == Source::Jm
 }
+/// Compact identity evidence retained when the user clears completed history.
+/// It prevents history housekeeping from removing duplicate/manual-match
+/// protection. It contains neither image manifests nor source credentials.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DownloadHistoryEvidence {
+    pub source: Source,
+    pub work_id: String,
+    pub root: LibraryRoot,
+    pub destination: String,
+    pub library_entry_id: String,
+}
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DownloadsDocument {
     pub version: u32,
     pub tasks: Vec<DownloadRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history_evidence: Vec<DownloadHistoryEvidence>,
 }
 impl Default for DownloadsDocument {
     fn default() -> Self {
         Self {
             version: 1,
             tasks: Vec::new(),
+            history_evidence: Vec::new(),
         }
     }
 }
@@ -136,8 +153,39 @@ fn json(v: &Option<String>, limit: usize) -> bool {
 impl ValidatedDocument for DownloadsDocument {
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("DOWNLOAD_DOCUMENT_INVALID");
-        if self.version != 1 || self.tasks.len() > MAX_DOWNLOAD_TASKS {
+        if self.version != 1
+            || self.tasks.len() > MAX_DOWNLOAD_TASKS
+            || self.history_evidence.len() > MAX_DOWNLOAD_HISTORY_EVIDENCE
+        {
             return Err(invalid());
+        }
+        let mut evidence = HashSet::new();
+        for old in &self.history_evidence {
+            if !(crate::LibraryReference {
+                source: old.source,
+                work_id: old.work_id.clone(),
+            })
+            .is_valid()
+                || !hash(&old.root.id)
+                || !hash(&old.root.file_key)
+                || !Path::new(&old.root.path).is_absolute()
+                || old.root.path.len() > 32768
+                || old.root.path.chars().any(char::is_control)
+                || !crate::library_relative_path_is_valid(&old.destination)
+                || old.destination.contains('/')
+                || old.destination.encode_utf16().count() > 180
+                || !hash(&old.library_entry_id)
+                || !evidence.insert((
+                    old.source,
+                    &old.work_id,
+                    &old.root.id,
+                    &old.root.file_key,
+                    &old.destination,
+                    &old.library_entry_id,
+                ))
+            {
+                return Err(invalid());
+            }
         }
         let mut ids = HashSet::new();
         for t in &self.tasks {

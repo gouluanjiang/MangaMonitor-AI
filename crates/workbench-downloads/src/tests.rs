@@ -26,6 +26,8 @@ use tempfile::TempDir;
 
 #[path = "pica_tests.rs"]
 mod pica_tests;
+#[path = "queue_tests.rs"]
+mod queue_tests;
 
 struct Fixture {
     _temp: TempDir,
@@ -716,7 +718,7 @@ fn stale_control_and_changed_root_are_refused_without_writes() {
         .write_library(library.revision, library.value)
         .unwrap();
     assert_eq!(
-        f.service
+        DownloadService::new()
             .control(&f.store, &f.id, 1, Control::Resume)
             .unwrap_err()
             .code,

@@ -3,6 +3,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LibrarySnapshot } from "./library-types.ts";
 import type { PhoneLibrarySnapshot } from "./phone-library-types.ts";
 import { emptyPhoneLibrary } from "./phone-library-types.ts";
+import { SourceMatchPanel } from "./SourceMatchesPanel.tsx";
+import type { useSourceMatches } from "./SourceMatchesPanel.tsx";
 import {
   createInventoryMatcher,
   inventoryLabel,
@@ -38,6 +40,8 @@ import "./source-workbench.css";
 export interface SourceWorkbenchProps {
   adapter: SourceAdapter;
   onDownload?(work: SourceWork): void;
+  onDownloadMany?(works: SourceWork[]): void;
+  matches?: ReturnType<typeof useSourceMatches>;
   downloadReady?: boolean;
   downloadBusy?: boolean;
   librarySnapshot?: LibrarySnapshot;
@@ -248,6 +252,8 @@ const scopeKey = (scope: SourceScope | null) =>
 export function SourceWorkbench({
   adapter,
   onDownload,
+  onDownloadMany,
+  matches,
   downloadReady = false,
   downloadBusy = false,
   librarySnapshot,
@@ -279,8 +285,16 @@ export function SourceWorkbench({
         librarySnapshot,
         phoneSnapshot ?? emptyPhoneLibrary(),
         phoneReady,
+        matches?.snapshot.pairs,
+        matches?.ready ?? true,
       ),
-    [librarySnapshot, phoneSnapshot, phoneReady],
+    [
+      librarySnapshot,
+      phoneSnapshot,
+      phoneReady,
+      matches?.snapshot.pairs,
+      matches?.ready,
+    ],
   );
   const [phoneNotice, setPhoneNotice] = useState("");
   useEffect(() => {
@@ -1280,7 +1294,7 @@ export function SourceWorkbench({
                     type="button"
                     className="button secondary"
                     data-testid="source-phone-mark"
-                    disabled={phoneBusy}
+                    disabled={phoneBusy || inventory(detail).kind === "owned"}
                     onClick={() =>
                       void onMarkPhone(detail).then((saved) =>
                         setPhoneNotice(
@@ -1291,7 +1305,9 @@ export function SourceWorkbench({
                       )
                     }
                   >
-                    标记手机已入库
+                    {inventory(detail).kind === "owned"
+                      ? "手机已入库"
+                      : "标记手机已入库"}
                   </button>
                 )}
                 {onUnmarkPhone &&
@@ -1379,7 +1395,7 @@ export function SourceWorkbench({
                 </button>
               </div>
               <p className="source-muted">
-                网站收藏、本机关注与本地书单分别保存。JM
+                网站收藏、本机关注与本地书单分别保存。作品
                 下载经单独确认后加入电脑队列。
                 <button
                   type="button"
@@ -1391,6 +1407,15 @@ export function SourceWorkbench({
                 </button>
               </p>
               {followingFeedback()}
+              {matches && (
+                <SourceMatchPanel
+                  key={sourceWorkKey(detail)}
+                  work={detail}
+                  matches={matches}
+                  adapter={adapter}
+                  accounts={accounts}
+                />
+              )}
               <section className="source-description">
                 <h2>简介</h2>
                 <p className={expanded ? "" : "is-collapsed"}>
@@ -1412,7 +1437,7 @@ export function SourceWorkbench({
                   {sourceLabel(source)} · {detail.workId}
                 </p>
                 <p className="source-muted">
-                  当前仅取得作品元数据，章节目录与本地文件尚未接入。
+                  可在上方确认下载到电脑，下载进度与结果在队列中查看。
                 </p>
               </section>
             </div>
@@ -1956,9 +1981,23 @@ export function SourceWorkbench({
                   >
                     加入书单
                   </button>
-                  <button type="button" className="button primary" disabled>
-                    真实下载尚未接入
+                  <button
+                    type="button"
+                    className="button primary"
+                    data-testid="source-batch-download"
+                    disabled={
+                      !onDownloadMany ||
+                      !downloadReady ||
+                      downloadBusy ||
+                      selectedWorks.length > 50
+                    }
+                    onClick={() => onDownloadMany?.(selectedWorks)}
+                  >
+                    {downloadBusy ? "正在准备…" : "准备下载"}
                   </button>
+                  {selectedWorks.length > 50 && (
+                    <span>每批最多 50 本，请减少选择。</span>
+                  )}
                 </div>
               )}
             </>

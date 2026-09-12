@@ -1,12 +1,19 @@
 # Desktop manual JM and Pica downloads
 
-This crate implements one explicitly confirmed JM or Pica task at a time. It projects
+This crate implements explicitly confirmed JM/Pica queues, executing one work at a time. It projects
 only its private task and current approval into the existing A6 staging chain;
 it never creates matcher evidence, updates production inventory, or changes the
 phone library. Plans stay in memory. Confirmed tasks use the fixed private
 `downloads.json` document and its existing revision/CAS storage boundary.
 
-`prepare_for_source`, `confirm`, `read`, and `control` serve the desktop IPC boundary.
+`prepare_for_source`, `confirm`, `confirm_many`, `read`, and `control` serve the desktop IPC boundary.
+Up to 50 reviewed plans can be confirmed with one durable queue write. Each immutable
+plan retains its source/root/approval binding while unrelated image progress may
+advance the document revision; confirmation rechecks current conflicts under the
+service lock. Waiting tasks admitted in this process stay queued. A native FIFO
+driver owns the entire download, materialize, and PC-registration lifecycle before
+taking its next item, so adding work never creates a second media worker. Ordinary
+failures or per-task pauses leave later admitted work able to proceed.
 The original `prepare` and `run` remain JM-compatible entry points. Old ledger
 records default to JM, omit that default source when serialized, and retain both
 historical JM binding profiles without modification. `DownloadMetadata` aliases
@@ -19,8 +26,10 @@ same expected control revision before selecting its account session.
 run on a dedicated blocking worker with an async runtime. The lease and current
 library identity/generation are checked at authorization points. Reading a
 reopened queue projects unfinished tasks as paused without starting network or
-media writes. A live worker remains visible and must finish unwinding before
-resume can start another worker. The file lock spans the worker and registration
+media writes. `resume_many` explicitly admits up to 50 exact source/revision-bound
+tasks under a current native session; `pause_all` stops waiting/media work while
+letting an already-started final save finish. A paused task's old worker must unwind
+before that same task resumes; other tasks may join the waiting queue. The file lock spans the worker and registration
 handoff, while the document lock is held only for short storage transactions.
 Pica requires a current, borrowed session token; JM refuses a Pica token. Tokens
 are never persisted in the task, metadata, receipt, logs, or media-byte client.
@@ -76,6 +85,15 @@ can reuse the process-local presence cache; prepare and explicit confirmation
 always recheck the source-specific target. Only positively missing index rows for
 that source are removed with CAS before a newly approved task is recorded. Other
 sources, manual associations, unavailable roots, and existing media remain intact.
+
+Visible full history is bounded at 500 tasks, with the existing 32 MiB private
+document ceiling retained. `remove_history` accepts only explicitly selected,
+revision-current completed records and never writes media, PC index, or phone
+state. It retains compact source/root/original-destination/entry evidence (bounded
+at 20,000 identities) so clearing history cannot remove same-source duplicate or
+manual association protection. Full image manifests and checkpoints leave the
+visible ledger with the removed history entry. Empty evidence is omitted when
+serializing older documents; existing JM approval bindings remain unchanged.
 
 Tests use generated images, complete synthetic Pica pagination, temporary
 directories, injected A6 fetchers, and the

@@ -10,6 +10,8 @@ import type {
   DownloadSource,
   DownloadSnapshot,
   DownloadTask,
+  DownloadBatchPlan,
+  DownloadTaskRevision,
 } from "./download-types.ts";
 import type { AccountSummary } from "./source-types.ts";
 export class DownloadError extends Error {
@@ -105,7 +107,7 @@ export function validateDownloadPlan(value: unknown): DownloadPlan {
 }
 export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
   const raw = record(value);
-  if (!Array.isArray(raw.tasks) || raw.tasks.length > 50) return invalid();
+  if (!Array.isArray(raw.tasks) || raw.tasks.length > 500) return invalid();
   const tasks = raw.tasks.map((value) => {
     const task = record(value);
     if (integer(task.revision) === 0) return invalid();
@@ -179,6 +181,51 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
     return invalid();
   return { revision: integer(raw.revision), tasks };
 }
+export function validateDownloadBatchPlan(value: unknown): DownloadBatchPlan {
+  const raw = record(value);
+  if (
+    !Array.isArray(raw.plans) ||
+    !Array.isArray(raw.issues) ||
+    raw.plans.length + raw.issues.length > 50 ||
+    raw.plans.length + raw.issues.length === 0
+  )
+    return invalid();
+  const plans = raw.plans.map(validateDownloadPlan);
+  if (
+    new Set(plans.map((plan) => plan.planId)).size !== plans.length ||
+    new Set(plans.map((plan) => plan.source + ":" + plan.workId)).size !==
+      plans.length
+  )
+    return invalid();
+  const batchId = raw.batchId === null ? null : rootIdentity(raw.batchId);
+  if (plans.length > 0 !== (batchId !== null)) return invalid();
+  const issues = raw.issues.map((value) => {
+    const issue = record(value);
+    if (
+      typeof issue.errorCode !== "string" ||
+      !/^[A-Z0-9_]{1,100}$/.test(issue.errorCode)
+    )
+      return invalid();
+    return { input: text(issue.input, 2048), errorCode: issue.errorCode };
+  });
+  return { batchId, plans, issues };
+}
+function taskRevisions(tasks: DownloadTaskRevision[]): DownloadTaskRevision[] {
+  if (
+    !Array.isArray(tasks) ||
+    tasks.length === 0 ||
+    tasks.length > 50 ||
+    new Set(tasks.map((task) => task.taskId)).size !== tasks.length
+  )
+    return invalid();
+  return tasks.map((task) => {
+    if (integer(task.expectedRevision) === 0) return invalid();
+    return {
+      taskId: rootIdentity(task.taskId),
+      expectedRevision: task.expectedRevision,
+    };
+  });
+}
 type Invoke = <T>(
   command: string,
   args?: Record<string, unknown>,
@@ -237,6 +284,51 @@ export function createDownloadAdapter(
           expectedRevision: integer(expectedRevision),
         }),
       ),
+    prepareBatch: async (context, inputs) => {
+      if (!Array.isArray(inputs) || inputs.length === 0 || inputs.length > 50)
+        return invalid();
+      const checked = {
+        scope: scope(context.scope),
+        rootId: rootIdentity(context.rootId),
+        generation: integer(context.generation),
+        inputs: inputs.map((input) => text(input.trim(), 2048)),
+      };
+      const batch = validateDownloadBatchPlan(
+        await call("jm_download_batch_prepare", checked),
+      );
+      if (batch.plans.some((plan) => plan.source !== checked.scope.source))
+        throw new DownloadError("DOWNLOAD_SOURCE_MISMATCH");
+      if (
+        batch.plans.some(
+          (plan) =>
+            plan.rootId !== checked.rootId ||
+            plan.generation !== checked.generation,
+        )
+      )
+        throw new DownloadError("DOWNLOAD_PLAN_STALE");
+      return batch;
+    },
+    confirmBatch: async (batchId) =>
+      validateDownloadSnapshot(
+        await call("jm_download_batch_confirm", {
+          batchId: rootIdentity(batchId),
+        }),
+      ),
+    pauseAll: async () =>
+      validateDownloadSnapshot(await call("jm_download_pause_all")),
+    resumeMany: async (current, tasks) =>
+      validateDownloadSnapshot(
+        await call("jm_download_resume_many", {
+          scope: scope(current),
+          tasks: taskRevisions(tasks),
+        }),
+      ),
+    removeHistory: async (tasks) =>
+      validateDownloadSnapshot(
+        await call("jm_download_history_remove", {
+          tasks: taskRevisions(tasks),
+        }),
+      ),
     control: async (current, taskId, expectedRevision, action) => {
       if (!actions.includes(action)) return invalid();
       return validateDownloadSnapshot(
@@ -289,7 +381,22 @@ export function downloadErrorMessage(cause: unknown): string {
     return "电脑目录正在读取或已暂停读取，请先完成目录读取再准备下载。";
   if (/BUSY/.test(code)) return "当前任务还在处理，请等待它暂停或完成后再试。";
   if (code === "DOWNLOAD_LIMIT_REACHED")
-    return "当前下载记录已达到本批支持的上限，暂时无法添加新任务。";
+    return "下载记录已达到 500 条，请先整理已完成的历史记录，再添加任务。";
+  if (
+    code === "DOWNLOAD_BATCH_INPUT_INVALID" ||
+    code === "DOWNLOAD_BATCH_LIMIT"
+  )
+    return "每行输入一个编号或链接，每批最多 50 本。";
+  if (code === "DOWNLOAD_BATCH_DUPLICATE")
+    return "本批重复的来源编号，已跳过。";
+  if (code === "DOWNLOAD_HISTORY_NOT_COMPLETED")
+    return "只能整理已完成的下载记录，未完成任务的进度会保留。";
+  if (code === "DOWNLOAD_HISTORY_LIMIT_REACHED")
+    return "保留的作品身份记录已达到上限，暂时无法继续整理历史。";
+  if (code === "DOWNLOAD_PLAN_LIMIT_REACHED")
+    return "待确认计划过多，请关闭确认单后重新准备。";
+  if (code === "DOWNLOAD_RESUME_REQUIRED")
+    return "任务记录已恢复，请点击继续后执行。";
   if (/DOCUMENT_INVALID|INVALID_DOCUMENT|RESPONSE_INVALID/.test(code))
     return "下载状态无法确认，已显示内容保留。请重新读取队列。";
   if (/INDEX_/.test(code))
@@ -341,14 +448,41 @@ export const downloadTaskLabel = (task: DownloadTask) =>
       }[task.localFiles as "missing" | "incomplete" | "unavailable"] ??
       "文件状态待核对")
     : downloadPhaseLabel(task.phase);
-export const filterDownloadTasks = (tasks: DownloadTask[], filter: string) =>
+export function parseDownloadInputs(input: string): string[] {
+  const inputs = input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (
+    inputs.length === 0 ||
+    inputs.length > 50 ||
+    inputs.some((line) => line.length > 2048)
+  )
+    throw new DownloadError("DOWNLOAD_BATCH_INPUT_INVALID");
+  return inputs;
+}
+export const filterDownloadTasks = (
+  tasks: DownloadTask[],
+  filter: string,
+  query = "",
+  source: DownloadSource | "all" = "all",
+) =>
   tasks.filter(
     (task) =>
-      filter === "all" ||
-      (filter === "downloaded" && isDownloadPresent(task)) ||
-      (filter === "error" && downloadNeedsAttention(task)) ||
-      (filter === "active" && !["error", "downloaded"].includes(task.phase)),
+      (source === "all" || task.source === source) &&
+      [task.title, task.workId, sourceLabelForSearch(task.source)]
+        .join(" ")
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .includes(query.trim().normalize("NFKC").toLocaleLowerCase()) &&
+      (filter === "all" ||
+        (filter === "history" && task.phase === "downloaded") ||
+        (filter === "downloaded" && isDownloadPresent(task)) ||
+        (filter === "error" && downloadNeedsAttention(task)) ||
+        (filter === "active" && !["error", "downloaded"].includes(task.phase))),
   );
+const sourceLabelForSearch = (source: DownloadSource) =>
+  source === "Pica" ? "Pica 哔咔" : "JM";
 const activeTask = (task: DownloadTask) =>
   ["queued", "downloading", "verifying", "saving"].includes(task.phase) ||
   (["paused", "error"].includes(task.phase) &&
@@ -367,6 +501,7 @@ export interface DownloadState {
   busy: boolean;
   error: string;
   plan: DownloadPlan | null;
+  batchPlan: DownloadBatchPlan | null;
 }
 /** Read polling is single-flight and never starts or resumes persisted work. */
 export class DownloadController {
@@ -378,6 +513,7 @@ export class DownloadController {
     busy: false,
     error: "",
     plan: null,
+    batchPlan: null,
   };
   private listeners = new Set<(state: DownloadState) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -490,7 +626,150 @@ export class DownloadController {
   cancelPlan() {
     this.planEpoch++;
     this.preparedContext = null;
-    this.publish({ plan: null });
+    this.publish({ plan: null, batchPlan: null });
+  }
+  async prepareBatch(
+    context: DownloadContext,
+    inputs: string[],
+  ): Promise<void> {
+    if (this.state.busy) return;
+    this.cancelPlan();
+    const token = this.planEpoch,
+      epoch = this.epoch;
+    this.publish({ busy: true, error: "" });
+    clearTimeout(this.timer);
+    try {
+      await this.readPromise;
+      if (epoch !== this.epoch || token !== this.planEpoch) return;
+      const batchPlan = await this.adapter.prepareBatch(context, inputs);
+      if (
+        batchPlan.plans.some(
+          (plan) =>
+            plan.source !== context.scope.source ||
+            plan.rootId !== context.rootId ||
+            plan.generation !== context.generation,
+        )
+      )
+        throw new DownloadError("DOWNLOAD_PLAN_STALE");
+      if (epoch === this.epoch && token === this.planEpoch) {
+        this.preparedContext = contextKey(context);
+        this.publish({ batchPlan });
+      }
+    } catch (cause) {
+      if (epoch === this.epoch && token === this.planEpoch)
+        this.publish({ error: downloadErrorMessage(cause) });
+    } finally {
+      if (epoch === this.epoch) {
+        this.publish({ busy: false });
+        this.schedule();
+      }
+    }
+  }
+  async confirmBatch(context: DownloadContext): Promise<boolean> {
+    const batch = this.state.batchPlan;
+    if (!batch?.batchId || this.state.busy) return false;
+    if (this.preparedContext !== contextKey(context)) {
+      this.cancelPlan();
+      this.publish({ error: downloadErrorMessage("DOWNLOAD_PLAN_STALE") });
+      return false;
+    }
+    const epoch = this.epoch;
+    this.publish({ busy: true, error: "" });
+    clearTimeout(this.timer);
+    try {
+      await this.readPromise;
+      if (epoch !== this.epoch) return false;
+      const next = await this.adapter.confirmBatch(batch.batchId);
+      if (epoch !== this.epoch) return false;
+      if (
+        !batch.plans.every((plan) =>
+          next.tasks.some(
+            (task) =>
+              task.id === plan.planId &&
+              task.source === plan.source &&
+              task.workId === plan.workId,
+          ),
+        )
+      )
+        return invalid();
+      this.accept(next);
+      this.cancelPlan();
+      return true;
+    } catch (cause) {
+      if (epoch === this.epoch) {
+        this.cancelPlan();
+        this.publish({ error: downloadErrorMessage(cause) });
+      }
+      return false;
+    } finally {
+      if (epoch === this.epoch) {
+        this.publish({ busy: false });
+        this.schedule();
+      }
+    }
+  }
+  private async changeQueue(
+    operation: () => Promise<DownloadSnapshot>,
+  ): Promise<boolean> {
+    if (this.state.busy) return false;
+    const epoch = this.epoch;
+    this.publish({ busy: true, error: "" });
+    clearTimeout(this.timer);
+    try {
+      await this.readPromise;
+      if (epoch !== this.epoch) return false;
+      const next = await operation();
+      if (epoch !== this.epoch) return false;
+      this.accept(next);
+      return true;
+    } catch (cause) {
+      if (epoch === this.epoch)
+        this.publish({ error: downloadErrorMessage(cause) });
+      return false;
+    } finally {
+      if (epoch === this.epoch) {
+        this.publish({ busy: false });
+        this.schedule();
+      }
+    }
+  }
+  pauseAll() {
+    return this.changeQueue(() => this.adapter.pauseAll());
+  }
+  resumeMany(current: DownloadScope, tasks: DownloadTask[]) {
+    if (
+      !tasks.length ||
+      tasks.some((task) => !canControlDownload(task, "resume", current))
+    )
+      return Promise.resolve(false);
+    return this.changeQueue(() =>
+      this.adapter.resumeMany(
+        current,
+        tasks.map((task) => ({
+          taskId: task.id,
+          expectedRevision: task.revision,
+        })),
+      ),
+    );
+  }
+  removeHistory(tasks: DownloadTask[]) {
+    if (!tasks.length || tasks.some((task) => task.phase !== "downloaded"))
+      return Promise.resolve(false);
+    return this.changeQueue(async () => {
+      const next = await this.adapter.removeHistory(
+        tasks.map((task) => ({
+          taskId: task.id,
+          expectedRevision: task.revision,
+        })),
+      );
+      if (
+        next.tasks.some((task) =>
+          tasks.some((removed) => removed.id === task.id),
+        )
+      )
+        return invalid();
+      return next;
+    });
   }
   async confirm(context: DownloadContext): Promise<boolean> {
     const plan = this.state.plan;
@@ -588,6 +867,12 @@ export class DownloadController {
     this.readingFiles = false;
     this.pendingRecheck = false;
     this.listeners.clear();
-    this.state = { ...this.state, reading: false, busy: false, plan: null };
+    this.state = {
+      ...this.state,
+      reading: false,
+      busy: false,
+      plan: null,
+      batchPlan: null,
+    };
   }
 }

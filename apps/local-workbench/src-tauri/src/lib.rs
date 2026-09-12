@@ -1,6 +1,7 @@
 mod accounts;
 mod downloads;
 mod library;
+mod matches;
 mod phone;
 
 use accounts::DesktopAccounts;
@@ -165,6 +166,14 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             downloads::jm_download_confirm,
             downloads::jm_download_read,
             downloads::jm_download_control,
+            downloads::jm_download_batch_prepare,
+            downloads::jm_download_batch_confirm,
+            downloads::jm_download_pause_all,
+            downloads::jm_download_resume_many,
+            downloads::jm_download_history_remove,
+            matches::source_matches_read,
+            matches::source_matches_confirm,
+            matches::source_matches_unlink,
             library::library_read,
             library::library_choose,
             library::library_scan,

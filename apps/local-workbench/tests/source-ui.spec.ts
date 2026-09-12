@@ -8,6 +8,10 @@ import type {
 } from "../src/source-types.ts";
 import type { BooklistsDocument } from "../src/booklists.ts";
 import type { WorkbenchPreferences } from "../src/preferences.ts";
+import type {
+  SourceMatchesSnapshot,
+  SourceMatchWork,
+} from "../src/source-matches-types.ts";
 
 // These are Chromium browser-preview integration tests using synthetic Tauri IPC.
 // They do not contact source sites, use real credentials, run native WebViews,
@@ -34,6 +38,8 @@ type MockOptions = {
   picaDuplicateRecord?: number;
   coverFailureOnce?: boolean;
   cacheSnapshot?: CatalogSnapshot;
+  crossSourcePhone?: boolean;
+  holdMatchDetail?: boolean;
 };
 type Call = {
   command: string;
@@ -53,6 +59,9 @@ type Hooks = {
   booklists: { revision: number; value: BooklistsDocument };
   preferences: { revision: number; value: WorkbenchPreferences };
   following: Record<Source, FollowingSnapshot>;
+  matches: SourceMatchesSnapshot;
+  matchHeld: boolean;
+  releaseMatch?: () => void;
   loginStarted: boolean;
   jmHeld: boolean;
   picaHeld: boolean;
@@ -748,6 +757,11 @@ async function installMock(page: Page, options: MockOptions = {}) {
       loginStarted: false,
       jmHeld: false,
       picaHeld: false,
+      matchHeld: false,
+      matches: JSON.parse(
+        localStorage.getItem("synthetic.source.matches") ??
+          '{"revision":0,"pairs":[]}',
+      ) as SourceMatchesSnapshot,
       booklists: { revision: 0, value: { version: 1, lists: [] } },
       preferences: {
         revision: 0,
@@ -817,6 +831,54 @@ async function installMock(page: Page, options: MockOptions = {}) {
           });
           if (command === "read_preferences") return clone(hooks.preferences);
           if (command === "jm_download_read") return { revision: 0, tasks: [] };
+          if (command === "source_matches_read") return clone(hooks.matches);
+          if (command === "source_matches_confirm") {
+            if (raw.revision !== hooks.matches.revision)
+              throw { code: "REVISION_CONFLICT" };
+            const jm = raw.jm as SourceMatchWork,
+              pica = raw.pica as SourceMatchWork;
+            if (
+              hooks.matches.pairs.some(
+                (pair) =>
+                  pair.jm.workId === jm.workId ||
+                  pair.pica.workId === pica.workId,
+              )
+            )
+              throw { code: "SOURCE_MATCH_CONFLICT" };
+            hooks.matches = {
+              revision: hooks.matches.revision + 1,
+              pairs: [
+                ...hooks.matches.pairs,
+                {
+                  id: "a".repeat(64),
+                  jm,
+                  pica,
+                  confirmedAt: 1800000000000,
+                  evidence: "manual",
+                },
+              ],
+            };
+            localStorage.setItem(
+              "synthetic.source.matches",
+              JSON.stringify(hooks.matches),
+            );
+            return clone(hooks.matches);
+          }
+          if (command === "source_matches_unlink") {
+            if (raw.revision !== hooks.matches.revision)
+              throw { code: "REVISION_CONFLICT" };
+            hooks.matches = {
+              revision: hooks.matches.revision + 1,
+              pairs: hooks.matches.pairs.filter(
+                (pair) => pair.id !== raw.pairId,
+              ),
+            };
+            localStorage.setItem(
+              "synthetic.source.matches",
+              JSON.stringify(hooks.matches),
+            );
+            return clone(hooks.matches);
+          }
           if (command === "read_booklists") return clone(hooks.booklists);
           if (command === "library_read")
             return {
@@ -834,11 +896,23 @@ async function installMock(page: Page, options: MockOptions = {}) {
             };
           if (command === "phone_library_read")
             return {
-              revision: 0,
+              revision: options.crossSourcePhone ? 1 : 0,
               importedNames: [],
               importedAt: null,
               importFileName: null,
-              manualEntries: [],
+              manualEntries: options.crossSourcePhone
+                ? [
+                    {
+                      id: "e".repeat(64),
+                      name: "合成手机作品",
+                      reference: {
+                        source: "Pica",
+                        workId: "0123456789abcdef01234567",
+                      },
+                      markedAt: 1800000000000,
+                    },
+                  ]
+                : [],
             };
           if (
             command === "write_preferences" ||
@@ -958,6 +1032,16 @@ async function installMock(page: Page, options: MockOptions = {}) {
             return { ...scope, ...clone(current) };
           }
           if (command === "source_query") {
+            if (
+              options.holdMatchDetail &&
+              source === "Pica" &&
+              raw.kind === "detail"
+            ) {
+              hooks.matchHeld = true;
+              await new Promise<void>((resolve) => {
+                hooks.releaseMatch = resolve;
+              });
+            }
             if (options.expireJM && source === "JM" && !expiryUsed) {
               expiryUsed = true;
               hooks.accounts = hooks.accounts.map((account) =>
@@ -1204,6 +1288,87 @@ async function createFromDetail(page: Page, name: string) {
   await expect(page.getByTestId("source-detail")).toBeVisible();
   return page.evaluate(() => window.sourceTest.booklists.value.lists[0].id);
 }
+
+test("manual cross-source confirmation previews both works, survives restart and unlinks without changing phone evidence", async ({
+  page,
+}) => {
+  const picaId = "0123456789abcdef01234567";
+  await installMock(page, { crossSourcePhone: true });
+  await detail(page);
+  await expect(page.getByTestId("source-detail-stock")).toContainText(
+    "尚未匹配",
+  );
+  await page.getByTestId("source-match-id").fill(picaId);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter(
+        (call) => call.command === "source_matches_confirm",
+      ),
+    ),
+  ).toEqual([]);
+  await page.getByTestId("source-match-lookup").click();
+  await expect(page.getByTestId("source-match-preview")).toContainText(
+    "JM · 123",
+  );
+  await expect(page.getByTestId("source-match-preview")).toContainText(
+    "哔咔 · " + picaId,
+  );
+  await expect(page.getByTestId("source-match-confirm")).toBeDisabled();
+  await page.getByLabel("我已核对内容与版本，确认是同一作品").check();
+  await page.getByTestId("source-match-confirm").click();
+  await expect(page.getByTestId("source-match-confirmed")).toContainText(
+    "已手动确认同一作品",
+  );
+  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
+  await page.reload();
+  await detail(page);
+  await expect(page.getByTestId("source-match-confirmed")).toContainText(
+    picaId,
+  );
+  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
+  await page.getByTestId("source-match-unlink").click();
+  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
+  await page.getByTestId("source-match-unlink-confirm").click();
+  await expect(page.getByTestId("source-match-confirmed")).toHaveCount(0);
+  await expect(page.getByTestId("source-detail-stock")).toContainText(
+    "尚未匹配",
+  );
+  expect(await page.evaluate(() => window.sourceTest.matches.pairs)).toEqual(
+    [],
+  );
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter((call) =>
+        /phone_library_(mark|unmark)|library_link|jm_download_(prepare|confirm)/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+});
+
+test("editing the opposite ID discards a late detail response before manual confirmation", async ({
+  page,
+}) => {
+  await installMock(page, { holdMatchDetail: true });
+  await detail(page);
+  await page.getByTestId("source-match-id").fill("0123456789abcdef01234567");
+  await page.getByTestId("source-match-lookup").click();
+  await expect
+    .poll(() => page.evaluate(() => window.sourceTest.matchHeld))
+    .toBe(true);
+  await page.getByTestId("source-match-id").fill("fedcba9876543210fedcba98");
+  await page.evaluate(() => window.sourceTest.releaseMatch!());
+  await expect(page.getByTestId("source-match-lookup")).toBeEnabled();
+  await expect(page.getByTestId("source-match-preview")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter(
+        (call) => call.command === "source_matches_confirm",
+      ),
+    ),
+  ).toEqual([]);
+});
 
 test("disconnected source opens account settings; pending login clears secret and preserves retry input", async ({
   page,

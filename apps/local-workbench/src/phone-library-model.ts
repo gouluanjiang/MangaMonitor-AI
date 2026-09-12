@@ -5,6 +5,8 @@ import type {
 } from "./phone-library-types.ts";
 import type { SourceWork } from "./source-types.ts";
 import { createLibraryMatcher } from "./library-model.ts";
+import type { SourceMatchPair } from "./source-matches-types.ts";
+import { createSourceAliasResolver } from "./source-matches-model.ts";
 
 /** Identity evidence preserves case, versions and every bracketed qualifier. */
 export const phoneNameKey = (name: string) =>
@@ -48,7 +50,11 @@ export function phoneLibraryRows(
 }
 const referenceKey = (value: { source: string; workId: string }) =>
   value.source + ":" + value.workId;
-function phoneIndex(phone: PhoneLibrarySnapshot) {
+function phoneIndex(
+  phone: PhoneLibrarySnapshot,
+  pairs: SourceMatchPair[] = [],
+) {
+  const aliases = createSourceAliasResolver(pairs);
   return {
     names: new Set([
       ...phone.importedNames.map(phoneNameKey),
@@ -58,13 +64,16 @@ function phoneIndex(phone: PhoneLibrarySnapshot) {
     ]),
     refs: new Set(
       phone.manualEntries.flatMap((entry) =>
-        entry.reference ? [referenceKey(entry.reference)] : [],
+        entry.reference ? aliases(entry.reference).map(referenceKey) : [],
       ),
     ),
   };
 }
-export function createPhoneItemMatcher(phone: PhoneLibrarySnapshot) {
-  const index = phoneIndex(phone);
+export function createPhoneItemMatcher(
+  phone: PhoneLibrarySnapshot,
+  pairs: SourceMatchPair[] = [],
+) {
+  const index = phoneIndex(phone, pairs);
   return (item: LibraryItem): "owned" | "downloaded" =>
     index.names.has(phoneNameKey(item.fileName)) ||
     (item.sourceRef !== null && index.refs.has(referenceKey(item.sourceRef)))
@@ -74,7 +83,8 @@ export function createPhoneItemMatcher(phone: PhoneLibrarySnapshot) {
 export const phoneStatusForItem = (
   phone: PhoneLibrarySnapshot,
   item: LibraryItem,
-) => createPhoneItemMatcher(phone)(item);
+  pairs: SourceMatchPair[] = [],
+) => createPhoneItemMatcher(phone, pairs)(item);
 export interface InventoryMatch {
   kind:
     | "owned"
@@ -91,20 +101,30 @@ export function createInventoryMatcher(
   library: LibrarySnapshot | undefined,
   phone: PhoneLibrarySnapshot,
   phoneReady = true,
+  pairs: SourceMatchPair[] = [],
+  matchesReady = true,
 ) {
-  const local = createLibraryMatcher(library),
-    index = phoneIndex(phone),
-    status = createPhoneItemMatcher(phone);
+  const currentPairs = matchesReady ? pairs : [];
+  const local = createLibraryMatcher(library, currentPairs),
+    directIndex = phoneIndex(phone),
+    index = phoneIndex(phone, currentPairs),
+    status = createPhoneItemMatcher(phone, currentPairs);
   return (work: WorkIdentity): InventoryMatch => {
     const match = local(work);
     if (!phoneReady) return { kind: "unknown", items: match.items };
+    if (directIndex.refs.has(referenceKey(work)))
+      return { kind: "owned", items: match.items };
+    if (
+      match.kind === "exact" &&
+      match.items.some((item) => status(item) === "owned")
+    )
+      return { kind: "owned", items: match.items };
+    if (!matchesReady) return { kind: "unknown", items: match.items };
     if (index.refs.has(referenceKey(work)))
       return { kind: "owned", items: match.items };
     if (match.kind === "exact")
       return {
-        kind: match.items.some((item) => status(item) === "owned")
-          ? "owned"
-          : "downloaded",
+        kind: "downloaded",
         items: match.items,
       };
     if (match.kind === "candidate" || index.names.has(phoneNameKey(work.title)))
@@ -132,5 +152,5 @@ export const inventoryLabel = (match: InventoryMatch) =>
     missing: "尚未匹配",
     incomplete: "电脑目录未读完",
     unconfigured: "尚未设置漫画库",
-    unknown: "手机名单未读取，状态待核对",
+    unknown: "名单或关联未读取，状态待核对",
   })[match.kind];

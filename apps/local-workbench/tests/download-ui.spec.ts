@@ -1215,6 +1215,12 @@ test("multiple queued works pause and resume explicitly under one source after r
     page.getByTestId("download-phase-" + "7b".padStart(64, "0")),
   ).toHaveText("已暂停");
   await page.getByTestId("download-resume-many-JM").click();
+  await expect(
+    page.getByTestId("download-phase-" + "7b".padStart(64, "0")),
+  ).toHaveText("等待下载");
+  await expect
+    .poll(async () => (await calls(page, "jm_download_resume_many")).length)
+    .toBe(1);
   expect((await calls(page, "jm_download_resume_many"))[0].args).toEqual({
     scope: { source: "JM", sessionId: "synthetic-JM" },
     tasks: [

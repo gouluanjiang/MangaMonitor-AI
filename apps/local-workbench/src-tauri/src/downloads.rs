@@ -559,7 +559,7 @@ pub(crate) async fn jm_download_confirm<R: Runtime>(
             worker_downloads
                 .service
                 .confirm(&worker_store, &plan_id, expected_revision)?;
-        let scheduled = scheduled_tasks(&snapshot, &[plan_id.clone()], &session)?;
+        let scheduled = scheduled_tasks(&snapshot, std::slice::from_ref(&plan_id), &session)?;
         worker_downloads
             .plans
             .lock()

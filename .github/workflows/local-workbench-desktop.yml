@@ -1,0 +1,228 @@
+name: Local workbench desktop
+
+on:
+  push:
+    branches: [main, 'assistant-*', 'codex/**']
+    paths:
+      - 'apps/local-workbench/**'
+      - 'crates/workbench-storage/**'
+      - 'crates/workbench-credentials/**'
+      - 'crates/workbench-sources/**'
+      - 'crates/workbench-accounts/**'
+      - 'crates/workbench-library/**'
+      - 'crates/workbench-downloads/**'
+      - 'crates/cloud-monitor/**'
+      - 'crates/jm-adapter/**'
+      - 'crates/pica-adapter/**'
+      - 'crates/rules-core/**'
+      - 'crates/state-model/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/local-workbench-desktop.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/local-workbench/**'
+      - 'crates/workbench-storage/**'
+      - 'crates/workbench-credentials/**'
+      - 'crates/workbench-sources/**'
+      - 'crates/workbench-accounts/**'
+      - 'crates/workbench-library/**'
+      - 'crates/workbench-downloads/**'
+      - 'crates/cloud-monitor/**'
+      - 'crates/jm-adapter/**'
+      - 'crates/pica-adapter/**'
+      - 'crates/rules-core/**'
+      - 'crates/state-model/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/local-workbench-desktop.yml'
+  workflow_dispatch:
+    inputs:
+      package_installer:
+        description: Build and upload a development installer for a planned delivery
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-workbench-desktop-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Set up pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.19.0'
+          run_install: false
+      - name: Set up Rust and the MSVC target
+        run: rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
+      - name: Restore native build dependencies
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            apps/local-workbench/src-tauri/target
+          key: desktop-windows-rust-1.98.1-${{ hashFiles('Cargo.lock', 'apps/local-workbench/src-tauri/Cargo.lock') }}
+          restore-keys: desktop-windows-rust-1.98.1-
+      - name: Install locked frontend dependencies
+        working-directory: apps/local-workbench
+        run: pnpm install --frozen-lockfile
+      - name: Check desktop Rust formatting
+        # --all follows path dependencies into the separate headless workspace.
+        run: cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --package mangamonitor-workbench-preview -- --check
+      - name: Test offline document storage and account workflows
+        run: cargo +1.98.1 test --locked -p workbench-storage -p workbench-credentials -p workbench-sources -p workbench-accounts -p workbench-library -p workbench-downloads -- --test-threads=2
+      - name: Verify Windows credential persistence in random CI slots
+        run: cargo +1.98.1 test --locked -p workbench-credentials windows_credential_manager_roundtrip_uses_only_random_ci_slots -- --ignored --test-threads=1
+      - name: Build frontend assets for native context tests
+        working-directory: apps/local-workbench
+        run: pnpm build
+      - name: Test native IPC and window permissions
+        id: native-ipc
+        run: cargo +1.98.1 test --manifest-path apps/local-workbench/src-tauri/Cargo.toml --lib --locked -- --test-threads=2
+      - name: Explain native lock drift after failed validation
+        if: failure() && steps.native-ipc.outcome == 'failure'
+        # Diagnostic only: the failed locked check still blocks all later builds.
+        # --workspace retains registry pins and updates local dependency edges.
+        run: |
+          cargo +1.98.1 update --manifest-path apps/local-workbench/src-tauri/Cargo.toml --workspace --offline
+          $resolverExit = $LASTEXITCODE
+          git diff -- apps/local-workbench/src-tauri/Cargo.lock
+          if ($resolverExit -ne 0) { throw 'Native lock diagnostic could not resolve offline' }
+      - name: Lint desktop commands and tests
+        run: cargo +1.98.1 clippy --manifest-path apps/local-workbench/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Build desktop executable for validation
+        if: github.event_name != 'workflow_dispatch' || !inputs.package_installer
+        working-directory: apps/local-workbench
+        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle -- --locked
+      - name: Build development NSIS installer
+        if: github.event_name == 'workflow_dispatch' && inputs.package_installer
+        working-directory: apps/local-workbench
+        run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+      - name: Select the current version installer
+        if: github.event_name == 'workflow_dispatch' && inputs.package_installer
+        id: current-installer
+        shell: pwsh
+        run: |
+          $appConfig = Get-Content -LiteralPath 'apps/local-workbench/src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json
+          $installerName = '{0}_{1}_x64-setup.exe' -f $appConfig.productName, $appConfig.version
+          $installerPath = Join-Path 'apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis' $installerName
+          if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) { throw 'Current version installer is missing' }
+          "installer=$installerPath" >> $env:GITHUB_OUTPUT
+      - name: Upload development installer for review
+        if: github.event_name == 'workflow_dispatch' && inputs.package_installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-dev-windows-nsis-${{ github.sha }}
+          path: ${{ steps.current-installer.outputs.installer }}
+          retention-days: 7
+          if-no-files-found: error
+      - name: Save verified native build before WebView smoke
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            apps/local-workbench/src-tauri/target
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Ensure WebView2 Runtime for the CI application
+        working-directory: apps/local-workbench
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          # Microsoft documents pv > 0.0.0.0 in either location as installed:
+          # https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
+          function Get-WebView2RuntimeVersion {
+            $registryKeys = @(
+              'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+              'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+            )
+            foreach ($registryKey in $registryKeys) {
+              $pv = Get-ItemPropertyValue -LiteralPath $registryKey -Name 'pv' -ErrorAction SilentlyContinue
+              [version]$parsedVersion = $null
+              if ([version]::TryParse([string]$pv, [ref]$parsedVersion) -and $parsedVersion -gt [version]'0.0.0.0') {
+                return $parsedVersion.ToString()
+              }
+            }
+            return $null
+          }
+
+          $evidenceDirectory = Join-Path $PWD 'native-smoke-results'
+          [System.IO.Directory]::CreateDirectory($evidenceDirectory) | Out-Null
+          $runtimeEvidence = [ordered]@{
+            versionBefore = $null
+            installAttempted = $false
+            installerExitCode = $null
+            versionAfter = $null
+            error = $null
+          }
+          try {
+            $runtimeVersion = Get-WebView2RuntimeVersion
+            $runtimeEvidence.versionBefore = $runtimeVersion
+            if (-not $runtimeVersion) {
+              $runtimeEvidence.installAttempted = $true
+              $bootstrapperPath = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+              Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapperPath
+              $installer = Start-Process -FilePath $bootstrapperPath -ArgumentList '/silent', '/install' -WindowStyle Hidden -Wait -PassThru
+              $runtimeEvidence.installerExitCode = $installer.ExitCode
+            }
+            $runtimeVersion = Get-WebView2RuntimeVersion
+            $runtimeEvidence.versionAfter = $runtimeVersion
+            if (-not $runtimeVersion) {
+              throw "WebView2 Runtime is still missing after CI setup. Bootstrapper exit code: $($runtimeEvidence.installerExitCode)"
+            }
+            Write-Output "WebView2 Runtime ready: $runtimeVersion"
+          } catch {
+            $runtimeEvidence.error = $_.Exception.Message
+            throw
+          } finally {
+            $runtimeEvidence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'webview2-runtime.json') -Encoding utf8
+          }
+      - name: Verify the actual Windows WebView and restart persistence
+        working-directory: apps/local-workbench
+        timeout-minutes: 5
+        run: node tests/native-webview-smoke.mjs
+      - name: Upload verified executable for manual acceptance
+        # This is the already-tested development executable, not an installer or release.
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-dev-executable-${{ github.sha }}
+          path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/mangamonitor-workbench-preview.exe
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload native smoke failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-webview-failure
+          path: apps/local-workbench/native-smoke-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -93,8 +93,15 @@ fn base_evidence(request: &SourceBridgeRequest) -> SourcePreflightEvidence {
     }
 }
 
-async fn enumerate_jm(request: &SourceBridgeRequest) -> Result<SourcePreflightEvidence, String> {
-    let mut client = jm_adapter::JmClient::new(jm_adapter::DEFAULT_DOMAIN)?;
+async fn enumerate_jm(
+    request: &SourceBridgeRequest,
+    download: bool,
+) -> Result<SourcePreflightEvidence, String> {
+    let mut client = if download {
+        jm_adapter::JmClient::new_for_download(jm_adapter::DEFAULT_DOMAIN)?
+    } else {
+        jm_adapter::JmClient::new(jm_adapter::DEFAULT_DOMAIN)?
+    };
     let chapters = client.preflight_chapters(&request.source_work_id).await?;
     let expected_chapter_count =
         u64::try_from(chapters.len()).map_err(|_| "JM_PREFLIGHT_CHAPTER_COUNT_OVERFLOW")?;
@@ -121,16 +128,29 @@ async fn enumerate_jm(request: &SourceBridgeRequest) -> Result<SourcePreflightEv
     Ok(evidence)
 }
 
-async fn enumerate_pica(
+async fn enumerate_pica<Guard>(
     request: &SourceBridgeRequest,
     token: &str,
-) -> Result<SourcePreflightEvidence, String> {
+    download: bool,
+    mut before_request: Guard,
+) -> Result<SourcePreflightEvidence, String>
+where
+    Guard: FnMut() -> Result<(), String>,
+{
     if token.trim().is_empty() {
         return Err("PICA_PREFLIGHT_TOKEN_REQUIRED".into());
     }
-    let mut client = pica_adapter::PicaClient::new(token.to_owned())?;
+    let mut client = if download {
+        pica_adapter::PicaClient::new_for_download(token.to_owned())?
+    } else {
+        pica_adapter::PicaClient::new(token.to_owned())?
+    };
     let chapters = client
-        .preflight_chapters(&request.source_work_id, PICA_PREFLIGHT_MAX_PAGES)
+        .preflight_chapters_with_guard(
+            &request.source_work_id,
+            PICA_PREFLIGHT_MAX_PAGES,
+            &mut before_request,
+        )
         .await?;
     let expected_chapter_count = u64::try_from(chapters.chapters.len())
         .map_err(|_| "PICA_PREFLIGHT_CHAPTER_COUNT_OVERFLOW")?;
@@ -146,10 +166,11 @@ async fn enumerate_pica(
     let mut result = Vec::with_capacity(chapters.chapters.len());
     for chapter in chapters.chapters {
         let images = client
-            .preflight_chapter_images(
+            .preflight_chapter_images_with_guard(
                 &request.source_work_id,
                 chapter.chapter_order,
                 PICA_PREFLIGHT_MAX_PAGES,
+                &mut before_request,
             )
             .await?;
         result.push(PreflightChapter {
@@ -174,14 +195,19 @@ async fn enumerate_pica(
 async fn enumerate_source(
     request: &SourceBridgeRequest,
     pica_token: Option<&str>,
+    download: bool,
 ) -> Result<SourcePreflightEvidence, String> {
     match request.source.as_str() {
-        "jm" => enumerate_jm(request).await,
-        "pica" => enumerate_pica(
-            request,
-            pica_token.ok_or("PICA_PREFLIGHT_TOKEN_REQUIRED")?,
-        )
-        .await,
+        "jm" => enumerate_jm(request, download).await,
+        "pica" => {
+            enumerate_pica(
+                request,
+                pica_token.ok_or("PICA_PREFLIGHT_TOKEN_REQUIRED")?,
+                download,
+                || Ok(()),
+            )
+            .await
+        }
         _ => Err("UNSUPPORTED_LIVE_SOURCE_PREFLIGHT_SOURCE".into()),
     }
 }
@@ -212,7 +238,16 @@ where
         request,
     )?;
     authorization_unchanged(&before, &after)?;
+    preflight_result(request, plan, evidence, before, after)
+}
 
+fn preflight_result(
+    request: &SourceBridgeRequest,
+    plan: &LocalExecutionPlan,
+    evidence: SourcePreflightEvidence,
+    before: SourcePreflightAuthorization,
+    after: SourcePreflightAuthorization,
+) -> Result<LiveSourcePreflightResult, String> {
     let proof = source_preflight::validate(plan, request, &evidence)?;
     Ok(LiveSourcePreflightResult {
         schema_version: LIVE_SOURCE_PREFLIGHT_SCHEMA_VERSION,
@@ -265,10 +300,56 @@ where
         command,
         plan,
         request,
-        || enumerate_source(request, pica_token),
+        || enumerate_source(request, pica_token, false),
         reload,
     )
     .await
+}
+
+/// Explicit desktop downloads use immediate metadata pacing. Pica pagination
+/// also reloads the caller's account/task scope before every metadata request.
+pub(crate) async fn run_for_download<Reload>(
+    state: &State,
+    ledger: &GateLedger,
+    command: &ExecutorCommand,
+    plan: &LocalExecutionPlan,
+    request: &SourceBridgeRequest,
+    pica_token: Option<&str>,
+    mut reload: Reload,
+) -> Result<LiveSourcePreflightResult, String>
+where
+    Reload: FnMut() -> Result<(State, GateLedger), String>,
+{
+    if request.source != "pica" {
+        return run_with_enumerator(
+            state,
+            ledger,
+            command,
+            plan,
+            request,
+            || enumerate_source(request, pica_token, true),
+            reload,
+        )
+        .await;
+    }
+    let before = source_preflight_authorization::authorize(state, ledger, command, plan, request)?;
+    let mut check_current = || {
+        let (state, ledger) = reload()?;
+        let current =
+            source_preflight_authorization::authorize(&state, &ledger, command, plan, request)?;
+        authorization_unchanged(&before, &current)
+    };
+    let evidence = enumerate_pica(
+        request,
+        pica_token.ok_or("PICA_PREFLIGHT_TOKEN_REQUIRED")?,
+        true,
+        &mut check_current,
+    )
+    .await?;
+    let (state, ledger) = reload()?;
+    let after = source_preflight_authorization::authorize(&state, &ledger, command, plan, request)?;
+    authorization_unchanged(&before, &after)?;
+    preflight_result(request, plan, evidence, before, after)
 }
 
 #[cfg(test)]
@@ -291,13 +372,27 @@ mod tests {
         SourceBridgeRequest,
         SourcePreflightEvidence,
     ) {
+        setup_source("jm", "123456")
+    }
+
+    fn setup_source(
+        source: &str,
+        id: &str,
+    ) -> (
+        State,
+        GateLedger,
+        ExecutorCommand,
+        LocalExecutionPlan,
+        SourceBridgeRequest,
+        SourcePreflightEvidence,
+    ) {
         let task = Task {
             task_id: "TASK_A6_9".into(),
             work_id: "WORK_A6_9".into(),
             first_seen: "fixed".into(),
             task_revision: 1,
             target: Target {
-                source_key: "jm:123456".into(),
+                source_key: format!("{source}:{id}"),
                 author: "Writer".into(),
                 title: "A6.9".into(),
                 version: Version::default(),
@@ -329,7 +424,11 @@ mod tests {
             }],
         };
         let target_hash = target_hash(&task);
-        let digest = hash(&(task.task_id.as_str(), task.task_revision, target_hash.as_str()));
+        let digest = hash(&(
+            task.task_id.as_str(),
+            task.task_revision,
+            target_hash.as_str(),
+        ));
         let command = ExecutorCommand {
             schema_version: 1,
             command_id: format!("EXEC_{}", &digest[..20]),
@@ -337,8 +436,8 @@ mod tests {
             work_id: task.work_id.clone(),
             task_revision: task.task_revision,
             target_hash,
-            source: "jm".into(),
-            source_work_id: "123456".into(),
+            source: source.into(),
+            source_work_id: id.into(),
             action: "download".into(),
             intent: "DOWNLOAD_TO_STAGING_ONLY".into(),
             target: task.target.clone(),
@@ -348,12 +447,45 @@ mod tests {
         let mut evidence = base_evidence(&request);
         evidence.expected_chapter_count = 1;
         evidence.chapters = vec![PreflightChapter {
-            chapter_id: "123456".into(),
+            chapter_id: id.into(),
             chapter_order: 1,
             expected_images: 3,
-            image_pagination: None,
+            image_pagination: (source == "pica").then(|| PaginationProof {
+                total_pages: 1,
+                successful_pages: vec![1],
+                failed_pages: vec![],
+            }),
         }];
+        if source == "pica" {
+            evidence.chapter_pagination = Some(PaginationProof {
+                total_pages: 1,
+                successful_pages: vec![1],
+                failed_pages: vec![],
+            });
+        }
         (state, ledger, command, plan, request, evidence)
+    }
+
+    #[tokio::test]
+    async fn pica_download_reloads_account_scope_before_its_first_metadata_request() {
+        let (state, ledger, command, plan, request, _) =
+            setup_source("pica", "111111111111111111111111");
+        let mut checks = 0;
+        let result = run_for_download(
+            &state,
+            &ledger,
+            &command,
+            &plan,
+            &request,
+            Some("synthetic-token"),
+            || {
+                checks += 1;
+                Err("SESSION_EXPIRED".into())
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap_err(), "SESSION_EXPIRED");
+        assert_eq!(checks, 1);
     }
 
     #[tokio::test]

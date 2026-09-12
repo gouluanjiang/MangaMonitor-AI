@@ -1,0 +1,56 @@
+//! Bounded, revisioned storage for the desktop preview's private UI documents.
+//!
+//! Library root paths are stored only as private metadata selected by the native picker.
+mod background;
+mod cache;
+mod completeness;
+mod discovery;
+mod downloads;
+mod library;
+mod matches;
+mod model;
+mod phone;
+mod store;
+
+pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
+pub use cache::{AccountCache, CacheEntry};
+pub use completeness::*;
+pub use discovery::*;
+pub use downloads::*;
+pub use library::*;
+pub use matches::*;
+pub use model::{
+    AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,
+    FollowedWork, ResourcePreferences, ResourceProfile, Source, WorkIdentity, WorkbenchPreferences,
+    MAX_FOLLOWED_ACCOUNTS, MAX_FOLLOWED_AUTHORS_PER_ACCOUNT, MAX_FOLLOWED_WORKS_PER_ACCOUNT,
+    MAX_FOLLOWING_NAME_CHARACTERS, MAX_SAFE_INTEGER,
+};
+pub use phone::{
+    phone_library_from_path, phone_library_mark, phone_library_read, phone_library_unmark,
+    PhoneLibraryDocument, PhoneLibraryEntry, PhoneLibrarySnapshot,
+};
+pub use store::{Document, WorkbenchStore, PRIVATE_DIRECTORY};
+
+use serde::Serialize;
+
+/// IPC errors contain only a stable code; filesystem paths and OS messages stay private.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct StoreError {
+    pub code: &'static str,
+}
+
+impl StoreError {
+    pub(crate) const fn new(code: &'static str) -> Self {
+        Self { code }
+    }
+}
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.code)
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+pub(crate) type Result<T> = std::result::Result<T, StoreError>;

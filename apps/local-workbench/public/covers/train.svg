@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560" role="img" aria-labelledby="title desc">
+  <title id="title">无人列车</title>
+  <desc id="desc">原创虚构漫画封面。黑白木刻风的废弃站台与透视铁轨，一列车驶出明亮的隧道。</desc>
+  <defs>
+    <pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse"><path d="M0 5 5 0" stroke="#ddddd3" stroke-width=".45" opacity=".25"/></pattern>
+    <pattern id="paper" width="7" height="9" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r=".5" fill="#252824" opacity=".17"/><path d="M5 6v1" stroke="#eeeadd" opacity=".3"/></pattern>
+    <linearGradient id="light" x2="0" y2="1"><stop stop-color="#f2eee0"/><stop offset="1" stop-color="#999f95"/></linearGradient>
+  </defs>
+  <rect width="400" height="560" fill="#e7e5d9"/>
+  <rect y="156" width="400" height="343" fill="#252a29"/>
+  <path d="M97 369V265a103 103 0 0 1 206 0v104z" fill="#858d83"/>
+  <path d="M109 363v-98a91 91 0 0 1 182 0v98z" fill="#c2c6b9"/>
+  <path d="M122 356v-87a78 78 0 0 1 156 0v87z" fill="url(#light)"/>
+  <path d="M130 349v-78a70 70 0 0 1 140 0v78" fill="none" stroke="#7f887f" stroke-width="1"/>
+  <path d="M0 156h400v27H0zM0 208l100 37m300-37-100 37M0 252l96 30m304-30-96 30" fill="none" stroke="#69706a" stroke-width="2"/>
+  <path d="M0 184h400M19 158v337M57 158v337M342 158v337M381 158v337" fill="none" stroke="#899087" stroke-width="1"/>
+  <path d="M0 333 155 350 83 499H0zM400 333l-155 17 72 149h83z" fill="#686d64"/>
+  <path d="m0 349 151 9-63 128L0 486zm400 0-151 9 63 128h88z" fill="url(#hatch)"/>
+  <path d="m0 338 155 15-64 135m309-150-155 15 64 135" fill="none" stroke="#d9d9cc" stroke-width="3"/>
+  <path d="M89 499 171 351m140 148-82-148M126 499l59-148m89 148-59-148" fill="none" stroke="#d1d3c8" stroke-width="3"/>
+  <path d="m154 380 93 0m-102 16h110m-121 20h132m-145 25h158m-174 32h190" stroke="#747d74" stroke-width="5"/>
+  <path d="M164 324v-44q36-14 72 0v44l-8 38h-57z" fill="#303a36" stroke="#e1e0cd" stroke-width="1.5"/>
+  <path d="M172 284h56v29h-56z" fill="#b5c3b3"/>
+  <path d="M198 284v29m-26-15h56" stroke="#2d3933" stroke-width="3"/>
+  <path d="M170 327h60v9h-60z" fill="#b2b5a8"/><path d="M174 343h52v7h-52z" fill="#8a9687"/>
+  <circle cx="176" cy="329" r="3" fill="#fbf5cc"/><circle cx="224" cy="329" r="3" fill="#fbf5cc"/>
+  <path d="M171 354h57l-4 8h-49z" fill="#1d2924"/>
+  <path d="M30 177h77v31H30z" fill="#e2e0d1"/><text x="68" y="198" text-anchor="middle" fill="#29342e" font-family="sans-serif" font-size="15" letter-spacing="3">00:13</text>
+  <path d="M312 181v118m0-109h42m-7 0v-9" stroke="#dddccd" stroke-width="2"/>
+  <circle cx="346" cy="179" r="4" fill="#e4c985"/>
+  <path d="M35 391h75v6H35zm8 6v30m57-30v18M42 381h57v8H42z" fill="#252f2a"/>
+  <path d="M0 443q26-36 43 7m320-41q16-18 37-11M19 476l11-29m-8 19-13-8m18 0 8-9" fill="none" stroke="#a9afa0" stroke-width="1"/>
+  <rect width="400" height="560" fill="url(#paper)"/>
+  <text x="33" y="45" fill="#6b7067" font-family="sans-serif" font-size="8" letter-spacing="4">THE LAST TRAIN TO NOWHERE</text>
+  <text x="28" y="108" fill="#252c29" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,serif" font-size="50" font-weight="bold" letter-spacing="5">无人列车</text>
+  <text x="34" y="135" fill="#646a60" font-family="'Noto Serif SC',SimSun,serif" font-size="10" letter-spacing="3">下一站，不在地图上</text>
+  <text x="32" y="531" fill="#343d35" font-family="'Noto Serif SC',SimSun,serif" font-size="14" letter-spacing="4">远野标本</text>
+  <path d="M268 516h97m-97 9h54m-54 9h72" stroke="#868d80" stroke-width=".8"/>
+  <text x="34" y="548" fill="#7b8277" font-family="sans-serif" font-size="6.5" letter-spacing="2.5">FICTIONAL COVER / ORIGINAL ART</text>
+</svg>

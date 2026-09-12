@@ -1,0 +1,71 @@
+name: Local workbench UI
+
+on:
+  push:
+    branches: [main, 'assistant-*', 'codex/**']
+    paths:
+      - 'apps/local-workbench/**'
+      - '.github/workflows/local-workbench.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/local-workbench/**'
+      - '.github/workflows/local-workbench.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-workbench-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/local-workbench
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Set up pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: '11.19.0'
+          run_install: false
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check source formatting
+        run: pnpm format:check
+      - name: Test the demo state transitions
+        run: pnpm test
+      - name: Type-check and build the web app
+        run: pnpm build
+      - name: Upload the static preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-workbench-preview
+          path: apps/local-workbench/dist/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Install Chromium for UI acceptance
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Test the mock workbench in Chromium
+        run: pnpm test:ui
+      - name: Upload UI failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-workbench-ui-failure-${{ github.run_attempt }}
+          path: |
+            apps/local-workbench/playwright-report/
+            apps/local-workbench/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

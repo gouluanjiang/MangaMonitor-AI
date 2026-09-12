@@ -1,6 +1,7 @@
 //! A6.14B JM pixel transform copied from the pinned upstream behavior.
 //!
-//! Only descriptor-bound WEBP `JM_SCRAMBLE_BLOCKS` media reaches this module.
+//! Descriptor-bound WEBP is restored and encoded directly to the selected
+//! legacy WEBP or JPEG format. GIF remains byte-exact.
 //! The transport remains private and authorization/staging authority is owned by
 //! the surrounding A6.10/A6.12 execution chain.
 
@@ -62,6 +63,24 @@ pub(crate) fn apply(
     bytes: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
     match (source_format, transform, transform_parameter) {
+        ("webp", "JM_SCRAMBLE_BLOCKS_JPEG", parameter) => {
+            let block_num = u32::try_from(parameter).map_err(|_| "JM_MEDIA_BLOCK_COUNT_INVALID")?;
+            let src = crate::media_validation::decode("webp", &bytes)
+                .map_err(|_| "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED")?
+                .into_rgb8();
+            let dst = if block_num == 0 {
+                src
+            } else {
+                stitch_rgb(&src, block_num)?
+            };
+            let mut encoded = Cursor::new(Vec::new());
+            // Same default JPEG encoder/quality as the pinned downloader. No
+            // intermediate lossless WEBP encode and no additional CPU workers.
+            DynamicImage::ImageRgb8(dst)
+                .write_to(&mut encoded, ImageFormat::Jpeg)
+                .map_err(|_| "JM_MEDIA_JPEG_ENCODE_FAILED")?;
+            Ok(encoded.into_inner())
+        }
         ("gif", "NONE", 0) | ("webp", "JM_SCRAMBLE_BLOCKS", 0) => Ok(bytes),
         ("webp", "JM_SCRAMBLE_BLOCKS", parameter) => {
             let block_num = u32::try_from(parameter).map_err(|_| "JM_MEDIA_BLOCK_COUNT_INVALID")?;

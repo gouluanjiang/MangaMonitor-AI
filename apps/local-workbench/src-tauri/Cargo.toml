@@ -1,0 +1,36 @@
+[package]
+name = "mangamonitor-workbench-preview"
+version = "0.3.4"
+description = "MangaMonitor development workbench with source accounts, favorites and local following"
+edition = "2021"
+rust-version = "1.98.1"
+license = "MIT"
+
+# Keep native GUI dependencies out of the repository's headless workspace.
+[workspace]
+resolver = "2"
+
+[lib]
+name = "mangamonitor_workbench_preview"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-dialog = "=2.7.3"
+workbench-storage = { path = "../../../crates/workbench-storage" }
+workbench-library = { path = "../../../crates/workbench-library" }
+workbench-downloads = { path = "../../../crates/workbench-downloads" }
+workbench-accounts = { path = "../../../crates/workbench-accounts" }
+workbench-sources = { path = "../../../crates/workbench-sources" }
+workbench-credentials = { path = "../../../crates/workbench-credentials" }
+zeroize = "=1.9.0"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tauri = { version = "=2.11.5", features = ["test"] }
+serde_json = "=1.0.151"
+tempfile = "=3.27.0"
+workbench-credentials = { path = "../../../crates/workbench-credentials", features = ["test-support"] }

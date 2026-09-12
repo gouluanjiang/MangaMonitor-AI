@@ -53,12 +53,16 @@ Do **not** dynamically trust domains discovered from remote pages without a sepa
 
 ### Safety differences deliberately preserved
 
+- The 2026-09-12 desktop Pica acceptance repair adds a bounded same-origin redirect loop after a task-specific header check showed 301 then 200 JPEG. Automatic redirects remain disabled; every initial/redirect GET must receive a fresh authorization from the staging coordinator, at most two redirects are allowed, and original descriptor/checkpoint identity remains unchanged. See `PICA_DOWNLOAD_REDIRECT_FIX_2026-09-12.md`. This is not arbitrary-domain trust or retry/failover authority; JM and the legacy exact-transfer entry remain unchanged.
+
 - Upstream GUI code is optimized for interactive downloading; MangaMonitor-AI requires complete pagination evidence and rejects missing/intermediate pages instead of silently aggregating partial results.
 - MangaMonitor-AI does not interpret ordinary HTTP/auth/network failures as proof that a work is unavailable.
 - API credentials never enter the media-byte client; media URLs are host/path constrained and redirects are disabled.
 - No upstream filesystem/download completion semantics may bypass command staging, generation checks, inventory gates, task revision checks, or `production_enabled=false`.
 
 ## Scaling implications
+
+The 2026-09-12 batch queue review reopened all three pinned download implementations. Their bounded scheduling and all-image completion requirements remain references; desktop cross-work scheduling now wraps the existing verified single-work path and waits through PC registration before dispatching the next explicitly confirmed work. No source pins, media transport, retry policy, output layout or production flags change. See `BATCH_QUEUE_AND_MATCHING_2026-09-12.md`.
 
 The live six-author JM+Pica validation established that real source traffic is substantial. For hundreds of authors, retain these upstream-inspired principles:
 

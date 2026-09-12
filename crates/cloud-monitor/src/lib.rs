@@ -19,21 +19,30 @@ pub mod local_inventory_apply;
 pub mod local_inventory_apply_authorization;
 pub mod local_inventory_rescan;
 pub mod local_inventory_update_candidate;
-#[expect(dead_code, clippy::too_many_arguments, reason = "V1.3 private importer keeps the audited plan in its validation bundle and passes all safety bindings explicitly with the current-state reload callback")]
+#[expect(
+    dead_code,
+    clippy::too_many_arguments,
+    reason = "V1.3 private importer keeps the audited plan in its validation bundle and passes all safety bindings explicitly with the current-state reload callback"
+)]
 mod local_library_import;
-#[expect(clippy::too_many_arguments, reason = "V1.3 public gate keeps every safety binding explicit, including the current-state reload callback")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "V1.3 public gate keeps every safety binding explicit, including the current-state reload callback"
+)]
 pub mod local_library_import_gate;
 pub mod local_task_completion;
 pub mod matcher_m2;
+mod media_request_guard;
 pub(crate) mod media_validation;
 pub mod monitor;
+mod parallel_media_processing;
 pub mod persistence;
 pub mod runner;
+pub mod scope_certificates;
 pub mod source_bridge_request;
 pub mod source_completion;
 pub mod source_media_descriptors;
 pub mod source_preflight;
 pub mod source_preflight_authorization;
 pub mod staging_manifest;
-pub mod scope_certificates;
 pub mod verified_execution_receipt;

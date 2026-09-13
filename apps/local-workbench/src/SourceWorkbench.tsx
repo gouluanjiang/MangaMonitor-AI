@@ -838,9 +838,7 @@ export function SourceWorkbench({
         return;
       updateWork({ ...work, favorite: result.favorite });
       setNotice(
-        result.favorite
-          ? "已读回确认网站收藏。"
-          : "已读回确认取消网站收藏。本地书单保留。",
+        result.favorite ? "已读回确认网站收藏。" : "已读回确认取消网站收藏。",
       );
     } catch (cause) {
       if (stillCurrent(captured) && detailRequest.current === detailEpoch) {
@@ -1288,8 +1286,7 @@ export function SourceWorkbench({
                 </button>
               </div>
               <p className="source-muted">
-                网站收藏、本机关注与本地书单分别保存。作品
-                下载经单独确认后加入电脑队列。
+                网站收藏与本机关注分别保存。作品下载经确认后加入电脑队列。
                 <button
                   type="button"
                   className="text-button"
@@ -1706,7 +1703,7 @@ export function SourceWorkbench({
                     : complete
                       ? "已读取完整范围"
                       : "范围尚未读全，已读取页面不代表全部作品"}{" "}
-                  · 手机名单与电脑文件分别核对；下载从详情单本确认
+                  · 入库以电脑漫画库为准；下载前确认作品与保存位置
                 </p>
               )}
               {grid(visible)}

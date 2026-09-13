@@ -39,6 +39,7 @@ type MockOptions = {
   coverFailureOnce?: boolean;
   cacheSnapshot?: CatalogSnapshot;
   crossSourcePhone?: boolean;
+  crossSourcePC?: boolean;
   holdMatchDetail?: boolean;
 };
 type Call = {
@@ -882,14 +883,40 @@ async function installMock(page: Page, options: MockOptions = {}) {
           if (command === "read_booklists") return clone(hooks.booklists);
           if (command === "library_read")
             return {
-              revision: 0,
-              rootId: null,
-              rootPath: null,
-              generation: 0,
-              phase: "idle",
-              freshness: "none",
-              items: [],
-              visited: 0,
+              revision: options.crossSourcePC ? 1 : 0,
+              rootId: options.crossSourcePC ? "a".repeat(64) : null,
+              rootPath: options.crossSourcePC
+                ? "C:\\Synthetic PC Library"
+                : null,
+              generation: options.crossSourcePC ? 1 : 0,
+              phase: options.crossSourcePC ? "complete" : "idle",
+              freshness: options.crossSourcePC ? "live" : "none",
+              items: options.crossSourcePC
+                ? [
+                    {
+                      id: "e".repeat(64),
+                      relativePath: "[合成作者] 电脑作品.zip",
+                      fileName: "[合成作者] 电脑作品.zip",
+                      format: "zip",
+                      title: "合成电脑作品",
+                      authors: ["合成作者"],
+                      description: null,
+                      tags: [],
+                      bytes: 4096,
+                      modifiedAt: 1800000000000,
+                      pageCount: 20,
+                      coverAvailable: false,
+                      state: "indexed",
+                      errorCode: null,
+                      sourceRef: {
+                        source: "Pica",
+                        workId: "0123456789abcdef01234567",
+                      },
+                      identityEvidence: "metadata",
+                    },
+                  ]
+                : [],
+              visited: options.crossSourcePC ? 1 : 0,
               skipped: 0,
               updatedAt: null,
               errorCode: null,
@@ -1289,14 +1316,14 @@ async function createFromDetail(page: Page, name: string) {
   return page.evaluate(() => window.sourceTest.booklists.value.lists[0].id);
 }
 
-test("manual cross-source confirmation previews both works, survives restart and unlinks without changing phone evidence", async ({
+test("manual cross-source confirmation projects the PC ZIP, survives restart and unlinks without reading retired phone evidence", async ({
   page,
 }) => {
   const picaId = "0123456789abcdef01234567";
-  await installMock(page, { crossSourcePhone: true });
+  await installMock(page, { crossSourcePhone: true, crossSourcePC: true });
   await detail(page);
   await expect(page.getByTestId("source-detail-stock")).toContainText(
-    "尚未匹配",
+    "漫画库内未匹配",
   );
   await page.getByTestId("source-match-id").fill(picaId);
   expect(
@@ -1331,7 +1358,7 @@ test("manual cross-source confirmation previews both works, survives restart and
   await page.getByTestId("source-match-unlink-confirm").click();
   await expect(page.getByTestId("source-match-confirmed")).toHaveCount(0);
   await expect(page.getByTestId("source-detail-stock")).toContainText(
-    "尚未匹配",
+    "漫画库内未匹配",
   );
   expect(await page.evaluate(() => window.sourceTest.matches.pairs)).toEqual(
     [],
@@ -1339,7 +1366,7 @@ test("manual cross-source confirmation previews both works, survives restart and
   expect(
     await page.evaluate(() =>
       window.sourceTest.calls.filter((call) =>
-        /phone_library_(mark|unmark)|library_link|jm_download_(prepare|confirm)/.test(
+        /phone_library_|read_booklists|library_link|jm_download_(prepare|confirm)/.test(
           call.command,
         ),
       ),

@@ -587,7 +587,7 @@ test("preparation shows the exact title and destination while cancel creates no 
     "C:\\Synthetic\\合成单本作品",
   );
   await expect(page.getByTestId("download-confirmation")).toContainText(
-    "电脑副本继续保留",
+    "保存为一个 ZIP",
   );
   expect((await calls(page, "jm_download_prepare"))[0].args.input).toBe("123");
   await page.getByTestId("download-cancel").click();

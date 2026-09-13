@@ -249,7 +249,7 @@ export function LibraryControls({ library }: { library: LibraryState }) {
         · {snapshot.items.length} 个电脑作品
         {snapshot.skipped > 0 ? ` · 跳过 ${snapshot.skipped} 项` : ""}
         {snapshot.freshness === "cached"
-          ? " · 上次目录记录，尚未重新核对文件"
+          ? " · 上次目录记录，可重新读取以发现增删"
           : ""}
       </p>
       {error && (

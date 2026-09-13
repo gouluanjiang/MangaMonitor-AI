@@ -140,7 +140,7 @@ function DownloadConfirmation({
         {plan.destinationDisplay}
       </p>
       <p>
-        同一时间只下载一本。保存为作品文件夹，包含元数据、封面、章节目录和图片。
+        同一时间只下载一本。保存为一个 ZIP，包含元数据、封面、章节目录和图片。
       </p>
       <p>
         {plan.source === "Pica"
@@ -251,10 +251,7 @@ function BatchDownloadConfirmation({
           </div>
         )}
       </div>
-      <p>
-        保存为作品文件夹。JM 静态图片使用
-        JPG，哔咔保留原图格式。每本分别保存为一个 ZIP。
-      </p>
+      <p>每本分别保存为一个 ZIP。JM 静态图片使用 JPG，哔咔保留原图格式。</p>
       <div className="dialog-actions">
         <button
           className="button secondary"
@@ -368,7 +365,7 @@ export function DownloadSettingsPanel({
         </div>
         <div>
           <dt>保存格式</dt>
-          <dd>作品文件夹／章节目录／图片</dd>
+          <dd>一本一个 ZIP，包含元数据、章节目录和图片</dd>
         </div>
         <div>
           <dt>关闭再打开</dt>

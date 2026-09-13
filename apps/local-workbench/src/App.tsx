@@ -2120,7 +2120,7 @@ export default function App() {
               ? sourceActive
                 ? "桌面开发版 · 真实来源"
                 : page === "library"
-                  ? "桌面开发版 · 双库记录"
+                  ? "桌面开发版 · 电脑漫画库"
                   : "桌面开发版 · 本机任务"
               : "交互样例 · 模拟数据"}
             {activeFixture && " · 100 条验收数据"}
@@ -2318,9 +2318,9 @@ export default function App() {
           </span>
           <span>
             {sourceActive
-              ? "手机名单与电脑文件核对 · 批量下载"
+              ? "电脑漫画库核对 · 批量下载"
               : libraryActive
-                ? "电脑文件保留 · 手机由你手动转入"
+                ? "一本一个 ZIP · 电脑漫画库"
                 : persistence.native
                   ? "JM / 哔咔下载队列"
                   : "示例数据 · 尚未连接下载器"}

@@ -459,6 +459,7 @@ export function LibraryWorkbench({
   onDensityChange,
   query,
   externalWork,
+  externalEntryId,
   pairs = [],
   requestKey = 0,
 }: {
@@ -468,6 +469,7 @@ export function LibraryWorkbench({
   onDensityChange(value: 5 | 7 | 9): void | Promise<unknown>;
   query: string;
   externalWork?: SourceWork | null;
+  externalEntryId?: string | null;
   pairs?: import("./source-matches-types.ts").SourceMatchPair[];
   requestKey?: number;
 }) {
@@ -495,7 +497,9 @@ export function LibraryWorkbench({
   useEffect(() => {
     if (!externalWork || requestKey === 0) return;
     const match = createLibraryMatcher(library.snapshot, pairs)(externalWork);
-    const exact = match.kind === "exact" ? match.items[0] : undefined;
+    const exact =
+      library.snapshot.items.find((item) => item.id === externalEntryId) ??
+      (match.kind === "exact" ? match.items[0] : undefined);
     setDetailId(exact?.id ?? null);
   }, [requestKey]);
   useLayoutEffect(() => {

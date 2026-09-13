@@ -19,7 +19,6 @@ export function NativeBooklistMembers({
   onAccountsChange,
   density,
   onOpenWork,
-  onAddToBooklists,
   onRemove,
   removeDisabled,
   query,
@@ -33,7 +32,6 @@ export function NativeBooklistMembers({
   onAccountsChange(accounts: AccountSummary[]): void;
   density: 5 | 7 | 9;
   onOpenWork(ref: WorkReference): void;
-  onAddToBooklists(refs: WorkReference[]): Promise<boolean>;
   onRemove(ref: WorkReference): Promise<boolean>;
   removeDisabled: boolean;
   query: string;

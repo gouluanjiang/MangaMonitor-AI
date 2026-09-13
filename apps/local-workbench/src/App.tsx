@@ -207,6 +207,9 @@ export default function App() {
   const [requestedLibraryWork, setRequestedLibraryWork] =
     useState<SourceWork | null>(null);
   const [libraryRequestKey, setLibraryRequestKey] = useState(0);
+  const [requestedLibraryEntryId, setRequestedLibraryEntryId] = useState<
+    string | null
+  >(null);
   const [accounts, setAccounts] = useState<AccountSummary[]>(() =>
     sources.map((source) => ({
       source,
@@ -424,7 +427,11 @@ export default function App() {
     setLibraryNavigationKey((value) => value + 1);
     setNotice("选择电脑漫画目录后，返回下载队列继续准备这本作品。");
   }
-  function showDownloadLibrary(work: SourceWork) {
+  function showDownloadLibrary(
+    work: SourceWork,
+    entryId: string | null = null,
+  ) {
+    setRequestedLibraryEntryId(entryId);
     navigate("library");
     setLibraryTab("all");
     setQuery("");
@@ -452,18 +459,21 @@ export default function App() {
     }
     if (!library.snapshot.items.some((item) => item.id === task.libraryEntryId))
       setNotice("这本作品已下载，当前目录尚未读取到对应文件。请核对电脑目录。");
-    showDownloadLibrary({
-      source: task.source,
-      workId: task.workId,
-      title: task.title,
-      authors: [],
-      description: null,
-      tags: [],
-      favorite: null,
-      chapterCount: null,
-      pageCount: null,
-      coverAvailable: false,
-    });
+    showDownloadLibrary(
+      {
+        source: task.source,
+        workId: task.workId,
+        title: task.title,
+        authors: [],
+        description: null,
+        tags: [],
+        favorite: null,
+        chapterCount: null,
+        pageCount: null,
+        coverAvailable: false,
+      },
+      task.libraryEntryId,
+    );
   }, [
     pendingDownloadedWork,
     downloadLibraryRefresh,
@@ -2181,6 +2191,7 @@ export default function App() {
               onDensityChange={changeDensity}
               query={query}
               externalWork={requestedLibraryWork}
+              externalEntryId={requestedLibraryEntryId}
               pairs={sourceMatches.snapshot.pairs}
               requestKey={libraryRequestKey}
             />
@@ -2253,6 +2264,7 @@ export default function App() {
               librarySnapshot={library.snapshot}
               libraryReady={!library.error}
               onOpenLibrary={(work) => {
+                setRequestedLibraryEntryId(null);
                 navigate("library");
                 setLibraryTab("all");
                 setRequestedLibraryWork(work);

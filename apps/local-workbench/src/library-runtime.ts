@@ -370,7 +370,7 @@ export class LibraryController {
       if (!result) return null;
       applied = true;
       this.publish({
-        migrationNotice: `已迁移 ${result.mapped} 条路径，保留 ${result.associated} 条来源关联。正在重新读取目录。`,
+        migrationNotice: `已迁移 ${result.mapped} 条路径。目录读取进度见上方。`,
       });
       return result.snapshot;
     });

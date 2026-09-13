@@ -218,6 +218,25 @@ async function installMock(page: Page, options: Options = {}) {
               freshness: hooks.pc.rootId ? "cached" : "none",
               phase: hooks.pc.phase === "reading" ? "paused" : hooks.pc.phase,
             });
+          if (command === "library_import_paths") {
+            if (
+              args.rootId !== hooks.pc.rootId ||
+              args.generation !== hooks.pc.generation
+            )
+              throw { code: "LIBRARY_STALE_GENERATION" };
+            hooks.pc = {
+              ...hooks.pc,
+              revision: hooks.pc.revision + 1,
+              phase: "paused",
+            };
+            savePC();
+            return clone({
+              snapshot: hooks.pc,
+              mapped: 2,
+              associated: 0,
+              unchanged: 0,
+            });
+          }
           if (command === "phone_library_read") {
             if (hooks.phoneReadBlocked)
               throw { code: "PHONE_LIBRARY_UNAVAILABLE" };
@@ -454,6 +473,35 @@ test("PC directories use bounded rows, preserve full names during Unicode search
     "586",
   );
   expect(await commands(page, "library_scan")).toEqual([]);
+});
+
+test("mapping import finishes its scan without leaving a stale reading message in settings", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { pcCount: 3, selectCount: 60, holdNext: true });
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-library").click();
+  const panel = page.locator('[aria-labelledby="library-title"]');
+  await page.getByTestId("library-import-paths").click();
+  await expect
+    .poll(() => page.evaluate(() => window.libraryTest.held))
+    .toBe(true);
+  await expect(panel.getByTestId("library-progress")).toContainText("正在读取");
+  await expect(panel).toContainText("已迁移 2 条路径");
+  await page.evaluate(() => window.libraryTest.release?.());
+  await expect(panel.getByTestId("library-progress")).toContainText(
+    "目录已读完 · 60 个电脑作品",
+  );
+  await expect(panel).not.toContainText("正在重新读取目录");
+  await expect(panel.getByTestId("library-pause")).toHaveCount(0);
+  await expect(page.getByTestId("library-import-paths")).toBeEnabled();
+  expect(await commands(page, "library_import_paths")).toHaveLength(1);
+  expect(
+    (await commands(page, "library_scan")).map((call) => call.args.action),
+  ).toEqual(["start", "next", "next", "next"]);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/zip-migration-complete.png" });
 });
 
 test("a selected root reads bounded batches, pauses after the current batch and explicitly resumes", async ({

@@ -1,5 +1,11 @@
 # Active development handoff
 
+## B acceptance follow-up: stale mapping notice (2026-09-13)
+
+The user's settings screenshot shows the library scan complete while the migration receipt still says it is rereading. The controller embedded an ongoing scan message in a one-time import result and never updated that message when the scan finished. The fix leaves only the mapping result in that receipt and uses the existing live directory progress for scan state. The ambiguous association count was removed from the receipt; backend association handling is unchanged. No library reimport, scan, source request, media or private-index mutation was performed for this repair. The user can continue acceptance from the completed directory state without repeating the mapping import.
+
+A synthetic settings regression checks import, an in-flight read, completion, no stale reading text and exactly one import/scan sequence. Formal CI and the replacement 0.3.4 Dev artifact are recorded in the local repair delivery and PR #19. Keep the existing batch scope, no installer, draft/unmerged PR and production disabled; B acceptance remains ongoing.
+
 
 ## Current batch B: PC-only library and common ZIP downloads (2026-09-13)
 

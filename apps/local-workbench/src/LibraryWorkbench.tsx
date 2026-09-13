@@ -189,14 +189,6 @@ export function LibraryControls({
   return (
     <div className={"library-read-controls" + (compact ? " is-compact" : "")}>
       <div className="source-actions">
-        <button
-          className={snapshot.rootId ? "text-button" : "button secondary"}
-          data-testid="library-choose"
-          disabled={busy}
-          onClick={() => void controller.choose()}
-        >
-          {snapshot.rootId ? "更换目录" : "选择电脑漫画目录"}
-        </button>
         {snapshot.rootId && (
           <button
             className="button secondary"
@@ -207,6 +199,14 @@ export function LibraryControls({
             刷新漫画库
           </button>
         )}
+        <button
+          className={snapshot.rootId ? "text-button" : "button secondary"}
+          data-testid="library-choose"
+          disabled={busy}
+          onClick={() => void controller.choose()}
+        >
+          {snapshot.rootId ? "更换目录" : "选择电脑漫画目录"}
+        </button>
         {snapshot.phase === "reading" && !error && (
           <button
             className="text-button"

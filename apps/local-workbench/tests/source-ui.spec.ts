@@ -1324,12 +1324,17 @@ test("favorites status filtering clears hidden selection and offers a direct ful
 test("a renamed local candidate can be confirmed from the source detail without typing IDs or replacing its other source", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { crossSourcePC: true, libraryCandidate: true });
   await openFavorites(page);
   await page.getByTestId("source-filter-candidate").click();
   await expect(page.getByTestId("source-card-JM:123")).toBeVisible();
   await page.getByTestId("source-open-JM:123").click();
   await expect(page.getByTestId("library-candidates")).toBeVisible();
+  await expect(
+    page.getByTestId("confirm-library-candidate-" + "e".repeat(64)),
+  ).toBeInViewport();
+  await expect(page.getByTestId("source-match-id")).toHaveCount(0);
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({ path: "visual-evidence/matching-candidates.png" });
   await page.getByTestId("confirm-library-candidate-" + "e".repeat(64)).click();

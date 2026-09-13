@@ -1308,6 +1308,64 @@ export function SourceWorkbench({
                   </dd>
                 </div>
               </dl>
+              {inventory(detail).kind === "candidate" && (
+                <section
+                  className="library-candidates"
+                  data-testid="library-candidates"
+                >
+                  <h2>漫画库中的候选</h2>
+                  <p className="source-muted">
+                    核对作者、标题、语言版本和页数；确认后会关联当前来源编号，保留已有来源关联。
+                  </p>
+                  {inventory(detail).items.map((item) => (
+                    <div className="library-candidate" key={item.id}>
+                      <strong>{item.fileName}</strong>
+                      <p>
+                        {item.authors.join("、") || "作者未知"} · 电脑{" "}
+                        {item.pageCount ?? "未知"} 页 / 来源{" "}
+                        {detail.pageCount ?? "未知"} 页
+                      </p>
+                      <div className="source-actions">
+                        {onAssociateLibrary && (
+                          <button
+                            className="button secondary"
+                            data-testid={"confirm-library-candidate-" + item.id}
+                            disabled={
+                              libraryBusy ||
+                              !readableLibraryItem(item) ||
+                              libraryReferences(item).some(
+                                (ref) =>
+                                  ref.source === detail.source &&
+                                  ref.workId !== detail.workId,
+                              )
+                            }
+                            onClick={() => {
+                              void onAssociateLibrary(item.id, detail).then(
+                                (saved) =>
+                                  setNotice(
+                                    saved
+                                      ? "关联已保存，这部作品已在漫画库中。"
+                                      : "关联未完成，请检查漫画库状态后重试。",
+                                  ),
+                              );
+                            }}
+                          >
+                            确认是同一本
+                          </button>
+                        )}
+                        {onOpenLibrary && (
+                          <button
+                            className="text-button"
+                            onClick={() => onOpenLibrary(detail, item.id)}
+                          >
+                            查看电脑详情
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </section>
+              )}
               <div className="source-actions">
                 {onOpenLibrary && (
                   <button
@@ -1390,73 +1448,19 @@ export function SourceWorkbench({
                 </button>
               </p>
               {followingFeedback()}
-              {matches && (
-                <SourceMatchPanel
-                  key={sourceWorkKey(detail)}
-                  work={detail}
-                  matches={matches}
-                  adapter={adapter}
-                  accounts={accounts}
-                />
-              )}
-              {inventory(detail).kind === "candidate" && (
-                <section
-                  className="library-candidates"
-                  data-testid="library-candidates"
-                >
-                  <h2>漫画库中的候选</h2>
-                  <p className="source-muted">
-                    核对作者、标题、语言版本和页数；确认后会关联当前来源编号，保留已有来源关联。
-                  </p>
-                  {inventory(detail).items.map((item) => (
-                    <div className="library-candidate" key={item.id}>
-                      <strong>{item.fileName}</strong>
-                      <p>
-                        {item.authors.join("、") || "作者未知"} · 电脑{" "}
-                        {item.pageCount ?? "未知"} 页 / 来源{" "}
-                        {detail.pageCount ?? "未知"} 页
-                      </p>
-                      <div className="source-actions">
-                        {onAssociateLibrary && (
-                          <button
-                            className="button secondary"
-                            data-testid={"confirm-library-candidate-" + item.id}
-                            disabled={
-                              libraryBusy ||
-                              !readableLibraryItem(item) ||
-                              libraryReferences(item).some(
-                                (ref) =>
-                                  ref.source === detail.source &&
-                                  ref.workId !== detail.workId,
-                              )
-                            }
-                            onClick={() => {
-                              void onAssociateLibrary(item.id, detail).then(
-                                (saved) =>
-                                  setNotice(
-                                    saved
-                                      ? "关联已保存，这部作品已在漫画库中。"
-                                      : "关联未完成，请检查漫画库状态后重试。",
-                                  ),
-                              );
-                            }}
-                          >
-                            确认是同一本
-                          </button>
-                        )}
-                        {onOpenLibrary && (
-                          <button
-                            className="text-button"
-                            onClick={() => onOpenLibrary(detail, item.id)}
-                          >
-                            查看电脑详情
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </section>
-              )}
+              {matches &&
+                inventory(detail).kind !== "candidate" &&
+                !inventory(detail).items.some(
+                  (item) => (item.links ?? []).length > 0,
+                ) && (
+                  <SourceMatchPanel
+                    key={sourceWorkKey(detail)}
+                    work={detail}
+                    matches={matches}
+                    adapter={adapter}
+                    accounts={accounts}
+                  />
+                )}
               <section className="source-description">
                 <h2>简介</h2>
                 <p className={expanded ? "" : "is-collapsed"}>

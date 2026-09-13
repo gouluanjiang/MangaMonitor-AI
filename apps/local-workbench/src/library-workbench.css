@@ -16,9 +16,6 @@
 .library-read-controls.is-compact p {
   margin: 0;
 }
-.library-read-controls [data-testid="library-refresh"] {
-  order: -1;
-}
 .library-workbench select {
   padding: 9px 12px;
   border: 1px solid var(--line);

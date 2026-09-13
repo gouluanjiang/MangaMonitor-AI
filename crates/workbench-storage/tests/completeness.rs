@@ -305,7 +305,7 @@ fn title_candidates_unverified_author_language_conflicts_and_partial_catalog_blo
     let (_directory, store) = fixture();
     let mut pc = pc_record(
         'c',
-        "[Writer] Work 2 [Japanese]",
+        "[Writer] Work 2 [Japanese].zip",
         reference(Source::Jm, "123"),
     );
     pc.item.source_ref = None;

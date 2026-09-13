@@ -179,6 +179,18 @@ fn explicit_zip_mapping_preserves_old_receipt_and_projects_current_history_path(
         .is_err());
     assert_eq!(f.store.read_downloads().unwrap(), before);
     fs::remove_dir_all(f.library.join(&completed.destination)).unwrap();
+    let mut wrong_hash: serde_json::Value = serde_json::from_slice(&mapping).unwrap();
+    wrong_hash["items"][0]["output_sha256"] = serde_json::json!("0".repeat(64));
+    let index_before = f.store.read_library().unwrap();
+    assert!(indexer
+        .import_paths(
+            &f.store,
+            &completed.root.id,
+            completed.generation,
+            &serde_json::to_vec(&wrong_hash).unwrap()
+        )
+        .is_err());
+    assert_eq!(f.store.read_library().unwrap(), index_before);
     let applied = indexer
         .import_paths(&f.store, &completed.root.id, completed.generation, &mapping)
         .unwrap();

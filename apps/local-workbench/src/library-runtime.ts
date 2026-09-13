@@ -363,6 +363,8 @@ export class LibraryController {
     const { rootId, generation } = this.state.snapshot;
     if (!rootId || this.state.busy) return;
     let applied = false;
+    const previousNotice = this.state.migrationNotice;
+    this.publish({ migrationNotice: "正在核对 ZIP 整理结果…" });
     await this.run(async () => {
       const result = await this.adapter.importPaths(rootId, generation);
       if (!result) return null;
@@ -373,6 +375,7 @@ export class LibraryController {
       return result.snapshot;
     });
     if (applied && !this.state.error) await this.scan("start");
+    else this.publish({ migrationNotice: previousNotice });
   }
   scan(action: LibraryScanAction) {
     if (action === "pause") {

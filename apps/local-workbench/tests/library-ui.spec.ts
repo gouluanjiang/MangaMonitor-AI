@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import type { LibrarySnapshot } from "../src/library-types.ts";
 import type { PhoneLibrarySnapshot } from "../src/phone-library-types.ts";
@@ -417,6 +418,8 @@ test("PC directories use bounded rows, preserve full names during Unicode search
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { pcCount: 586, unicode: true, cancelChoose: true });
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/pc-library.png" });
   await expect(page.getByTestId("library-grid")).toHaveAttribute(
     "data-total-items",
     "586",
@@ -630,6 +633,8 @@ test("retired phone and classification lists neither appear nor load, while PC s
   await page.reload();
   await page.getByTestId("library-open-" + id(1)).click();
   await expect(page.getByTestId("library-reference")).toContainText("123");
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/pc-library-detail.png" });
   await expect(page.getByTestId("library-detail-stock")).toContainText(
     "已入库 · 电脑漫画库",
   );

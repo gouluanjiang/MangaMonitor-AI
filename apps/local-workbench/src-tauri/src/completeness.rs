@@ -122,9 +122,7 @@ async fn verify_reused_translations(
         Ok(model
             .groups
             .into_iter()
-            .filter(|group| {
-                group.status == workbench_storage::CompletenessStatus::TranslationDownloaded
-            })
+            .filter(|group| group.status == workbench_storage::CompletenessStatus::OwnedChinese)
             .flat_map(|group| group.computer)
             .filter(|copy| copy.language == CompletenessLanguage::Chinese)
             .filter_map(|copy| match copy.member {

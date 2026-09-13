@@ -59,6 +59,14 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Test the mock workbench in Chromium
         run: pnpm test:ui
+      - name: Upload synthetic UI visual review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-workbench-visual-review
+          path: apps/local-workbench/visual-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Upload UI failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

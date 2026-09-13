@@ -196,7 +196,7 @@ test("manual references accept platform IDs and reject paths, URLs and cross-pla
 test("cached unsupported and corrupt records remain visible while malformed IPC snapshots reject", () => {
   const valid = snapshot(
     [
-      item(1),
+      item(1, { pageCount: null }),
       item(2, {
         format: "rar",
         fileName: "合成不支持.rar",

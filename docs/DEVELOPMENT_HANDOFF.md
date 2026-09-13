@@ -1,5 +1,9 @@
 # Active development handoff
 
+## B usability follow-up (2026-09-13)
+
+The user reports unintuitive flows and requests admission-date sorting, library/favorites status filters and assisted Pica matching. Work is described in [the usability follow-up](LIBRARY_USABILITY_2026-09-13.md). Private metadata diagnostics are kept outside Git; cached source coverage is partial, not full-library matching acceptance. This batch extends private source associations and keeps existing admission dates across reindexing. Formal verification remains CI-only. Do not resume C or generate an installer before this usability delivery; Dev 0.3.4 and production disabled remain unchanged.
+
 ## B acceptance follow-up: stale mapping notice (2026-09-13)
 
 The user's settings screenshot shows the library scan complete while the migration receipt still says it is rereading. The controller embedded an ongoing scan message in a one-time import result and never updated that message when the scan finished. The fix leaves only the mapping result in that receipt and uses the existing live directory progress for scan state. The ambiguous association count was removed from the receipt; backend association handling is unchanged. No library reimport, scan, source request, media or private-index mutation was performed for this repair. The user can continue acceptance from the completed directory state without repeating the mapping import.

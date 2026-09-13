@@ -437,6 +437,14 @@ fn library_commands_require_main_packaged_origin_and_never_offer_generic_paths()
             "library_link",
             json!({"rootId":id,"generation":1,"entryId":id,"reference":null}),
         ),
+        (
+            "library_associate",
+            json!({"rootId":id,"generation":1,"entryId":id,"reference":{"source":"JM","workId":"123"}}),
+        ),
+        (
+            "library_reconcile",
+            json!({"rootId":id,"generation":1,"works":[]}),
+        ),
         ("phone_library_read", json!({})),
         ("phone_library_import", json!({"revision":0})),
         (

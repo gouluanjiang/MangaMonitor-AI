@@ -6,6 +6,13 @@ import type {
 import type { Source } from "./source-types.ts";
 import type { SourceMatchPair } from "./source-matches-types.ts";
 import { createSourceAliasResolver } from "./source-matches-model.ts";
+import {
+  candidateTitle,
+  libraryReferences,
+  libraryFilterMatches,
+  compareAdded,
+} from "./library-matching.ts";
+import type { LibraryFilter, LibrarySort } from "./library-matching.ts";
 
 export const normalizeLibraryText = (value: string) =>
   value.normalize("NFKC").toLocaleLowerCase().trim();
@@ -27,11 +34,13 @@ export function parseLibraryReference(
 export function filterLibraryItems(
   items: LibraryItem[],
   query: string,
-  sort: "title" | "modified" = "title",
+  sort: LibrarySort = "title",
+  filter: LibraryFilter = "all",
 ): LibraryItem[] {
   const terms = normalizeLibraryText(query).split(/\s+/).filter(Boolean);
   return items
     .filter((item) => {
+      if (!libraryFilterMatches(item, filter)) return false;
       const text = normalizeLibraryText(
         [
           item.title,
@@ -40,12 +49,16 @@ export function filterLibraryItems(
           ...item.tags,
           item.sourceRef?.source ?? "",
           item.sourceRef?.workId ?? "",
+          ...libraryReferences(item).map(
+            (reference) => reference.source + " " + reference.workId,
+          ),
         ].join(" "),
       );
       return terms.every((term) => text.includes(term));
     })
     .sort(
       (a, b) =>
+        compareAdded(a, b, sort) ||
         (sort === "modified" ? (b.modifiedAt ?? 0) - (a.modifiedAt ?? 0) : 0) ||
         normalizeLibraryText(a.title).localeCompare(
           normalizeLibraryText(b.title),
@@ -69,25 +82,24 @@ export function createLibraryMatcher(
   const aliases = createSourceAliasResolver(pairs);
   for (const item of snapshot?.items ?? []) {
     if (
-      item.sourceRef &&
       item.state == "indexed" &&
       item.errorCode === null &&
       (item.pageCount ?? 0) > 0
     )
-      for (const reference of aliases(item.sourceRef))
-        refs.set(key(reference), [...(refs.get(key(reference)) ?? []), item]);
-    if (
-      item.sourceRef &&
-      (item.state !== "indexed" ||
-        item.errorCode !== null ||
-        !(item.pageCount && item.pageCount > 0))
-    )
-      for (const reference of aliases(item.sourceRef))
-        uncertain.set(key(reference), [
-          ...(uncertain.get(key(reference)) ?? []),
-          item,
+      for (const reference of libraryReferences(item).flatMap(aliases))
+        refs.set(key(reference), [
+          ...new Set([...(refs.get(key(reference)) ?? []), item]),
         ]);
-    const title = normalizeLibraryText(item.title);
+    if (
+      item.state !== "indexed" ||
+      item.errorCode !== null ||
+      !(item.pageCount && item.pageCount > 0)
+    )
+      for (const reference of libraryReferences(item).flatMap(aliases))
+        uncertain.set(key(reference), [
+          ...new Set([...(uncertain.get(key(reference)) ?? []), item]),
+        ]);
+    const title = candidateTitle(item.title);
     if (title) titles.set(title, [...(titles.get(title) ?? []), item]);
   }
   return (work: SourceIdentity): LibraryMatch => {
@@ -95,7 +107,7 @@ export function createLibraryMatcher(
     const exact = refs.get(key(work));
     if (exact?.length) return { kind: "exact", items: exact };
     const candidates =
-      uncertain.get(key(work)) ?? titles.get(normalizeLibraryText(work.title));
+      uncertain.get(key(work)) ?? titles.get(candidateTitle(work.title));
     if (candidates?.length) return { kind: "candidate", items: candidates };
     return {
       kind: snapshot.phase === "complete" ? "missing" : "incomplete",

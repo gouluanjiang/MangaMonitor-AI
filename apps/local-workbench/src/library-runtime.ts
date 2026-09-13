@@ -7,6 +7,7 @@ import type {
   LibraryReference,
   LibraryScanAction,
   LibrarySnapshot,
+  LibraryMatchWork,
 } from "./library-types.ts";
 import { parseLibraryReference } from "./library-model.ts";
 
@@ -83,13 +84,40 @@ function item(value: unknown): LibraryItem {
     tags: strings(raw.tags),
     bytes: integer(raw.bytes),
     modifiedAt: nullableNumber(raw.modifiedAt),
+    ...(raw.addedAt === undefined
+      ? {}
+      : { addedAt: nullableNumber(raw.addedAt) }),
     pageCount: nullableNumber(raw.pageCount),
     coverAvailable: raw.coverAvailable,
     state: raw.state as LibraryItem["state"],
     errorCode: nullableText(raw.errorCode),
     sourceRef,
     identityEvidence: raw.identityEvidence as LibraryItem["identityEvidence"],
+    ...(raw.links === undefined ? {} : { links: links(raw.links, sourceRef) }),
   };
+}
+function links(
+  value: unknown,
+  primary: LibraryReference | null,
+): NonNullable<LibraryItem["links"]> {
+  if (!Array.isArray(value) || value.length > 2) return bad();
+  const sources = new Set(primary ? [primary.source] : []);
+  return value.map((entry) => {
+    const raw = record(entry),
+      ref = reference(raw.reference);
+    if (
+      !ref ||
+      sources.has(ref.source) ||
+      !["manual", "titleAuthorPages"].includes(String(raw.evidence))
+    )
+      return bad();
+    sources.add(ref.source);
+    return {
+      reference: ref,
+      evidence: raw.evidence as "manual" | "titleAuthorPages",
+      linkedAt: integer(raw.linkedAt),
+    };
+  });
 }
 export function validateLibrarySnapshot(value: unknown): LibrarySnapshot {
   const raw = record(value);
@@ -152,6 +180,32 @@ export function createLibraryAdapter(
     }
   }
   return {
+    reconcile: async (rootId, generation, works) => {
+      const raw = record(
+        await call("library_reconcile", {
+          rootId: id(rootId),
+          generation: integer(generation),
+          works,
+        }),
+      );
+      const snapshot = validateLibrarySnapshot(raw.snapshot);
+      if (snapshot.rootId !== rootId || snapshot.generation !== generation)
+        return bad();
+      return {
+        snapshot,
+        linked: integer(raw.linked),
+        examined: integer(raw.examined),
+      };
+    },
+    associate: async (rootId, generation, entryId, ref) =>
+      validateLibrarySnapshot(
+        await call("library_associate", {
+          rootId: id(rootId),
+          generation: integer(generation),
+          entryId: id(entryId),
+          reference: reference(ref),
+        }),
+      ),
     read: async () => validateLibrarySnapshot(await call("library_read")),
     choose: async () => {
       const result = await call("library_choose");
@@ -230,7 +284,7 @@ export function libraryErrorMessage(cause: unknown): string {
     case "LIBRARY_MIGRATION_CONFLICT":
       return "原作品与 ZIP 的来源关联冲突，请核对后再导入。";
     case "LIBRARY_BUSY":
-      return "请先完成目录读取并暂停当前漫画库的下载，再导入映射。";
+      return "漫画库正在读取或处理任务，请完成后再试。";
     case "LIBRARY_FILE_CHANGED":
     case "LIBRARY_STALE":
     case "LIBRARY_STALE_GENERATION":
@@ -413,6 +467,40 @@ export class LibraryController {
         return bad();
       return snapshot;
     }, true);
+  }
+  async reconcile(works: LibraryMatchWork[]): Promise<number | null> {
+    const { rootId, generation } = this.state.snapshot;
+    if (!rootId || this.state.busy || !this.adapter.reconcile) return null;
+    let linked: number | null = null;
+    await this.run(async () => {
+      const result = await this.adapter.reconcile!(rootId, generation, works);
+      if (
+        result.snapshot.rootId !== rootId ||
+        result.snapshot.generation !== generation
+      )
+        return bad();
+      linked = result.linked;
+      return result.snapshot;
+    });
+    return linked;
+  }
+  async associate(entryId: string, ref: LibraryReference): Promise<boolean> {
+    const { rootId, generation } = this.state.snapshot;
+    if (!rootId || this.state.busy || !this.adapter.associate) return false;
+    let saved = false;
+    await this.run(async () => {
+      const snapshot = await this.adapter.associate!(
+        rootId,
+        generation,
+        entryId,
+        ref,
+      );
+      if (snapshot.rootId !== rootId || snapshot.generation !== generation)
+        return bad();
+      saved = true;
+      return snapshot;
+    });
+    return saved;
   }
   dispose() {
     this.epoch++;

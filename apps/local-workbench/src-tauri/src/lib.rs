@@ -193,6 +193,8 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             library::library_scan,
             library::library_cover,
             library::library_link,
+            library::library_associate,
+            library::library_reconcile,
             phone::phone_library_read,
             phone::phone_library_import,
             phone::phone_library_mark,

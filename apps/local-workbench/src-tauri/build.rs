@@ -33,6 +33,8 @@ fn main() {
         "library_scan",
         "library_cover",
         "library_link",
+        "library_associate",
+        "library_reconcile",
         "phone_library_read",
         "phone_library_import",
         "phone_library_mark",

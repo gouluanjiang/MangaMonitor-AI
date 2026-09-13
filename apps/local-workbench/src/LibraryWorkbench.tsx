@@ -29,6 +29,12 @@ import type { SourceWork } from "./source-types.ts";
 import type { SourceGridHandle, GridAnchor } from "./VirtualSourceGrid.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import "./library-workbench.css";
+import {
+  libraryFilterLabels,
+  libraryFilterMatches,
+  libraryReferences,
+} from "./library-matching.ts";
+import type { LibraryFilter, LibrarySort } from "./library-matching.ts";
 
 export function useLibrary(adapter: LibraryAdapter, enabled: boolean) {
   const [controller] = useState(() => new LibraryController(adapter));
@@ -364,6 +370,12 @@ function LibraryDetail({
               </dd>
             </div>
           </dl>
+          <p className="source-muted" data-testid="library-added-at">
+            入库时间：
+            {item.addedAt == null
+              ? "历史记录未知"
+              : new Date(item.addedAt).toLocaleString()}
+          </p>
           {(item.state !== "indexed" || item.errorCode) && (
             <p className="source-notice" role="status">
               {libraryErrorMessage(item.errorCode)} 请核对文件后重新读取漫画库。
@@ -385,6 +397,18 @@ function LibraryDetail({
                 ）
               </p>
             )}
+            {(item.links ?? []).map((link) => (
+              <p
+                key={link.reference.source}
+                data-testid="library-extra-reference"
+              >
+                {link.reference.source} · {link.reference.workId}（
+                {link.evidence === "manual"
+                  ? "已确认"
+                  : "标题、作者和页数一致，自动关联"}
+                ）
+              </p>
+            ))}
             <div className="source-actions">
               <select
                 aria-label="关联来源"
@@ -409,19 +433,26 @@ function LibraryDetail({
                 data-testid="library-link"
                 disabled={!ref || library.busy}
                 onClick={() => {
-                  if (ref) void library.controller.link(item.id, ref);
+                  if (!ref) return;
+                  if (
+                    libraryReferences(item).some(
+                      (value) => value.source !== ref.source,
+                    )
+                  )
+                    void library.controller.associate(item.id, ref);
+                  else void library.controller.link(item.id, ref);
                 }}
               >
                 确认关联
               </button>
-              {item.sourceRef && (
+              {libraryReferences(item).length > 0 && (
                 <button
                   className="text-button"
                   data-testid="library-unlink"
                   disabled={library.busy}
                   onClick={() => void library.controller.link(item.id, null)}
                 >
-                  取消来源关联
+                  清空来源关联
                 </button>
               )}
             </div>
@@ -473,7 +504,8 @@ export function LibraryWorkbench({
   pairs?: import("./source-matches-types.ts").SourceMatchPair[];
   requestKey?: number;
 }) {
-  const [sort, setSort] = useState<"title" | "modified">("title"),
+  const [sort, setSort] = useState<LibrarySort>("added-desc"),
+    [filter, setFilter] = useState<LibraryFilter>("all"),
     [detailId, setDetailId] = useState<string | null>(null),
     [densitySaving, setDensitySaving] = useState(false);
   const grid = useRef<SourceGridHandle>(null),
@@ -487,15 +519,20 @@ export function LibraryWorkbench({
     activeRef = useRef(active);
   activeRef.current = active;
   const items = useMemo(
-    () => filterLibraryItems(library.snapshot.items, query, sort),
-    [library.snapshot.items, query, sort],
+    () => filterLibraryItems(library.snapshot.items, query, sort, filter),
+    [library.snapshot.items, query, sort, filter],
   );
   const detail = library.snapshot.items.find((item) => item.id === detailId);
+  const searchedItems = useMemo(
+    () => filterLibraryItems(library.snapshot.items, query),
+    [library.snapshot.items, query],
+  );
   useEffect(() => {
     setDetailId(null);
   }, [query, library.snapshot.rootId]);
   useEffect(() => {
     if (!externalWork || requestKey === 0) return;
+    setFilter("all");
     const match = createLibraryMatcher(library.snapshot, pairs)(externalWork);
     const exact =
       library.snapshot.items.find((item) => item.id === externalEntryId) ??
@@ -560,7 +597,7 @@ export function LibraryWorkbench({
             <div>
               <div className="product-name">MangaMonitor</div>
               <h1>漫画库</h1>
-              <p>一本一个 ZIP · 以电脑文件核对入库</p>
+              <p>浏览电脑中的作品，查找与核对来源关联</p>
             </div>
           </div>
           <div className="library-toolbar">
@@ -594,6 +631,34 @@ export function LibraryWorkbench({
           </div>
           <>
             <LibraryControls library={library} />
+            <div
+              className="result-filters"
+              role="group"
+              aria-label="漫画库状态筛选"
+            >
+              {(Object.keys(libraryFilterLabels) as LibraryFilter[]).map(
+                (value) => (
+                  <button
+                    key={value}
+                    data-testid={"library-filter-" + value}
+                    aria-pressed={filter === value}
+                    onClick={() => {
+                      setFilter(value);
+                      root.current?.closest("main")?.scrollTo(0, 0);
+                    }}
+                  >
+                    {libraryFilterLabels[value]}{" "}
+                    <span>
+                      {
+                        searchedItems.filter((item) =>
+                          libraryFilterMatches(item, value),
+                        ).length
+                      }
+                    </span>
+                  </button>
+                ),
+              )}
+            </div>
             <div className="library-list-heading">
               <p>
                 {items.length} 个作品{query ? "匹配搜索" : ""}
@@ -607,14 +672,21 @@ export function LibraryWorkbench({
                   data-testid="library-sort"
                   value={sort}
                   onChange={(event) =>
-                    setSort(event.target.value as "title" | "modified")
+                    setSort(event.target.value as LibrarySort)
                   }
                 >
+                  <option value="added-desc">入库时间：从新到旧</option>
+                  <option value="added-asc">入库时间：从旧到新</option>
                   <option value="title">作品标题</option>
                   <option value="modified">文件修改时间</option>
                 </select>
               </label>
             </div>
+            {sort.startsWith("added-") && (
+              <p className="source-muted">
+                按首次成功记录到漫画库的时间排序；历史时间未知的作品排在最后。重新读取不会改变入库时间。
+              </p>
+            )}
             {externalWork && (
               <p className="source-notice">
                 正在核对 {externalWork.source} · {externalWork.workId}
@@ -630,7 +702,7 @@ export function LibraryWorkbench({
               </div>
             ) : items.length === 0 ? (
               <p className="source-empty">
-                {query
+                {query || filter !== "all"
                   ? "没有匹配的电脑作品。"
                   : "此目录暂未读到作品，已读取的进度会保留。"}
               </p>

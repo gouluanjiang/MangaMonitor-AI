@@ -714,7 +714,7 @@ pub fn completeness_project(
                     && record.item.page_count.is_some_and(|n| n > 0),
             ),
         });
-        if let Some(reference) = &record.item.source_ref {
+        for reference in record.item.references() {
             let source = graph.source(reference);
             graph.join(index, source);
             exact_edges.push((index, source));

@@ -7,7 +7,7 @@ use std::{
 use workbench_storage::{library_relative_path_is_valid, LibraryCoverFile, LibraryRecord};
 use zip::ZipArchive;
 
-pub(crate) const MAX_ARCHIVE_ENTRIES: usize = 10_404;
+pub(crate) const MAX_ARCHIVE_ENTRIES: usize = 50_404;
 const MAX_CENTRAL_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPRESSED_IMAGE_BYTES: u64 = 16 * 1024 * 1024;

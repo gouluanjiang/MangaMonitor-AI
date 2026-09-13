@@ -50,6 +50,43 @@ pub(crate) async fn library_read<R: Runtime>(
 }
 
 #[tauri::command]
+pub(crate) async fn library_reconcile<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: State<'_, Arc<DesktopLibrary>>,
+    store: State<'_, Arc<DesktopStore>>,
+    root_id: String,
+    generation: u64,
+    works: Vec<workbench_storage::LibraryMatchWork>,
+) -> Result<workbench_library::LibraryReconcileResult, StoreError> {
+    require_main(window.label())?;
+    with_library(
+        Arc::clone(library.inner()),
+        Arc::clone(store.inner()),
+        move |service, store| service.reconcile(store, &root_id, generation, &works, true),
+    )
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn library_associate<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: State<'_, Arc<DesktopLibrary>>,
+    store: State<'_, Arc<DesktopStore>>,
+    root_id: String,
+    generation: u64,
+    entry_id: String,
+    reference: LibraryReference,
+) -> Result<LibrarySnapshot, StoreError> {
+    require_main(window.label())?;
+    with_library(
+        Arc::clone(library.inner()),
+        Arc::clone(store.inner()),
+        move |service, store| service.associate(store, &root_id, generation, &entry_id, reference),
+    )
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn library_import_paths<R: Runtime>(
     app: AppHandle<R>,
     window: WebviewWindow<R>,

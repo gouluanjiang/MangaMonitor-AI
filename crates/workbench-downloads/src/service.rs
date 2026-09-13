@@ -1210,7 +1210,7 @@ fn check_new_download(
     }
     let mut missing = BTreeSet::new();
     for old in &library.records {
-        let matches_reference = old.item.source_ref.as_ref().is_some_and(|reference| {
+        let matches_reference = old.item.references().any(|reference| {
             reference.source == record.source && reference.work_id == record.metadata.work_id
         });
         let previous_association = downloads.tasks.iter().any(|task| {

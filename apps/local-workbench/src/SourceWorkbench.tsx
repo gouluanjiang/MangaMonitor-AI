@@ -4,6 +4,13 @@ import type { LibrarySnapshot } from "./library-types.ts";
 import { SourceMatchPanel } from "./SourceMatchesPanel.tsx";
 import type { useSourceMatches } from "./SourceMatchesPanel.tsx";
 import { createInventoryMatcher, inventoryLabel } from "./inventory-model.ts";
+import {
+  inventoryFilterLabels,
+  inventoryFilterMatches,
+  readableLibraryItem,
+} from "./inventory-model.ts";
+import type { InventoryFilter } from "./inventory-model.ts";
+import { libraryReferences } from "./library-matching.ts";
 import type { WorkReference } from "./booklists.ts";
 import type {
   AccountSummary,
@@ -41,7 +48,10 @@ export interface SourceWorkbenchProps {
   downloadBusy?: boolean;
   librarySnapshot?: LibrarySnapshot;
   libraryReady?: boolean;
-  onOpenLibrary?(work: SourceWork): void;
+  onOpenLibrary?(work: SourceWork, entryId?: string): void;
+  onReconcileLibrary?(works: SourceWork[]): Promise<number | null>;
+  onAssociateLibrary?(entryId: string, work: SourceWork): Promise<boolean>;
+  libraryBusy?: boolean;
   accounts: AccountSummary[];
   onAccountsChange(updates: AccountSummary[]): void;
   onOpenAccounts(source: Source): void;
@@ -248,6 +258,9 @@ export function SourceWorkbench({
   librarySnapshot,
   libraryReady = true,
   onOpenLibrary,
+  onReconcileLibrary,
+  onAssociateLibrary,
+  libraryBusy = false,
   accounts,
   onAccountsChange,
   onOpenAccounts,
@@ -285,6 +298,10 @@ export function SourceWorkbench({
   const [queryMode, setQueryMode] = useState<"search" | "detail">("search");
   const [folder, setFolder] = useState<string | null>(null);
   const [sort, setSort] = useState("source");
+  const [inventoryFilter, setInventoryFilter] =
+    useState<InventoryFilter>("all");
+  const [reconcileNotice, setReconcileNotice] = useState("");
+  const reconciled = useRef("");
   const currentSort = useRef(sort);
   currentSort.current = sort;
   const [coverEpoch, setCoverEpoch] = useState(0);
@@ -561,6 +578,7 @@ export function SourceWorkbench({
       authorSearch ||
       detailRef ||
       query.trim() ||
+      inventoryFilter !== "all" ||
       collectionState.phase !== "ready" ||
       !sentinel.current
     )
@@ -581,6 +599,7 @@ export function SourceWorkbench({
     authorSearch,
     detailRef,
     query,
+    inventoryFilter,
     collectionState.phase,
     collectionState.snapshot?.page,
     density,
@@ -900,13 +919,73 @@ export function SourceWorkbench({
   }));
   const browsingWorks =
     view === "following" && !authorSearch ? followedWorks : items;
-  const filtered = browsingWorks.filter(
+  const searchedWorks = browsingWorks.filter(
     (work) =>
       searching ||
       (work.title + " " + work.authors.join(" "))
         .toLocaleLowerCase()
         .includes(query.trim().toLocaleLowerCase()),
   );
+  const inventoryByKey = useMemo(
+    () => new Map(items.map((work) => [sourceWorkKey(work), inventory(work)])),
+    [items, inventory],
+  );
+  const inventoryFor = (work: SourceWork) =>
+    inventoryByKey.get(sourceWorkKey(work)) ?? inventory(work);
+  const filtered = searchedWorks.filter((work) =>
+    inventoryFilterMatches(inventoryFor(work), inventoryFilter),
+  );
+  useEffect(() => {
+    setInventoryFilter("all");
+    setReconcileNotice("");
+  }, [scopeId, folder, view]);
+  async function reconcileLibrary() {
+    if (!onReconcileLibrary) return;
+    const expected = scopeId;
+    setReconcileNotice("正在用标题、作者和页数核对漫画库…");
+    const linked = await onReconcileLibrary(items);
+    if (scopeKey(currentScope.current) === expected)
+      setReconcileNotice(
+        linked === null
+          ? "核对暂未完成，请完成漫画库读取后重试。"
+          : `核对完成，新增 ${linked} 条关联。证据不足的作品请查看“待确认匹配”。`,
+      );
+  }
+  // A completed catalog is reconciled once per library generation and catalog update.
+  useEffect(() => {
+    const key = [
+      scopeId,
+      folder,
+      librarySnapshot?.rootId,
+      librarySnapshot?.generation,
+      collectionState.snapshot?.updatedAt,
+    ].join(":");
+    if (
+      !active ||
+      view !== "favorites" ||
+      !collectionState.snapshot?.complete ||
+      !libraryReady ||
+      libraryBusy ||
+      librarySnapshot?.phase !== "complete" ||
+      !onReconcileLibrary ||
+      reconciled.current === key
+    )
+      return;
+    reconciled.current = key;
+    void reconcileLibrary();
+  }, [
+    active,
+    view,
+    scopeId,
+    folder,
+    collectionState.snapshot?.complete,
+    collectionState.snapshot?.updatedAt,
+    librarySnapshot?.rootId,
+    librarySnapshot?.generation,
+    librarySnapshot?.phase,
+    libraryReady,
+    libraryBusy,
+  ]);
   const completeIndex = collectionState.snapshot?.complete ?? false;
   const collectionRecords = collectionState.snapshot?.items.length ?? 0;
   const collectionWorks = new Set(
@@ -927,6 +1006,11 @@ export function SourceWorkbench({
         ? [...filtered].reverse()
         : filtered;
   const selectionKeys = new Set(selection);
+  useEffect(() => {
+    if (inventoryFilter === "all" || !selection.length) return;
+    const keys = new Set(filtered.map(sourceWorkKey));
+    if (selection.some((key) => !keys.has(key))) clearSelection();
+  }, [inventoryByKey, inventoryFilter]);
   for (const key of selectedMetadata.current.keys())
     if (!selectionKeys.has(key)) selectedMetadata.current.delete(key);
   for (const work of browsingWorks)
@@ -1238,11 +1322,20 @@ export function SourceWorkbench({
                 <button
                   type="button"
                   className="button primary"
-                  disabled={!onDownload || !downloadReady || downloadBusy}
+                  disabled={
+                    !onDownload ||
+                    !downloadReady ||
+                    downloadBusy ||
+                    inventory(detail).kind === "owned"
+                  }
                   data-testid="source-download"
                   onClick={() => onDownload?.(detail)}
                 >
-                  {downloadBusy ? "正在准备下载…" : "下载到电脑"}
+                  {inventory(detail).kind === "owned"
+                    ? "已入库"
+                    : downloadBusy
+                      ? "正在准备下载…"
+                      : "下载到电脑"}
                 </button>
 
                 <button
@@ -1305,6 +1398,64 @@ export function SourceWorkbench({
                   adapter={adapter}
                   accounts={accounts}
                 />
+              )}
+              {inventory(detail).kind === "candidate" && (
+                <section
+                  className="library-candidates"
+                  data-testid="library-candidates"
+                >
+                  <h2>漫画库中的候选</h2>
+                  <p className="source-muted">
+                    核对作者、标题、语言版本和页数；确认后会关联当前来源编号，保留已有来源关联。
+                  </p>
+                  {inventory(detail).items.map((item) => (
+                    <div className="library-candidate" key={item.id}>
+                      <strong>{item.fileName}</strong>
+                      <p>
+                        {item.authors.join("、") || "作者未知"} · 电脑{" "}
+                        {item.pageCount ?? "未知"} 页 / 来源{" "}
+                        {detail.pageCount ?? "未知"} 页
+                      </p>
+                      <div className="source-actions">
+                        {onAssociateLibrary && (
+                          <button
+                            className="button secondary"
+                            data-testid={"confirm-library-candidate-" + item.id}
+                            disabled={
+                              libraryBusy ||
+                              !readableLibraryItem(item) ||
+                              libraryReferences(item).some(
+                                (ref) =>
+                                  ref.source === detail.source &&
+                                  ref.workId !== detail.workId,
+                              )
+                            }
+                            onClick={() => {
+                              void onAssociateLibrary(item.id, detail).then(
+                                (saved) =>
+                                  setNotice(
+                                    saved
+                                      ? "关联已保存，这部作品已在漫画库中。"
+                                      : "关联未完成，请检查漫画库状态后重试。",
+                                  ),
+                              );
+                            }}
+                          >
+                            确认是同一本
+                          </button>
+                        )}
+                        {onOpenLibrary && (
+                          <button
+                            className="text-button"
+                            onClick={() => onOpenLibrary(detail, item.id)}
+                          >
+                            查看电脑详情
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </section>
               )}
               <section className="source-description">
                 <h2>简介</h2>
@@ -1695,6 +1846,82 @@ export function SourceWorkbench({
                   )}
                 </div>
               </div>
+              <div
+                className="result-filters"
+                role="group"
+                aria-label="来源作品状态筛选"
+              >
+                {(Object.keys(inventoryFilterLabels) as InventoryFilter[]).map(
+                  (value) => (
+                    <button
+                      key={value}
+                      data-testid={"source-filter-" + value}
+                      aria-pressed={inventoryFilter === value}
+                      onClick={() => {
+                        clearSelection();
+                        setInventoryFilter(value);
+                        main()?.scrollTo(0, 0);
+                      }}
+                    >
+                      {inventoryFilterLabels[value]}{" "}
+                      <span>
+                        {
+                          searchedWorks.filter((work) =>
+                            inventoryFilterMatches(inventoryFor(work), value),
+                          ).length
+                        }
+                      </span>
+                    </button>
+                  ),
+                )}
+              </div>
+              <p className="source-muted" data-testid="source-filter-count">
+                当前显示 {visible.length} 部 · 筛选覆盖已读取的{" "}
+                {browsingWorks.length} 部作品
+                {!complete ? "，未读取的收藏尚未参与核对" : ""}。
+              </p>
+              {view === "favorites" && (
+                <div className="source-actions collection-prepare">
+                  {!completeIndex && (
+                    <button
+                      className="button secondary"
+                      data-testid="collection-read-all"
+                      onClick={() => {
+                        collectionReadAll.current = true;
+                        setAutoPaused(false);
+                        resumeCollection(true);
+                      }}
+                    >
+                      读取全部收藏
+                    </button>
+                  )}
+                  {onReconcileLibrary && (
+                    <button
+                      className="text-button"
+                      data-testid="source-reconcile-library"
+                      disabled={
+                        libraryBusy ||
+                        !libraryReady ||
+                        librarySnapshot?.phase !== "complete" ||
+                        items.length === 0
+                      }
+                      onClick={() => void reconcileLibrary()}
+                    >
+                      核对已读取作品
+                    </button>
+                  )}
+                  {!completeIndex && (
+                    <span className="source-muted">
+                      可在这里直接准备完整搜索和筛选范围。
+                    </span>
+                  )}
+                </div>
+              )}
+              {reconcileNotice && (
+                <p className="source-notice" role="status">
+                  {reconcileNotice}
+                </p>
+              )}
               {view !== "following" && pageInfo && (
                 <p className="source-muted" data-testid="source-completeness">
                   {error ||
@@ -1704,6 +1931,22 @@ export function SourceWorkbench({
                       ? "已读取完整范围"
                       : "范围尚未读全，已读取页面不代表全部作品"}{" "}
                   · 入库以电脑漫画库为准；下载前确认作品与保存位置
+                </p>
+              )}
+              {visible.length === 0 && browsingWorks.length > 0 && (
+                <p className="source-empty">
+                  当前筛选没有结果
+                  {!complete ? "；还有未读取的收藏，可以继续读取全部收藏" : ""}
+                  。
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setInventoryFilter("all");
+                      setQuery("");
+                    }}
+                  >
+                    清空筛选与搜索
+                  </button>
                 </p>
               )}
               {grid(visible)}
@@ -1726,7 +1969,7 @@ export function SourceWorkbench({
                               ? "正在读取下一页…"
                               : autoPaused
                                 ? "自动续读已暂停"
-                                : query.trim()
+                                : query.trim() || inventoryFilter !== "all"
                                   ? "仅筛选已读取范围；清空筛选后继续自动读取"
                                   : "向下滚动继续读取"}
                     {" · 已读取 " +

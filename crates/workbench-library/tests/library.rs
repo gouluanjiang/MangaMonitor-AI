@@ -61,6 +61,239 @@ fn archive(path: &Path, entries: &[(&str, &[u8])]) {
     writer.finish().unwrap();
 }
 
+#[test]
+fn assisted_associations_preserve_files_dates_and_existing_source_across_reindex() {
+    use workbench_storage::LibraryMatchWork;
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let name = "[Synthetic Author] Synthetic adventure volume 1 [Chinese].zip";
+    archive(&root.path().join(name), &[("1.png", &image_bytes())]);
+    let original = fs::read(root.path().join(name)).unwrap();
+    let mut service = LibraryService::new();
+    let start = service.choose(&store, root.path()).unwrap();
+    let ready = finish(&mut service, &store, start);
+    let scope = ready.root_id.as_deref().unwrap();
+    let date = ready.items[0].added_at;
+    assert!(date.is_some());
+    let work: LibraryMatchWork = serde_json::from_value(serde_json::json!({
+        "source":"Pica", "workId":"0123456789abcdef01234567", "title":"(C106) Synthetic adventure volume 1 [Chinese]", "authors":["Synthetic Author"], "pageCount":1
+    })).unwrap();
+    let preview = service
+        .reconcile(
+            &store,
+            scope,
+            ready.generation,
+            std::slice::from_ref(&work),
+            false,
+        )
+        .unwrap();
+    assert_eq!(preview.linked, 1);
+    assert_eq!(store.read_library().unwrap().revision, ready.revision);
+    let linked = service
+        .reconcile(
+            &store,
+            scope,
+            ready.generation,
+            std::slice::from_ref(&work),
+            true,
+        )
+        .unwrap();
+    assert_eq!(linked.linked, 1);
+    assert_eq!(linked.snapshot.items[0].links.len(), 1);
+    assert_eq!(
+        service
+            .reconcile(
+                &store,
+                scope,
+                ready.generation,
+                std::slice::from_ref(&work),
+                true
+            )
+            .unwrap()
+            .linked,
+        0
+    );
+    service
+        .associate(
+            &store,
+            scope,
+            ready.generation,
+            &ready.items[0].id,
+            LibraryReference {
+                source: Source::Jm,
+                work_id: "123".into(),
+            },
+        )
+        .unwrap();
+    let start = service
+        .scan(&store, scope, ready.generation, ScanAction::Start)
+        .unwrap();
+    let refreshed = finish(&mut service, &store, start);
+    assert_eq!(refreshed.items[0].references().count(), 2);
+    assert_eq!(refreshed.items[0].added_at, date);
+    assert_eq!(original, fs::read(root.path().join(name)).unwrap());
+    service
+        .link(
+            &store,
+            scope,
+            refreshed.generation,
+            &ready.items[0].id,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        service
+            .reconcile(
+                &store,
+                scope,
+                refreshed.generation,
+                std::slice::from_ref(&work),
+                true
+            )
+            .unwrap()
+            .linked,
+        0
+    );
+    assert_eq!(
+        service.read(&store).unwrap().items[0].references().count(),
+        0
+    );
+}
+
+#[test]
+fn matching_rejects_ambiguous_editions_unknown_pages_and_changed_files() {
+    use workbench_storage::LibraryMatchWork;
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let name = "[Synthetic Author] Synthetic adventure volume 1 [Chinese].zip";
+    archive(&root.path().join(name), &[("1.png", &image_bytes())]);
+    let mut service = LibraryService::new();
+    let start = service.choose(&store, root.path()).unwrap();
+    let ready = finish(&mut service, &store, start);
+    let scope = ready.root_id.as_deref().unwrap();
+    let work = LibraryMatchWork {
+        reference: LibraryReference {
+            source: Source::Pica,
+            work_id: "0123456789abcdef01234567".into(),
+        },
+        title: "Synthetic adventure volume 1 [Chinese]".into(),
+        authors: vec!["Synthetic Author".into()],
+        page_count: Some(1),
+    };
+    for invalid in [
+        LibraryMatchWork {
+            page_count: None,
+            ..work.clone()
+        },
+        LibraryMatchWork {
+            page_count: Some(2),
+            ..work.clone()
+        },
+        LibraryMatchWork {
+            authors: vec!["Other Author".into()],
+            ..work.clone()
+        },
+        LibraryMatchWork {
+            title: "Synthetic adventure volume 2 [Chinese]".into(),
+            ..work.clone()
+        },
+        LibraryMatchWork {
+            title: "Synthetic adventure volume 1 [Japanese]".into(),
+            ..work.clone()
+        },
+    ] {
+        assert_eq!(
+            service
+                .reconcile(&store, scope, ready.generation, &[invalid], true)
+                .unwrap()
+                .linked,
+            0
+        );
+    }
+    let duplicate = LibraryMatchWork {
+        reference: LibraryReference {
+            source: Source::Pica,
+            work_id: "1123456789abcdef01234567".into(),
+        },
+        ..work.clone()
+    };
+    assert_eq!(
+        service
+            .reconcile(
+                &store,
+                scope,
+                ready.generation,
+                &[work.clone(), duplicate],
+                true
+            )
+            .unwrap()
+            .linked,
+        0
+    );
+    fs::remove_file(root.path().join(name)).unwrap();
+    assert_eq!(
+        service
+            .reconcile(&store, scope, ready.generation, &[work], true)
+            .unwrap()
+            .linked,
+        0
+    );
+}
+
+#[test]
+fn old_unknown_admission_dates_do_not_become_the_next_scan_date() {
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    archive(
+        &root.path().join("legacy.zip"),
+        &[("1.png", &image_bytes())],
+    );
+    let mut service = LibraryService::new();
+    let start = service.choose(&store, root.path()).unwrap();
+    let ready = finish(&mut service, &store, start);
+    let mut old = store.read_library().unwrap();
+    old.value.records[0].item.added_at = None;
+    store.write_library(old.revision, old.value).unwrap();
+    archive(&root.path().join("new.zip"), &[("1.png", &image_bytes())]);
+    let start = service
+        .scan(
+            &store,
+            ready.root_id.as_deref().unwrap(),
+            ready.generation,
+            ScanAction::Start,
+        )
+        .unwrap();
+    let refreshed = finish(&mut service, &store, start);
+    assert_eq!(named(&refreshed, "legacy.zip").added_at, None);
+    assert!(named(&refreshed, "new.zip").added_at.is_some());
+}
+
+#[test]
+fn large_existing_zip_is_indexed_without_decoding_all_images() {
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let mut writer = ZipWriter::new(File::create(root.path().join("large.zip")).unwrap());
+    for n in 0..13_552 {
+        writer
+            .start_file(
+                format!("{n:05}.jpg"),
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"synthetic-index-only-image").unwrap();
+    }
+    writer.finish().unwrap();
+    let mut service = LibraryService::new();
+    let start = service.choose(&store, root.path()).unwrap();
+    let ready = finish(&mut service, &store, start);
+    assert_eq!(ready.items[0].page_count, Some(13_552));
+    assert_eq!(ready.items[0].error_code, None);
+}
+
 fn finish(
     service: &mut LibraryService,
     store: &WorkbenchStore,

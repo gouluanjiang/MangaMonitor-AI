@@ -7,6 +7,7 @@ mod completeness;
 mod discovery;
 mod downloads;
 mod library;
+mod library_matching;
 mod matches;
 mod model;
 mod phone;
@@ -18,6 +19,7 @@ pub use completeness::*;
 pub use discovery::*;
 pub use downloads::*;
 pub use library::*;
+pub use library_matching::*;
 pub use matches::*;
 pub use model::{
     AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,

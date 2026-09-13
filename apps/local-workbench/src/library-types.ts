@@ -15,12 +15,18 @@ export interface LibraryItem {
   tags: string[];
   bytes: number;
   modifiedAt: number | null;
+  addedAt?: number | null;
   pageCount: number | null;
   coverAvailable: boolean;
   state: "indexed" | "unreadable" | "unsupported";
   errorCode: string | null;
   sourceRef: LibraryReference | null;
   identityEvidence: "metadata" | "filename" | "manual" | null;
+  links?: {
+    reference: LibraryReference;
+    evidence: "titleAuthorPages" | "manual";
+    linkedAt: number;
+  }[];
 }
 export interface LibrarySnapshot {
   revision: number;
@@ -43,6 +49,17 @@ export interface LibraryCover {
   dataUrl: string | null;
 }
 export interface LibraryAdapter {
+  reconcile?(
+    rootId: string,
+    generation: number,
+    works: LibraryMatchWork[],
+  ): Promise<{ snapshot: LibrarySnapshot; linked: number; examined: number }>;
+  associate?(
+    rootId: string,
+    generation: number,
+    entryId: string,
+    reference: LibraryReference,
+  ): Promise<LibrarySnapshot>;
   read(): Promise<LibrarySnapshot>;
   choose(): Promise<LibrarySnapshot | null>;
   importPaths(
@@ -65,6 +82,11 @@ export interface LibraryAdapter {
     entryId: string,
     reference: LibraryReference | null,
   ): Promise<LibrarySnapshot>;
+}
+export interface LibraryMatchWork extends LibraryReference {
+  title: string;
+  authors: string[];
+  pageCount: number | null;
 }
 export interface LibraryMigrationResult {
   snapshot: LibrarySnapshot;

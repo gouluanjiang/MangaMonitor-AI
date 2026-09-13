@@ -2263,13 +2263,33 @@ export default function App() {
               downloadBusy={downloads.busy}
               librarySnapshot={library.snapshot}
               libraryReady={!library.error}
-              onOpenLibrary={(work) => {
-                setRequestedLibraryEntryId(null);
+              libraryBusy={library.busy}
+              onReconcileLibrary={(works) =>
+                library.controller.reconcile(
+                  works.map(
+                    ({ source, workId, title, authors, pageCount }) => ({
+                      source,
+                      workId,
+                      title,
+                      authors,
+                      pageCount,
+                    }),
+                  ),
+                )
+              }
+              onAssociateLibrary={(entryId, work) =>
+                library.controller.associate(entryId, {
+                  source: work.source,
+                  workId: work.workId,
+                })
+              }
+              onOpenLibrary={(work, entryId) => {
+                setRequestedLibraryEntryId(entryId ?? null);
                 navigate("library");
                 setLibraryTab("all");
                 setRequestedLibraryWork(work);
                 setLibraryRequestKey((key) => key + 1);
-                setQuery(work.title);
+                setQuery("");
               }}
               accounts={accounts}
               onAccountsChange={mergeAccounts}

@@ -81,12 +81,40 @@ pub struct LibraryItem {
     pub tags: Vec<String>,
     pub bytes: u64,
     pub modified_at: Option<u64>,
+    /// First successful registration. Legacy entries retain unknown dates.
+    #[serde(default)]
+    pub added_at: Option<u64>,
     pub page_count: Option<u64>,
     pub cover_available: bool,
     pub state: LibraryItemState,
     pub error_code: Option<String>,
     pub source_ref: Option<LibraryReference>,
     pub identity_evidence: Option<LibraryEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LibrarySourceLink>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryLinkEvidence {
+    TitleAuthorPages,
+    Manual,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibrarySourceLink {
+    pub reference: LibraryReference,
+    pub evidence: LibraryLinkEvidence,
+    pub linked_at: u64,
+}
+
+impl LibraryItem {
+    pub fn references(&self) -> impl Iterator<Item = &LibraryReference> {
+        self.source_ref
+            .iter()
+            .chain(self.links.iter().map(|link| &link.reference))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -301,10 +329,22 @@ impl ValidatedDocument for LibraryDocument {
                 || item.description.as_ref().is_some_and(|v| !text(v, 4096))
                 || item.bytes > MAX_SAFE_INTEGER
                 || item.modified_at.is_some_and(|v| v > MAX_SAFE_INTEGER)
-                || item.page_count.is_some_and(|v| v > 10_000)
+                || item.added_at.is_some_and(|v| v > MAX_SAFE_INTEGER)
+                || item.page_count.is_some_and(|v| v > 60_000)
                 || !error_code(&item.error_code)
                 || item.source_ref.as_ref().is_some_and(|v| !v.is_valid())
                 || item.source_ref.is_some() != item.identity_evidence.is_some()
+                || item.links.len() > 2
+                || item
+                    .links
+                    .iter()
+                    .any(|link| !link.reference.is_valid() || link.linked_at > MAX_SAFE_INTEGER)
+                || item
+                    .references()
+                    .map(|reference| reference.source)
+                    .collect::<HashSet<_>>()
+                    .len()
+                    != item.references().count()
                 || (item.identity_evidence == Some(LibraryEvidence::Manual)
                     && !record.manual_override)
                 || (record.manual_override

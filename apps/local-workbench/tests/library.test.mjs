@@ -13,6 +13,11 @@ import {
   validateLibrarySnapshot,
 } from "../src/library-runtime.ts";
 import { LibraryCoverCache } from "../src/library-cover-cache.ts";
+import { libraryReferences } from "../src/library-matching.ts";
+import {
+  createInventoryMatcher,
+  inventoryFilterMatches,
+} from "../src/inventory-model.ts";
 import {
   phoneNameKey,
   phoneLibraryRows,
@@ -77,6 +82,91 @@ const empty = () => ({
   errorCode: null,
 });
 const clone = (value) => structuredClone(value);
+
+test("admission sorting keeps unknown history last and separates file review from unlinked files", () => {
+  const entries = [
+    item(1, { addedAt: null }),
+    item(2, {
+      addedAt: 200,
+      sourceRef: { source: "JM", workId: "2" },
+      identityEvidence: "metadata",
+    }),
+    item(3, { addedAt: 100 }),
+    item(4, {
+      addedAt: 300,
+      state: "unreadable",
+      errorCode: "LIBRARY_FILE_CHANGED",
+    }),
+  ];
+  assert.deepEqual(
+    filterLibraryItems(entries, "", "added-desc").map((v) => v.id),
+    [entryId(4), entryId(2), entryId(3), entryId(1)],
+  );
+  assert.deepEqual(
+    filterLibraryItems(entries, "", "added-asc").map((v) => v.id),
+    [entryId(3), entryId(2), entryId(4), entryId(1)],
+  );
+  assert.deepEqual(
+    filterLibraryItems(entries, "", "title", "review").map((v) => v.id),
+    [entryId(4)],
+  );
+  assert.deepEqual(
+    filterLibraryItems(entries, "", "title", "unlinked").map((v) => v.id),
+    [entryId(1), entryId(3)],
+  );
+});
+
+test("renamed creator and event prefixes generate candidates without granting ownership; confirmed second sources work", () => {
+  const entry = item(1, {
+    title: "[Creator] Synthetic adventure volume 1 [Chinese].zip",
+    authors: ["Creator"],
+  });
+  const work = {
+    source: "Pica",
+    workId: picaId,
+    title: "(C106) [Creator] Synthetic adventure volume 1 [Chinese]",
+  };
+  assert.equal(matchLibraryWork(snapshot([entry]), work).kind, "candidate");
+  const linked = {
+    ...entry,
+    sourceRef: { source: "JM", workId: "123" },
+    identityEvidence: "metadata",
+    links: [
+      {
+        reference: { source: "Pica", workId: picaId },
+        evidence: "titleAuthorPages",
+        linkedAt: 200,
+      },
+    ],
+  };
+  assert.equal(libraryReferences(linked).length, 2);
+  assert.equal(matchLibraryWork(snapshot([linked]), work).kind, "exact");
+  assert.equal(
+    matchLibraryWork(
+      snapshot([
+        { ...linked, state: "unreadable", errorCode: "LIBRARY_FILE_CHANGED" },
+      ]),
+      work,
+    ).kind,
+    "candidate",
+  );
+  assert.equal(
+    matchLibraryWork(snapshot([entry]), {
+      ...work,
+      title: work.title.replace("volume 1", "volume 2"),
+    }).kind,
+    "missing",
+  );
+  const match = createInventoryMatcher(
+    snapshot([linked]),
+    [],
+    true,
+    false,
+  )(work);
+  assert.equal(match.kind, "unknown");
+  assert.equal(inventoryFilterMatches(match, "missing"), false);
+  assert.equal(inventoryFilterMatches(match, "unknown"), true);
+});
 
 test("2833 synthetic names remain individually addressable after Unicode search and sorting", () => {
   const items = Array.from({ length: 2833 }, (_, i) => item(i + 1));

@@ -84,7 +84,7 @@ pub(crate) struct ScanJob {
     pub revision: u64,
     entries: Entries,
     active: Option<WorkScan>,
-    manual: HashMap<String, LibraryRecord>,
+    previous: HashMap<String, LibraryRecord>,
     incomplete: bool,
 }
 
@@ -168,12 +168,14 @@ pub(crate) fn base_record(root_id: &str, relative: &str, format: LibraryFormat) 
             tags: Vec::new(),
             bytes: 0,
             modified_at: None,
+            added_at: None,
             page_count: None,
             cover_available: false,
             state: LibraryItemState::Indexed,
             error_code: conflict.then(|| "LIBRARY_IDENTITY_CONFLICT".into()),
             identity_evidence: reference.as_ref().map(|_| LibraryEvidence::Filename),
             source_ref: reference,
+            links: Vec::new(),
         },
         identity: None,
         manual_override: false,
@@ -198,18 +200,14 @@ pub(crate) fn mark_error(record: &mut LibraryRecord, code: &'static str) {
 impl ScanJob {
     pub fn new(root: Root, generation: u64, revision: u64, old: &[LibraryRecord]) -> Result<Self> {
         let entries = root.directory("")?.entries()?;
-        let manual = old
-            .iter()
-            .filter(|r| r.manual_override)
-            .map(|r| (r.item.id.clone(), r.clone()))
-            .collect();
+        let previous = old.iter().map(|r| (r.item.id.clone(), r.clone())).collect();
         Ok(Self {
             root,
             generation,
             revision,
             entries,
             active: None,
-            manual,
+            previous,
             incomplete: false,
         })
     }
@@ -338,16 +336,26 @@ impl ScanJob {
     }
 
     fn finish_work(&self, document: &mut LibraryDocument, mut record: LibraryRecord) {
+        record.item.added_at = self.previous.get(&record.item.id).map_or_else(
+            || {
+                (record.item.state == LibraryItemState::Indexed && record.item.error_code.is_none())
+                    .then(crate::service::now)
+            },
+            |old| old.item.added_at,
+        );
         if let Some(old) = self
-            .manual
+            .previous
             .get(&record.item.id)
             .filter(|old| old.identity.is_some() && old.identity == record.identity)
         {
-            record.manual_override = true;
-            record.item.source_ref = old.item.source_ref.clone();
-            record.item.identity_evidence = old.item.identity_evidence;
-            if record.item.error_code.as_deref() == Some("LIBRARY_IDENTITY_CONFLICT") {
-                record.item.error_code = None;
+            record.item.links = old.item.links.clone();
+            if old.manual_override {
+                record.manual_override = true;
+                record.item.source_ref = old.item.source_ref.clone();
+                record.item.identity_evidence = old.item.identity_evidence;
+                if record.item.error_code.as_deref() == Some("LIBRARY_IDENTITY_CONFLICT") {
+                    record.item.error_code = None;
+                }
             }
         }
         document.records.push(record);

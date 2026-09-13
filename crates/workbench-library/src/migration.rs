@@ -199,6 +199,22 @@ impl LibraryService {
             .into_iter()
             .flatten()
             {
+                target.item.added_at = match (target.item.added_at, previous.item.added_at) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+                for link in &previous.item.links {
+                    if target
+                        .item
+                        .references()
+                        .any(|v| v.source == link.reference.source && v != &link.reference)
+                    {
+                        return Err(error("LIBRARY_MIGRATION_CONFLICT"));
+                    }
+                    if !target.item.references().any(|v| v == &link.reference) {
+                        target.item.links.push(link.clone());
+                    }
+                }
                 if previous.manual_override {
                     if target.manual_override && target.item.source_ref != previous.item.source_ref
                     {

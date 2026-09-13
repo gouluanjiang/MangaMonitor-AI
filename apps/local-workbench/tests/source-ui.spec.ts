@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
 import type {
   AccountSummary,
   FollowingSnapshot,
@@ -40,6 +41,7 @@ type MockOptions = {
   cacheSnapshot?: CatalogSnapshot;
   crossSourcePhone?: boolean;
   crossSourcePC?: boolean;
+  libraryCandidate?: boolean;
   holdMatchDetail?: boolean;
 };
 type Call = {
@@ -801,6 +803,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
     let jmHoldUsed = false;
     let picaHoldUsed = false;
     let expiryUsed = false;
+    let libraryConfirmed = false;
     const catalogs = new Map<
       string,
       {
@@ -881,8 +884,13 @@ async function installMock(page: Page, options: MockOptions = {}) {
             return clone(hooks.matches);
           }
           if (command === "read_booklists") return clone(hooks.booklists);
-          if (command === "library_read")
-            return {
+          if (
+            command === "library_read" ||
+            command === "library_reconcile" ||
+            command === "library_associate"
+          ) {
+            if (command === "library_associate") libraryConfirmed = true;
+            const snapshot = {
               revision: options.crossSourcePC ? 1 : 0,
               rootId: options.crossSourcePC ? "a".repeat(64) : null,
               rootPath: options.crossSourcePC
@@ -898,7 +906,18 @@ async function installMock(page: Page, options: MockOptions = {}) {
                       relativePath: "[合成作者] 电脑作品.zip",
                       fileName: "[合成作者] 电脑作品.zip",
                       format: "zip",
-                      title: "合成电脑作品",
+                      title: options.libraryCandidate
+                        ? "[合成作者] 合成验收 JM 作品 123 账号1.zip"
+                        : "合成电脑作品",
+                      links: libraryConfirmed
+                        ? [
+                            {
+                              reference: { source: "JM", workId: "123" },
+                              evidence: "manual",
+                              linkedAt: 1800000000000,
+                            },
+                          ]
+                        : [],
                       authors: ["合成作者"],
                       description: null,
                       tags: [],
@@ -921,6 +940,14 @@ async function installMock(page: Page, options: MockOptions = {}) {
               updatedAt: null,
               errorCode: null,
             };
+            return command === "library_reconcile"
+              ? {
+                  snapshot,
+                  linked: 0,
+                  examined: (args.works as unknown[]).length,
+                }
+              : snapshot;
+          }
           if (command === "phone_library_read")
             return {
               revision: options.crossSourcePhone ? 1 : 0,
@@ -1260,6 +1287,63 @@ async function openFavorites(page: Page) {
   await page.getByTestId("nav-favorites").click();
   await expect(page.getByTestId("source-workbench")).toBeVisible();
 }
+
+test("favorites status filtering clears hidden selection and offers a direct full-read action", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { collectionCount: 65, collectionAuthors: true });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-Pica:1").check();
+  await page.getByTestId("source-filter-owned").click();
+  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(page.getByTestId("source-filter-count")).toContainText(
+    "当前显示 0 部",
+  );
+  await page.getByTestId("collection-read-all").click();
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "已读取全部收藏 · 已读取 65 / 65",
+  );
+  expect(await picaFavoritePages(page, false)).toEqual([1, 2, 3, 4]);
+  await page.getByTestId("source-filter-unknown").click();
+  await expect(page.getByTestId("source-filter-count")).toContainText(
+    "当前显示 65 部",
+  );
+  await page.getByTestId("source-tab-JM").click();
+  await expect(page.getByTestId("source-filter-all")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/favorites-usability.png" });
+});
+
+test("a renamed local candidate can be confirmed from the source detail without typing IDs or replacing its other source", async ({
+  page,
+}) => {
+  await installMock(page, { crossSourcePC: true, libraryCandidate: true });
+  await openFavorites(page);
+  await page.getByTestId("source-filter-candidate").click();
+  await expect(page.getByTestId("source-card-JM:123")).toBeVisible();
+  await page.getByTestId("source-open-JM:123").click();
+  await expect(page.getByTestId("library-candidates")).toBeVisible();
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/matching-candidates.png" });
+  await page.getByTestId("confirm-library-candidate-" + "e".repeat(64)).click();
+  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
+  await expect(page.getByTestId("library-candidates")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        window.sourceTest.calls.filter(
+          (call) => call.command === "library_associate",
+        ).length,
+    ),
+  ).toBe(1);
+});
 async function favoritePages(page: Page) {
   return page.evaluate(() =>
     window.sourceTest.calls

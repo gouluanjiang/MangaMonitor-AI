@@ -39,9 +39,30 @@ export function createInventoryMatcher(
 export const inventoryLabel = (match: InventoryMatch) =>
   ({
     owned: "已入库 · 电脑漫画库",
-    candidate: "文件或同标题待确认",
+    candidate: "待确认匹配",
     missing: "漫画库内未匹配",
     incomplete: "漫画库目录未读完",
     unconfigured: "尚未设置漫画库",
     unknown: "文件或关联未核对",
   })[match.kind];
+
+export type InventoryFilter =
+  "all" | "owned" | "candidate" | "missing" | "unknown";
+export const inventoryFilterLabels: Record<InventoryFilter, string> = {
+  all: "全部",
+  owned: "已入库",
+  candidate: "待确认匹配",
+  missing: "未匹配",
+  unknown: "状态待核对",
+};
+export function inventoryFilterMatches(
+  match: InventoryMatch,
+  filter: InventoryFilter,
+) {
+  return (
+    filter === "all" ||
+    (filter === "unknown"
+      ? ["unknown", "unconfigured", "incomplete"].includes(match.kind)
+      : match.kind === filter)
+  );
+}

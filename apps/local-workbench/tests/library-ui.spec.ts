@@ -21,6 +21,7 @@ type Options = {
   failPhoneRead?: boolean;
   namespaceMarks?: boolean;
   importedNames?: string[];
+  usability?: boolean;
 };
 type Hooks = {
   calls: Call[];
@@ -97,10 +98,15 @@ async function installMock(page: Page, options: Options = {}) {
         tags: [],
         bytes: 4096,
         modifiedAt: 1800000000000,
+        addedAt:
+          options.usability && number < 3
+            ? 1800000000000 + number * 1000
+            : null,
         pageCount: 20,
         coverAvailable: Boolean(options.covers),
-        state: "indexed",
-        errorCode: null,
+        state: options.usability && number === 3 ? "unreadable" : "indexed",
+        errorCode:
+          options.usability && number === 3 ? "LIBRARY_FILE_CHANGED" : null,
         sourceRef: reference,
         identityEvidence: reference ? "manual" : null,
       };
@@ -425,6 +431,33 @@ async function installMock(page: Page, options: Options = {}) {
   await page.goto("/");
   await expect(page.getByTestId("library-workbench")).toBeVisible();
 }
+
+test("library admission sorting and state filters combine with search and preserve unknown dates", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { pcCount: 4, usability: true });
+  const cards = page.getByTestId("library-grid").locator("article");
+  await expect(cards.first()).toHaveAttribute("data-library-id", id(2));
+  await page.getByTestId("library-sort").selectOption("added-asc");
+  await expect(cards.first()).toHaveAttribute("data-library-id", id(1));
+  await page.getByTestId("library-filter-review").click();
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toHaveAttribute("data-library-id", id(3));
+  await page.getByTestId("library-filter-unlinked").click();
+  await expect(cards).toHaveCount(3);
+  await page.getByTestId("search-input").fill("0004");
+  await expect(cards).toHaveCount(1);
+  await page.getByTestId("library-open-" + id(4)).click();
+  await expect(page.getByTestId("library-added-at")).toContainText(
+    "历史记录未知",
+  );
+  await page.getByTestId("library-detail-back").click();
+  await page.getByTestId("search-input").fill("");
+  await page.getByTestId("library-filter-all").click();
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/library-usability.png" });
+});
 const commands = (page: Page, command: string) =>
   page.evaluate(
     (command) =>

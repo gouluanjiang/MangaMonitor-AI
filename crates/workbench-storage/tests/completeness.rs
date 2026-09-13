@@ -71,6 +71,8 @@ fn mark(store: &WorkbenchStore, name: &str, source_ref: Option<LibraryReference>
 fn pc_record(id: char, name: &str, source_ref: LibraryReference) -> LibraryRecord {
     LibraryRecord {
         item: LibraryItem {
+            added_at: None,
+            links: Vec::new(),
             id: id.to_string().repeat(64),
             relative_path: name.into(),
             file_name: name.into(),

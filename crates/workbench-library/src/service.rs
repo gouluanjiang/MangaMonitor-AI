@@ -358,6 +358,8 @@ impl LibraryService {
             .ok_or(error("LIBRARY_ENTRY_UNKNOWN"))?;
         record.item.identity_evidence = reference.as_ref().map(|_| LibraryEvidence::Manual);
         record.item.source_ref = reference;
+        // This explicit editor replaces the whole association set.
+        record.item.links.clear();
         record.manual_override = true;
         if record.item.error_code.as_deref() == Some("LIBRARY_IDENTITY_CONFLICT") {
             record.item.error_code = None;
@@ -408,7 +410,10 @@ impl LibraryService {
         // manual unlink/association as a side effect of download registration.
         for old in &document.value.records {
             if old.item.relative_path != relative_path
-                && old.item.source_ref.as_ref() == Some(expected_reference)
+                && old
+                    .item
+                    .references()
+                    .any(|reference| reference == expected_reference)
             {
                 return Err(error("LIBRARY_IDENTITY_CONFLICT"));
             }
@@ -430,6 +435,7 @@ impl LibraryService {
                 .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
         )?;
         let (mut record, visited, skipped) = completed_work(&root, relative_path)?;
+        record.item.added_at = Some(now());
         if record.item.source_ref.as_ref() != Some(expected_reference)
             || record.item.identity_evidence != Some(LibraryEvidence::Metadata)
             || record.item.page_count != Some(expected_pages)
@@ -443,6 +449,8 @@ impl LibraryService {
             .position(|old| old.item.relative_path == relative_path);
         if let Some(index) = existing {
             let old = &document.value.records[index];
+            record.item.added_at = old.item.added_at;
+            record.item.links = old.item.links.clone();
             if old.identity.is_none() || old.identity != record.identity {
                 return Err(error("LIBRARY_FILE_CHANGED"));
             }
@@ -508,7 +516,7 @@ impl LibraryService {
     }
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
@@ -517,7 +525,11 @@ fn now() -> u64 {
         .min(MAX_SAFE_INTEGER)
 }
 
-fn require_scope(document: &LibraryDocument, root_id: &str, generation: u64) -> Result<()> {
+pub(crate) fn require_scope(
+    document: &LibraryDocument,
+    root_id: &str,
+    generation: u64,
+) -> Result<()> {
     if !library_hash_is_valid(root_id) || generation == 0 || generation > MAX_SAFE_INTEGER {
         return Err(error("VALIDATION_FAILED"));
     }
@@ -542,7 +554,7 @@ fn find_record<'a>(document: &'a LibraryDocument, entry_id: &str) -> Result<&'a 
         .ok_or(error("LIBRARY_ENTRY_UNKNOWN"))
 }
 
-fn verify_record(root: &Root, record: &LibraryRecord) -> Result<()> {
+pub(crate) fn verify_record(root: &Root, record: &LibraryRecord) -> Result<()> {
     let identity = match root.node(&record.item.relative_path)? {
         Node::Directory(directory) if record.item.format == LibraryFormat::Directory => {
             paths::identity(&directory.file)?

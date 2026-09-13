@@ -1664,6 +1664,38 @@ export function SourceWorkbench({
                   刷新收藏
                 </button>
               )}
+              {view === "favorites" && (
+                <>
+                  {!completeIndex && (
+                    <button
+                      className="button secondary"
+                      data-testid="collection-read-all"
+                      onClick={() => {
+                        collectionReadAll.current = true;
+                        setAutoPaused(false);
+                        resumeCollection(true);
+                      }}
+                    >
+                      读取全部收藏
+                    </button>
+                  )}
+                  {onReconcileLibrary && (
+                    <button
+                      className="text-button"
+                      data-testid="source-reconcile-library"
+                      disabled={
+                        libraryBusy ||
+                        !libraryReady ||
+                        librarySnapshot?.phase !== "complete" ||
+                        items.length === 0
+                      }
+                      onClick={() => void reconcileLibrary()}
+                    >
+                      核对已读取作品
+                    </button>
+                  )}
+                </>
+              )}
               {authorSearch && (
                 <button
                   type="button"
@@ -1878,59 +1910,22 @@ export function SourceWorkbench({
               <p className="source-muted" data-testid="source-filter-count">
                 当前显示 {visible.length} 部 · 筛选覆盖已读取的{" "}
                 {browsingWorks.length} 部作品
-                {!complete ? "，未读取的收藏尚未参与核对" : ""}。
+                {view !== "following" && pageInfo && (
+                  <span data-testid="source-completeness">
+                    {" · "}
+                    {error ||
+                    (view === "favorites" && collectionState.error !== null)
+                      ? "本次读取未完成，保留上次已读结果"
+                      : complete
+                        ? "已读取完整范围"
+                        : "范围尚未读全，未读取作品尚未参与筛选"}
+                  </span>
+                )}
+                。
               </p>
-              {view === "favorites" && (
-                <div className="source-actions collection-prepare">
-                  {!completeIndex && (
-                    <button
-                      className="button secondary"
-                      data-testid="collection-read-all"
-                      onClick={() => {
-                        collectionReadAll.current = true;
-                        setAutoPaused(false);
-                        resumeCollection(true);
-                      }}
-                    >
-                      读取全部收藏
-                    </button>
-                  )}
-                  {onReconcileLibrary && (
-                    <button
-                      className="text-button"
-                      data-testid="source-reconcile-library"
-                      disabled={
-                        libraryBusy ||
-                        !libraryReady ||
-                        librarySnapshot?.phase !== "complete" ||
-                        items.length === 0
-                      }
-                      onClick={() => void reconcileLibrary()}
-                    >
-                      核对已读取作品
-                    </button>
-                  )}
-                  {!completeIndex && (
-                    <span className="source-muted">
-                      可在这里直接准备完整搜索和筛选范围。
-                    </span>
-                  )}
-                </div>
-              )}
               {reconcileNotice && (
                 <p className="source-notice" role="status">
                   {reconcileNotice}
-                </p>
-              )}
-              {view !== "following" && pageInfo && (
-                <p className="source-muted" data-testid="source-completeness">
-                  {error ||
-                  (view === "favorites" && collectionState.error !== null)
-                    ? "本次读取未完成，保留上次已读结果"
-                    : complete
-                      ? "已读取完整范围"
-                      : "范围尚未读全，已读取页面不代表全部作品"}{" "}
-                  · 入库以电脑漫画库为准；下载前确认作品与保存位置
                 </p>
               )}
               {visible.length === 0 && browsingWorks.length > 0 && (

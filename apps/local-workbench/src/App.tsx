@@ -2012,7 +2012,7 @@ export default function App() {
               ["discovery", "discover"],
               ["queue", "download"],
               ["authors", "people"],
-              ["completion", "discover"],
+              ["completion", "completeness"],
             ] as const
           )
             .filter(([value]) => persistence.native || value !== "completion")

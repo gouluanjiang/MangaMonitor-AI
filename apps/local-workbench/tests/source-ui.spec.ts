@@ -944,7 +944,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
               ? {
                   snapshot,
                   linked: 0,
-                  examined: (args.works as unknown[]).length,
+                  examined: (raw.works as unknown[]).length,
                 }
               : snapshot;
           }

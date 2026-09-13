@@ -11,6 +11,7 @@ This batch addresses the user's current library and favorites workflow before co
 - Completed favorite catalogs reconcile automatically once per catalog/library generation. Manual reconciliation of the already-read scope is also available. Only title/author/page-count agreement, an unambiguous candidate and a current file identity can add a source link. Creator/event prefixes and archive extensions can differ; edition/language/volume suffixes remain significant. No image or credential is read by reconciliation.
 - Candidate details show the local filename, author and both page counts, with an explicit confirmation action. A second source adds an association instead of replacing the first. Existing manual decisions remain authoritative; clearing associations disables automatic relinking of that same unchanged file.
 - ZIP indexing accepts up to 50,404 central-directory entries, retaining the 8 MiB central directory bound and all path/format checks. This accommodates a large existing collection without reading every image into memory.
+- The primary library action is refresh once a directory exists; changing it is secondary. Source reading/matching actions share the toolbar and duplicate scope notices are combined. The completion page has a checklist icon distinct from discovery. Existing narrow navigation, cover geometry and density choices are retained.
 
 ## Affected authority review
 

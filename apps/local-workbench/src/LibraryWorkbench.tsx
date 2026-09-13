@@ -178,27 +178,33 @@ function LibraryCover({
     </div>
   );
 }
-export function LibraryControls({ library }: { library: LibraryState }) {
+export function LibraryControls({
+  library,
+  compact = false,
+}: {
+  library: LibraryState;
+  compact?: boolean;
+}) {
   const { snapshot, busy, error, controller } = library;
   return (
-    <div className="library-read-controls">
+    <div className={"library-read-controls" + (compact ? " is-compact" : "")}>
       <div className="source-actions">
         <button
-          className="button secondary"
+          className={snapshot.rootId ? "text-button" : "button secondary"}
           data-testid="library-choose"
           disabled={busy}
           onClick={() => void controller.choose()}
         >
-          选择电脑漫画目录
+          {snapshot.rootId ? "更换目录" : "选择电脑漫画目录"}
         </button>
         {snapshot.rootId && (
           <button
-            className="text-button"
+            className="button secondary"
             data-testid="library-refresh"
             disabled={busy}
             onClick={() => void controller.scan("start")}
           >
-            重新读取电脑目录
+            刷新漫画库
           </button>
         )}
         {snapshot.phase === "reading" && !error && (
@@ -239,8 +245,14 @@ export function LibraryControls({ library }: { library: LibraryState }) {
           </button>
         )}
       </div>
-      <p className="source-muted library-path" data-testid="library-root-path">
-        {snapshot.rootPath ?? "尚未选择电脑目录"}
+      <p
+        className="source-muted library-path"
+        title={snapshot.rootPath ?? undefined}
+        data-testid="library-root-path"
+      >
+        {compact && snapshot.rootPath
+          ? "目录：" + snapshot.rootPath.split(/[\\/]/).filter(Boolean).at(-1)
+          : (snapshot.rootPath ?? "尚未选择电脑目录")}
       </p>
       <p className="source-muted" data-testid="library-progress" role="status">
         {snapshot.phase === "reading" && !error
@@ -254,7 +266,7 @@ export function LibraryControls({ library }: { library: LibraryState }) {
                 : "尚未读取"}{" "}
         · {snapshot.items.length} 个电脑作品
         {snapshot.skipped > 0 ? ` · 跳过 ${snapshot.skipped} 项` : ""}
-        {snapshot.freshness === "cached"
+        {snapshot.freshness === "cached" && !compact
           ? " · 上次目录记录，可重新读取以发现增删"
           : ""}
       </p>
@@ -630,7 +642,7 @@ export function LibraryWorkbench({
             </div>
           </div>
           <>
-            <LibraryControls library={library} />
+            <LibraryControls library={library} compact />
             <div
               className="result-filters"
               role="group"

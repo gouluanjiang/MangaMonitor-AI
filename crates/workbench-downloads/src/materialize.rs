@@ -18,6 +18,7 @@ use std::{
     path::Path,
 };
 use workbench_storage::{DownloadFile, DownloadRecord, Source, MAX_DOWNLOAD_FILES};
+mod archive_output;
 
 pub(crate) fn require_root(record: &DownloadRecord) -> Result<Directory> {
     let directory = Directory::open(Path::new(&record.root.path))?;
@@ -293,6 +294,9 @@ fn verify_file(directory: &Directory, name: &str, expected: &DownloadFile) -> Re
     Ok(())
 }
 pub(crate) fn verify_output(record: &DownloadRecord) -> Result<()> {
+    if record.zip_output {
+        return archive_output::verify(record);
+    }
     let root = require_root(record)?;
     let output = root.child(&record.destination)?;
     if Some(output.key()?) != record.output_identity {
@@ -406,6 +410,9 @@ pub(crate) fn save(
     require: &impl Fn() -> Result<()>,
     persist: &mut impl FnMut(&DownloadRecord) -> Result<()>,
 ) -> Result<()> {
+    if record.zip_output {
+        return archive_output::save(record, report, staging, require, persist);
+    }
     require()?;
     validate_staging(record, report, staging)?;
     if record.output_manifest_hash.is_some() {

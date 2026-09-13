@@ -1,7 +1,7 @@
 use crate::{
     archive, cover, error,
     paths::{self, Node, Root},
-    scan::{completed_directory, ScanJob},
+    scan::{completed_work, ScanJob},
     LibraryCover, LibraryFreshness, LibraryPhase, LibraryReference, LibrarySnapshot, Result,
     ScanAction,
 };
@@ -18,7 +18,7 @@ use workbench_storage::{
 
 #[derive(Default)]
 pub struct LibraryService {
-    job: Option<ScanJob>,
+    pub(crate) job: Option<ScanJob>,
 }
 
 impl LibraryService {
@@ -40,11 +40,25 @@ impl LibraryService {
     /// without enumerating new media or decoding covers. Changed/missing files
     /// lose positive PC evidence until the user refreshes the library scan.
     pub fn recheck_known_entries(&mut self, store: &WorkbenchStore) -> Result<LibrarySnapshot> {
+        self.recheck_entries(store, false)
+    }
+
+    /// Startup/window re-entry checks known file identities without a full scan
+    /// or image decoding. Restored cached records are not treated as presence.
+    pub fn read_current_files(&mut self, store: &WorkbenchStore) -> Result<LibrarySnapshot> {
+        self.recheck_entries(store, true)
+    }
+
+    fn recheck_entries(
+        &mut self,
+        store: &WorkbenchStore,
+        allow_partial: bool,
+    ) -> Result<LibrarySnapshot> {
         let mut document = store.read_library()?;
         let Some(saved) = document.value.root.as_ref() else {
             return Ok(snapshot(document, false));
         };
-        if document.value.phase != LibraryPhase::Complete {
+        if !allow_partial && document.value.phase != LibraryPhase::Complete {
             return Err(error("COMPLETENESS_LIBRARY_NOT_READY"));
         }
         let root = Root::restore(saved)?;
@@ -76,7 +90,8 @@ impl LibraryService {
         if changed {
             document = store.write_library(document.revision, document.value)?;
         }
-        Ok(snapshot(document, false))
+        let live = self.job_matches(&document);
+        Ok(snapshot(document, live))
     }
 
     /// Before reusing a translated PC copy, verify that specific known work.
@@ -112,13 +127,11 @@ impl LibraryService {
                 continue;
             }
             let valid = if record.item.format == LibraryFormat::Directory {
-                completed_directory(&root, &record.item.relative_path).is_ok_and(
-                    |(current, _, _)| {
-                        current.item.page_count == record.item.page_count
-                            && current.item.bytes == record.item.bytes
-                            && current.identity == record.identity
-                    },
-                )
+                completed_work(&root, &record.item.relative_path).is_ok_and(|(current, _, _)| {
+                    current.item.page_count == record.item.page_count
+                        && current.item.bytes == record.item.bytes
+                        && current.identity == record.identity
+                })
             } else {
                 verify_record(&root, record).is_ok()
             };
@@ -158,6 +171,11 @@ impl LibraryService {
             .ok_or(error("REVISION_EXHAUSTED"))?;
         let mut job = ScanJob::new(root, generation, previous.revision, &previous.value.records)?;
         let value = LibraryDocument {
+            relocations: if previous.value.root.as_ref() == Some(&job.root.saved) {
+                previous.value.relocations.clone()
+            } else {
+                Vec::new()
+            },
             root: Some(job.root.saved.clone()),
             generation,
             phase: LibraryPhase::Reading,
@@ -357,7 +375,7 @@ impl LibraryService {
         Ok(snapshot(saved, was_live))
     }
 
-    /// Adds a private PC-index record for one command-finalized work directory.
+    /// Adds a private PC-index record for one command-finalized directory or ZIP.
     /// This is not a download completion, promotion or phone-presence authority.
     /// The command must have already validated its exact media tree and hashes.
     pub fn register_completed(
@@ -395,9 +413,11 @@ impl LibraryService {
                 return Err(error("LIBRARY_IDENTITY_CONFLICT"));
             }
             if old.item.relative_path == relative_path
-                && (old.item.format != LibraryFormat::Directory
-                    || (old.manual_override
-                        && old.item.source_ref.as_ref() != Some(expected_reference)))
+                && (!matches!(
+                    old.item.format,
+                    LibraryFormat::Directory | LibraryFormat::Zip
+                ) || (old.manual_override
+                    && old.item.source_ref.as_ref() != Some(expected_reference)))
             {
                 return Err(error("LIBRARY_IDENTITY_CONFLICT"));
             }
@@ -409,7 +429,7 @@ impl LibraryService {
                 .as_ref()
                 .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
         )?;
-        let (mut record, visited, skipped) = completed_directory(&root, relative_path)?;
+        let (mut record, visited, skipped) = completed_work(&root, relative_path)?;
         if record.item.source_ref.as_ref() != Some(expected_reference)
             || record.item.identity_evidence != Some(LibraryEvidence::Metadata)
             || record.item.page_count != Some(expected_pages)
@@ -538,7 +558,7 @@ fn verify_record(root: &Root, record: &LibraryRecord) -> Result<()> {
     Ok(())
 }
 
-fn snapshot(document: Document<LibraryDocument>, live: bool) -> LibrarySnapshot {
+pub(crate) fn snapshot(document: Document<LibraryDocument>, live: bool) -> LibrarySnapshot {
     let value = document.value;
     let freshness = if value.root.is_none() {
         LibraryFreshness::None

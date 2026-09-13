@@ -699,7 +699,7 @@ test("error retry retains the task and final native registration refreshes PC me
     )
     .click();
   await expect(page.getByTestId("library-detail-stock")).toHaveText(
-    "已入库 · 手机名单",
+    "已入库 · 电脑漫画库",
   );
   expect(await calls(page, "library_scan")).toEqual([]);
   expect(await calls(page, "phone_library_mark")).toEqual([]);
@@ -1015,7 +1015,7 @@ test("manual Pica selection preserves the official link and only confirmed compl
     .toBeGreaterThan(1);
   await page.getByTestId("download-open-" + oldTaskId).click();
   await expect(page.getByTestId("library-detail-stock")).toHaveText(
-    "已入库 · 手机名单",
+    "已入库 · 电脑漫画库",
   );
   expect(
     await page.evaluate(() => window.downloadTest.pc.items[0].sourceRef),
@@ -1242,7 +1242,7 @@ test("completed history filtering and removal preserve PC entries", async ({
   await page.getByTestId("download-history-query").fill("123");
   await page.getByTestId("download-history-clear").click();
   await expect(page.getByTestId("download-history-confirmation")).toContainText(
-    "电脑漫画文件、电脑索引和手机名单会保留",
+    "漫画文件和漫画库索引会保留",
   );
   await page.getByTestId("download-history-confirm").click();
   await expect(page.getByTestId("download-empty")).toBeVisible();

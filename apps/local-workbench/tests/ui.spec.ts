@@ -142,7 +142,7 @@ test("one batch confirmation queues two works and prevents duplicate selection",
   // Queued works remain selectable for local organization, but cannot enqueue again.
   await page.getByTestId("select-rain").check();
   await page.getByTestId("select-flight").check();
-  await expect(page.getByTestId("batch-booklist")).toBeEnabled();
+  await expect(page.getByTestId("batch-booklist")).toHaveCount(0);
   await expect(page.getByTestId("batch-download")).toBeDisabled();
   await page.getByTestId("nav-queue").click();
   await expectPairOnce(page);
@@ -157,7 +157,7 @@ test("an unresolved review work has no batch-download selection", async ({
   await expect(review).toContainText("星光回声");
   await expect(review.getByRole("checkbox")).toHaveCount(1);
   await page.getByTestId("select-echo").check();
-  await expect(page.getByTestId("batch-booklist")).toBeEnabled();
+  await expect(page.getByTestId("batch-booklist")).toHaveCount(0);
   await expect(page.getByTestId("batch-download")).toBeDisabled();
   await page.getByTestId("nav-queue").click();
   await expect(page.getByTestId("task-echo")).toHaveCount(0);
@@ -483,7 +483,7 @@ test("the library separates local works from remote-only titles in both grids", 
   }
   await expect(
     page.getByRole("button", { name: "本地书单", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "全部作品", exact: true }),
   ).toBeVisible();

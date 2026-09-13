@@ -96,7 +96,7 @@ async function installMock(page: Page, options: Options = {}) {
         tags: [],
         bytes: 4096,
         modifiedAt: 1800000000000,
-        pageCount: null,
+        pageCount: 20,
         coverAvailable: Boolean(options.covers),
         state: "indexed",
         errorCode: null,
@@ -412,38 +412,11 @@ const commands = (page: Page, command: string) =>
     command,
   );
 
-test("phone-only 2833-name inventory is browsable and searchable without a PC folder or startup scan", async ({
-  page,
-}) => {
-  await installMock(page, { phoneCount: 2833 });
-  await page.getByTestId("phone-tab").click();
-  await expect(page.getByTestId("phone-library-grid")).toHaveAttribute(
-    "data-total-items",
-    "2833",
-  );
-  expect(
-    await page.getByTestId("phone-library-grid").locator("article").count(),
-  ).toBeLessThan(90);
-  await page.getByTestId("search-input").fill("合成手机作品 2833");
-  await expect(page.getByTestId("phone-library-grid")).toContainText(
-    "合成手机作品 2833",
-  );
-  await page.getByTestId("nav-settings").click();
-  await page.getByTestId("nav-library").click();
-  await page.getByTestId("phone-tab").click();
-  await expect(page.getByTestId("phone-library-grid")).toBeVisible();
-  expect(await commands(page, "library_scan")).toEqual([]);
-  expect(await commands(page, "library_choose")).toEqual([]);
-  expect(await commands(page, "phone_library_import")).toEqual([]);
-  expect(await commands(page, "library_cover")).toEqual([]);
-});
-
 test("PC directories use bounded rows, preserve full names during Unicode search and cancel folder selection", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { pcCount: 586, unicode: true, cancelChoose: true });
-  await page.getByTestId("pc-tab").click();
   await expect(page.getByTestId("library-grid")).toHaveAttribute(
     "data-total-items",
     "586",
@@ -484,7 +457,6 @@ test("a selected root reads bounded batches, pauses after the current batch and 
   page,
 }) => {
   await installMock(page, { selectCount: 60, holdNext: true });
-  await page.getByTestId("pc-tab").click();
   await page.getByTestId("library-choose").click();
   await expect
     .poll(() => page.evaluate(() => window.libraryTest.held))
@@ -516,7 +488,6 @@ test("scan errors retain the partial catalog across settings and require an expl
   page,
 }) => {
   await installMock(page, { selectCount: 60, failNextOnce: true });
-  await page.getByTestId("pc-tab").click();
   await page.getByTestId("library-choose").click();
   await expect(page.getByTestId("library-retry")).toBeVisible();
   await expect(page.getByTestId("library-grid")).toHaveAttribute(
@@ -526,7 +497,6 @@ test("scan errors retain the partial catalog across settings and require an expl
   const before = (await commands(page, "library_scan")).length;
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("nav-library").click();
-  await page.getByTestId("pc-tab").click();
   await expect(page.getByTestId("library-retry")).toBeVisible();
   expect(await commands(page, "library_scan")).toHaveLength(before);
   await page.getByTestId("library-retry").click();
@@ -541,101 +511,11 @@ test("scan errors retain the partial catalog across settings and require an expl
   ).toBe(true);
 });
 
-test("manual phone marks and source links survive restart while imported TXT replaces only imported names", async ({
-  page,
-}) => {
-  await installMock(page, {
-    pcCount: 2,
-    phoneCount: 1,
-    importedNames: ["合成更新手机作品.rar"],
-    cancelImportOnce: true,
-  });
-  await page.getByTestId("pc-tab").click();
-  await page.getByTestId("library-open-" + id(1)).click();
-  await expect(page.getByTestId("library-detail")).toBeVisible();
-  await page.getByTestId("library-source").selectOption("JM");
-  await page.getByTestId("library-source-id").fill("JM413751");
-  await page.getByTestId("library-link").click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => window.libraryTest.pc.items[0].sourceRef?.workId),
-    )
-    .toBe("413751");
-  await page.getByTestId("phone-mark").click();
-  await expect(page.getByTestId("library-detail")).toContainText("已入库");
-  expect(await page.evaluate(() => window.libraryTest.pc.items.length)).toBe(2);
-  await page.getByTestId("library-detail-back").click();
-  await page.getByTestId("phone-tab").click();
-  await expect(page.getByTestId("phone-library-grid")).toHaveAttribute(
-    "data-total-items",
-    "2",
-  );
-  await page.getByTestId("phone-library-import").click();
-  await expect(page.getByTestId("phone-library-grid")).toHaveAttribute(
-    "data-total-items",
-    "2",
-  );
-  await page.getByTestId("phone-library-import").click();
-  await expect(page.getByTestId("phone-library-grid")).toContainText(
-    "合成更新手机作品",
-  );
-  await expect(page.getByTestId("phone-library-grid")).toContainText(
-    "合成电脑作品 0001",
-  );
-  await expect(page.getByTestId("phone-library-grid")).not.toContainText(
-    "合成手机作品 0001",
-  );
-  await page.reload();
-  await page.getByTestId("phone-tab").click();
-  await expect(page.getByTestId("phone-library-grid")).toContainText(
-    "合成电脑作品 0001",
-  );
-  await page.getByTestId("pc-tab").click();
-  await page.getByTestId("library-open-" + id(1)).click();
-  await expect(page.getByTestId("library-detail")).toContainText("已入库");
-  await expect(page.getByTestId("library-detail")).toContainText("413751");
-  expect(await commands(page, "library_scan")).toEqual([]);
-  expect(
-    await page.evaluate(() =>
-      window.libraryTest.pc.items.map((entry) => entry.format),
-    ),
-  ).toEqual(["directory", "directory"]);
-});
-
-test("removing a manual phone mark leaves imported evidence and every PC work intact", async ({
-  page,
-}) => {
-  await installMock(page, {
-    pcCount: 1,
-    importedNames: ["合成电脑作品 0001.zip"],
-  });
-  await page.getByTestId("pc-tab").click();
-  await page.getByTestId("library-open-" + id(1)).click();
-  await page.getByTestId("phone-mark").click();
-  await page.getByTestId("library-detail-back").click();
-  await page.getByTestId("phone-tab").click();
-  await page.getByTestId("phone-library-import").click();
-  await page.getByTestId("phone-unmark-" + id(900000)).click();
-  await expect(page.getByTestId("phone-library-grid")).toHaveAttribute(
-    "data-total-items",
-    "1",
-  );
-  await expect(page.getByTestId("phone-library-grid")).toContainText(
-    "合成电脑作品 0001",
-  );
-  await page.getByTestId("pc-tab").click();
-  await expect(page.getByTestId("library-card-" + id(1))).toContainText(
-    "已入库",
-  );
-  expect(await page.evaluate(() => window.libraryTest.pc.items.length)).toBe(1);
-});
-
 test("decoded offscreen covers release while compressed covers survive scrolling, detail and settings", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { pcCount: 586, covers: true });
-  await page.getByTestId("pc-tab").click();
   const firstCover = page.getByTestId("library-cover-" + id(1)).locator("img");
   await expect(firstCover).toBeVisible();
   await expect
@@ -658,7 +538,6 @@ test("decoded offscreen covers release while compressed covers survive scrolling
   await page.getByTestId("library-detail-back").click();
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("nav-library").click();
-  await page.getByTestId("pc-tab").click();
   await expect(firstCover).toBeVisible();
   expect(
     (await commands(page, "library_cover")).filter(
@@ -674,7 +553,6 @@ test("PC density changes and a detail return retain a deep catalog anchor", asyn
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { pcCount: 586 });
-  await page.getByTestId("pc-tab").click();
   await page.getByTestId("library-grid").evaluate((grid) => {
     grid.closest("main")!.scrollTop = 12000;
   });
@@ -727,84 +605,32 @@ test("PC density changes and a detail return retain a deep catalog anchor", asyn
   expect(await commands(page, "library_scan")).toEqual([]);
 });
 
-test("a failed phone TXT update keeps the prior inventory until an explicit successful import", async ({
+test("retired phone and classification lists neither appear nor load, while PC state survives restart", async ({
   page,
 }) => {
-  await installMock(page, { phoneCount: 2, failImportOnce: true });
-  await page.getByTestId("phone-tab").click();
-  await page.getByTestId("phone-library-import").click();
-  await expect(page.getByRole("alert")).toContainText("原名单保留");
-  await expect(page.getByTestId("phone-library-grid")).toHaveAttribute(
+  await installMock(page, { pcCount: 3, phoneCount: 2833 });
+  await expect(page.getByTestId("library-grid")).toHaveAttribute(
     "data-total-items",
-    "2",
+    "3",
   );
-  await page.getByTestId("nav-settings").click();
-  await page.getByTestId("nav-library").click();
-  await page.getByTestId("phone-tab").click();
-  expect(await commands(page, "phone_library_import")).toHaveLength(1);
-  await page.getByTestId("phone-library-import").click();
-  await expect(page.getByTestId("phone-library-grid")).toHaveAttribute(
-    "data-total-items",
-    "1",
-  );
-  await expect(page.getByTestId("phone-library-grid")).toContainText(
-    "合成更新手机作品",
-  );
-  expect(await commands(page, "library_scan")).toEqual([]);
-});
-
-test("an unreadable phone index stays unverified until a user retries reading it", async ({
-  page,
-}) => {
-  await installMock(page, { pcCount: 1, phoneCount: 1, failPhoneRead: true });
-  await page.getByTestId("pc-tab").click();
   await expect(page.getByTestId("library-card-" + id(1))).toContainText(
-    "待核对",
+    "已入库 · 电脑漫画库",
   );
+  await expect(page.getByTestId("phone-tab")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "本地书单", exact: true }),
+  ).toHaveCount(0);
+  expect(await commands(page, "phone_library_read")).toEqual([]);
+  expect(await commands(page, "read_booklists")).toEqual([]);
   await page.getByTestId("library-open-" + id(1)).click();
-  await expect(page.getByTestId("library-detail-stock")).toContainText(
-    "待核对",
-  );
-  await expect(page.getByTestId("phone-mark")).toBeDisabled();
-  await page.getByTestId("library-detail-back").click();
-  await page.getByTestId("phone-tab").click();
-  await expect(page.getByTestId("phone-library-import")).toBeDisabled();
-  await page.evaluate(() => {
-    window.libraryTest.phoneReadBlocked = false;
-  });
-  await page.getByTestId("phone-library-read").click();
-  await expect(page.getByTestId("phone-library-grid")).toHaveAttribute(
-    "data-total-items",
-    "1",
-  );
-  await page.getByTestId("pc-tab").click();
-  await expect(page.getByTestId("library-card-" + id(1))).toContainText(
-    "已下载",
-  );
-  expect(await commands(page, "phone_library_mark")).toEqual([]);
-});
-
-test("same-named PC works do not inherit or revoke another source's explicit phone mark", async ({
-  page,
-}) => {
-  await installMock(page, { pcCount: 2, namespaceMarks: true });
-  await page.getByTestId("pc-tab").click();
-  await expect(page.getByTestId("library-card-" + id(1))).toContainText(
-    "已入库",
-  );
-  await expect(page.getByTestId("library-card-" + id(2))).toContainText(
-    "已下载",
-  );
-  await page.getByTestId("library-open-" + id(2)).click();
-  await expect(page.getByTestId("library-reference")).toContainText("Pica");
-  await expect(page.getByTestId("phone-unmark-" + id(900000))).toHaveCount(0);
-  await page.getByTestId("library-detail-back").click();
+  await page.getByTestId("library-source-id").fill("123");
+  await page.getByTestId("library-link").click();
+  await expect(page.getByTestId("library-reference")).toContainText("123");
+  await expect(page.getByTestId("phone-mark")).toHaveCount(0);
+  await page.reload();
   await page.getByTestId("library-open-" + id(1)).click();
-  await expect(page.getByTestId("library-reference")).toContainText("JM");
-  await page.getByTestId("phone-unmark-" + id(900000)).click();
+  await expect(page.getByTestId("library-reference")).toContainText("123");
   await expect(page.getByTestId("library-detail-stock")).toContainText(
-    "已下载",
+    "已入库 · 电脑漫画库",
   );
-  expect(await page.evaluate(() => window.libraryTest.pc.items.length)).toBe(2);
-  expect(await commands(page, "phone_library_unmark")).toHaveLength(1);
 });

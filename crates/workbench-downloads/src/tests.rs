@@ -28,6 +28,8 @@ use tempfile::TempDir;
 mod pica_tests;
 #[path = "queue_tests.rs"]
 mod queue_tests;
+#[path = "zip_tests.rs"]
+mod zip_tests;
 
 struct Fixture {
     _temp: TempDir,
@@ -36,7 +38,17 @@ struct Fixture {
     library: PathBuf,
     id: String,
 }
+// Legacy fixtures exercise the previously approved directory receipt/profile.
 fn fixture() -> Fixture {
+    let f = zip_fixture();
+    let mut saved = record(&f);
+    saved.zip_output = false;
+    saved.destination = "[JM123456] Offline example".into();
+    saved.target_hash = binding(&saved).unwrap();
+    put(&f, saved);
+    f
+}
+fn zip_fixture() -> Fixture {
     let temp = TempDir::new().unwrap();
     let library = temp.path().join("library");
     fs::create_dir(&library).unwrap();

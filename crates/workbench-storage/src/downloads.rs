@@ -92,6 +92,11 @@ pub struct DownloadRecord {
     /// Old saved tasks retain their original WEBP policy and checkpoint hashes.
     #[serde(default)]
     pub jpeg_output: bool,
+    /// Missing on old tasks: their directory layout and approval hash stay valid.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub zip_output: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_file: Option<DownloadFile>,
     pub phase: DownloadPhase,
     pub files_done: u64,
     pub files_total: Option<u64>,
@@ -104,6 +109,9 @@ pub struct DownloadRecord {
     pub output_identity: Option<String>,
     pub output_files: Vec<DownloadFile>,
     pub output_manifest_hash: Option<String>,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 const fn default_source() -> Source {
     Source::Jm
@@ -225,6 +233,14 @@ impl ValidatedDocument for DownloadsDocument {
                 || !json(&t.staging_report_json, 12 * 1024 * 1024)
                 || t.output_identity.as_ref().is_some_and(|v| !hash(v))
                 || t.output_manifest_hash.as_ref().is_some_and(|v| !hash(v))
+                || (t.zip_output && !t.destination.ends_with(".zip"))
+                || (!t.zip_output && t.archive_file.is_some())
+                || t.archive_file.as_ref().is_some_and(|file| {
+                    file.relative_path != t.destination
+                        || file.size_bytes == 0
+                        || file.size_bytes > MAX_SAFE_INTEGER
+                        || !hash(&file.sha256)
+                })
                 || t.output_files.len() > MAX_DOWNLOAD_FILES + 202
             {
                 return Err(invalid());
@@ -241,7 +257,9 @@ impl ValidatedDocument for DownloadsDocument {
                 }
             }
             if t.phase == DownloadPhase::Downloaded
-                && (t.library_entry_id.is_none() || t.output_manifest_hash.is_none())
+                && (t.library_entry_id.is_none()
+                    || t.output_manifest_hash.is_none()
+                    || (t.zip_output && t.archive_file.is_none()))
             {
                 return Err(invalid());
             }

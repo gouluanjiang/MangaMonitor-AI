@@ -45,6 +45,10 @@ export interface LibraryCover {
 export interface LibraryAdapter {
   read(): Promise<LibrarySnapshot>;
   choose(): Promise<LibrarySnapshot | null>;
+  importPaths(
+    rootId: string,
+    generation: number,
+  ): Promise<LibraryMigrationResult | null>;
   scan(
     rootId: string,
     generation: number,
@@ -61,6 +65,12 @@ export interface LibraryAdapter {
     entryId: string,
     reference: LibraryReference | null,
   ): Promise<LibrarySnapshot>;
+}
+export interface LibraryMigrationResult {
+  snapshot: LibrarySnapshot;
+  mapped: number;
+  associated: number;
+  unchanged: number;
 }
 export const emptyLibrary = (): LibrarySnapshot => ({
   revision: 0,

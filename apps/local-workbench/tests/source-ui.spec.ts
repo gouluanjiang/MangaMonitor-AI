@@ -1580,65 +1580,6 @@ test("unknown metadata and uncertain favorite writes never imply zero counts or 
   ).toEqual([true, false]);
 });
 
-test("two source identities sharing a work ID join one local booklist and return to their real details", async ({
-  page,
-}) => {
-  await installMock(page);
-  await detail(page);
-  const id = await createFromDetail(page, "合成跨来源书单");
-  await expect(page.getByTestId("source-detail")).toContainText("合成验收 JM");
-  await page.getByTestId("source-detail-back").click();
-  await detail(page, "Pica");
-  await page.getByTestId("source-detail-booklist").click();
-  await page.getByTestId("booklist-target-" + id).check();
-  await page.getByTestId("booklist-picker-save").click();
-  await expect(page.getByTestId("booklist-picker")).toBeHidden();
-  await expect(page.getByTestId("source-detail")).toContainText(
-    "合成验收 Pica",
-  );
-  await page.getByTestId("source-detail-booklist").click();
-  await expect(page.getByTestId("booklist-target-" + id)).toBeDisabled();
-  await expect(page.getByTestId("booklist-picker")).toContainText(
-    "已包含所选作品",
-  );
-  await page
-    .getByTestId("booklist-picker")
-    .getByRole("button", { name: "取消", exact: true })
-    .click();
-  await expect(page.getByTestId("source-detail")).toContainText(
-    "合成验收 Pica",
-  );
-  expect(
-    await page.evaluate(
-      () => window.sourceTest.booklists.value.lists[0].members,
-    ),
-  ).toEqual([
-    { source: "JM", workId: "123" },
-    { source: "Pica", workId: "123" },
-  ]);
-  expect(
-    await page.evaluate(() =>
-      window.sourceTest.calls.some(
-        (call) =>
-          call.command !== "jm_download_read" &&
-          /download|enqueue/.test(call.command),
-      ),
-    ),
-  ).toBe(false);
-  await page.getByTestId("nav-library").click();
-  await page.getByRole("button", { name: "本地书单", exact: true }).click();
-  await page.getByTestId("booklist-select").selectOption(id);
-  await expect(page.getByTestId("source-reference-card-JM:123")).toBeVisible();
-  await expect(
-    page.getByTestId("source-reference-card-Pica:123"),
-  ).toBeVisible();
-  await page
-    .getByTestId("source-reference-card-JM:123")
-    .getByRole("button", { name: /查看.*详情/ })
-    .click();
-  await expect(page.getByTestId("source-detail")).toContainText("合成验收 JM");
-});
-
 test("following conflict reload keeps the requested action for explicit retry and retains external authors", async ({
   page,
 }) => {

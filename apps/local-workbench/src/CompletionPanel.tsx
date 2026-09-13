@@ -7,7 +7,6 @@ import type {
 } from "./source-types.ts";
 import { accountScope, sourceWorkKey } from "./source-types.ts";
 import type { LibrarySnapshot } from "./library-types.ts";
-import type { PhoneLibrarySnapshot } from "./phone-library-types.ts";
 import type { WorkReference } from "./booklists.ts";
 import type {
   CompletionAdapter,
@@ -29,11 +28,11 @@ import "./completion.css";
 const nativeAdapter = createCompletionAdapter();
 export const completionLabels: Record<CompletionStatus, string> = {
   missing: "待补入",
-  downloaded: "已下载 · 待传手机",
+  downloaded: "已入库",
   owned_chinese: "汉化已入库",
   waiting_translation: "日文已入库 · 等待汉化",
   translation_available: "发现汉化 · 待下载",
-  translation_downloaded: "汉化已下载 · 待替换",
+  translation_downloaded: "汉化已入库",
   review_required: "需要核对",
   unknown: "状态待确认",
 };
@@ -49,7 +48,6 @@ interface Props {
   sourceAdapter: SourceAdapter;
   adapter?: CompletionAdapter;
   library: LibrarySnapshot;
-  phone: PhoneLibrarySnapshot;
   density: 5 | 7 | 9;
   onOpenWork(reference: WorkReference): void;
   onDownload(work: SourceWork): void;
@@ -61,7 +59,6 @@ export function CompletionPanel({
   sourceAdapter,
   adapter = nativeAdapter,
   library,
-  phone,
   density,
   onOpenWork,
   onDownload,
@@ -90,7 +87,7 @@ export function CompletionPanel({
     [author, setAuthor] = useState("");
   const [reviewId, setReviewId] = useState<string | null>(null),
     [selected, setSelected] = useState<CompletionMember[]>([]);
-  const [phoneQuery, setPhoneQuery] = useState("");
+  const [memberQuery, setMemberQuery] = useState("");
   const alive = useRef(true),
     operation = useRef(false),
     pollEpoch = useRef(0);
@@ -198,15 +195,6 @@ export function CompletionPanel({
     ...new Set(view?.discovery.authors.map((a) => a.author) ?? []),
   ];
   const review = view?.completeness.groups.find((g) => g.groupId === reviewId);
-  const phoneNames = useMemo(
-    () => [
-      ...new Set([
-        ...phone.importedNames,
-        ...phone.manualEntries.map((e) => e.name),
-      ]),
-    ],
-    [phone],
-  );
   const members = review
     ? [
         ...review.sources.map((s) => ({
@@ -218,7 +206,6 @@ export function CompletionPanel({
             s.reference.source + " · " + s.reference.workId + " · " + s.title,
           language: s.language,
         })),
-        ...review.phone,
         ...review.computer,
       ]
     : [];
@@ -251,7 +238,8 @@ export function CompletionPanel({
       <header>
         <h1>作者作品补全</h1>
         <p>
-          检查关注作者在 JM 和哔咔的作品，找出手机漫画库中的遗漏与待替换汉化。
+          检查关注作者在 JM
+          和哔咔的作品，找出电脑漫画库中的遗漏与可补入的汉化版本。
         </p>
       </header>
       {!connected ? (
@@ -335,8 +323,8 @@ export function CompletionPanel({
             </button>
           </p>
           <p className="source-muted">
-            下载完成后，由你传入手机并手动标记或导入最新
-            TXT；电脑副本继续保留。普通遗漏作品由你选择下载。
+            汉化 ZIP
+            下载完成并入库后即视为补齐。原日文副本保留，普通遗漏作品由你选择下载。
           </p>
           {error && <p role="alert">{error}</p>}
           {view?.discovery.run && (
@@ -470,7 +458,7 @@ export function CompletionPanel({
                       onClick={() => {
                         setReviewId(group.groupId);
                         setSelected([]);
-                        setPhoneQuery("");
+                        setMemberQuery("");
                       }}
                     >
                       核对版本
@@ -549,27 +537,30 @@ export function CompletionPanel({
                 </div>
               ))}
               <label>
-                从手机 TXT 名单找对应作品
+                从电脑漫画库找对应作品
                 <input
-                  aria-label="搜索手机名单"
-                  value={phoneQuery}
-                  onChange={(e) => setPhoneQuery(e.target.value)}
+                  aria-label="搜索电脑漫画库"
+                  value={memberQuery}
+                  onChange={(e) => setMemberQuery(e.target.value)}
                   placeholder="输入作品名"
                 />
               </label>
-              {phoneQuery.trim() && (
+              {memberQuery.trim() && (
                 <div className="completion-phone-results">
-                  {phoneNames
-                    .filter((n) =>
-                      n
+                  {library.items
+                    .filter((item) =>
+                      item.title
                         .toLocaleLowerCase()
-                        .includes(phoneQuery.trim().toLocaleLowerCase()),
+                        .includes(memberQuery.trim().toLocaleLowerCase()),
                     )
                     .slice(0, 30)
-                    .map((name) => {
-                      const m: CompletionMember = { kind: "phone", name };
+                    .map((item) => {
+                      const m: CompletionMember = {
+                        kind: "computer",
+                        itemId: item.id,
+                      };
                       return (
-                        <label key={name}>
+                        <label key={item.id}>
                           <input
                             type="checkbox"
                             checked={selected.some(
@@ -577,7 +568,7 @@ export function CompletionPanel({
                             )}
                             onChange={(e) => choose(m, e.target.checked)}
                           />
-                          {name}
+                          {item.title}
                         </label>
                       );
                     })}
@@ -588,12 +579,13 @@ export function CompletionPanel({
                 <input
                   aria-label="输入另一来源作品编号"
                   placeholder="作品编号"
-                  onChange={(e) => setPhoneQuery(e.target.value)}
+                  onChange={(e) => setMemberQuery(e.target.value)}
                 />
-                {phoneQuery.trim() &&
+                {memberQuery.trim() &&
                   [...works.values()]
                     .filter(
-                      (w) => w.workId === phoneQuery.trim().replace(/^JM/i, ""),
+                      (w) =>
+                        w.workId === memberQuery.trim().replace(/^JM/i, ""),
                     )
                     .slice(0, 10)
                     .map((w) => {

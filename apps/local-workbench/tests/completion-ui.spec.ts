@@ -190,7 +190,7 @@ function fixtures() {
   const phone: PhoneLibrarySnapshot = {
     revision: 1,
     importedNames: [
-      "合成手机原版 [Japanese].zip",
+      "合成电脑原版 [Japanese].zip",
       "合成手机中文本 [Chinese].zip",
     ],
     importedAt: 1,
@@ -204,8 +204,27 @@ function fixtures() {
     generation: 1,
     phase: "complete",
     freshness: "live",
-    items: [],
-    visited: 0,
+    items: [
+      {
+        id: "7".repeat(64),
+        relativePath: "Synthetic.zip",
+        fileName: "Synthetic.zip",
+        format: "zip",
+        title: "合成电脑原版 [Japanese].zip",
+        authors: ["合成作者"],
+        description: null,
+        tags: [],
+        bytes: 1234,
+        modifiedAt: 1,
+        pageCount: 20,
+        coverAvailable: false,
+        state: "indexed",
+        errorCode: null,
+        sourceRef: null,
+        identityEvidence: null,
+      },
+    ],
+    visited: 1,
     skipped: 0,
     updatedAt: 1,
     errorCode: null,
@@ -345,11 +364,13 @@ async function install(page: Page) {
             const group = hooks.view.completeness.groups.find(
               (g) => g.groupId === "d".repeat(64),
             )!;
-            group.phone = members
-              .filter((m) => m.kind === "phone")
+            group.computer = members
+              .filter((m) => m.kind === "computer")
               .map((member) => ({
                 member,
-                name: member.name,
+                name: hooks.library.items.find(
+                  (item) => item.id === member.itemId,
+                )!.title,
                 language: "japanese",
               }));
             group.status = "translation_available";
@@ -368,11 +389,11 @@ async function install(page: Page) {
             const member = args.member as CompletionMember;
             hooks.settings.revision++;
             hooks.view.completeness.revision = hooks.settings.revision;
-            if (member.kind === "phone" && args.language === "chinese") {
+            if (member.kind === "computer" && args.language === "chinese") {
               const group = hooks.view.completeness.groups.find(
                 (g) => g.groupId === "d".repeat(64),
               )!;
-              group.phone[0].language = "chinese";
+              group.computer[0].language = "chinese";
               group.status = "owned_chinese";
               group.eligible = null;
             }
@@ -405,7 +426,7 @@ test("opening author completion keeps old omissions, Chinese PC copies and uncer
   await install(page);
   const panel = page.getByTestId("completion-panel");
   await expect(panel).toContainText("01 旧作遗漏");
-  await expect(panel).toContainText("汉化已下载 · 待替换");
+  await expect(panel).toContainText("汉化已入库");
   await expect(panel).toContainText("需要核对");
   await expect(
     page.getByTestId("completion-group-" + "b".repeat(64)),
@@ -466,7 +487,7 @@ test("only an explicit check sends automatic permission, author union and curren
   );
 });
 
-test("an explicit phone-name relation and language correction update projection without a phone write or automatic start", async ({
+test("an explicit computer-file relation and language correction update projection without media changes or automatic start", async ({
   page,
 }) => {
   await install(page);
@@ -475,10 +496,10 @@ test("an explicit phone-name relation and language correction update projection 
   const dialog = page.getByRole("dialog", { name: "核对作品版本" });
   await dialog.getByRole("checkbox", { name: /JM · 555/ }).check();
   await dialog
-    .getByRole("textbox", { name: "搜索手机名单" })
-    .fill("合成手机原版");
+    .getByRole("textbox", { name: "搜索电脑漫画库" })
+    .fill("合成电脑原版");
   await dialog
-    .getByRole("checkbox", { name: "合成手机原版 [Japanese].zip", exact: true })
+    .getByRole("checkbox", { name: "合成电脑原版 [Japanese].zip", exact: true })
     .check();
   await dialog
     .getByRole("button", { name: "确认所选版本属于同一作品" })
@@ -489,20 +510,20 @@ test("an explicit phone-name relation and language correction update projection 
     revision: 0,
     members: [
       { kind: "source", reference: { source: "JM", workId: "555" } },
-      { kind: "phone", name: "合成手机原版 [Japanese].zip" },
+      { kind: "computer", itemId: "7".repeat(64) },
     ],
   });
   await page.getByRole("combobox", { name: "补全状态" }).selectOption("all");
   await dialog
     .getByRole("combobox", {
-      name: "语言：合成手机原版 [Japanese].zip",
+      name: "语言：合成电脑原版 [Japanese].zip",
       exact: true,
     })
     .selectOption("chinese");
   await expect(group).toContainText("汉化已入库");
   expect((await calls(page, "completeness_language_set"))[0].args).toEqual({
     revision: 1,
-    member: { kind: "phone", name: "合成手机原版 [Japanese].zip" },
+    member: { kind: "computer", itemId: "7".repeat(64) },
     language: "chinese",
   });
   expect(await calls(page, "completeness_start")).toEqual([]);

@@ -44,7 +44,51 @@ pub(crate) async fn library_read<R: Runtime>(
     with_library(
         Arc::clone(library.inner()),
         Arc::clone(store.inner()),
-        |service, store| service.read(store),
+        |service, store| service.read_current_files(store),
+    )
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn library_import_paths<R: Runtime>(
+    app: AppHandle<R>,
+    window: WebviewWindow<R>,
+    library: State<'_, Arc<DesktopLibrary>>,
+    store: State<'_, Arc<DesktopStore>>,
+    root_id: String,
+    generation: u64,
+) -> Result<Option<workbench_library::LibraryMigrationResult>, StoreError> {
+    require_main(window.label())?;
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("导入 ZIP 整理对应表")
+            .add_filter("整理对应表", &["json"])
+            .set_parent(&window)
+            .blocking_pick_file()
+            .map(|file| {
+                file.into_path().map_err(|_| StoreError {
+                    code: "LIBRARY_PATH_INVALID",
+                })
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|_| StoreError {
+        code: "LIBRARY_PICKER_FAILED",
+    })??;
+    let Some(path) = selected else {
+        return Ok(None);
+    };
+    with_library(
+        Arc::clone(library.inner()),
+        Arc::clone(store.inner()),
+        move |service, store| {
+            let bytes = workbench_storage::library_path_mapping_bytes(&path)?;
+            service
+                .import_paths(store, &root_id, generation, &bytes)
+                .map(Some)
+        },
     )
     .await
 }

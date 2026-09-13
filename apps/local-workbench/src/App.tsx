@@ -36,7 +36,6 @@ import {
   LibraryWorkbench,
   LibrarySettingsPanel,
   useLibrary,
-  usePhoneLibrary,
 } from "./LibraryWorkbench.tsx";
 import { createLibraryAdapter } from "./library-runtime.ts";
 import {
@@ -60,11 +59,10 @@ import type {
   DownloadTask,
 } from "./download-types.ts";
 import { parseLibraryReference } from "./library-model.ts";
-import { createPhoneLibraryAdapter } from "./phone-library-runtime.ts";
 import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
 import { createSourceMatchesAdapter } from "./source-matches-runtime.ts";
 import { useSourceMatches } from "./SourceMatchesPanel.tsx";
-import { createInventoryMatcher } from "./phone-library-model.ts";
+import { createInventoryMatcher } from "./inventory-model.ts";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
 import { boundSourceCache } from "./source-memory.ts";
 import { sources, sourceWorkKey, sourceLabel } from "./source-types.ts";
@@ -77,7 +75,6 @@ import type {
 const sourceAdapter = createSourceAdapter();
 const libraryAdapter = createLibraryAdapter();
 const downloadAdapter = createDownloadAdapter();
-const phoneLibraryAdapter = createPhoneLibraryAdapter();
 const sourceMatchesAdapter = createSourceMatchesAdapter();
 const persistence = createWorkbenchPersistence({ fixture: activeFixture });
 const workReference = (work: Work): WorkReference => ({
@@ -188,7 +185,6 @@ export default function App() {
     useState<DownloadTask | null>(null);
   const [libraryNavigationKey, setLibraryNavigationKey] = useState(0);
   const library = useLibrary(libraryAdapter, persistence.native);
-  const phoneLibrary = usePhoneLibrary(phoneLibraryAdapter, persistence.native);
   const sourceMatches = useSourceMatches(
     sourceMatchesAdapter,
     persistence.native,
@@ -197,17 +193,15 @@ export default function App() {
     () =>
       createInventoryMatcher(
         library.snapshot,
-        phoneLibrary.snapshot,
-        phoneLibrary.ready,
         sourceMatches.snapshot.pairs,
         sourceMatches.ready,
+        !library.error,
       ),
     [
       library.snapshot,
-      phoneLibrary.snapshot,
-      phoneLibrary.ready,
       sourceMatches.snapshot.pairs,
       sourceMatches.ready,
+      library.error,
     ],
   );
   const [requestedLibraryWork, setRequestedLibraryWork] =
@@ -403,7 +397,7 @@ export default function App() {
   const currentBooklist = booklists.lists.find(
     (list) => list.id === selectedBooklistId && !list.archived,
   );
-  const booklistView = page === "library" && libraryTab === "booklists";
+  const booklistView = false; // Retired: private documents are kept for compatibility only.
   const libraryActive =
     persistence.native && page === "library" && !booklistView;
   const sourceActive =
@@ -749,7 +743,6 @@ export default function App() {
   }
   useEffect(() => {
     void loadPreferences();
-    void loadBooklists();
     return () => {
       preferencesRead.current += 1;
       booklistsRead.current += 1;
@@ -1112,17 +1105,6 @@ export default function App() {
               >
                 全部作品
               </button>
-              <button
-                className={libraryTab === "booklists" ? "active" : ""}
-                aria-pressed={libraryTab === "booklists"}
-                onClick={() => {
-                  setLibraryTab("booklists");
-                  clearScopeSelection();
-                  setFilter("all");
-                }}
-              >
-                本地书单
-              </button>
             </div>
           ) : (
             <div className="tabs" aria-label="作品范围">
@@ -1314,7 +1296,6 @@ export default function App() {
               onAccountsChange={mergeAccounts}
               density={appearance.density}
               onOpenWork={openSourceWork}
-              onAddToBooklists={openSourceBooklistPicker}
               query={query}
               sourceFilter={source}
               removeDisabled={!booklistsReady || booklistsSaving}
@@ -1383,16 +1364,7 @@ export default function App() {
             <button className="text-button" onClick={() => setSelection([])}>
               取消选择
             </button>
-            <button
-              className="button secondary"
-              data-testid="batch-booklist"
-              disabled={!booklistsReady || booklistsSaving}
-              onClick={() =>
-                setBooklistPickerMembers(selectedWorks.map(workReference))
-              }
-            >
-              加入书单
-            </button>
+
             {booklistView && currentBooklist && (
               <button
                 className="text-button"
@@ -1556,15 +1528,7 @@ export default function App() {
                 {badge.text}
               </span>
             </div>
-            <button
-              className="text-button detail-booklist"
-              data-testid="detail-booklist"
-              disabled={!booklistsReady || booklistsSaving}
-              onClick={() => setBooklistPickerMembers([workReference(work)])}
-            >
-              <Icon name="book" size={16} />
-              加入书单
-            </button>
+
             <p className="detail-note">
               一部作品一个 ZIP · 按章节整理 · {work.updated} 更新
             </p>
@@ -1966,7 +1930,7 @@ export default function App() {
         }
         libraryPanel={
           persistence.native ? (
-            <LibrarySettingsPanel library={library} phone={phoneLibrary} />
+            <LibrarySettingsPanel library={library} />
           ) : undefined
         }
         accountPanel={
@@ -2212,16 +2176,10 @@ export default function App() {
             <LibraryWorkbench
               key={libraryNavigationKey}
               library={library}
-              phone={phoneLibrary}
               active={libraryActive}
               density={appearance.density}
               onDensityChange={changeDensity}
               query={query}
-              onBooklists={() => {
-                setLibraryTab("booklists");
-                setQuery("");
-              }}
-              onAddToBooklists={openSourceBooklistPicker}
               externalWork={requestedLibraryWork}
               pairs={sourceMatches.snapshot.pairs}
               requestKey={libraryRequestKey}
@@ -2256,16 +2214,12 @@ export default function App() {
               showFeedback={downloadFeedback}
               inventoryHint={(plan) => {
                 const match = downloadInventory(plan);
-                if (match.kind === "owned")
-                  return "手机名单中已入库，本次仍可下载电脑副本。";
-                if (
-                  match.kind === "downloaded" &&
-                  match.items.some(
-                    (item) => item.sourceRef?.source !== plan.source,
-                  )
+                if (match.kind !== "owned") return null;
+                return match.items.some(
+                  (item) => item.sourceRef?.source !== plan.source,
                 )
-                  return "已确认的另一来源版本在电脑中存在。继续确认会再保存当前来源的副本。";
-                return null;
+                  ? "已确认的另一来源版本在漫画库中存在，请核对是否需要再保存当前来源的副本。"
+                  : "漫画库已有此作品，请核对版本后确认是否保留另一份副本。";
               }}
             />
           )}
@@ -2274,7 +2228,6 @@ export default function App() {
               accounts={accounts}
               sourceAdapter={sourceAdapter}
               library={library.snapshot}
-              phone={phoneLibrary.snapshot}
               density={appearance.density}
               onOpenWork={openSourceWork}
               onDownload={(work) => void beginDownload(work.workId, work)}
@@ -2298,17 +2251,7 @@ export default function App() {
               downloadReady={downloads.ready}
               downloadBusy={downloads.busy}
               librarySnapshot={library.snapshot}
-              phoneSnapshot={phoneLibrary.snapshot}
-              phoneBusy={phoneLibrary.busy || !phoneLibrary.ready}
-              phoneReady={phoneLibrary.ready}
-              phoneError={phoneLibrary.error}
-              onMarkPhone={(work) =>
-                phoneLibrary.mark(work.title, {
-                  source: work.source,
-                  workId: work.workId,
-                })
-              }
-              onUnmarkPhone={phoneLibrary.unmark}
+              libraryReady={!library.error}
               onOpenLibrary={(work) => {
                 navigate("library");
                 setLibraryTab("all");
@@ -2322,7 +2265,6 @@ export default function App() {
                 setRequestedSource(source);
                 navigate("settings");
               }}
-              onAddToBooklists={openSourceBooklistPicker}
               onWorksChanged={cacheSourceWorks}
               view={sourceView}
               active={sourceActive}
@@ -2426,24 +2368,6 @@ export default function App() {
             </button>
           </div>
         </Dialog>
-      )}
-      {booklistPickerMembers && (
-        <BooklistPicker
-          document={booklists}
-          members={booklistPickerMembers}
-          disabled={!booklistsReady || booklistsSaving}
-          onChange={async (next) => {
-            const saved = await commitBooklists(next);
-            if (saved) {
-              pickerCompletion.current?.(true);
-              pickerCompletion.current = null;
-            }
-            return saved;
-          }}
-          onReload={loadBooklists}
-          reloadDisabled={booklistsSaving}
-          onClose={() => closeBooklistPicker(false)}
-        />
       )}
       {!persistence.native && state.closed && (
         <Dialog

@@ -157,6 +157,23 @@ export function createLibraryAdapter(
       const result = await call("library_choose");
       return result === null ? null : validateLibrarySnapshot(result);
     },
+    importPaths: async (rootId, generation) => {
+      const value = await call("library_import_paths", {
+        rootId: id(rootId),
+        generation: integer(generation),
+      });
+      if (value === null) return null;
+      const raw = record(value),
+        snapshot = validateLibrarySnapshot(raw.snapshot);
+      if (snapshot.rootId !== rootId || snapshot.generation !== generation)
+        return bad();
+      return {
+        snapshot,
+        mapped: integer(raw.mapped),
+        associated: integer(raw.associated),
+        unchanged: integer(raw.unchanged),
+      };
+    },
     scan: async (rootId, generation, action) => {
       if (!["start", "next", "pause", "resume"].includes(action)) return bad();
       return validateLibrarySnapshot(
@@ -203,6 +220,17 @@ export function libraryErrorMessage(cause: unknown): string {
   const code =
     typeof cause === "string" ? cause : (cause as { code?: string })?.code;
   switch (code) {
+    case "LIBRARY_MIGRATION_INVALID":
+    case "LIBRARY_MIGRATION_ROOT_MISMATCH":
+      return "映射文件与当前漫画库不符，请选择此目录整理时生成的 JSON 映射。";
+    case "LIBRARY_MIGRATION_ORIGINAL_PRESENT":
+      return "映射中的原文件仍存在，请先核对整理结果。关联未改变。";
+    case "LIBRARY_MIGRATION_FILE_CHANGED":
+      return "整理后的 ZIP 与映射记录不一致，关联未改变。请核对文件。";
+    case "LIBRARY_MIGRATION_CONFLICT":
+      return "原作品与 ZIP 的来源关联冲突，请核对后再导入。";
+    case "LIBRARY_BUSY":
+      return "请先完成目录读取并暂停当前漫画库的下载，再导入映射。";
     case "LIBRARY_FILE_CHANGED":
     case "LIBRARY_STALE":
     case "LIBRARY_STALE_GENERATION":
@@ -245,6 +273,7 @@ export interface LibraryControllerState {
   snapshot: LibrarySnapshot;
   error: string;
   busy: boolean;
+  migrationNotice: string;
 }
 /** One bounded native batch at a time. Only explicit actions start scanning. */
 export class LibraryController {
@@ -253,6 +282,7 @@ export class LibraryController {
     snapshot: emptyLibrary(),
     error: "",
     busy: false,
+    migrationNotice: "",
   };
   private listeners = new Set<(state: LibraryControllerState) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -328,6 +358,21 @@ export class LibraryController {
   choose() {
     this.paused = false;
     return this.run(() => this.adapter.choose(), true);
+  }
+  async importPaths() {
+    const { rootId, generation } = this.state.snapshot;
+    if (!rootId || this.state.busy) return;
+    let applied = false;
+    await this.run(async () => {
+      const result = await this.adapter.importPaths(rootId, generation);
+      if (!result) return null;
+      applied = true;
+      this.publish({
+        migrationNotice: `已迁移 ${result.mapped} 条路径，保留 ${result.associated} 条来源关联。正在重新读取目录。`,
+      });
+      return result.snapshot;
+    });
+    if (applied && !this.state.error) await this.scan("start");
   }
   scan(action: LibraryScanAction) {
     if (action === "pause") {

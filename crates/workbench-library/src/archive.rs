@@ -1,13 +1,13 @@
 use crate::{error, metadata, Result};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs::File,
     io::{Read, Seek, SeekFrom},
 };
 use workbench_storage::{library_relative_path_is_valid, LibraryCoverFile, LibraryRecord};
 use zip::ZipArchive;
 
-pub(crate) const MAX_ARCHIVE_ENTRIES: usize = 10_000;
+pub(crate) const MAX_ARCHIVE_ENTRIES: usize = 10_404;
 const MAX_CENTRAL_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COMPRESSED_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
@@ -169,6 +169,10 @@ pub(crate) fn cover_precedes(candidate: &str, current: &str) -> bool {
 pub(crate) fn inspect(file: &mut File, record: &mut LibraryRecord) -> Result<()> {
     let mut archive = open(file)?;
     let mut images = 0u64;
+    let mut chapter_images = 0u64;
+    let mut observed = BTreeMap::new();
+    let mut directories = BTreeSet::new();
+    let mut managed = false;
     let mut cover: Option<String> = None;
     let mut metadata_entries = Vec::new();
     for index in 0..archive.len() {
@@ -180,10 +184,24 @@ pub(crate) fn inspect(file: &mut File, record: &mut LibraryRecord) -> Result<()>
             return Err(error("LIBRARY_ARCHIVE_UNSAFE"));
         }
         if entry.is_dir() {
+            directories.insert(name.trim_end_matches('/').to_owned());
             continue;
         }
+        if let Some((directory, _)) = name.rsplit_once('/') {
+            directories.insert(directory.to_owned());
+        }
+        observed.insert(name.to_owned(), entry.size());
+        if matches!(name, "_mangamonitor-layout.json" | "_mangamonitor.json") {
+            managed = true;
+        }
         if is_image(name) {
+            if entry.size() == 0 {
+                return Err(error("LIBRARY_EMPTY_IMAGE"));
+            }
             images += 1;
+            if name.contains('/') {
+                chapter_images += 1;
+            }
             if cover.as_ref().is_none_or(|old| cover_precedes(name, old)) {
                 cover = Some(name.to_owned());
             }
@@ -194,7 +212,7 @@ pub(crate) fn inspect(file: &mut File, record: &mut LibraryRecord) -> Result<()>
             metadata_entries.push((index, name.to_owned()));
         }
     }
-    record.item.page_count = Some(images);
+    record.item.page_count = Some(if managed { chapter_images } else { images });
     record.item.cover_available = cover.is_some();
     record.cover = cover.map(|relative_path| LibraryCoverFile {
         relative_path,
@@ -217,6 +235,18 @@ pub(crate) fn inspect(file: &mut File, record: &mut LibraryRecord) -> Result<()>
                 }
             }
         }
+    }
+    if managed {
+        let invalid = || error("LIBRARY_DOWNLOAD_INCOMPLETE");
+        let layout_index = archive
+            .index_for_name("_mangamonitor-layout.json")
+            .ok_or_else(invalid)?;
+        let manifest_index = archive
+            .index_for_name("_mangamonitor.json")
+            .ok_or_else(invalid)?;
+        let layout = read_entry(&mut archive, layout_index, 256 * 1024)?;
+        let manifest = read_entry(&mut archive, manifest_index, 4 * 1024 * 1024)?;
+        crate::scan::validate_managed_archive(record, &layout, &manifest, &observed, &directories)?;
     }
     Ok(())
 }

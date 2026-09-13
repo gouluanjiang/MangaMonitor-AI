@@ -1,12 +1,12 @@
 # MangaMonitor-AI
 
-MangaMonitor-AI is a safety-first manga monitoring and automation system for JM and Pica. The project is no longer targeting an indefinitely expanding collection of isolated features: the immediate release goal is a narrow V1 that can run the complete real-world pipeline safely and repeatedly, from cloud discovery to verified local inventory completion.
+> Current scope and delivery status (2026-09-13): read the [active handoff](docs/DEVELOPMENT_HANDOFF.md), [scope audit](docs/SCOPE_AUDIT_AND_V1_FREEZE_2026-09-13.md), and [corrected V1 roadmap](docs/ROADMAP_ZIP_LIBRARY_V1_2026-09-13.md). Native JM/Pica browsing/download/queue work has since been delivered and accepted; the older frontend-sample status below is historical. The accepted next target is a PC-based, one-ZIP-per-work library, with classification booklists cancelled. JM weekly recommendations and Pica rankings remain required for V1. Author completeness still needs PC-model adaptation and real acceptance; original cloud publication/final acceptance remain separate obligations. Reader/updater are deferred after V1; PDF/CBZ export is cancelled. Historical backend snapshots and forecasts below must not override these later user decisions or stand in for current delivery evidence.
 
-This repository has moved far beyond the original Phase 1A smoke test. The README is the primary project handoff and roadmap for new development sessions. Always combine it with the current repository state, `AGENTS.md`, current tests, and the safety documents referenced below; current code and GitHub state win if any historical note becomes stale.
+MangaMonitor-AI is a deterministic JM/Pica manga monitoring and desktop-workbench project. Current scope and acceptance status are recorded in [docs/DEVELOPMENT_HANDOFF.md](docs/DEVELOPMENT_HANDOFF.md).
 
-The current development boundary is recorded in [docs/DEVELOPMENT_HANDOFF.md](docs/DEVELOPMENT_HANDOFF.md). On 2026-09-08 the user requested continued backend/cloud work and a stop **before constructing the local downloader frontend**, so its local interface and implementation can be discussed together. Existing command-line modules do not imply that a desktop downloader has been delivered.
+This README retains the original cloud/add-only architecture and acceptance reference. Read the latest applicable handoff section for resumed work, and consult the sections below only when relevant. Later explicit user decisions supersede historical plans; implementation and CI evidence do not grant execution authority or establish live acceptance.
 
-That stop was reached after PR #18 passed PR and post-main CI. The subsequent confirmed product decisions are recorded in [docs/LOCAL_WORKBENCH_V1_DESIGN.md](docs/LOCAL_WORKBENCH_V1_DESIGN.md): a cover-first local workbench, independent detail/queue pages, one ZIP per work, batch-confirmed automatic download-and-import, and safe exit/recovery. The user then authorized the next step: a [clickable frontend sample](apps/local-workbench/README.md) with original fictional covers and simulated task state. It is not a delivered native downloader or real end-to-end acceptance.
+The latest recorded planning decision is [the ZIP-library-to-V1 roadmap](docs/ROADMAP_ZIP_LIBRARY_V1_2026-09-13.md). Earlier frontend stops and sample-only descriptions are historical. A roadmap does not authorize migration, file cleanup, implementation or production enablement by itself.
 
 ## V1 product target
 
@@ -453,8 +453,8 @@ If any step fails or becomes stale, the task remains incomplete and recoverable.
 
 ## Key documentation
 
-- `README.md` — V1 product target, current roadmap, production acceptance definition, and new-session handoff.
-- `docs/DEVELOPMENT_HANDOFF.md` — active work, verification evidence and the user-requested local-frontend discussion stop.
+- `README.md` — historical cloud/add-only architecture and production acceptance reference.
+- `docs/DEVELOPMENT_HANDOFF.md` — latest scope, continuation and acceptance status; older milestones for traceability.
 - `docs/LOCAL_WORKBENCH_V1_DESIGN.md` — confirmed local workbench behavior and pending implementation/acceptance criteria.
 - `AGENTS.md` — repository-wide development guardrails and the currently thawed authority boundary.
 - `docs/CLOUD_PRODUCTION_READINESS.md` — accepted cloud runner/soak/failure/resume/budget readiness evidence.
@@ -470,41 +470,9 @@ Older phase/result documents are retained for traceability, but when they confli
 
 ## New development-session handoff
 
-A new development conversation should not require a large copied prompt. Start by reading this README and then obtain the **current real GitHub state** before doing work.
+For resumed work, read the latest applicable section of `docs/DEVELOPMENT_HANDOFF.md`, follow `AGENTS.md`, and inspect the relevant working-tree changes. Consult linked contracts as needed. Refresh the specific remote branch/PR/CI state when it affects the requested decision or delivery; unrelated edits do not require fetching every branch or reading the full README.
 
-At the start of a new session:
-
-1. Read `README.md`, `AGENTS.md` and `docs/DEVELOPMENT_HANDOFF.md`.
-2. Fetch the current `main` head, open PRs/branches relevant to the current work, and recent GitHub Actions results.
-3. If real-download/local execution work is about to begin, read the current thaw/upstream documents required by `AGENTS.md` in that same development session. Do not assume the accepted scope covers a new authority expansion.
-4. Continue from the most advanced real repository state; do not restart an already completed phase merely because an older result document contains stale wording.
-5. Keep `production_enabled=false` until final V1 acceptance and explicit user approval.
-6. Preserve all safety invariants and favor stability over throughput.
-
-For autonomous project execution, the working rule is:
-
-```text
-read current state
-        ↓
-identify the next unblocked engineering action
-        ↓
-execute it
-        ↓
-test / inspect the result
-        ↓
-fix or continue
-```
-
-Do **not** stop merely because analysis or planning has finished. "The next step is ..." is not a completion condition.
-
-Stop and return to the user only when one of these is true:
-
-- the requested/current phase is genuinely complete;
-- a product, safety, or production decision requires the user;
-- only an external wait such as GitHub Actions remains **and** there is no independent unblocked work left;
-- an external dependency makes further safe progress impossible.
-
-If GitHub Actions are running while independent work remains, continue that work. If CI is the only remaining activity, do not waste time polling continuously; report that only CI remains and wait for the user to notify when it finishes.
+Complete the authorized task and its necessary verification, preserving accepted work and all execution boundaries. Planning-only requests end with the plan. For implementation that requires CI, continue independent work while it runs, use bounded waits with backoff, and inspect the required results before claiming verification complete. If waiting cannot continue, report CI as pending and preserve a resumable handoff; do not label it passed or require the user to relay CI results as the default workflow.
 
 ## Production boundary
 

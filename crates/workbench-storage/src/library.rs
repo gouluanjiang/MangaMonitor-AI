@@ -108,6 +108,19 @@ pub struct LibraryRecord {
     pub cover: Option<LibraryCoverFile>,
 }
 
+/// User-imported, hash-verified container relocation. Kept separately from old
+/// task receipts: renaming a library file never rewrites download authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryRelocation {
+    pub old_path: String,
+    pub old_item_id: String,
+    pub new_path: String,
+    pub new_item_id: String,
+    pub identity: LibraryFileIdentity,
+    pub sha256: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LibraryCoverFile {
@@ -132,6 +145,8 @@ pub struct LibraryDocument {
     pub generation: u64,
     pub phase: LibraryPhase,
     pub records: Vec<LibraryRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relocations: Vec<LibraryRelocation>,
     pub visited: u64,
     pub skipped: u64,
     pub updated_at: Option<u64>,
@@ -146,12 +161,26 @@ impl Default for LibraryDocument {
             generation: 0,
             phase: LibraryPhase::Idle,
             records: Vec::new(),
+            relocations: Vec::new(),
             visited: 0,
             skipped: 0,
             updated_at: None,
             error_code: None,
         }
     }
+}
+
+impl LibraryDocument {
+    pub fn relocated_path(&self, old_path: &str) -> Option<&LibraryRelocation> {
+        self.relocations
+            .iter()
+            .find(|item| item.old_path == old_path)
+    }
+}
+
+/// Only native-picked mapping files reach this bounded reader.
+pub fn library_path_mapping_bytes(path: &Path) -> Result<Vec<u8>> {
+    crate::store::read_regular_bounded(path, MAX_LIBRARY_DOCUMENT_BYTES)
 }
 
 pub fn library_hash_is_valid(value: &str) -> bool {
@@ -195,6 +224,7 @@ impl ValidatedDocument for LibraryDocument {
             || self.visited > MAX_LIBRARY_VISITED
             || self.skipped > self.visited
             || self.records.len() > MAX_LIBRARY_ITEMS
+            || self.relocations.len() > MAX_LIBRARY_ITEMS
             || self.records.len() as u64 > self.visited
             || self.updated_at.is_some_and(|v| v > MAX_SAFE_INTEGER)
             || !error_code(&self.error_code)
@@ -219,6 +249,7 @@ impl ValidatedDocument for LibraryDocument {
         } else if self.generation != 0
             || self.phase != LibraryPhase::Idle
             || !self.records.is_empty()
+            || !self.relocations.is_empty()
             || self.visited != 0
             || self.skipped != 0
             || self.updated_at.is_some()
@@ -231,6 +262,30 @@ impl ValidatedDocument for LibraryDocument {
         }
         let mut ids = HashSet::new();
         let mut paths = HashSet::new();
+        let mut old_paths = HashSet::new();
+        for relocation in &self.relocations {
+            if !library_relative_path_is_valid(&relocation.old_path)
+                || !library_relative_path_is_valid(&relocation.new_path)
+                || relocation.old_path == relocation.new_path
+                || !relocation.new_path.to_ascii_lowercase().ends_with(".zip")
+                || !old_paths.insert(&relocation.old_path)
+                || !library_hash_is_valid(&relocation.old_item_id)
+                || !library_hash_is_valid(&relocation.new_item_id)
+                || !library_hash_is_valid(&relocation.sha256)
+                || !library_hash_is_valid(&relocation.identity.file_key)
+                || relocation.identity.bytes == 0
+                || relocation.identity.bytes > MAX_SAFE_INTEGER
+                || relocation.identity.modified.is_empty()
+                || relocation.identity.modified.len() > 64
+                || !relocation
+                    .identity
+                    .modified
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
+            {
+                return Err(invalid());
+            }
+        }
         for record in &self.records {
             let item = &record.item;
             if !library_hash_is_valid(&item.id)

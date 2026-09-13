@@ -466,7 +466,6 @@ async fn automatic_worker<B: SourceBackend + 'static, V: Vault + 'static>(
             let check_permit = Arc::clone(&permit);
             let check_store = Arc::clone(&store);
             let check_root = root_id.clone();
-            let phone_revision = fresh.phone_revision;
             let settings_revision = fresh.revision;
             let matches_revision = fresh.matches_revision;
             let live_service = Arc::clone(&service);
@@ -488,10 +487,8 @@ async fn automatic_worker<B: SourceBackend + 'static, V: Vault + 'static>(
                     {
                         return Err(error("LIBRARY_SCOPE_CHANGED"));
                     }
-                    if workbench_storage::phone_library_read(&check_store)?.revision
-                        != phone_revision
-                        || workbench_storage::completeness_settings_read(&check_store)?.revision
-                            != settings_revision
+                    if workbench_storage::completeness_settings_read(&check_store)?.revision
+                        != settings_revision
                         || workbench_storage::source_matches_read(&check_store)?.revision
                             != matches_revision
                     {

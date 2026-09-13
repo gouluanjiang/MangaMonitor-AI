@@ -544,40 +544,6 @@ fn language_evidence(title: &str, tags: &[String]) -> LanguageEvidence {
     result
 }
 
-// Explicit source IDs use the already accepted desktop destination or existing
-// scanner token grammar. Multiple different IDs are never a title-identity guess.
-fn filename_reference(name: &str) -> Option<LibraryReference> {
-    let mut found = None;
-    for (_, _, token) in bracket_groups(name) {
-        let (source, id) = if let Some(id) = token.strip_prefix("JM") {
-            (Source::Jm, id)
-        } else if let Some(id) = token.strip_prefix("Pica") {
-            (Source::Pica, id)
-        } else {
-            continue;
-        };
-        let id = id
-            .strip_prefix('-')
-            .or_else(|| id.strip_prefix(':'))
-            .unwrap_or(id);
-        let reference = LibraryReference {
-            source,
-            work_id: id.to_ascii_lowercase(),
-        };
-        if !reference.is_valid() {
-            continue;
-        }
-        if found
-            .as_ref()
-            .is_some_and(|previous| previous != &reference)
-        {
-            return None;
-        }
-        found = Some(reference);
-    }
-    found
-}
-
 /// A candidate key only, never identity evidence. Every edition/number/creator
 /// token stays intact; the only removed tokens are explicit language labels.
 fn possible_name(value: &str) -> String {
@@ -601,7 +567,7 @@ struct Node {
     language: LanguageEvidence,
     corrected: bool,
     record: Option<usize>,
-    copy: Option<bool>, // true phone; false indexed PC
+    copy: Option<bool>, // Some(true): readable PC copy; Some(false): file requires review
 }
 
 struct Graph {
@@ -704,15 +670,13 @@ pub fn completeness_project(
         }
     }
     let settings = store.read_completeness()?;
-    let phone = store.read_phone_library()?;
     let library = store.read_library()?;
     let matches = store.read_source_matches()?;
     let evidence_hash = hash(&(
-        "completeness-v1",
+        "completeness-pc-v2",
         discovery_revision,
         records,
         &settings,
-        &phone,
         &library,
         &matches,
     ))?;
@@ -733,60 +697,7 @@ pub fn completeness_project(
         });
     }
     let mut exact_edges = Vec::new();
-    for name in &phone.value.imported_names {
-        graph.add(Node {
-            member: CompletenessMember::Phone { name: name.clone() },
-            name: name.clone(),
-            language: language_evidence(name, &[]),
-            corrected: false,
-            record: None,
-            copy: Some(true),
-        });
-    }
-    for entry in &phone.value.manual_entries {
-        let index = graph.add(Node {
-            member: CompletenessMember::Phone {
-                name: entry.name.clone(),
-            },
-            name: entry.name.clone(),
-            language: language_evidence(&entry.name, &[]),
-            corrected: false,
-            record: None,
-            copy: Some(true),
-        });
-        if let Some(reference) = &entry.reference {
-            let source = graph.source(reference);
-            graph.join(index, source);
-            exact_edges.push((index, source));
-        }
-    }
-    let manually_referenced_names: HashSet<_> = phone
-        .value
-        .manual_entries
-        .iter()
-        .filter(|entry| entry.reference.is_some())
-        .map(|entry| name_key(&entry.name))
-        .collect();
-    let phone_filename_refs: Vec<_> = graph
-        .nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| {
-            node.copy == Some(true) && !manually_referenced_names.contains(&name_key(&node.name))
-        })
-        .filter_map(|(index, node)| {
-            filename_reference(&node.name).map(|reference| (index, reference))
-        })
-        .collect();
-    for (index, reference) in phone_filename_refs {
-        let source = graph.source(&reference);
-        graph.join(index, source);
-        exact_edges.push((index, source));
-    }
     for record in &library.value.records {
-        if record.item.state != LibraryItemState::Indexed {
-            continue;
-        }
         let mut language = language_evidence(&record.item.file_name, &record.item.tags);
         language.merge(language_evidence(&record.item.title, &[]));
         let index = graph.add(Node {
@@ -797,22 +708,31 @@ pub fn completeness_project(
             language,
             corrected: false,
             record: None,
-            copy: Some(false),
+            copy: Some(
+                record.item.state == LibraryItemState::Indexed
+                    && record.item.error_code.is_none()
+                    && record.item.page_count.is_some_and(|n| n > 0),
+            ),
         });
         if let Some(reference) = &record.item.source_ref {
             let source = graph.source(reference);
             graph.join(index, source);
             exact_edges.push((index, source));
         }
-        // Existing accepted phone/file semantics: identical full filename (only
-        // archive extension and NFC normalized), not a stripped source title.
-        let phone_key = CompletenessMember::Phone {
-            name: record.item.file_name.clone(),
-        }
-        .key();
-        if let Some(phone_index) = graph.indices.get(&phone_key).copied() {
-            graph.join(index, phone_index);
-            exact_edges.push((phone_index, index));
+        // Aliases preserve explicit language/family links across the approved
+        // ZIP path migration, but only while the target still has its identity.
+        for alias in &library.value.relocations {
+            if alias.new_item_id == record.item.id
+                && record.identity.as_ref() == Some(&alias.identity)
+            {
+                graph.indices.insert(
+                    CompletenessMember::Computer {
+                        item_id: alias.old_item_id.clone(),
+                    }
+                    .key(),
+                    index,
+                );
+            }
         }
     }
     for pair in &matches.value.pairs {
@@ -843,11 +763,16 @@ pub fn completeness_project(
     }
     for correction in &settings.value.languages {
         if let Some(index) = graph.indices.get(&correction.member.key()).copied() {
-            graph.nodes[index].language = LanguageEvidence::from_language(correction.language);
+            let evidence = LanguageEvidence::from_language(correction.language);
+            if graph.nodes[index].corrected {
+                graph.nodes[index].language.merge(evidence);
+            } else {
+                graph.nodes[index].language = evidence;
+            }
             graph.nodes[index].corrected = true;
         }
     }
-    // Source -> exact PC/phone -> identical phone filename, never across a family.
+    // Source language reaches only an exact PC identity, never across a family.
     for &(target, exact) in &exact_edges {
         graph.copy_language(target, exact);
     }
@@ -871,13 +796,12 @@ pub fn completeness_project(
             }
         }
     }
-    let phone_ready = phone.value.imported_at.is_some() || !phone.value.manual_entries.is_empty();
     let computer_ready =
         library.value.root.is_some() && library.value.phase == LibraryPhase::Complete;
     let mut groups = Vec::new();
     for (root, indices) in grouped {
         let mut sources = Vec::new();
-        let mut phone_copies = Vec::new();
+        let mut unavailable_copy = false;
         let mut computer = Vec::new();
         let mut authors = BTreeSet::new();
         let mut member_keys = Vec::new();
@@ -902,16 +826,16 @@ pub fn completeness_project(
                     .get(&possible_name(&node.name))
                     .is_some_and(|roots| roots.iter().any(|other| *other != root));
             }
-            if let Some(is_phone) = node.copy {
+            if let Some(available) = node.copy {
                 let copy = CompletenessCopy {
                     member: node.member.clone(),
                     name: node.name.clone(),
                     language: node.language.language(),
                 };
-                if is_phone {
-                    phone_copies.push(copy);
-                } else {
+                if available {
                     computer.push(copy);
+                } else {
+                    unavailable_copy = true;
                 }
             }
         }
@@ -919,50 +843,40 @@ pub fn completeness_project(
             continue;
         }
         sources.sort_by_key(|source| source_key(&source.reference));
-        phone_copies.sort_by_key(|copy| copy.member.key());
         computer.sort_by_key(|copy| copy.member.key());
         member_keys.sort();
         let group_id = hash(&("completeness-group-v1", member_keys))?;
-        let has_phone = !phone_copies.is_empty();
-        let phone_chinese = phone_copies
+        let pc_chinese = computer
             .iter()
             .any(|copy| copy.language == CompletenessLanguage::Chinese);
-        let phone_japanese = phone_copies
+        let pc_japanese = computer
             .iter()
             .any(|copy| copy.language == CompletenessLanguage::Japanese);
-        let phone_uncertain = phone_copies.iter().any(|copy| {
+        let pc_uncertain = computer.iter().any(|copy| {
             matches!(
                 copy.language,
                 CompletenessLanguage::Unknown | CompletenessLanguage::Other
             )
         });
-        let pc_chinese = computer
-            .iter()
-            .any(|copy| copy.language == CompletenessLanguage::Chinese);
-        let pc_uncertain = computer
-            .iter()
-            .any(|copy| copy.language == CompletenessLanguage::Unknown);
         let chinese = sources.iter().find(|source| {
             source.language == CompletenessLanguage::Chinese && source.author_verified
         });
         let mut reasons = Vec::new();
         let mut kind = None;
-        let status = if phone_chinese {
+        let status = if pc_chinese {
             CompletenessStatus::OwnedChinese
-        } else if phone_japanese && pc_chinese {
-            CompletenessStatus::TranslationDownloaded
-        } else if has_phone && phone_uncertain {
-            reasons.push("PHONE_LANGUAGE_UNCONFIRMED");
+        } else if unavailable_copy {
+            reasons.push("COMPUTER_FILE_UNCONFIRMED");
             CompletenessStatus::ReviewRequired
         } else if ambiguous {
             reasons.push("VERSION_IDENTITY_UNCONFIRMED");
             CompletenessStatus::ReviewRequired
-        } else if phone_japanese {
-            if pc_uncertain {
-                reasons.push("COMPUTER_LANGUAGE_UNCONFIRMED");
-                CompletenessStatus::ReviewRequired
-            } else if chinese.is_some() {
-                if phone_ready && computer_ready {
+        } else if pc_uncertain {
+            reasons.push("COMPUTER_LANGUAGE_UNCONFIRMED");
+            CompletenessStatus::ReviewRequired
+        } else if pc_japanese {
+            if chinese.is_some() {
+                if computer_ready {
                     kind = Some(CompletenessCandidateKind::Translation);
                 } else {
                     reasons.push("COMPUTER_CATALOG_INCOMPLETE");
@@ -972,9 +886,7 @@ pub fn completeness_project(
                 reasons.push("CHINESE_VERSION_NOT_CONFIRMED");
                 CompletenessStatus::WaitingTranslation
             }
-        } else if !computer.is_empty() {
-            CompletenessStatus::Downloaded
-        } else if !phone_ready || !computer_ready {
+        } else if !computer_ready {
             reasons.push("LIBRARY_EVIDENCE_INCOMPLETE");
             CompletenessStatus::Unknown
         } else if chinese.is_some() {
@@ -999,7 +911,7 @@ pub fn completeness_project(
             status,
             reasons: reasons.into_iter().map(str::to_owned).collect(),
             sources,
-            phone: phone_copies,
+            phone: vec![], // Legacy response slot; phone inventory is retired.
             computer,
             eligible,
         });
@@ -1011,7 +923,6 @@ pub fn completeness_project(
     });
     // Avoid publishing a mixed generation if another explicit UI edit raced the projection.
     if store.read_completeness()?.revision != settings.revision
-        || store.read_phone_library()?.revision != phone.revision
         || store.read_library()?.revision != library.revision
         || store.read_source_matches()?.revision != matches.revision
     {
@@ -1019,7 +930,7 @@ pub fn completeness_project(
     }
     Ok(CompletenessSnapshot {
         revision: settings.revision,
-        phone_revision: phone.revision,
+        phone_revision: 0,
         library_revision: library.revision,
         matches_revision: matches.revision,
         discovery_revision,

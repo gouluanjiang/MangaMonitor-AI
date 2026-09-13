@@ -424,6 +424,7 @@ fn library_commands_require_main_packaged_origin_and_never_offer_generic_paths()
     let commands = [
         ("library_read", json!({})),
         ("library_choose", json!({})),
+        ("library_import_paths", json!({"rootId":id,"generation":1})),
         (
             "library_scan",
             json!({"rootId":id,"generation":1,"action":"next"}),

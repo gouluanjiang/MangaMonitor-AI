@@ -1,14 +1,9 @@
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LibrarySnapshot } from "./library-types.ts";
-import type { PhoneLibrarySnapshot } from "./phone-library-types.ts";
-import { emptyPhoneLibrary } from "./phone-library-types.ts";
 import { SourceMatchPanel } from "./SourceMatchesPanel.tsx";
 import type { useSourceMatches } from "./SourceMatchesPanel.tsx";
-import {
-  createInventoryMatcher,
-  inventoryLabel,
-} from "./phone-library-model.ts";
+import { createInventoryMatcher, inventoryLabel } from "./inventory-model.ts";
 import type { WorkReference } from "./booklists.ts";
 import type {
   AccountSummary,
@@ -45,17 +40,11 @@ export interface SourceWorkbenchProps {
   downloadReady?: boolean;
   downloadBusy?: boolean;
   librarySnapshot?: LibrarySnapshot;
-  phoneSnapshot?: PhoneLibrarySnapshot;
-  phoneBusy?: boolean;
-  phoneReady?: boolean;
-  phoneError?: string;
-  onMarkPhone?(work: SourceWork): Promise<boolean>;
-  onUnmarkPhone?(entryId: string): Promise<boolean>;
+  libraryReady?: boolean;
   onOpenLibrary?(work: SourceWork): void;
   accounts: AccountSummary[];
   onAccountsChange(updates: AccountSummary[]): void;
   onOpenAccounts(source: Source): void;
-  onAddToBooklists(refs: WorkReference[]): Promise<boolean>;
   onWorksChanged(scope: SourceScope, works: SourceWork[]): void;
   view: "favorites" | "search" | "following";
   active: boolean;
@@ -257,17 +246,11 @@ export function SourceWorkbench({
   downloadReady = false,
   downloadBusy = false,
   librarySnapshot,
-  phoneSnapshot,
-  phoneBusy = false,
-  phoneReady = true,
-  phoneError = "",
-  onMarkPhone,
-  onUnmarkPhone,
+  libraryReady = true,
   onOpenLibrary,
   accounts,
   onAccountsChange,
   onOpenAccounts,
-  onAddToBooklists,
   onWorksChanged,
   view,
   active,
@@ -283,20 +266,12 @@ export function SourceWorkbench({
     () =>
       createInventoryMatcher(
         librarySnapshot,
-        phoneSnapshot ?? emptyPhoneLibrary(),
-        phoneReady,
         matches?.snapshot.pairs,
         matches?.ready ?? true,
+        libraryReady,
       ),
-    [
-      librarySnapshot,
-      phoneSnapshot,
-      phoneReady,
-      matches?.snapshot.pairs,
-      matches?.ready,
-    ],
+    [librarySnapshot, matches?.snapshot.pairs, matches?.ready, libraryReady],
   );
-  const [phoneNotice, setPhoneNotice] = useState("");
   useEffect(() => {
     getCoverCache(adapter).retainScopes(
       accounts.flatMap((account) => {
@@ -339,7 +314,6 @@ export function SourceWorkbench({
   const [notice, setNotice] = useState("");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
-  const [organizing, setOrganizing] = useState(false);
   const [detailRef, setDetailRef] = useState<WorkReference | null>(null);
   const [detail, setDetail] = useState<SourceWork | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -363,7 +337,6 @@ export function SourceWorkbench({
   const followingRequest = useRef(0);
   const favoriteLock = useRef(false);
   const followingLock = useRef(false);
-  const organizeLock = useRef(false);
   const savedAnchor = useRef<Anchor | null>(null);
   const pendingAnchor = useRef<Anchor | null>(null);
   const autoContext = useRef("");
@@ -902,11 +875,7 @@ export function SourceWorkbench({
         return;
       setFollowing(result);
       setPendingFollow(null);
-      setNotice(
-        mutation.desired
-          ? "已加入本机关注。"
-          : "已取消本机关注，书单、网站收藏和文件保留。",
-      );
+      setNotice(mutation.desired ? "已加入本机关注。" : "已取消本机关注。");
     } catch (cause) {
       if (stillCurrent(captured) && request === followingRequest.current) {
         setFollowingError(sourceErrorMessage(cause));
@@ -917,22 +886,6 @@ export function SourceWorkbench({
         followingLock.current = false;
         setFollowingBusy(false);
       }
-    }
-  }
-  async function organize(works: SourceWork[]) {
-    if (!works.length || organizeLock.current) return;
-    const captured = currentScope.current;
-    organizeLock.current = true;
-    setOrganizing(true);
-    try {
-      const saved = await onAddToBooklists(works.map(toWorkReference));
-      if (captured && stillCurrent(captured))
-        setNotice(saved ? "书单已保存。" : "书单操作未完成，选择已保留。");
-    } catch {
-      setNotice("书单未能保存，选择已保留。");
-    } finally {
-      organizeLock.current = false;
-      setOrganizing(false);
     }
   }
   const followedWorks: SourceWork[] = (following?.works ?? []).map((work) => ({
@@ -1190,11 +1143,6 @@ export function SourceWorkbench({
         ← 返回列表
       </button>
       {detailLoading && <p role="status">正在读取作品详情…</p>}
-      {(phoneNotice || phoneError) && (
-        <p role="status" className="source-notice">
-          {phoneError || phoneNotice}
-        </p>
-      )}
       {detailError && (
         <div className="source-notice">
           <p role="alert">{detailError}</p>
@@ -1289,53 +1237,6 @@ export function SourceWorkbench({
                     核对电脑文件
                   </button>
                 )}
-                {onMarkPhone && (
-                  <button
-                    type="button"
-                    className="button secondary"
-                    data-testid="source-phone-mark"
-                    disabled={phoneBusy || inventory(detail).kind === "owned"}
-                    onClick={() =>
-                      void onMarkPhone(detail).then((saved) =>
-                        setPhoneNotice(
-                          saved
-                            ? "已标记手机已入库，电脑文件保留。"
-                            : "手机标记未完成，请重试。",
-                        ),
-                      )
-                    }
-                  >
-                    {inventory(detail).kind === "owned"
-                      ? "手机已入库"
-                      : "标记手机已入库"}
-                  </button>
-                )}
-                {onUnmarkPhone &&
-                  phoneSnapshot?.manualEntries
-                    .filter(
-                      (entry) =>
-                        entry.reference?.source === detail.source &&
-                        entry.reference.workId === detail.workId,
-                    )
-                    .map((entry) => (
-                      <button
-                        key={entry.id}
-                        className="text-button"
-                        data-testid={"source-phone-unmark-" + entry.id}
-                        disabled={phoneBusy}
-                        onClick={() =>
-                          void onUnmarkPhone(entry.id).then((saved) =>
-                            setPhoneNotice(
-                              saved
-                                ? "已撤销手动标记；导入名单仍保留。"
-                                : "撤销未完成，请重试。",
-                            ),
-                          )
-                        }
-                      >
-                        撤销手动标记
-                      </button>
-                    ))}
                 <button
                   type="button"
                   className="button primary"
@@ -1345,15 +1246,7 @@ export function SourceWorkbench({
                 >
                   {downloadBusy ? "正在准备下载…" : "下载到电脑"}
                 </button>
-                <button
-                  type="button"
-                  className="button secondary"
-                  disabled={organizing}
-                  data-testid="source-detail-booklist"
-                  onClick={() => void organize([detail])}
-                >
-                  加入书单
-                </button>
+
                 <button
                   type="button"
                   className="text-button"
@@ -1972,15 +1865,7 @@ export function SourceWorkbench({
                   >
                     取消选择
                   </button>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    data-testid="source-batch-booklist"
-                    disabled={organizing}
-                    onClick={() => void organize(selectedWorks)}
-                  >
-                    加入书单
-                  </button>
+
                   <button
                     type="button"
                     className="button primary"
@@ -2035,7 +1920,6 @@ export interface SourceWorkGridProps {
   adapter: SourceAdapter;
   density: 5 | 7 | 9;
   onOpenWork(reference: WorkReference): void;
-  onAddToBooklists?(references: WorkReference[]): Promise<boolean>;
 }
 /** A read-only real-metadata projection for local booklists; it never uses demo inventory. */
 export function SourceWorkGrid({
@@ -2044,36 +1928,10 @@ export function SourceWorkGrid({
   adapter,
   density,
   onOpenWork,
-  onAddToBooklists,
 }: SourceWorkGridProps) {
   const [coverEpoch] = useState(0);
-  const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState("");
-  const lock = useRef(false);
-  async function organize(work: SourceWork) {
-    if (!onAddToBooklists || lock.current) return;
-    lock.current = true;
-    setPending(true);
-    try {
-      setNotice(
-        (await onAddToBooklists([toWorkReference(work)]))
-          ? "书单已保存。"
-          : "书单操作未完成。",
-      );
-    } catch {
-      setNotice("书单未能保存，请重试。");
-    } finally {
-      lock.current = false;
-      setPending(false);
-    }
-  }
   return (
     <>
-      {notice && (
-        <p role="status" className="source-notice">
-          {notice}
-        </p>
-      )}
       <div
         className="source-grid"
         data-testid="source-reference-grid"
@@ -2118,16 +1976,6 @@ export function SourceWorkGrid({
               <p className="source-card-state">
                 {sourceLabel(work.source)} · 库存状态待核对
               </p>
-              {onAddToBooklists && (
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={pending}
-                  onClick={() => void organize(work)}
-                >
-                  加入其他书单
-                </button>
-              )}
             </article>
           );
         })}

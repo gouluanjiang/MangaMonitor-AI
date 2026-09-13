@@ -150,8 +150,13 @@ impl SafeDirectory {
         #[cfg(unix)]
         {
             use rustix::fs::{openat, statat, AtFlags, FileType, Mode, OFlags};
-            let stat = statat(&self.file, name, AtFlags::SYMLINK_NOFOLLOW)
-                .map_err(|_| error("LIBRARY_READ_FAILED"))?;
+            let stat = statat(&self.file, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|problem| {
+                error(if problem == rustix::io::Errno::NOENT {
+                    "LIBRARY_ENTRY_MISSING"
+                } else {
+                    "LIBRARY_READ_FAILED"
+                })
+            })?;
             let kind = FileType::from_raw_mode(stat.st_mode);
             if kind != FileType::Directory && kind != FileType::RegularFile {
                 return Ok(Node::Skipped);
@@ -181,7 +186,13 @@ impl SafeDirectory {
         {
             use std::os::windows::fs::OpenOptionsExt;
             let path = self.path.join(name);
-            let metadata = fs::symlink_metadata(&path).map_err(|_| error("LIBRARY_READ_FAILED"))?;
+            let metadata = fs::symlink_metadata(&path).map_err(|problem| {
+                error(if problem.kind() == std::io::ErrorKind::NotFound {
+                    "LIBRARY_ENTRY_MISSING"
+                } else {
+                    "LIBRARY_READ_FAILED"
+                })
+            })?;
             if redirected(&metadata) {
                 return Ok(Node::Skipped);
             }

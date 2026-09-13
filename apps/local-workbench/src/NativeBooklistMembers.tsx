@@ -161,7 +161,6 @@ export function NativeBooklistMembers({
           adapter={adapter}
           density={density}
           onOpenWork={onOpenWork}
-          onAddToBooklists={onAddToBooklists}
         />
       )}
       {missing.length > 0 && (

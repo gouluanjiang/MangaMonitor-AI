@@ -189,6 +189,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             matches::source_matches_unlink,
             library::library_read,
             library::library_choose,
+            library::library_import_paths,
             library::library_scan,
             library::library_cover,
             library::library_link,

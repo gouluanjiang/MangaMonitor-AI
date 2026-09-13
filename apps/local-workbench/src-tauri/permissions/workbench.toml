@@ -42,4 +42,4 @@ commands.allow = ["jm_download_prepare", "jm_download_confirm", "jm_download_rea
 [[permission]]
 identifier = "workbench-library"
 description = "Read the native-picked existing comic library and update its private index and explicit source associations; no media writes or execution authority."
-commands.allow = ["library_read", "library_choose", "library_scan", "library_cover", "library_link", "phone_library_read", "phone_library_import", "phone_library_mark", "phone_library_unmark", "source_matches_read", "source_matches_confirm", "source_matches_unlink"]
+commands.allow = ["library_read", "library_choose", "library_import_paths", "library_scan", "library_cover", "library_link", "phone_library_read", "phone_library_import", "phone_library_mark", "phone_library_unmark", "source_matches_read", "source_matches_confirm", "source_matches_unlink"]

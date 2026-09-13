@@ -106,6 +106,7 @@ struct Runtime {
     /// Durable queued records alone never authorize restart-time networking.
     queued: BTreeMap<String, u64>,
     local_files: BTreeMap<String, (u64, LocalFiles)>,
+    library_revision: Option<u64>,
 }
 #[derive(Default)]
 pub struct DownloadService {
@@ -181,7 +182,7 @@ impl DownloadService {
         if document.value.tasks.len() >= MAX_DOWNLOAD_TASKS {
             return Err(error("DOWNLOAD_LIMIT_REACHED"));
         }
-        let destination = destination(source, &metadata);
+        let destination = crate::naming::zip_name(&metadata);
         let updated_at = now()?;
         let sequence = PLAN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let id = hash(
@@ -199,6 +200,8 @@ impl DownloadService {
         let mut record = DownloadRecord {
             source,
             jpeg_output: source == Source::Jm,
+            zip_output: true,
+            archive_file: None,
             id: id.clone(),
             origin: "manual".into(),
             revision: 1,
@@ -330,7 +333,12 @@ impl DownloadService {
             runtime.plans.remove(&record.id);
             runtime.queued.insert(record.id, record.revision);
         }
-        Ok(snapshot(&saved, &mut runtime, false))
+        Ok(snapshot(
+            &saved,
+            &mut runtime,
+            false,
+            store.read_library_shared()?.as_ref(),
+        ))
     }
     /// This is a read-only projection. An orphaned running state is displayed
     /// paused; its persisted approval is not executed or silently changed.
@@ -346,7 +354,12 @@ impl DownloadService {
     ) -> Result<DownloadSnapshot> {
         let mut runtime = self.lock()?;
         let document = self.load_shared(store)?;
-        Ok(snapshot(&document, &mut runtime, recheck_files))
+        Ok(snapshot(
+            &document,
+            &mut runtime,
+            recheck_files,
+            store.read_library_shared()?.as_ref(),
+        ))
     }
     /// Native session selection must use the same control revision as the
     /// subsequent command. This exposes no token, path, or mutable task data.
@@ -434,7 +447,12 @@ impl DownloadService {
         } else {
             runtime.queued.insert(task_id.into(), revision);
         }
-        Ok(snapshot(&saved, &mut runtime, false))
+        Ok(snapshot(
+            &saved,
+            &mut runtime,
+            false,
+            store.read_library_shared()?.as_ref(),
+        ))
     }
     /// Stops all admitted waiting work and invalidates active media epochs.
     /// Final saving/index registration is allowed to finish; no next task starts.
@@ -457,7 +475,12 @@ impl DownloadService {
             document = store.write_downloads(document.revision, document.value)?;
         }
         runtime.queued.clear();
-        Ok(snapshot(&document, &mut runtime, false))
+        Ok(snapshot(
+            &document,
+            &mut runtime,
+            false,
+            store.read_library_shared()?.as_ref(),
+        ))
     }
     /// Reopening never starts a queue. An explicit source-bound selection of
     /// paused tasks creates new control epochs and process-local admissions.
@@ -509,7 +532,12 @@ impl DownloadService {
                 .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
             runtime.queued.insert(task.id.clone(), task.revision);
         }
-        Ok(snapshot(&saved, &mut runtime, false))
+        Ok(snapshot(
+            &saved,
+            &mut runtime,
+            false,
+            store.read_library_shared()?.as_ref(),
+        ))
     }
     /// Removes only completed display/history records. Compact identity evidence
     /// remains private, and neither library document nor any media file is written.
@@ -557,7 +585,12 @@ impl DownloadService {
                 .any(|selection| selection.task_id == task.id)
         });
         let saved = store.write_downloads(document.revision, document.value)?;
-        Ok(snapshot(&saved, &mut runtime, false))
+        Ok(snapshot(
+            &saved,
+            &mut runtime,
+            false,
+            store.read_library_shared()?.as_ref(),
+        ))
     }
     /// Session/root errors before the executor acquired its worker still need a
     /// visible retryable result. A newer pause/resume epoch is never overwritten.
@@ -879,6 +912,7 @@ impl DownloadService {
                 self.update_run(store, task_id, revision, |task| {
                     task.output_identity.clone_from(&updated.output_identity);
                     task.output_files.clone_from(&updated.output_files);
+                    task.archive_file.clone_from(&updated.archive_file);
                     task.output_manifest_hash
                         .clone_from(&updated.output_manifest_hash);
                     Ok(())
@@ -1047,11 +1081,14 @@ fn selected_task<'a>(
 }
 fn binding(record: &DownloadRecord) -> Result<String> {
     serde_json::to_vec(&(
-        match (record.source, record.jpeg_output) {
-            (Source::Jm, true) => "manual-JM-layout-v1-jpeg",
-            (Source::Jm, false) => "manual-JM-layout-v1",
-            (Source::Pica, false) => "manual-Pica-layout-v1",
-            (Source::Pica, true) => return Err(error("DOWNLOAD_DOCUMENT_INVALID")),
+        match (record.source, record.jpeg_output, record.zip_output) {
+            (Source::Jm, true, true) => "manual-JM-zip-v1-jpeg",
+            (Source::Jm, false, true) => "manual-JM-zip-v1",
+            (Source::Pica, false, true) => "manual-Pica-zip-v1",
+            (Source::Jm, true, false) => "manual-JM-layout-v1-jpeg",
+            (Source::Jm, false, false) => "manual-JM-layout-v1",
+            (Source::Pica, false, false) => "manual-Pica-layout-v1",
+            (Source::Pica, true, _) => return Err(error("DOWNLOAD_DOCUMENT_INVALID")),
         },
         &record.root,
         record.generation,
@@ -1116,25 +1153,6 @@ fn display(record: &DownloadRecord) -> String {
         .to_string_lossy()
         .into_owned()
 }
-fn destination(source: Source, metadata: &JmDownloadMetadata) -> String {
-    let mut name = format!("[{}{}] ", crate::source_label(source), metadata.work_id);
-    for character in metadata.title.chars() {
-        let character = if character.is_control()
-            || matches!(
-                character,
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
-            ) {
-            '_'
-        } else {
-            character
-        };
-        if name.encode_utf16().count() + character.len_utf16() > 160 {
-            break;
-        }
-        name.push(character);
-    }
-    name.trim_end_matches([' ', '.']).to_owned()
-}
 /// Returns only matching private index rows whose recorded paths are positively
 /// absent. This never grants adoption of an existing or partially missing tree.
 fn check_new_download(
@@ -1165,7 +1183,7 @@ fn check_new_download(
         if old.root.file_key != record.root.file_key {
             continue;
         }
-        match presence::check(old) {
+        match presence::check_with_library(old, library) {
             LocalFiles::Missing => {}
             LocalFiles::Present => return Err(error("DOWNLOAD_ALREADY_PRESENT")),
             LocalFiles::Incomplete => return Err(error("DOWNLOAD_LOCAL_FILES_INCOMPLETE")),
@@ -1177,7 +1195,13 @@ fn check_new_download(
             && old.work_id == record.metadata.work_id
             && old.root.id == record.root.id
             && old.root.file_key == record.root.file_key
-            && presence::probe_path(&root, &old.destination)?.is_some()
+            && presence::probe_path(
+                &root,
+                library
+                    .relocated_path(&old.destination)
+                    .map_or(&old.destination, |v| &v.new_path),
+            )?
+            .is_some()
         {
             // Clearing history cannot turn an existing original directory into
             // a new work when the upstream title or a manual association changes.
@@ -1193,12 +1217,18 @@ fn check_new_download(
             task.root == record.root
                 && task.source == record.source
                 && task.metadata.work_id == record.metadata.work_id
-                && task.library_entry_id.as_ref() == Some(&old.item.id)
+                && (task.library_entry_id.as_ref() == Some(&old.item.id)
+                    || library
+                        .relocated_path(&task.destination)
+                        .is_some_and(|v| v.new_item_id == old.item.id))
         }) || downloads.history_evidence.iter().any(|task| {
             task.root == record.root
                 && task.source == record.source
                 && task.work_id == record.metadata.work_id
-                && task.library_entry_id == old.item.id
+                && (task.library_entry_id == old.item.id
+                    || library
+                        .relocated_path(&task.destination)
+                        .is_some_and(|v| v.new_item_id == old.item.id))
         });
         if !matches_reference {
             if old.item.relative_path == record.destination
@@ -1228,7 +1258,12 @@ fn snapshot(
     document: &Document<DownloadsDocument>,
     runtime: &mut Runtime,
     recheck_files: bool,
+    library: &Document<LibraryDocument>,
 ) -> DownloadSnapshot {
+    if runtime.library_revision != Some(library.revision) {
+        runtime.local_files.clear();
+        runtime.library_revision = Some(library.revision);
+    }
     runtime.queued.retain(|id, revision| {
         document.value.tasks.iter().any(|task| {
             task.id == *id && task.revision == *revision && task.phase == DownloadPhase::Queued
@@ -1243,9 +1278,13 @@ fn snapshot(
         if task.phase == DownloadPhase::Downloaded
             && (recheck_files || !runtime.local_files.contains_key(&task.id))
         {
-            runtime
-                .local_files
-                .insert(task.id.clone(), (task.revision, presence::check(task)));
+            runtime.local_files.insert(
+                task.id.clone(),
+                (
+                    task.revision,
+                    presence::check_with_library(task, &library.value),
+                ),
+            );
         }
     }
     DownloadSnapshot {
@@ -1277,6 +1316,7 @@ fn snapshot(
                     DownloadPhase::Error if !active => vec![Control::Retry],
                     _ => Vec::new(),
                 };
+                let relocated = presence::relocation(t, &library.value);
                 DownloadTask {
                     id: t.id.clone(),
                     revision: t.revision,
@@ -1289,9 +1329,18 @@ fn snapshot(
                     bytes_done: t.bytes_done,
                     error_code: t.error_code.clone(),
                     allowed_actions,
-                    library_entry_id: t.library_entry_id.clone(),
+                    library_entry_id: relocated
+                        .map(|v| v.new_item_id.clone())
+                        .or_else(|| t.library_entry_id.clone()),
                     updated_at: t.updated_at,
-                    destination_display: display(t),
+                    destination_display: relocated
+                        .map(|v| {
+                            std::path::Path::new(&t.root.path)
+                                .join(&v.new_path)
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .unwrap_or_else(|| display(t)),
                     local_files: runtime.local_files.get(&t.id).map(|(_, state)| *state),
                 }
             })

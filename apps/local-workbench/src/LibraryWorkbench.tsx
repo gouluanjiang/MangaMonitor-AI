@@ -24,16 +24,7 @@ import type {
   LibraryCoverLease,
   LibraryCoverResult,
 } from "./library-cover-cache.ts";
-import type {
-  PhoneLibraryAdapter,
-  PhoneLibrarySnapshot,
-} from "./phone-library-types.ts";
-import { emptyPhoneLibrary } from "./phone-library-types.ts";
-import {
-  createPhoneItemMatcher,
-  phoneLibraryRows,
-  phoneNameKey,
-} from "./phone-library-model.ts";
+import { libraryItemStatus, readableLibraryItem } from "./inventory-model.ts";
 import type { SourceWork } from "./source-types.ts";
 import type { SourceGridHandle, GridAnchor } from "./VirtualSourceGrid.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
@@ -61,86 +52,6 @@ export function useLibrary(adapter: LibraryAdapter, enabled: boolean) {
   return { ...state, controller };
 }
 export type LibraryState = ReturnType<typeof useLibrary>;
-export function usePhoneLibrary(
-  adapter: PhoneLibraryAdapter,
-  enabled: boolean,
-) {
-  const [snapshot, setSnapshot] = useState(emptyPhoneLibrary);
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [ready, setReady] = useState(false);
-  const state = useRef(snapshot);
-  state.current = snapshot;
-  const lock = useRef(false),
-    epoch = useRef(0);
-  const execute = useCallback(
-    async (operation: () => Promise<PhoneLibrarySnapshot | null>) => {
-      if (lock.current) return false;
-      lock.current = true;
-      setBusy(true);
-      setError("");
-      const token = epoch.current;
-      try {
-        const next = await operation();
-        if (token !== epoch.current) return false;
-        if (next) {
-          state.current = next;
-          setSnapshot(next);
-          setReady(true);
-        }
-        return next !== null;
-      } catch (cause) {
-        if (token === epoch.current) {
-          const code = (cause as { code?: string })?.code;
-          setError(
-            code === "PHONE_LIBRARY_INVALID_TXT"
-              ? "名单格式无法读取，请选择每行一个文件名的 UTF-8 或带 BOM 的 UTF-16 TXT。原名单保留。"
-              : code === "PHONE_LIBRARY_EMPTY_TXT"
-                ? "TXT 名单为空，原名单保留。"
-                : code === "PHONE_LIBRARY_LIMIT_EXCEEDED"
-                  ? "名单超过 20,000 条或 8 MiB，原名单保留。"
-                  : code === "REVISION_CONFLICT"
-                    ? "手机名单已有变化，请重新读取后再操作。原名单保留。"
-                    : "手机名单未能保存或读取，原名单保留。请重新读取后重试。",
-          );
-        }
-        return false;
-      } finally {
-        if (token === epoch.current) {
-          lock.current = false;
-          setBusy(false);
-        }
-      }
-    },
-    [],
-  );
-  const read = useCallback(
-    () => execute(() => adapter.read()),
-    [adapter, execute],
-  );
-  useEffect(() => {
-    if (!enabled) return;
-    void read();
-    return () => {
-      epoch.current++;
-      lock.current = false;
-    };
-  }, [enabled, read]);
-  return {
-    snapshot,
-    busy,
-    error,
-    ready,
-    read,
-    import: () => execute(() => adapter.import(state.current.revision)),
-    mark: (name: string, reference: LibraryReference | null) =>
-      execute(() => adapter.mark(state.current.revision, name, reference)),
-    unmark: (entryId: string) =>
-      execute(() => adapter.unmark(state.current.revision, entryId)),
-  };
-}
-export type PhoneLibraryState = ReturnType<typeof usePhoneLibrary>;
-
 function LibraryCover({
   adapter,
   snapshot,
@@ -349,83 +260,46 @@ export function LibraryControls({ library }: { library: LibraryState }) {
     </div>
   );
 }
-export function PhoneLibraryControls({ phone }: { phone: PhoneLibraryState }) {
-  return (
-    <div className="library-read-controls">
-      <div className="source-actions">
-        <button
-          className="button secondary"
-          data-testid="phone-library-import"
-          disabled={phone.busy || !phone.ready}
-          onClick={() => void phone.import()}
-        >
-          导入 / 更新手机 TXT 名单
-        </button>
-        <button
-          className="text-button"
-          data-testid="phone-library-read"
-          disabled={phone.busy}
-          onClick={() => void phone.read()}
-        >
-          重新读取手机名单
-        </button>
-      </div>
-      <p className="source-muted">
-        更新导入名单，保留手动标记；不会改动漫画文件。手机中的作品显示“已入库”，仅在电脑上的作品显示“已下载”。
-      </p>
-      {phone.snapshot.importFileName && (
-        <p className="source-muted" data-testid="phone-import-info">
-          {phone.snapshot.importFileName} · 导入{" "}
-          {phone.snapshot.importedNames.length} 条
-        </p>
-      )}
-      {phone.error && (
-        <p role="alert" className="source-notice">
-          {phone.error}
-        </p>
-      )}
-    </div>
-  );
-}
-export function LibrarySettingsPanel({
-  library,
-  phone,
-}: {
-  library: LibraryState;
-  phone: PhoneLibraryState;
-}) {
+export function LibrarySettingsPanel({ library }: { library: LibraryState }) {
   return (
     <section className="settings-card" aria-labelledby="library-title">
-      <h2 id="library-title">电脑与手机漫画库</h2>
-      <h3>电脑文件</h3>
+      <h2 id="library-title">漫画库</h2>
       <LibraryControls library={library} />
       <p className="settings-help">
-        选择目录后分批读取作品文件夹、ZIP 与 CBZ。RAR
-        只列出文件名。只读取文件，封面仅在本次运行内缓存。
+        以电脑漫画库中的实际文件判断已入库。新下载一本一个
+        ZIP，封面仅在本次运行内缓存。
       </p>
-      <h3>手机名单</h3>
-      <PhoneLibraryControls phone={phone} />
       <p className="settings-help">
-        你手动将漫画传到手机后，可标记已入库或导入最新
-        TXT。电脑文件继续保留，程序不传输、移动或删除文件。
+        整理过文件名或格式后，可以导入整理时生成的路径映射，保留来源关联与下载记录，再重新读取目录。
       </p>
+      <button
+        className="button secondary"
+        data-testid="library-import-paths"
+        disabled={
+          library.busy ||
+          !library.snapshot.rootId ||
+          library.snapshot.phase === "reading"
+        }
+        onClick={() => void library.controller.importPaths()}
+      >
+        导入 ZIP 整理映射
+      </button>
+      {library.migrationNotice && (
+        <p role="status">{library.migrationNotice}</p>
+      )}
     </section>
   );
 }
 function LibraryDetail({
   item,
   library,
-  phone,
   onBack,
-  onAddToBooklists,
   externalWork,
   pairs = [],
 }: {
   item: LibraryItem;
   library: LibraryState;
-  phone: PhoneLibraryState;
   onBack(): void;
-  onAddToBooklists(refs: LibraryReference[]): Promise<boolean>;
   externalWork?: SourceWork | null;
   pairs?: import("./source-matches-types.ts").SourceMatchPair[];
 }) {
@@ -437,15 +311,6 @@ function LibraryDetail({
   );
   const [notice, setNotice] = useState("");
   const ref = parseLibraryReference(source, input);
-  const owned = createPhoneItemMatcher(phone.snapshot, pairs)(item) === "owned";
-  const marks = phone.snapshot.manualEntries.filter(
-    (entry) =>
-      (entry.reference === null &&
-        phoneNameKey(entry.name) === phoneNameKey(item.fileName)) ||
-      (item.sourceRef &&
-        entry.reference?.source === item.sourceRef.source &&
-        entry.reference?.workId === item.sourceRef.workId),
-  );
   return (
     <div className="source-detail" data-testid="library-detail">
       <button
@@ -481,11 +346,7 @@ function LibraryDetail({
             <div>
               <dt>状态</dt>
               <dd data-testid="library-detail-stock">
-                {!phone.ready
-                  ? "电脑文件存在 · 手机待核对"
-                  : owned
-                    ? "已入库 · 手机名单"
-                    : "已下载 · 电脑文件"}
+                {library.error ? "文件待核对" : libraryItemStatus(item)}
               </dd>
             </div>
             <div>
@@ -505,53 +366,7 @@ function LibraryDetail({
           </dl>
           {(item.state !== "indexed" || item.errorCode) && (
             <p className="source-notice" role="status">
-              {libraryErrorMessage(item.errorCode)}{" "}
-              已下载表示发现电脑文件，不代表内容完整性校验通过。
-            </p>
-          )}
-          <div className="source-actions">
-            <button
-              className="button secondary"
-              data-testid="phone-mark"
-              disabled={phone.busy || !phone.ready}
-              onClick={() =>
-                void phone
-                  .mark(item.fileName, item.sourceRef)
-                  .then((saved) =>
-                    setNotice(
-                      saved
-                        ? "已标记手机已入库，电脑文件保留。"
-                        : "标记未完成。",
-                    ),
-                  )
-              }
-            >
-              标记手机已入库
-            </button>
-            {item.sourceRef && (
-              <button
-                className="button secondary"
-                data-testid="library-detail-booklist"
-                onClick={() => void onAddToBooklists([item.sourceRef!])}
-              >
-                加入书单
-              </button>
-            )}
-          </div>
-          {marks.map((entry) => (
-            <button
-              className="text-button"
-              key={entry.id}
-              data-testid={"phone-unmark-" + entry.id}
-              disabled={phone.busy}
-              onClick={() => void phone.unmark(entry.id)}
-            >
-              撤销手动标记
-            </button>
-          ))}
-          {marks.length > 0 && (
-            <p className="source-muted">
-              撤销只移除手动标记；若导入名单仍有该作品，仍显示已入库。
+              {libraryErrorMessage(item.errorCode)} 请核对文件后重新读取漫画库。
             </p>
           )}
           <section className="library-link-form">
@@ -616,16 +431,15 @@ function LibraryDetail({
               </p>
             )}
           </section>
-          {(notice || library.error || phone.error) && (
+          {(notice || library.error) && (
             <p role="status" className="source-notice">
-              {library.error || phone.error || notice}
+              {library.error || notice}
             </p>
           )}
           <h2>电脑位置</h2>
           <p className="library-path">{item.relativePath}</p>
           <p className="source-muted">
-            {item.bytes.toLocaleString()} 字节 ·
-            文件保持原样。转入手机后电脑文件继续保留。
+            {item.bytes.toLocaleString()} 字节 · 文件保持原样。
           </p>
           {item.description && (
             <>
@@ -640,31 +454,24 @@ function LibraryDetail({
 }
 export function LibraryWorkbench({
   library,
-  phone,
   active,
   density,
   onDensityChange,
   query,
-  onBooklists,
-  onAddToBooklists,
   externalWork,
   pairs = [],
   requestKey = 0,
 }: {
   library: LibraryState;
-  phone: PhoneLibraryState;
   active: boolean;
   density: 5 | 7 | 9;
   onDensityChange(value: 5 | 7 | 9): void | Promise<unknown>;
   query: string;
-  onBooklists(): void;
-  onAddToBooklists(refs: LibraryReference[]): Promise<boolean>;
   externalWork?: SourceWork | null;
   pairs?: import("./source-matches-types.ts").SourceMatchPair[];
   requestKey?: number;
 }) {
-  const [tab, setTab] = useState<"pc" | "phone">("pc"),
-    [sort, setSort] = useState<"title" | "modified">("title"),
+  const [sort, setSort] = useState<"title" | "modified">("title"),
     [detailId, setDetailId] = useState<string | null>(null),
     [densitySaving, setDensitySaving] = useState(false);
   const grid = useRef<SourceGridHandle>(null),
@@ -681,26 +488,12 @@ export function LibraryWorkbench({
     () => filterLibraryItems(library.snapshot.items, query, sort),
     [library.snapshot.items, query, sort],
   );
-  const phoneItems = useMemo(
-    () =>
-      phoneLibraryRows(phone.snapshot)
-        .filter((row) =>
-          normalizeLibraryText(row.name).includes(normalizeLibraryText(query)),
-        )
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [phone.snapshot, query],
-  );
-  const itemStatus = useMemo(
-    () => createPhoneItemMatcher(phone.snapshot, pairs),
-    [phone.snapshot, pairs],
-  );
   const detail = library.snapshot.items.find((item) => item.id === detailId);
   useEffect(() => {
     setDetailId(null);
   }, [query, library.snapshot.rootId]);
   useEffect(() => {
     if (!externalWork || requestKey === 0) return;
-    setTab("pc");
     const match = createLibraryMatcher(library.snapshot, pairs)(externalWork);
     const exact = match.kind === "exact" ? match.items[0] : undefined;
     setDetailId(exact?.id ?? null);
@@ -753,10 +546,8 @@ export function LibraryWorkbench({
           key={detail.id}
           item={detail}
           library={library}
-          phone={phone}
           pairs={pairs}
           onBack={back}
-          onAddToBooklists={onAddToBooklists}
           externalWork={externalWork}
         />
       ) : (
@@ -765,29 +556,10 @@ export function LibraryWorkbench({
             <div>
               <div className="product-name">MangaMonitor</div>
               <h1>漫画库</h1>
-              <p>手机已入库 · 电脑已下载</p>
+              <p>一本一个 ZIP · 以电脑文件核对入库</p>
             </div>
           </div>
           <div className="library-toolbar">
-            <div className="tabs" aria-label="漫画库范围">
-              <button
-                data-testid="pc-tab"
-                className={tab === "pc" ? "active" : ""}
-                aria-pressed={tab === "pc"}
-                onClick={() => setTab("pc")}
-              >
-                电脑文件
-              </button>
-              <button
-                data-testid="phone-tab"
-                className={tab === "phone" ? "active" : ""}
-                aria-pressed={tab === "phone"}
-                onClick={() => setTab("phone")}
-              >
-                手机名单
-              </button>
-              <button onClick={onBooklists}>本地书单</button>
-            </div>
             <div className="source-density" role="group" aria-label="封面密度">
               封面密度
               {([5, 7, 9] as const).map((value) => (
@@ -816,169 +588,109 @@ export function LibraryWorkbench({
               ))}
             </div>
           </div>
-          {tab === "pc" ? (
-            <>
-              <LibraryControls library={library} />
-              <div className="library-list-heading">
-                <p>
-                  {items.length} 个作品{query ? "匹配搜索" : ""}
-                  {phone.ready
-                    ? ` · 已入库 ${items.filter((item) => itemStatus(item) === "owned").length} · 已下载 ${items.filter((item) => itemStatus(item) === "downloaded").length}`
-                    : " · 手机名单未读取，状态待核对"}
-                </p>
-                <label>
-                  排序{" "}
-                  <select
-                    data-testid="library-sort"
-                    value={sort}
-                    onChange={(event) =>
-                      setSort(event.target.value as "title" | "modified")
-                    }
-                  >
-                    <option value="title">作品标题</option>
-                    <option value="modified">文件修改时间</option>
-                  </select>
-                </label>
-              </div>
-              {externalWork && (
-                <p className="source-notice">
-                  正在核对 {externalWork.source} · {externalWork.workId}
-                  。打开对应电脑作品，在详情中确认关联；同标题仍需你确认。
-                </p>
-              )}
-              {!library.snapshot.rootId ? (
-                <div className="source-empty" data-testid="library-empty">
-                  <h2>选择电脑漫画目录</h2>
-                  <p>
-                    读取现有作品文件夹、ZIP 和 CBZ。也可以先打开手机名单，导入
-                    TXT 查看已入库作品。
-                  </p>
-                </div>
-              ) : items.length === 0 ? (
-                <p className="source-empty">
-                  {query
-                    ? "没有匹配的电脑作品。"
-                    : "此目录暂未读到作品，已读取的进度会保留。"}
-                </p>
-              ) : (
-                <VirtualSourceGrid
-                  ref={grid}
-                  items={items}
-                  density={density}
-                  testId="library-grid"
-                  itemKey={(item) => item.id}
-                  renderItem={(item) => (
-                    <article
-                      className="source-card"
-                      data-testid={"library-card-" + item.id}
-                      data-library-id={item.id}
-                    >
-                      <div className="source-card-cover">
-                        <div
-                          className="library-cover-open"
-                          role="button"
-                          tabIndex={0}
-                          aria-label={"查看《" + item.title + "》电脑详情"}
-                          data-testid={"library-open-" + item.id}
-                          onClick={() => open(item)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              open(item);
-                            }
-                          }}
-                        >
-                          <LibraryCover
-                            adapter={library.controller.adapter}
-                            snapshot={library.snapshot}
-                            item={item}
-                          />
-                        </div>
-                      </div>
-                      <h3>
-                        <button onClick={() => open(item)}>{item.title}</button>
-                      </h3>
-                      <p>
-                        {item.authors.length
-                          ? item.authors.join("、")
-                          : item.fileName}
-                      </p>
-                      <p className="source-card-state">
-                        {!phone.ready
-                          ? "电脑文件存在 · 手机待核对"
-                          : itemStatus(item) === "owned"
-                            ? "已入库 · 手机名单"
-                            : "已下载 · 电脑文件"}
-                        {item.state !== "indexed"
-                          ? item.state === "unsupported"
-                            ? " · 格式暂不支持"
-                            : " · 无法读取"
-                          : ""}
-                        {item.errorCode === "LIBRARY_COVER_ONLY"
-                          ? " · 正文未读取"
-                          : item.errorCode === "LIBRARY_DOWNLOAD_INCOMPLETE"
-                            ? " · 含下载中章节"
-                            : ""}
-                      </p>
-                    </article>
-                  )}
-                />
-              )}
-            </>
-          ) : (
-            <>
-              <PhoneLibraryControls phone={phone} />
-              <p className="source-muted" data-testid="phone-library-count">
-                已入库 {phoneItems.length} 部 · 名单记录，无需连接手机
+          <>
+            <LibraryControls library={library} />
+            <div className="library-list-heading">
+              <p>
+                {items.length} 个作品{query ? "匹配搜索" : ""}
+                {library.error
+                  ? " · 文件待核对"
+                  : ` · 已入库 ${items.filter(readableLibraryItem).length} · 待核对 ${items.filter((item) => !readableLibraryItem(item)).length}`}
               </p>
-              {phoneItems.length === 0 ? (
-                <div className="source-empty">
-                  <h2>{query ? "没有匹配的手机作品" : "导入手机名单"}</h2>
-                  <p>
-                    导入文件名 TXT
-                    或在作品详情中手动标记已入库。这里不读取手机漫画图片。
-                  </p>
-                </div>
-              ) : (
-                <VirtualSourceGrid
-                  ref={grid}
-                  items={phoneItems}
-                  density={density}
-                  testId="phone-library-grid"
-                  itemKey={(row) => row.id}
-                  renderItem={(row) => (
-                    <article
-                      className="phone-library-card"
-                      data-testid={"phone-row-" + row.id}
-                    >
-                      <span className="phone-library-state">已入库</span>
-                      <h3>{row.name}</h3>
-                      <p>
-                        {row.imported ? "手机 TXT 名单" : "手动确认"}
-                        {row.imported && row.manualEntries.length
-                          ? " · 含手动标记"
+              <label>
+                排序{" "}
+                <select
+                  data-testid="library-sort"
+                  value={sort}
+                  onChange={(event) =>
+                    setSort(event.target.value as "title" | "modified")
+                  }
+                >
+                  <option value="title">作品标题</option>
+                  <option value="modified">文件修改时间</option>
+                </select>
+              </label>
+            </div>
+            {externalWork && (
+              <p className="source-notice">
+                正在核对 {externalWork.source} · {externalWork.workId}
+                。打开对应电脑作品，在详情中确认关联；同标题仍需你确认。
+              </p>
+            )}
+            {!library.snapshot.rootId ? (
+              <div className="source-empty" data-testid="library-empty">
+                <h2>选择电脑漫画目录</h2>
+                <p>
+                  读取电脑目录中的 ZIP 与已有作品文件夹，核对作品和来源编号。
+                </p>
+              </div>
+            ) : items.length === 0 ? (
+              <p className="source-empty">
+                {query
+                  ? "没有匹配的电脑作品。"
+                  : "此目录暂未读到作品，已读取的进度会保留。"}
+              </p>
+            ) : (
+              <VirtualSourceGrid
+                ref={grid}
+                items={items}
+                density={density}
+                testId="library-grid"
+                itemKey={(item) => item.id}
+                renderItem={(item) => (
+                  <article
+                    className="source-card"
+                    data-testid={"library-card-" + item.id}
+                    data-library-id={item.id}
+                  >
+                    <div className="source-card-cover">
+                      <div
+                        className="library-cover-open"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={"查看《" + item.title + "》电脑详情"}
+                        data-testid={"library-open-" + item.id}
+                        onClick={() => open(item)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            open(item);
+                          }
+                        }}
+                      >
+                        <LibraryCover
+                          adapter={library.controller.adapter}
+                          snapshot={library.snapshot}
+                          item={item}
+                        />
+                      </div>
+                    </div>
+                    <h3>
+                      <button onClick={() => open(item)}>{item.title}</button>
+                    </h3>
+                    <p>
+                      {item.authors.length
+                        ? item.authors.join("、")
+                        : item.fileName}
+                    </p>
+                    <p className="source-card-state">
+                      {library.error ? "文件待核对" : libraryItemStatus(item)}
+                      {item.state !== "indexed"
+                        ? item.state === "unsupported"
+                          ? " · 格式暂不支持"
+                          : " · 无法读取"
+                        : ""}
+                      {item.errorCode === "LIBRARY_COVER_ONLY"
+                        ? " · 正文未读取"
+                        : item.errorCode === "LIBRARY_DOWNLOAD_INCOMPLETE"
+                          ? " · 含下载中章节"
                           : ""}
-                      </p>
-                      {row.manualEntries.map((entry) => (
-                        <button
-                          className="text-button"
-                          key={entry.id}
-                          disabled={phone.busy}
-                          data-testid={"phone-unmark-" + entry.id}
-                          onClick={() => void phone.unmark(entry.id)}
-                        >
-                          撤销手动标记
-                          {entry.reference
-                            ? ` · ${entry.reference.source} ${entry.reference.workId}`
-                            : ""}
-                        </button>
-                      ))}
-                    </article>
-                  )}
-                />
-              )}
-            </>
-          )}
+                    </p>
+                  </article>
+                )}
+              />
+            )}
+          </>
         </>
       )}
     </div>

@@ -41,7 +41,7 @@ const item = (number, overrides = {}) => ({
   tags: [],
   bytes: 1024,
   modifiedAt: 1800000000000,
-  pageCount: null,
+  pageCount: 20,
   coverAvailable: false,
   state: "indexed",
   errorCode: null,

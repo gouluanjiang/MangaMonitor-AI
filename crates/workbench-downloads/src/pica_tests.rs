@@ -30,6 +30,11 @@ fn pica_fixture() -> Fixture {
         .confirm(&f.store, &plan.plan_id, plan.revision)
         .unwrap();
     f.id = plan.plan_id;
+    let mut saved = pica_record(&f);
+    saved.zip_output = false;
+    saved.destination = format!("[Pica{PICA_ID}] Offline Pica work");
+    saved.target_hash = binding(&saved).unwrap();
+    save_task(&f, saved);
     f
 }
 fn pica_record(f: &Fixture) -> DownloadRecord {
@@ -475,4 +480,65 @@ fn source_failures_keep_actionable_codes_without_returning_raw_errors() {
     ] {
         assert_eq!(classify(incoming).code, expected);
     }
+}
+
+#[tokio::test]
+async fn pica_zip_retains_every_original_format_and_two_chapter_metadata() {
+    use std::io::Read;
+    let f = pica_fixture();
+    let mut saved = pica_record(&f);
+    saved.zip_output = true;
+    saved.destination = crate::naming::zip_name(&saved.metadata);
+    saved.target_hash = binding(&saved).unwrap();
+    save_task(&f, saved);
+    let c = seed_pica(&f).await;
+    let receipt = f
+        .service
+        .run_with_token(&f.store, &f.id, Some(TOKEN), || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    let file = fs::File::open(f.library.join(&receipt.relative_path)).unwrap();
+    let mut zip = zip::ZipArchive::new(file).unwrap();
+    for chapter in &c.descriptors.chapters {
+        for media in &chapter.media {
+            let mut bytes = Vec::new();
+            zip.by_name(&format!(
+                "{:03}-{}/{:03}.{}",
+                chapter.chapter_order, chapter.chapter_id, media.image_index, media.source_format
+            ))
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+            assert_eq!(bytes, pica_bytes(&media.source_format));
+        }
+    }
+    drop(zip);
+    let indexed = workbench_library::LibraryService::new()
+        .register_completed(
+            &f.store,
+            &receipt.root_id,
+            receipt.generation,
+            &receipt.relative_path,
+            &workbench_storage::LibraryReference {
+                source: Source::Pica,
+                work_id: PICA_ID.into(),
+            },
+            5,
+        )
+        .unwrap();
+    let entry = indexed
+        .items
+        .iter()
+        .find(|v| v.relative_path == receipt.relative_path)
+        .unwrap();
+    assert_eq!(entry.page_count, Some(5));
+    assert_eq!(entry.error_code, None);
+    f.service
+        .mark_indexed(&f.store, &receipt, &entry.id)
+        .unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[1].local_files,
+        Some(LocalFiles::Present)
+    );
 }

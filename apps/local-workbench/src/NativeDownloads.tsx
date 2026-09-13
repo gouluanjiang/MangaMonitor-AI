@@ -147,9 +147,7 @@ function DownloadConfirmation({
           ? "哔咔保留原图格式。"
           : "JM 图片保存为 JPEG 格式。"}
       </p>
-      <p>
-        完成后显示电脑“已下载”。手机名单保持原样，之后传到手机时电脑副本继续保留。
-      </p>
+      <p>完成后保存为一本一个 ZIP，并登记到电脑漫画库。</p>
       <p>完成后清理下载临时文件，电脑作品副本继续保留。</p>
       <div className="dialog-actions">
         <button
@@ -255,7 +253,7 @@ function BatchDownloadConfirmation({
       </div>
       <p>
         保存为作品文件夹。JM 静态图片使用
-        JPG，哔咔保留原图格式。手机名单由你手动更新，电脑副本继续保留。
+        JPG，哔咔保留原图格式。每本分别保存为一个 ZIP。
       </p>
       <div className="dialog-actions">
         <button
@@ -311,8 +309,7 @@ function HistoryConfirmation({
         <h2>整理下载历史</h2>
       </div>
       <p>
-        从队列移除以下 {tasks.length}{" "}
-        条完成记录。电脑漫画文件、电脑索引和手机名单会保留。
+        从队列移除以下 {tasks.length} 条完成记录。漫画文件和漫画库索引会保留。
       </p>
       {downloads.error && (
         <p role="alert" className="source-notice">
@@ -378,8 +375,8 @@ export function DownloadSettingsPanel({
           <dd>恢复任务记录，未完成任务暂停，点击继续后执行</dd>
         </div>
         <div>
-          <dt>手机已入库</dt>
-          <dd>由手机名单或手动标记确认，电脑副本保留</dd>
+          <dt>已入库</dt>
+          <dd>以电脑漫画库中的实际作品文件确认</dd>
         </div>
         <div>
           <dt>下载临时文件</dt>
@@ -834,9 +831,7 @@ export function NativeDownloads({
                   </p>
                 )}
                 {isDownloadPresent(task) && (
-                  <p className="quiet">
-                    电脑文件已保存并登记，手机名单未改变。
-                  </p>
+                  <p className="quiet">电脑文件已保存并登记到漫画库。</p>
                 )}
                 {task.phase === "downloaded" &&
                   task.localFiles === "missing" && (

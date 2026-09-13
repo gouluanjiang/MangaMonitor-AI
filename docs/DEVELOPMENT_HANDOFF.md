@@ -1,6 +1,49 @@
 # Active development handoff
 
-Updated 2026-09-12. This document separates the current continuation from historical milestone reports.
+
+## Current batch B: PC-only library and common ZIP downloads (2026-09-13)
+
+The user requested the next development batch after A normalization/cleanup. B implements PC-file ownership, JM/Pica ZIP finalization/common naming, explicit A path-mapping import, historical receipt/location projection, and removal of phone/classification-booklist UI and startup reads. See [B behavior and affected download-gate review](PC_ZIP_LIBRARY_BATCH_2026-09-13.md). Source transport pins and the accepted JM 20-image pipeline are unchanged. Old directory approvals keep their original binding; private legacy phone/booklist documents are inert compatibility data. Existing manga and historical download receipts are not rewritten by migration.
+
+Code and synthetic tests are being prepared for formal CI. Exact CI/Dev evidence is recorded in the final local delivery report and PR #19; do not infer CI or user acceptance from this handoff. Real JM/Pica ZIP and private mapping acceptance remain user steps. Keep 0.3.4 Dev, no installer, draft/unmerged PR and production disabled. No new real downloads or library mutations were executed during implementation.
+
+Current roadmap: A complete with 16 separately recorded old-file/information issues; B implementation and validation, then user acceptance; C complete version review and author-completeness live acceptance; D JM weekly recommendations/Pica rankings; E new favorites/work-follow discovery and complete-scope batch planning; F legacy cloud durable inventory/task loop; G final native UI/settings and V1 acceptance. Reader and updater remain frozen after V1; PDF/CBZ export and classification booklists are cancelled. Do not redo A, the USB transfer or previously accepted queues/download performance.
+
+Updated 2026-09-13. This document separates the current continuation from historical milestone reports.
+
+Read the latest applicable section and its linked roadmap when resuming work; older sections are evidence to consult as needed, even where their original headings say "Current". Earlier next-step, resource and product-scope statements do not override later explicit decisions or the current `AGENTS.md`. A historical turn's permission or pause is not a substitute for interpreting the current request and applicable execution gates.
+
+## Current batch A2: ZIP normalization complete, 138 exceptions resolved (2026-09-13)
+
+The user explicitly requested resolving as many of the 154 review entries as possible and directly deleting the corresponding 908 originals. This supersedes the earlier choice to retain originals until B; do not ask the same decision again. Both operations are now complete. Read [the latest follow-up](LIBRARY_ZIP_EXCEPTION_RESOLUTION_2026-09-13.md) and [current roadmap](ROADMAP_ZIP_LIBRARY_V1_2026-09-13.md). Keep the earlier rejected move/defer evidence as history, not current blocked status.
+
+After fresh original/replacement proof, 908 original top-level objects were deleted: 26,560 files, 1,130 directories and 17,131,904,533 bytes. All 937 prior replacement ZIPs remain; final root comparison passed. Separately, 138 of 154 exception records were handled: 62 conversions, 69 ZIP renames, 5 existing ZIPs retained and 2 exact duplicate RARs reusing canonical ZIPs. The 64 source objects from this exception batch were moved to a separate local backup (about 1.08 GB), not physically deleted. All 138 records verified, with zero failures or final audit differences.
+
+The formal root now contains 2,961 entries, all ZIP. Preserve 16 remaining entries unchanged: 12 lack reliable author information and may keep their existing names; 4 ZIPs contain 7 pre-existing zero-byte images. No proven local replacement was found within the checked scope. This is not full-library visual acceptance or proof of cross-source unique work counts. The user's additional creator confirmation is stored locally and already applied; do not repeat the question.
+
+Current position: A storage-format normalization complete, 16 metadata/content exceptions recorded, B next and unimplemented. Latest local handoff is `MangaMonitor-library-zip-20260913/A2-review-applied-20260913/HANDOFF.md`; results are in `MangaMonitor-deliverables/batch-library-exceptions-2026-09-13`. `path-mapping-for-B.json` joins 1,075 records to 1,073 ZIP targets, preserving original source metadata and distinguishing deleted, renamed, backed-up and retained originals. This is migration evidence, not a complete inventory. Never rerun completed A1/A2, deletion or exception-apply plans.
+
+Application indexes, old download paths, phone/booklist state, code, version and production state have not been migrated. Existing application records may still refer to paths just removed; B must apply path associations and PC-only state semantics. No source requests/downloads, application CI/builds, installer, commits/pushes or remote writes occurred. Seven new targeted local maintenance checks passed, without duplicating app/CI suites. Preserve other pre-existing uncommitted rules and documents. [The first A2 report](LIBRARY_ZIP_BATCH_2026-09-13.md) remains historical conversion evidence, including its Windows allocation-size repair and reused outputs.
+
+### Accepted A1 evidence
+
+The [A1 historical report](LIBRARY_ZIP_SAMPLES_BATCH_2026-09-13.md) records five representative outputs and 108 verified files. The user has now visually accepted those five; do not ask for the same sample acceptance again. A1 isolated copies and initial plans remain retained evidence. The private handoff contains the user's explicit collection-author clarification; do not repeat that question.
+
+## Latest scope correction: rankings required for V1; classification booklists cancelled (2026-09-13)
+
+The user challenged the omitted JM/Pica ranking scope and explicitly confirmed that classification booklists are also cancelled: retain only the manga library. Website favorites, work following and author following remain. Retire both the phone TXT/manual-phone-ownership workflow and classification-booklist controls in the planned PC-library adaptation; no existing records or manga were deleted in this planning turn.
+
+Read the [scope audit and freeze register](SCOPE_AUDIT_AND_V1_FREEZE_2026-09-13.md) and [corrected ZIP-library-to-V1 roadmap](ROADMAP_ZIP_LIBRARY_V1_2026-09-13.md). JM weekly recommendations and Pica rankings are original F12 requirements, not optional post-V1 enhancements. The previous roadmap incorrectly combined them with weekly summaries and downgraded them; that statement and its incomplete 6–12 engineering-day total are withdrawn.
+
+The accepted USB transfer is complete. One ZIP per work and PC-file-based ownership are the accepted target, not implemented changes. Preserve source metadata and agreed circle/author/title/language/edition naming, omitting generated source-ID and leading event prefixes. RAR is migration input, not a new permanent V1 reader. Existing author completeness has implementation/CI evidence but requires PC-model adaptation and real acceptance; do not rebuild it from scratch or infer acceptance from the completed transfer.
+
+Proposed continuation: A existing ZIP normalization/path mapping; B PC-only library, common JM/Pica ZIP output and removal of phone/classification-booklist workflows; C complete version-relation review plus author-completeness adaptation/acceptance; D JM weekly recommendations and Pica rankings; E new-favorite/work-follow discovery and complete-scope batch plans; F the original cloud inventory/completion-state loop; G remaining native UI/resource/diagnostic scope, full V1 acceptance and packaging. The current per-batch 50-work queue and manual pairing remain accepted foundations, not proof of complete-scope once-confirmed downloading or the full three-choice version review.
+
+The original cloud durable-state obligation in Issue #7 remains open and was not cancelled by the desktop workflow. Reconcile its boundary with the private PC library before implementation and preserve existing privacy/authority contracts; desktop completion is not legacy cloud end-to-end acceptance. Do not revive the discarded cloud-results-import design for the author page. Existing code and merged milestones must be reused, not inferred missing merely from stale open issues. The audit records these distinctions and the actual implementation evidence.
+
+Only the in-app reader and in-app updater are explicitly frozen for discussion after formal V1. PDF/CBZ export and classification booklists are cancelled, not post-V1 tasks; existing CBZ recognition remains. Older unselected/deferred suggestions have no automatic restart date. Preserve the four accepted reliability basics and the accepted fast download defaults; do not add elaborate offline orchestration. The native settings panel replaces legacy preference controls, so saved legacy resource preferences are not evidence of configurable native execution.
+
+This turn is documentation only: no conversion, record/media deletion, code changes, source requests/downloads, tests, builds, commits, pushes, issue writes or production enablement. Keep the draft/unmerged PR and production-disabled status. Batch doc changes with the next necessary implementation push and retain the no-duplicate local/CI check policy. The entries below are historical batch-time records; use this current scope and subsequent acceptance notes over older pending or dual-library descriptions. Do not restart the completed USB transfer or stale naming scratch checkout.
 
 ## Current batch: followed-author library completeness and Chinese PC copies
 

@@ -65,11 +65,28 @@ export function createLibraryMatcher(
 ) {
   const refs = new Map<string, LibraryItem[]>();
   const titles = new Map<string, LibraryItem[]>();
+  const uncertain = new Map<string, LibraryItem[]>();
   const aliases = createSourceAliasResolver(pairs);
   for (const item of snapshot?.items ?? []) {
-    if (item.sourceRef)
+    if (
+      item.sourceRef &&
+      item.state == "indexed" &&
+      item.errorCode === null &&
+      (item.pageCount ?? 0) > 0
+    )
       for (const reference of aliases(item.sourceRef))
         refs.set(key(reference), [...(refs.get(key(reference)) ?? []), item]);
+    if (
+      item.sourceRef &&
+      (item.state !== "indexed" ||
+        item.errorCode !== null ||
+        !(item.pageCount && item.pageCount > 0))
+    )
+      for (const reference of aliases(item.sourceRef))
+        uncertain.set(key(reference), [
+          ...(uncertain.get(key(reference)) ?? []),
+          item,
+        ]);
     const title = normalizeLibraryText(item.title);
     if (title) titles.set(title, [...(titles.get(title) ?? []), item]);
   }
@@ -77,7 +94,8 @@ export function createLibraryMatcher(
     if (!snapshot?.rootId) return { kind: "unconfigured", items: [] };
     const exact = refs.get(key(work));
     if (exact?.length) return { kind: "exact", items: exact };
-    const candidates = titles.get(normalizeLibraryText(work.title));
+    const candidates =
+      uncertain.get(key(work)) ?? titles.get(normalizeLibraryText(work.title));
     if (candidates?.length) return { kind: "candidate", items: candidates };
     return {
       kind: snapshot.phase === "complete" ? "missing" : "incomplete",

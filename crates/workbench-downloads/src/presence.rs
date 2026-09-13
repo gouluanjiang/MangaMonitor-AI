@@ -43,11 +43,78 @@ pub(crate) fn check(record: &DownloadRecord) -> LocalFiles {
     check_inner(record).unwrap_or(LocalFiles::Unavailable)
 }
 
+pub(crate) fn relocation<'a>(
+    record: &DownloadRecord,
+    library: &'a workbench_storage::LibraryDocument,
+) -> Option<&'a workbench_storage::LibraryRelocation> {
+    (record.phase == workbench_storage::DownloadPhase::Downloaded
+        && library.root.as_ref() == Some(&record.root))
+    .then(|| library.relocated_path(&record.destination))
+    .flatten()
+}
+
+pub(crate) fn check_with_library(
+    record: &DownloadRecord,
+    library: &workbench_storage::LibraryDocument,
+) -> LocalFiles {
+    let Some(relocated) = relocation(record, library) else {
+        return check(record);
+    };
+    let result = (|| -> Result<LocalFiles> {
+        let root = materialize::require_root(record)?;
+        let state = match root.probe(&relocated.new_path)? {
+            None => LocalFiles::Missing,
+            Some(EntryKind::File(size)) if size == relocated.identity.bytes => {
+                let file = root.read(&relocated.new_path)?;
+                let metadata = file.metadata().map_err(|_| error("DOWNLOAD_READ_FAILED"))?;
+                #[cfg(windows)]
+                let modified = {
+                    use std::os::windows::fs::MetadataExt;
+                    metadata.last_write_time().to_string()
+                };
+                #[cfg(unix)]
+                let modified = {
+                    use std::os::unix::fs::MetadataExt;
+                    format!("{}:{}", metadata.mtime(), metadata.mtime_nsec())
+                };
+                if crate::fs::file_key(&file)? == relocated.identity.file_key
+                    && modified == relocated.identity.modified
+                {
+                    LocalFiles::Present
+                } else {
+                    LocalFiles::Incomplete
+                }
+            }
+            Some(_) => LocalFiles::Incomplete,
+        };
+        materialize::require_root(record)?;
+        Ok(state)
+    })();
+    result.unwrap_or(LocalFiles::Unavailable)
+}
+
 fn check_inner(record: &DownloadRecord) -> Result<LocalFiles> {
     let root = materialize::require_root(record)?;
     let result = match root.probe(&record.destination)? {
         None => LocalFiles::Missing,
+        Some(EntryKind::File(bytes)) if record.zip_output => {
+            let file = root.read(&record.destination)?;
+            if record
+                .archive_file
+                .as_ref()
+                .is_some_and(|v| v.size_bytes == bytes)
+                && record.output_manifest_hash.is_some()
+                && record.output_identity.as_ref() == Some(&crate::fs::file_key(&file)?)
+            {
+                LocalFiles::Present
+            } else {
+                LocalFiles::Incomplete
+            }
+        }
         Some(EntryKind::Directory) => {
+            if record.zip_output {
+                return Ok(LocalFiles::Incomplete);
+            }
             let output = root.child(&record.destination)?;
             if Some(output.key()?) != record.output_identity || record.output_files.is_empty() {
                 LocalFiles::Incomplete

@@ -57,7 +57,7 @@ Do **not** dynamically trust domains discovered from remote pages without a sepa
 
 - Upstream GUI code is optimized for interactive downloading; MangaMonitor-AI requires complete pagination evidence and rejects missing/intermediate pages instead of silently aggregating partial results.
 - MangaMonitor-AI does not interpret ordinary HTTP/auth/network failures as proof that a work is unavailable.
-- API credentials never enter the media-byte client; media URLs are host/path constrained and redirects are disabled.
+- API credentials never enter the media-byte client; media URLs remain host/path constrained. Automatic redirects are disabled; only the explicitly reviewed desktop Pica redirect path above may follow its bounded, reauthorized same-origin hops.
 - No upstream filesystem/download completion semantics may bypass command staging, generation checks, inventory gates, task revision checks, or `production_enabled=false`.
 
 ## Scaling implications
@@ -72,20 +72,12 @@ The live six-author JM+Pica validation established that real source traffic is s
 4. source-specific error evidence, never inferred deletion;
 5. pinned protocol/domain trust, with upstream updates reviewed before changing constants.
 
-## Mandatory download-executor thaw reminder
+## Download review entry point
 
-Real local download execution is currently frozen. Before any future work enables or materially changes real JM/Pica download execution, staging-to-library promotion, replacement, completion mutation, or physical deletion, the current development session **must** read `AGENTS.md` and `docs/DOWNLOAD_EXECUTOR_THAW_GATE.md`, then re-open these three upstream repositories and compare the pinned download-related source again.
-
-This requirement is intentionally duplicated across project-level files so a long time gap or a new conversation cannot safely proceed by relying on remembered protocol/download behavior alone.
-
-The future re-review must cover at minimum JM scramble/image reconstruction, JM/Pica pagination, authentication/token handling, image path construction, retry/backoff, concurrency, temporary staging/finalization, partial-failure behavior, and each upstream project's definition of completion. Those upstream completion definitions remain references only; MangaMonitor-AI's stricter approval, task-revision, source identity, staging, manifest, filesystem verification, inventory, promotion, replacement, deletion, and production gates remain authoritative.
+Use [DOWNLOAD_EXECUTOR_THAW_GATE.md](DOWNLOAD_EXECUTOR_THAW_GATE.md) for review triggers, reusable evidence and authority boundaries. This reference records protocol findings; it does not independently require a full upstream re-audit on every session or grant live execution authority.
 
 ## Update policy
 
-When one of the three upstream repositories changes protocol constants, auth headers, endpoints, pagination, image transforms, domain lists, or download/completion behavior:
+When adopting an upstream change to protocol constants, auth, endpoints, pagination, image transforms, trusted domains or completion behavior, compare the affected source at its exact revision, update the pin and findings, and add appropriate regressions. An upstream release alone does not require updating this project's pin.
 
-1. record the new upstream commit here;
-2. compare the exact source change;
-3. add regression tests before updating adapter constants;
-4. run workspace CI plus a live JM/Pica canary;
-5. never loosen existing safety gates merely to match permissive upstream behavior.
+Run affected validation and required CI under `AGENTS.md`. Use a live canary when required to validate changed source behavior and separately authorized; otherwise record that live validation remains pending. Preserve all existing safety gates and do not repeat unchanged-source checks merely because another adapter changed.

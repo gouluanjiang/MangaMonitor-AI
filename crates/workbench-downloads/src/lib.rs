@@ -3,6 +3,7 @@
 mod adapter;
 mod fs;
 mod materialize;
+mod naming;
 mod presence;
 mod service;
 pub use presence::LocalFiles;
@@ -24,12 +25,6 @@ pub(crate) const fn source_key(source: Source) -> &'static str {
     match source {
         Source::Jm => "jm",
         Source::Pica => "pica",
-    }
-}
-pub(crate) const fn source_label(source: Source) -> &'static str {
-    match source {
-        Source::Jm => "JM",
-        Source::Pica => "Pica",
     }
 }
 pub(crate) fn now() -> Result<u64> {

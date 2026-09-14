@@ -89,6 +89,10 @@ test("settings search finds actual controls through common words and normalized 
     ["accounts"],
   );
   assert.deepEqual(
+    matchingSettingsPages("记住会话").map((x) => x.id),
+    ["accounts"],
+  );
+  assert.deepEqual(
     matchingSettingsPages("ＰＩＣＡ").map((x) => x.id),
     ["accounts"],
   );

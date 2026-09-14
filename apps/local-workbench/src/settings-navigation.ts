@@ -4,7 +4,7 @@ const pages: { id: SettingsPage; label: string; keywords: string }[] = [
   {
     id: "accounts",
     label: "账号与收藏",
-    keywords: "登录 连接 退出 会话 记住 JM Pica 哔咔 收藏",
+    keywords: "登录 连接 退出 会话 记住 记住会话 JM Pica 哔咔 收藏",
   },
   {
     id: "library",

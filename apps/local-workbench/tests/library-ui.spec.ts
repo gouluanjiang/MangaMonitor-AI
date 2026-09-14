@@ -601,6 +601,11 @@ test("settings keywords select matching sections and preserve appearance drafts 
   await installMock(page, { pcCount: 3 });
   await page.getByTestId("nav-settings").click();
   const search = page.getByRole("textbox", { name: "搜索设置", exact: true });
+  await search.fill("记住会话");
+  await expect(page.getByTestId("settings-accounts")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   await search.fill("壁纸");
   await expect(page.getByTestId("settings-appearance")).toHaveAttribute(
     "aria-current",

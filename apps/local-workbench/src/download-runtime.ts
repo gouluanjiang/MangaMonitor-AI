@@ -1,5 +1,9 @@
 import { invokeDesktop, isDesktopRuntime } from "./runtime.ts";
-import { emptyDownloads } from "./download-types.ts";
+import {
+  emptyDownloads,
+  downloadSelectionLimit,
+  downloadPreparationChunk,
+} from "./download-types.ts";
 import type {
   DownloadAction,
   DownloadAdapter,
@@ -13,6 +17,9 @@ import type {
   DownloadBatchPlan,
   DownloadTaskRevision,
   DownloadInventorySnapshot,
+  DownloadContexts,
+  DownloadSelectionInput,
+  DownloadSelectionPlan,
 } from "./download-types.ts";
 import type { AccountSummary } from "./source-types.ts";
 export class DownloadError extends Error {
@@ -323,7 +330,7 @@ export function createDownloadAdapter(
           expectedRevision: integer(expectedRevision),
         }),
       ),
-    prepareBatch: async (context, inputs) => {
+    prepareBatch: async (context, inputs, retainedBatchIds = []) => {
       if (!Array.isArray(inputs) || inputs.length === 0 || inputs.length > 50)
         return invalid();
       const checked = {
@@ -331,6 +338,7 @@ export function createDownloadAdapter(
         rootId: rootIdentity(context.rootId),
         generation: integer(context.generation),
         inputs: inputs.map((input) => text(input.trim(), 2048)),
+        retainedBatchIds: retainedBatchIds.map(rootIdentity),
       };
       const batch = validateDownloadBatchPlan(
         await call("jm_download_batch_prepare", checked),
@@ -353,6 +361,22 @@ export function createDownloadAdapter(
           batchId: rootIdentity(batchId),
         }),
       ),
+    confirmSelection: async (batchIds) => {
+      if (
+        !batchIds.length ||
+        batchIds.length > downloadSelectionLimit ||
+        new Set(batchIds).size !== batchIds.length
+      )
+        return invalid();
+      return validateDownloadSnapshot(
+        await call("jm_download_selection_confirm", {
+          batchIds: batchIds.map(rootIdentity),
+        }),
+      );
+    },
+    cancelBatch: async () => {
+      await call("jm_download_batch_cancel");
+    },
     pauseAll: async () =>
       validateDownloadSnapshot(await call("jm_download_pause_all")),
     resumeMany: async (current, tasks) =>
@@ -425,7 +449,7 @@ export function downloadErrorMessage(cause: unknown): string {
     code === "DOWNLOAD_BATCH_INPUT_INVALID" ||
     code === "DOWNLOAD_BATCH_LIMIT"
   )
-    return "每行输入一个编号或链接，每批最多 50 本。";
+    return "每行输入一个编号或链接，一次最多选择 500 本；不会截取前 50 本。";
   if (code === "DOWNLOAD_BATCH_DUPLICATE")
     return "本批重复的来源编号，已跳过。";
   if (code === "DOWNLOAD_HISTORY_NOT_COMPLETED")
@@ -494,7 +518,7 @@ export function parseDownloadInputs(input: string): string[] {
     .filter(Boolean);
   if (
     inputs.length === 0 ||
-    inputs.length > 50 ||
+    inputs.length > downloadSelectionLimit ||
     inputs.some((line) => line.length > 2048)
   )
     throw new DownloadError("DOWNLOAD_BATCH_INPUT_INVALID");
@@ -540,7 +564,8 @@ export interface DownloadState {
   busy: boolean;
   error: string;
   plan: DownloadPlan | null;
-  batchPlan: DownloadBatchPlan | null;
+  batchPlan: DownloadSelectionPlan | null;
+  preparation: { done: number; total: number } | null;
 }
 /** Read polling is single-flight and never starts or resumes persisted work. */
 export class DownloadController {
@@ -553,6 +578,7 @@ export class DownloadController {
     error: "",
     plan: null,
     batchPlan: null,
+    preparation: null,
   };
   private listeners = new Set<(state: DownloadState) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -562,6 +588,8 @@ export class DownloadController {
   private epoch = 0;
   private planEpoch = 0;
   private preparedContext: string | null = null;
+  private preparedBatchContexts: DownloadContext[] = [];
+  private cancellation: Promise<void> = Promise.resolve();
   constructor(adapter: DownloadAdapter) {
     this.adapter = adapter;
   }
@@ -663,51 +691,155 @@ export class DownloadController {
     }
   }
   cancelPlan() {
+    const hadBatch =
+      this.state.batchPlan !== null || this.state.preparation !== null;
     this.planEpoch++;
     this.preparedContext = null;
-    this.publish({ plan: null, batchPlan: null });
+    this.preparedBatchContexts = [];
+    this.publish({ plan: null, batchPlan: null, preparation: null });
+    if (hadBatch && this.adapter.cancelBatch) {
+      // New preparation waits for cancellation so a late cancel cannot erase it.
+      this.cancellation = this.cancellation
+        .then(() => this.adapter.cancelBatch())
+        .catch(() => {});
+    }
   }
   async prepareBatch(
     context: DownloadContext,
     inputs: string[],
   ): Promise<void> {
+    const contexts: DownloadContexts = { JM: null, Pica: null };
+    contexts[context.scope.source] = context;
+    return this.prepareSelection(
+      contexts,
+      inputs.map((input) => ({ source: context.scope.source, input })),
+    );
+  }
+  async prepareSelection(
+    contexts: DownloadContexts,
+    inputs: DownloadSelectionInput[],
+  ): Promise<void> {
     if (this.state.busy) return;
     this.cancelPlan();
     const token = this.planEpoch,
       epoch = this.epoch;
-    this.publish({ busy: true, error: "" });
+    this.publish({
+      busy: true,
+      error: "",
+      preparation: { done: 0, total: inputs.length },
+    });
     clearTimeout(this.timer);
     try {
       await this.readPromise;
+      await this.cancellation;
       if (epoch !== this.epoch || token !== this.planEpoch) return;
-      const batchPlan = await this.adapter.prepareBatch(context, inputs);
+      if (!inputs.length || inputs.length > downloadSelectionLimit)
+        throw new DownloadError("DOWNLOAD_BATCH_LIMIT");
+      const groups = new Map<DownloadSource, string[]>();
+      for (const item of inputs) {
+        if (
+          !contexts[item.source] ||
+          !item.input.trim() ||
+          item.input.length > 2048
+        )
+          throw new DownloadError("DOWNLOAD_PLAN_STALE");
+        const group = groups.get(item.source) ?? [];
+        group.push(item.input.trim());
+        groups.set(item.source, group);
+      }
+      const used = [...groups.keys()].map((source) => contexts[source]!);
       if (
-        batchPlan.plans.some(
-          (plan) =>
-            plan.source !== context.scope.source ||
-            plan.rootId !== context.rootId ||
-            plan.generation !== context.generation,
+        used.some(
+          (context) =>
+            context.rootId !== used[0].rootId ||
+            context.generation !== used[0].generation,
         )
       )
         throw new DownloadError("DOWNLOAD_PLAN_STALE");
+      const batchPlan: DownloadSelectionPlan = {
+        batchId: null,
+        batchIds: [],
+        plans: [],
+        issues: [],
+      };
+      let done = 0;
+      for (const [source, values] of groups) {
+        const context = contexts[source]!;
+        for (
+          let offset = 0;
+          offset < values.length;
+          offset += downloadPreparationChunk
+        ) {
+          if (epoch !== this.epoch || token !== this.planEpoch) return;
+          const chunk = values.slice(offset, offset + downloadPreparationChunk);
+          const next = await this.adapter.prepareBatch(context, chunk, [
+            ...batchPlan.batchIds,
+          ]);
+          if (epoch !== this.epoch || token !== this.planEpoch) return;
+          if (
+            next.plans.length + next.issues.length !== chunk.length ||
+            next.plans.some(
+              (plan) =>
+                plan.source !== source ||
+                plan.rootId !== context.rootId ||
+                plan.generation !== context.generation ||
+                batchPlan.plans.some(
+                  (old) =>
+                    old.planId === plan.planId ||
+                    (old.source === plan.source && old.workId === plan.workId),
+                ),
+            )
+          )
+            throw new DownloadError("DOWNLOAD_PLAN_STALE");
+          if (next.batchId) {
+            if (batchPlan.batchIds.includes(next.batchId))
+              throw new DownloadError("DOWNLOAD_PLAN_STALE");
+            batchPlan.batchIds.push(next.batchId);
+          }
+          batchPlan.plans.push(...next.plans);
+          batchPlan.issues.push(
+            ...next.issues.map((issue) => ({
+              ...issue,
+              input: `${source} · ${issue.input}`,
+            })),
+          );
+          done += chunk.length;
+          this.publish({ preparation: { done, total: inputs.length } });
+        }
+      }
+      batchPlan.batchId = batchPlan.batchIds[0] ?? null;
       if (epoch === this.epoch && token === this.planEpoch) {
-        this.preparedContext = contextKey(context);
+        this.preparedBatchContexts = used;
         this.publish({ batchPlan });
       }
     } catch (cause) {
-      if (epoch === this.epoch && token === this.planEpoch)
+      if (epoch === this.epoch && token === this.planEpoch) {
+        this.cancelPlan();
         this.publish({ error: downloadErrorMessage(cause) });
+      }
     } finally {
       if (epoch === this.epoch) {
-        this.publish({ busy: false });
+        this.publish({ busy: false, preparation: null });
         this.schedule();
       }
     }
   }
-  async confirmBatch(context: DownloadContext): Promise<boolean> {
+  async confirmBatch(
+    context: DownloadContext | DownloadContexts,
+  ): Promise<boolean> {
     const batch = this.state.batchPlan;
     if (!batch?.batchId || this.state.busy) return false;
-    if (this.preparedContext !== contextKey(context)) {
+    const contexts: DownloadContexts =
+      "scope" in context
+        ? { JM: null, Pica: null, [context.scope.source]: context }
+        : context;
+    if (
+      this.preparedBatchContexts.some(
+        (previous) =>
+          !contexts[previous.scope.source] ||
+          contextKey(previous) !== contextKey(contexts[previous.scope.source]!),
+      )
+    ) {
       this.cancelPlan();
       this.publish({ error: downloadErrorMessage("DOWNLOAD_PLAN_STALE") });
       return false;
@@ -718,7 +850,10 @@ export class DownloadController {
     try {
       await this.readPromise;
       if (epoch !== this.epoch) return false;
-      const next = await this.adapter.confirmBatch(batch.batchId);
+      const next =
+        batch.batchIds.length === 1
+          ? await this.adapter.confirmBatch(batch.batchId)
+          : await this.adapter.confirmSelection(batch.batchIds);
       if (epoch !== this.epoch) return false;
       if (
         !batch.plans.every((plan) =>
@@ -912,6 +1047,7 @@ export class DownloadController {
       busy: false,
       plan: null,
       batchPlan: null,
+      preparation: null,
     };
   }
 }

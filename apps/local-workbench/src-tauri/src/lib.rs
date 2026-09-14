@@ -171,6 +171,8 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             downloads::jm_download_control,
             downloads::jm_download_batch_prepare,
             downloads::jm_download_batch_confirm,
+            downloads::jm_download_selection_confirm,
+            downloads::jm_download_batch_cancel,
             downloads::jm_download_pause_all,
             downloads::jm_download_resume_many,
             downloads::jm_download_history_remove,

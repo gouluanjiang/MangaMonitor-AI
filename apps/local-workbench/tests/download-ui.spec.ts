@@ -233,6 +233,8 @@ async function install(page: Page, options: Options = {}) {
     let restored = false;
     let preparedPlan: DownloadPlan | null = null;
     let preparedBatch: DownloadBatchPlan | null = null;
+    const preparedBatches = new Map<string, DownloadBatchPlan>();
+    let batchSequence = 0;
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
@@ -344,7 +346,14 @@ async function install(page: Page, options: Options = {}) {
             return clone(preparedPlan);
           }
           if (command === "jm_download_batch_prepare") {
-            const seen = new Set<string>();
+            const retained = (args.retainedBatchIds ?? []) as string[];
+            for (const id of preparedBatches.keys())
+              if (!retained.includes(id)) preparedBatches.delete(id);
+            const seen = new Set<string>(
+              [...preparedBatches.values()].flatMap((batch) =>
+                batch.plans.map((plan) => plan.workId),
+              ),
+            );
             const plans: DownloadPlan[] = [],
               issues: DownloadBatchPlan["issues"] = [];
             for (const input of args.inputs as string[]) {
@@ -366,14 +375,36 @@ async function install(page: Page, options: Options = {}) {
                 generation: 1,
               });
             }
-            preparedBatch = { batchId: "e".repeat(64), plans, issues };
+            preparedBatch = {
+              batchId: plans.length
+                ? (++batchSequence).toString(16).padStart(64, "0")
+                : null,
+              plans,
+              issues,
+            };
+            if (preparedBatch.batchId)
+              preparedBatches.set(preparedBatch.batchId, preparedBatch);
             return clone(preparedBatch);
           }
-          if (command === "jm_download_batch_confirm") {
-            if (!preparedBatch || preparedBatch.batchId !== args.batchId)
+          if (command === "jm_download_batch_cancel") {
+            preparedBatches.clear();
+            preparedBatch = null;
+            return null;
+          }
+          if (
+            command === "jm_download_batch_confirm" ||
+            command === "jm_download_selection_confirm"
+          ) {
+            const ids = (
+              command === "jm_download_batch_confirm"
+                ? [args.batchId]
+                : args.batchIds
+            ) as string[];
+            if (ids.some((id) => !preparedBatches.has(id)))
               throw { code: "DOWNLOAD_PLAN_STALE" };
-            const tasks: DownloadTask[] = preparedBatch.plans.map(
-              (plan, index) => ({
+            const tasks: DownloadTask[] = ids
+              .flatMap((id) => preparedBatches.get(id)!.plans)
+              .map((plan, index) => ({
                 id: plan.planId,
                 revision: 1,
                 source: plan.source,
@@ -389,8 +420,7 @@ async function install(page: Page, options: Options = {}) {
                 localFiles: null,
                 updatedAt: 1,
                 destinationDisplay: plan.destinationDisplay,
-              }),
-            );
+              }));
             hooks.queue = {
               revision: hooks.queue.revision + 1,
               tasks: [...hooks.queue.tasks, ...tasks],
@@ -573,6 +603,39 @@ test("native queue is empty on first read and never shows or persists demo tasks
   ).toEqual([]);
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
   expect(await calls(page, "jm_download_control")).toEqual([]);
+});
+
+test("more than fifty choices retain every chunk and enter the queue in one confirmation", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByTestId("nav-queue").click();
+  const ids = Array.from({ length: 61 }, (_, i) => `JM${1000 + i}`);
+  await page.getByTestId("download-input").fill([...ids, ids[0]].join("\n"));
+  await page.getByTestId("download-prepare").click();
+  await expect(page.getByTestId("download-batch-plan")).toHaveCount(61);
+  await expect(page.getByTestId("download-batch-issues")).toContainText(
+    "JM1000",
+  );
+  const prepares = await calls(page, "jm_download_batch_prepare");
+  expect(prepares.map((call) => (call.args.inputs as string[]).length)).toEqual(
+    [20, 20, 20, 2],
+  );
+  expect(
+    await page.evaluate(() => window.downloadTest.queue.tasks.length),
+  ).toBe(0);
+  await page.screenshot({
+    path: "visual-evidence/large-download-selection.png",
+  });
+  await page.getByTestId("download-batch-confirm").click();
+  await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  expect(await calls(page, "jm_download_selection_confirm")).toHaveLength(1);
+  expect(await calls(page, "jm_download_batch_confirm")).toHaveLength(0);
+  expect(
+    await page.evaluate(() =>
+      window.downloadTest.queue.tasks.map((task) => task.workId),
+    ),
+  ).toEqual(ids.map((id) => id.slice(2)));
 });
 
 test("preparation shows the exact title and destination while cancel creates no task", async ({

@@ -1,6 +1,26 @@
 # JM 周榜修复与搜索范围说明
 
-2026-09-14，接续已交付的 `6f794fd` Dev 版本，处理用户本轮验收反馈。周榜修复 `524f256` 已通过工程检查；本轮继续补充用户确认的 JM 搜索范围说明，新说明的验证与交付单独记录，不沿用上一修订的通过状态。
+2026-09-14，接续已交付的 `6f794fd` Dev 版本，处理用户本轮验收反馈。最新修订 `6325982` 包含已完成的周榜修复与用户确认的 JM 搜索范围说明，全部必需工程检查已通过；以下保留独立验证及先前 `524f256` 的历史证据。
+
+## 最新交付：6325982
+
+交付目录为 Documents/Codex 下的 `MangaMonitor-Dev-20260914-6325982`，其中 `MangaMonitor Dev.exe` 的版本仍是 0.3.4，大小 20,234,240 字节。退出旧 Dev 后打开这一份，无需重新安装或重新导入漫画库。旧程序文件没有被覆盖，新程序未自动启动。
+
+| 检查 | 结果 |
+| --- | --- |
+| [前端 CI 34828965934](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34828965934) | 139 项逻辑测试、96 项 Chromium 界面测试全部通过；格式、类型与构建通过。 |
+| [基础 CI 34828965947](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34828965947) | Rust 工作区与 Windows 核心检查全部通过。 |
+| [Windows CI 34828965929](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34828965929) | 周榜空标题回归、模块／原生接口、Clippy、Dev 构建与实际 WebView 启动／重启检查全部通过，安装包步骤保持跳过。 |
+| 页面检查 | 已查看同修订的作者搜索、作者更新与 JM 周榜截图；范围说明与期数／类型显示正常。使用合成数据，不替代用户真实使用验收。 |
+
+对应代码 `6325982c924286fac19742e1f1a60f0a6e66f578`，PR 测试合并提交 `6d494b3ea7edb9049f2ca297dfb81f4d9c3a15e1`。已核对 [Dev 工件 10341925776](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/34828965929/artifacts/10341925776)：
+
+- ZIP SHA-256：`bac02d21aea67acfbaebccd1540e9099a2fa8b183b7fedd6f33a3cd578a7c1b5`，与 GitHub 摘要一致且 ZIP CRC 通过。
+- EXE SHA-256：`11f6c7e75979fd2598a1a2f529b2b248c161745a315b48511a8a35a409c8db76`。
+
+待用户复测两处：JM 周榜可读并能切换期数／类型；JM 搜索和作者页面能看到已确认的 English Manga 范围说明。未要求重新导入或核对旧漫画库。真实来源诊断、工程验证与用户验收继续分别记录。
+
+主项目与现有开发分支已同步到这一修订，PR #19 保持草稿、未合并。此前未提交报告先备份并保留到定向 stash；本节最终证据留在本地，随下次必要代码推送纳入，不为文档重复构建。
 
 ## JM 搜索数量差异与已确认范围
 

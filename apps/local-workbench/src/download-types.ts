@@ -1,4 +1,6 @@
 export type DownloadSource = "JM" | "Pica";
+export const downloadSelectionLimit = 500;
+export const downloadPreparationChunk = 20;
 export interface DownloadScope {
   source: DownloadSource;
   sessionId: string;
@@ -24,6 +26,13 @@ export interface DownloadBatchPlan {
   batchId: string | null;
   plans: DownloadPlan[];
   issues: { input: string; errorCode: string }[];
+}
+export interface DownloadSelectionPlan extends DownloadBatchPlan {
+  batchIds: string[];
+}
+export interface DownloadSelectionInput {
+  source: DownloadSource;
+  input: string;
 }
 export interface DownloadTaskRevision {
   taskId: string;
@@ -86,8 +95,11 @@ export interface DownloadAdapter {
   prepareBatch(
     context: DownloadContext,
     inputs: string[],
+    retainedBatchIds?: string[],
   ): Promise<DownloadBatchPlan>;
   confirmBatch(batchId: string): Promise<DownloadSnapshot>;
+  confirmSelection(batchIds: string[]): Promise<DownloadSnapshot>;
+  cancelBatch(): Promise<void>;
   pauseAll(): Promise<DownloadSnapshot>;
   resumeMany(
     scope: DownloadScope,

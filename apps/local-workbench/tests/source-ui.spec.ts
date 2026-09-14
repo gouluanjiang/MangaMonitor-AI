@@ -435,6 +435,32 @@ test("Pica complete reading stays paused across settings and verifies before res
   expect(await picaFavoritePages(page, true)).toEqual([]);
 });
 
+test("favorite full selection waits for every page and includes offscreen results", async ({
+  page,
+}) => {
+  await installMock(page, { collectionCount: 65, holdPicaPage: 2 });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-all").click();
+  await expect
+    .poll(() => page.evaluate(() => window.sourceTest.picaHeld))
+    .toBe(true);
+  await expect(page.getByTestId("source-select-all")).toContainText(
+    "完成后全选",
+  );
+  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await page.evaluate(() => window.sourceTest.releasePica?.());
+  await expect(page.getByTestId("source-selection-bar")).toContainText(
+    "已选 65 部",
+  );
+  expect(await picaFavoritePages(page, false)).toEqual([1, 2, 3, 4]);
+  await expect(page.getByTestId("source-select-all")).toHaveText(
+    "全选当前筛选范围",
+  );
+});
+
 test("Pica time switching reuses its outstanding forward page and keeps complete-reading intent", async ({
   page,
 }) => {

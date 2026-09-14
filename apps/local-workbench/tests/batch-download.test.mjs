@@ -52,10 +52,16 @@ const task = (n, phase = "queued") => ({
 test("batch input bounds and response identities reject ambiguous plans", () => {
   assert.deepEqual(parseDownloadInputs(" JM1\r\n\n JM2\n"), ["JM1", "JM2"]);
   assert.throws(
-    () => parseDownloadInputs(Array(51).fill("JM1").join("\n")),
+    () => parseDownloadInputs(Array(501).fill("JM1").join("\n")),
     DownloadError,
   );
   assert.throws(() => parseDownloadInputs(" "), DownloadError);
+  assert.equal(
+    parseDownloadInputs(
+      Array.from({ length: 500 }, (_, i) => String(i + 1)).join("\n"),
+    ).length,
+    500,
+  );
   assert.equal(validateDownloadBatchPlan(batch()).plans.length, 2);
   for (const value of [
     { ...batch(), plans: [plan(1), plan(1)] },
@@ -200,4 +206,142 @@ test("history filters retain removed-file completion without treating it as curr
   );
   assert.equal(filterDownloadTasks(rows, "history", "作品 3", "JM").length, 1);
   assert.equal(filterDownloadTasks(rows, "all", "", "Pica").length, 0);
+});
+
+function selectionAdapter() {
+  const calls = [],
+    plans = [];
+  return {
+    calls,
+    plans,
+    read: async () => ({ revision: 1, tasks: [] }),
+    prepareBatch: async (ctx, inputs, retained) => {
+      calls.push({ source: ctx.scope.source, inputs, retained });
+      const rows = inputs.map((input) => ({
+        ...plan(Number(input)),
+        source: ctx.scope.source,
+        planId: hash(
+          plans.length +
+            Number(input) +
+            (ctx.scope.source === "Pica" ? 10000 : 0),
+        ),
+        workId: input,
+      }));
+      plans.push(...rows);
+      return { batchId: hash(1000 + calls.length), plans: rows, issues: [] };
+    },
+    confirmSelection: async (ids) => {
+      calls.push({ confirm: ids });
+      return {
+        revision: 2,
+        tasks: plans.map((p) => ({
+          ...task(1),
+          id: p.planId,
+          workId: p.workId,
+          source: p.source,
+        })),
+      };
+    },
+    cancelBatch: async () => {
+      calls.push({ cancel: true });
+    },
+  };
+}
+const bothContexts = {
+  JM: context,
+  Pica: { ...context, scope: { source: "Pica", sessionId: "pica-session" } },
+};
+
+test("large mixed-source selection prepares bounded chunks, then confirms all once", async () => {
+  const adapter = selectionAdapter(),
+    controller = new DownloadController(adapter);
+  const inputs = [
+    ...Array.from({ length: 61 }, (_, i) => ({
+      source: "JM",
+      input: String(i + 1),
+    })),
+    { source: "Pica", input: "71" },
+    { source: "Pica", input: "72" },
+  ];
+  await controller.prepareSelection(bothContexts, inputs);
+  assert.deepEqual(
+    adapter.calls.map((c) => c.inputs.length),
+    [20, 20, 20, 1, 2],
+  );
+  assert.deepEqual(
+    adapter.calls.map((c) => c.retained.length),
+    [0, 1, 2, 3, 4],
+  );
+  assert.equal(controller.getState().batchPlan.plans.length, 63);
+  assert.equal(controller.getState().snapshot.tasks.length, 0);
+  assert.equal(await controller.confirmBatch(bothContexts), true);
+  assert.equal(controller.getState().snapshot.tasks.length, 63);
+  assert.equal(adapter.calls.filter((c) => c.confirm).length, 1);
+  controller.dispose();
+});
+
+test("cancel during a chunk ignores its late result and never starts another chunk", async () => {
+  const adapter = selectionAdapter(),
+    original = adapter.prepareBatch;
+  let release;
+  adapter.prepareBatch = async (...args) => {
+    const result = await original(...args);
+    if (adapter.calls.filter((c) => c.inputs).length === 2)
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return result;
+  };
+  const controller = new DownloadController(adapter);
+  const pending = controller.prepareBatch(
+    context,
+    Array.from({ length: 61 }, (_, i) => String(i + 1)),
+  );
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(controller.getState().preparation, { done: 20, total: 61 });
+  controller.cancelPlan();
+  release();
+  await pending;
+  assert.equal(controller.getState().batchPlan, null);
+  assert.equal(adapter.calls.filter((c) => c.inputs).length, 2);
+  assert.equal(await controller.confirmBatch(context), false);
+  assert.equal(adapter.calls.filter((c) => c.confirm).length, 0);
+  controller.dispose();
+});
+
+test("a lost item or changed second-source session cannot confirm a prepared prefix", async () => {
+  const adapter = selectionAdapter(),
+    original = adapter.prepareBatch;
+  adapter.prepareBatch = async (...args) => {
+    const next = await original(...args);
+    if (adapter.calls.filter((c) => c.inputs).length === 2) next.plans.pop();
+    return next;
+  };
+  const controller = new DownloadController(adapter);
+  await controller.prepareBatch(
+    context,
+    Array.from({ length: 41 }, (_, i) => String(i + 1)),
+  );
+  assert.equal(controller.getState().batchPlan, null);
+  assert.notEqual(controller.getState().error, "");
+  assert.equal(await controller.confirmBatch(context), false);
+  controller.dispose();
+  const valid = selectionAdapter(),
+    changed = new DownloadController(valid);
+  await changed.prepareSelection(bothContexts, [
+    { source: "JM", input: "1" },
+    { source: "Pica", input: "2" },
+  ]);
+  assert.equal(
+    await changed.confirmBatch({
+      ...bothContexts,
+      Pica: {
+        ...bothContexts.Pica,
+        scope: { source: "Pica", sessionId: "changed" },
+      },
+    }),
+    false,
+  );
+  assert.equal(valid.calls.filter((c) => c.confirm).length, 0);
+  changed.dispose();
 });

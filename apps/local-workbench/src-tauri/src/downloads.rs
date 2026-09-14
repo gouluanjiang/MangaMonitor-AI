@@ -2,7 +2,10 @@ use crate::{accounts, library, require_main, DesktopStore};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 use tauri::{Runtime, State, WebviewWindow};
 use workbench_accounts::{DownloadSession, QueryKind, Source};
@@ -12,6 +15,7 @@ use workbench_downloads::{
 };
 use workbench_storage::{
     LibraryReference, Source as LibrarySource, StoreError, WorkbenchStore, MAX_DOWNLOAD_BATCH,
+    MAX_DOWNLOAD_SELECTION,
 };
 
 /// Session bindings are deliberately process-local. A reopened task needs an
@@ -22,12 +26,14 @@ pub(crate) struct DesktopDownloads {
     plans: Mutex<HashMap<String, DownloadSession>>,
     batches: Mutex<HashMap<String, PreparedBatch>>,
     scheduler: Mutex<Scheduler<DownloadSession>>,
+    preparation_epoch: AtomicU64,
 }
 
 #[derive(Clone)]
 struct PreparedBatch {
     plans: Vec<PreparedSelection>,
     session: DownloadSession,
+    work_ids: HashSet<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -260,6 +266,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
     inputs: Vec<String>,
     root_id: String,
     generation: u64,
+    retained_batch_ids: Option<Vec<String>>,
 ) -> Result<DownloadBatchPlan, StoreError> {
     require_main(window.label())?;
     live_execution_allowed()?;
@@ -275,20 +282,43 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
     let account_service = accounts::service(Arc::clone(accounts.inner()))
         .await
         .map_err(|e| error(e.code))?;
-    // Replacing a prepared batch expires its confirmations, not any queued work.
+    let retained = retained_batch_ids.unwrap_or_default();
+    if retained.len() > MAX_DOWNLOAD_SELECTION
+        || retained.iter().collect::<HashSet<_>>().len() != retained.len()
+    {
+        return Err(error("DOWNLOAD_BATCH_LIMIT"));
+    }
+    // Continuations retain only the exact reviewed selection's previous chunks.
+    // A fresh selection expires previous previews, never confirmed queue work.
+    let preparation = if retained.is_empty() {
+        downloads.preparation_epoch.fetch_add(1, Ordering::AcqRel) + 1
+    } else {
+        downloads.preparation_epoch.load(Ordering::Acquire)
+    };
+    let mut seen = HashSet::new();
     {
         let mut batches = downloads
             .batches
             .lock()
             .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        if retained.iter().any(|id| !batches.contains_key(id)) {
+            return Err(error("DOWNLOAD_PLAN_EXPIRED"));
+        }
+        for id in &retained {
+            let batch = &batches[id];
+            if batch.session.source() == scope.source {
+                seen.extend(batch.work_ids.iter().cloned());
+            }
+        }
         let old: Vec<_> = batches
-            .values()
+            .iter()
+            .filter(|(id, _)| !retained.contains(id))
+            .map(|(_, batch)| batch)
             .flat_map(|batch| batch.plans.iter().map(|plan| plan.plan_id.clone()))
             .collect();
         downloads.service.discard_plans(&old)?;
-        batches.clear();
+        batches.retain(|id, _| retained.contains(id));
     }
-    let mut seen = HashSet::new();
     let mut result = DownloadBatchPlan {
         batch_id: None,
         plans: Vec::new(),
@@ -297,6 +327,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
     for input in inputs {
         let input = input.trim().to_owned();
         let prepared = async {
+            require_preparation(&downloads, preparation)?;
             session.require_current().map_err(|e| error(e.code))?;
             let work_id = parse_input(scope.source, &input)?;
             if !seen.insert(work_id.clone()) {
@@ -314,6 +345,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
                 .await
                 .map_err(|e| error(e.code))?;
             session.require_current().map_err(|e| error(e.code))?;
+            require_preparation(&downloads, preparation)?;
             let work = detail
                 .page
                 .items
@@ -353,7 +385,9 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
                 error_code: problem.code,
             }),
         }
-        if let Err(problem) = session.require_current() {
+        if let Err(problem) = require_preparation(&downloads, preparation)
+            .and_then(|()| session.require_current().map_err(|e| error(e.code)))
+        {
             downloads.service.discard_plans(
                 &result
                     .plans
@@ -367,6 +401,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
     if let Some(first) = result.plans.first() {
         let batch_id = first.plan_id.clone();
         let batch = PreparedBatch {
+            work_ids: result.plans.iter().map(|p| p.work_id.clone()).collect(),
             plans: result
                 .plans
                 .iter()
@@ -382,7 +417,9 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
             .lock()
             .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
         // A bounded concurrent caller cannot accumulate unbounded credentials/plans.
-        if batches.len() >= 4 {
+        if batches.len() >= MAX_DOWNLOAD_SELECTION
+            || downloads.preparation_epoch.load(Ordering::Acquire) != preparation
+        {
             downloads.service.discard_plans(
                 &batch
                     .plans
@@ -396,6 +433,33 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
         result.batch_id = Some(batch_id);
     }
     Ok(result)
+}
+
+fn require_preparation(downloads: &DesktopDownloads, epoch: u64) -> Result<(), StoreError> {
+    if downloads.preparation_epoch.load(Ordering::Acquire) != epoch {
+        return Err(error("DOWNLOAD_PREPARATION_CANCELLED"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn jm_download_batch_cancel<R: Runtime>(
+    window: WebviewWindow<R>,
+    downloads: State<'_, Arc<DesktopDownloads>>,
+) -> Result<(), StoreError> {
+    require_main(window.label())?;
+    downloads.preparation_epoch.fetch_add(1, Ordering::AcqRel);
+    let mut batches = downloads
+        .batches
+        .lock()
+        .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+    let ids: Vec<_> = batches
+        .values()
+        .flat_map(|b| b.plans.iter().map(|p| p.plan_id.clone()))
+        .collect();
+    downloads.service.discard_plans(&ids)?;
+    batches.clear();
+    Ok(())
 }
 
 fn launch(
@@ -663,8 +727,25 @@ pub(crate) async fn jm_download_batch_confirm<R: Runtime>(
     library: State<'_, Arc<library::DesktopLibrary>>,
     batch_id: String,
 ) -> Result<DownloadSnapshot, StoreError> {
+    jm_download_selection_confirm(window, downloads, store, library, vec![batch_id]).await
+}
+
+#[tauri::command]
+pub(crate) async fn jm_download_selection_confirm<R: Runtime>(
+    window: WebviewWindow<R>,
+    downloads: State<'_, Arc<DesktopDownloads>>,
+    store: State<'_, Arc<DesktopStore>>,
+    library: State<'_, Arc<library::DesktopLibrary>>,
+    batch_ids: Vec<String>,
+) -> Result<DownloadSnapshot, StoreError> {
     require_main(window.label())?;
     live_execution_allowed()?;
+    if batch_ids.is_empty()
+        || batch_ids.len() > MAX_DOWNLOAD_SELECTION
+        || batch_ids.iter().collect::<HashSet<_>>().len() != batch_ids.len()
+    {
+        return Err(error("DOWNLOAD_BATCH_LIMIT"));
+    }
     let downloads = Arc::clone(downloads.inner());
     let store_state = Arc::clone(store.inner());
     let library_state = Arc::clone(library.inner());
@@ -680,20 +761,26 @@ pub(crate) async fn jm_download_batch_confirm<R: Runtime>(
             .batches
             .lock()
             .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
-        let batch = batches
-            .get(&batch_id)
-            .ok_or(error("DOWNLOAD_PLAN_EXPIRED"))?;
-        batch.session.require_current().map_err(|e| error(e.code))?;
+        let chosen: Vec<_> = batch_ids
+            .iter()
+            .map(|id| batches.get(id).ok_or(error("DOWNLOAD_PLAN_EXPIRED")))
+            .collect::<Result<_, _>>()?;
+        let mut selections = Vec::new();
+        for batch in &chosen {
+            batch.session.require_current().map_err(|e| error(e.code))?;
+            selections.extend(batch.plans.iter().cloned());
+        }
         let snapshot = worker_downloads
             .service
-            .confirm_many(&worker_store, &batch.plans)?;
-        let ids: Vec<_> = batch
-            .plans
-            .iter()
-            .map(|plan| plan.plan_id.clone())
-            .collect();
-        let scheduled = scheduled_tasks(&snapshot, &ids, &batch.session)?;
-        batches.remove(&batch_id);
+            .confirm_selection(&worker_store, &selections)?;
+        let mut scheduled = Vec::new();
+        for batch in chosen {
+            let ids: Vec<_> = batch.plans.iter().map(|p| p.plan_id.clone()).collect();
+            scheduled.extend(scheduled_tasks(&snapshot, &ids, &batch.session)?);
+        }
+        for id in batch_ids {
+            batches.remove(&id);
+        }
         Ok::<_, StoreError>((snapshot, scheduler.enqueue(scheduled)))
     })
     .await

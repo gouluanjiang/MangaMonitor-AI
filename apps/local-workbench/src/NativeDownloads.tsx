@@ -7,6 +7,7 @@ import type {
   DownloadTask,
   DownloadPlan,
 } from "./download-types.ts";
+import { downloadSelectionLimit } from "./download-types.ts";
 import {
   DownloadController,
   downloadErrorMessage,
@@ -192,7 +193,11 @@ function BatchDownloadConfirmation({
     dialog.current?.showModal();
   }, []);
   if (!batch) return null;
-  const context = batch.plans[0] ? contexts[batch.plans[0].source] : null;
+  const connected = batch.plans.every((plan) => contexts[plan.source] !== null);
+  const remaining = Math.max(
+    0,
+    downloadSelectionLimit - downloads.snapshot.tasks.length,
+  );
   return (
     <dialog
       ref={dialog}
@@ -220,6 +225,12 @@ function BatchDownloadConfirmation({
         {batch.issues.length > 0 && ` · 跳过 ${batch.issues.length} 项`}
         。按下方顺序依次下载，已有任务先执行。
       </p>
+      {batch.plans.length > remaining && (
+        <p role="alert" className="source-notice">
+          队列还能加入 {remaining} 本，本次可下载 {batch.plans.length}{" "}
+          本。请返回减少选择，或先整理完成历史；本次没有加入任何任务。
+        </p>
+      )}
       <div className="download-batch-preview">
         <ol>
           {batch.plans.map((plan) => (
@@ -264,15 +275,62 @@ function BatchDownloadConfirmation({
         <button
           className="button primary"
           data-testid="download-batch-confirm"
-          disabled={downloads.busy || !context || !batch.batchId}
+          disabled={
+            downloads.busy ||
+            !connected ||
+            !batch.batchId ||
+            batch.plans.length > remaining
+          }
           onClick={() => {
-            if (context)
-              void downloads.controller.confirmBatch(context).then((done) => {
+            if (connected)
+              void downloads.controller.confirmBatch(contexts).then((done) => {
                 if (done) onConfirmed();
               });
           }}
         >
-          {downloads.busy ? "正在确认…" : `确认加入 ${batch.plans.length} 本`}
+          {downloads.busy
+            ? "正在确认…"
+            : `确认下载并入库 · ${batch.plans.length} 本`}
+        </button>
+      </div>
+    </dialog>
+  );
+}
+function DownloadPreparation({ downloads }: { downloads: DownloadsState }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  const progress = downloads.preparation!;
+  return (
+    <dialog
+      ref={dialog}
+      className="dialog download-confirmation"
+      data-testid="download-preparation"
+      aria-label="准备下载计划"
+      onCancel={(event) => {
+        event.preventDefault();
+        downloads.controller.cancelPlan();
+      }}
+    >
+      <h2>准备下载计划</h2>
+      <p role="status">
+        已核对 {progress.done} / {progress.total} 本
+      </p>
+      <progress
+        value={progress.done}
+        max={progress.total}
+        aria-label="下载计划准备进度"
+      />
+      <p>
+        正在分段核对标题和保存位置。全部准备完毕后统一确认，当前不会开始下载。
+      </p>
+      <div className="dialog-actions">
+        <button
+          className="button secondary"
+          onClick={() => downloads.controller.cancelPlan()}
+        >
+          停止准备
         </button>
       </div>
     </dialog>
@@ -355,8 +413,8 @@ export function DownloadSettingsPanel({
     <section className="settings-card" aria-labelledby="native-download-title">
       <h2 id="native-download-title">下载队列</h2>
       <p className="settings-copy">
-        从 JM 或哔咔来源详情进入，也可以多选收藏或每行粘贴一个编号。每批最多 50
-        本，核对后依次下载。
+        从 JM 或哔咔来源详情进入，也可以多选收藏或每行粘贴一个编号。一次最多选择
+        500 本，核对后依次下载。
       </p>
       <dl className="settings-facts">
         <div>
@@ -457,6 +515,9 @@ export function NativeDownloads({
           inventoryHint={inventoryHint}
         />
       )}
+      {downloads.preparation && !downloads.batchPlan && (
+        <DownloadPreparation downloads={downloads} />
+      )}
       {historySelection && (
         <HistoryConfirmation
           downloads={downloads}
@@ -530,7 +591,7 @@ export function NativeDownloads({
               rows={3}
               placeholder={
                 sourceLabel(selectedSource) +
-                " 编号或作品链接，每行一个，最多 50 本"
+                " 编号或作品链接，每行一个，最多 500 本"
               }
               onChange={(event) => onInputChange(event.target.value)}
             />
@@ -544,7 +605,7 @@ export function NativeDownloads({
           </div>
         </form>
         <p className="quiet">
-          每批最多 50
+          一次最多选择 500
           本；重复编号或无法读取的作品会在确认前列出。同一时间处理一本，失败的任务保留进度，队列继续处理后续作品。
         </p>
         {!scope && (

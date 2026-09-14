@@ -17,7 +17,7 @@ use std::{
 use workbench_storage::{
     Document, DownloadHistoryEvidence, DownloadRecord, DownloadWorkspace, DownloadsDocument,
     LibraryDocument, LibraryPhase, WorkbenchStore, MAX_DOWNLOAD_BATCH,
-    MAX_DOWNLOAD_HISTORY_EVIDENCE, MAX_DOWNLOAD_TASKS, MAX_SAFE_INTEGER,
+    MAX_DOWNLOAD_HISTORY_EVIDENCE, MAX_DOWNLOAD_SELECTION, MAX_DOWNLOAD_TASKS, MAX_SAFE_INTEGER,
 };
 
 static PLAN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -234,7 +234,7 @@ impl DownloadService {
         };
         record.target_hash = binding(&record)?;
         check_new_download(&record, &document.value, &library.value)?;
-        if runtime.plans.len() >= 256 {
+        if runtime.plans.len() >= MAX_DOWNLOAD_SELECTION {
             return Err(error("DOWNLOAD_PLAN_LIMIT_REACHED"));
         }
         let plan = DownloadPlan {
@@ -286,7 +286,29 @@ impl DownloadService {
         store: &WorkbenchStore,
         selections: &[PreparedSelection],
     ) -> Result<DownloadSnapshot> {
-        if selections.is_empty() || selections.len() > MAX_DOWNLOAD_BATCH {
+        self.confirm_prepared(store, selections, false)
+    }
+    /// All source-scoped chunks share one explicit review and one queue write.
+    /// The desktop caller must validate each chunk's own current account lease.
+    pub fn confirm_selection(
+        &self,
+        store: &WorkbenchStore,
+        selections: &[PreparedSelection],
+    ) -> Result<DownloadSnapshot> {
+        self.confirm_prepared(store, selections, true)
+    }
+    fn confirm_prepared(
+        &self,
+        store: &WorkbenchStore,
+        selections: &[PreparedSelection],
+        mixed_selection: bool,
+    ) -> Result<DownloadSnapshot> {
+        let limit = if mixed_selection {
+            MAX_DOWNLOAD_SELECTION
+        } else {
+            MAX_DOWNLOAD_BATCH
+        };
+        if selections.is_empty() || selections.len() > limit {
             return Err(error("DOWNLOAD_BATCH_LIMIT"));
         }
         let mut runtime = self.lock()?;
@@ -311,7 +333,7 @@ impl DownloadService {
             }
             let record = &prepared.record;
             if records.first().is_some_and(|first: &DownloadRecord| {
-                first.source != record.source
+                (!mixed_selection && first.source != record.source)
                     || first.root != record.root
                     || first.generation != record.generation
             }) {

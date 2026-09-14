@@ -1,6 +1,19 @@
 .completion-panel {
   padding: 0 0 5rem;
 }
+.completion-panel.has-completion-selection {
+  padding-bottom: 220px;
+}
+.completion-select {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+.completion-panel .source-card.is-selected {
+  outline: 2px solid #8560f2;
+  border-radius: 8px;
+}
 .completion-panel h1 {
   font-size: clamp(2rem, 4vw, 4rem);
   margin-bottom: 0.6rem;

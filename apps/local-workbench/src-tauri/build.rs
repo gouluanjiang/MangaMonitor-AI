@@ -16,6 +16,8 @@ fn main() {
         "jm_download_control",
         "jm_download_batch_prepare",
         "jm_download_batch_confirm",
+        "jm_download_selection_confirm",
+        "jm_download_batch_cancel",
         "jm_download_pause_all",
         "jm_download_resume_many",
         "jm_download_history_remove",

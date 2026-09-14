@@ -157,6 +157,27 @@ async function install(page: Page) {
             if (command === "source_accounts") return clone(accounts);
             if (command === "jm_download_read")
               return { revision: 0, tasks: [] };
+            if (command === "jm_download_batch_cancel") return null;
+            if (command === "jm_download_batch_prepare") {
+              const source = (args.scope as { source: string }).source;
+              const plans = (args.inputs as string[]).map((id) => {
+                const work = works.find(
+                  (work) => work.source === source && work.workId === id,
+                )!;
+                return {
+                  planId: (source === "JM" ? "c" : "d").repeat(64),
+                  revision: 0,
+                  source,
+                  workId: id,
+                  title: work.title,
+                  authors: work.authors,
+                  destinationDisplay: "C:\\Synthetic\\" + work.title + ".zip",
+                  rootId: library.rootId,
+                  generation: library.generation,
+                };
+              });
+              return { batchId: plans[0].planId, plans, issues: [] };
+            }
             if (command === "source_following")
               return {
                 source: args.source,
@@ -403,4 +424,63 @@ test("a new author is searched across every page of both sources without requiri
         ).length,
     ),
   ).toBe(3);
+});
+
+test("full-range author selection waits for completion, excludes owned works and reviews both sources together", async ({
+  page,
+}) => {
+  await install(page);
+  await open(page);
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await expect(page.getByTestId("completion-select-all")).toBeDisabled();
+  await page.evaluate(() => {
+    window.authorTest.view.authors = window.authorTest.view.authors.map(
+      (range) => ({
+        ...range,
+        state: "complete",
+        errorCode: null,
+        lastCompleteAt: 1800000000000,
+      }),
+    );
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByTestId("completion-select-all").click();
+  await expect(page.getByTestId("completion-selection-bar")).toContainText(
+    "已选 2 本",
+  );
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/author-full-selection.png" });
+  await page
+    .getByTestId("completion-selection-bar")
+    .getByRole("button", { name: "查看下载计划" })
+    .click();
+  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "jm_download_batch_prepare")
+        .map((call) => [
+          (call.args.scope as { source: string }).source,
+          call.args.inputs,
+        ]),
+    ),
+  ).toEqual([
+    ["JM", ["456"]],
+    ["Pica", ["0123456789abcdef01234567"]],
+  ]);
+  await page.screenshot({
+    path: "visual-evidence/mixed-source-download-selection.png",
+  });
+  await page.getByTestId("download-batch-cancel").click();
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /download_(selection_confirm|batch_confirm|confirm)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+  await page.getByRole("button", { name: "全部 3", exact: true }).click();
+  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
 });

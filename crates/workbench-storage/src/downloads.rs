@@ -16,6 +16,8 @@ use std::{
 
 pub const MAX_DOWNLOAD_TASKS: usize = 500;
 pub const MAX_DOWNLOAD_BATCH: usize = 50;
+/// One reviewed selection may fill the existing queue; transport chunks stay small.
+pub const MAX_DOWNLOAD_SELECTION: usize = MAX_DOWNLOAD_TASKS;
 pub const MAX_DOWNLOAD_HISTORY_EVIDENCE: usize = 20_000;
 // The existing library scanner counts the one root cover toward its 10k limit.
 pub const MAX_DOWNLOAD_FILES: usize = 9_999;

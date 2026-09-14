@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { jmSearchScopeNote, readCompleteSearch } from "./source-search.ts";
+import { downloadSelectionLimit } from "./download-types.ts";
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LibrarySnapshot } from "./library-types.ts";
@@ -404,6 +405,7 @@ export function SourceWorkbench({
   function clearSelection() {
     if (selection.length) setNotice("范围已改变，临时选择已清空。");
     setSelection([]);
+    setFullSelectionScope(null);
     selectedMetadata.current.clear();
   }
   function changeSource(next: Source) {
@@ -988,6 +990,50 @@ export function SourceWorkbench({
     view === "favorites"
       ? Boolean(collectionState.snapshot?.complete)
       : searchComplete && !loading && !error;
+  const [fullSelectionScope, setFullSelectionScope] = useState<string | null>(
+    null,
+  );
+  const selectionScope = JSON.stringify([
+    scopeId,
+    view,
+    folder,
+    query,
+    inventoryFilter,
+  ]);
+  const selectionComplete =
+    view === "following" && !authorSearch
+      ? Boolean(following) && !followingBusy && !followingError
+      : complete &&
+        !loading &&
+        !error &&
+        (view !== "favorites" || !collectionState.error);
+  const selectable = visible.filter(
+    (work) => inventoryFor(work).kind !== "owned",
+  );
+  useEffect(() => {
+    if (!fullSelectionScope) return;
+    if (
+      fullSelectionScope !== selectionScope ||
+      autoPaused ||
+      error ||
+      collectionState.error
+    ) {
+      setFullSelectionScope(null);
+      return;
+    }
+    if (selectionComplete) {
+      setSelection(selectable.map(sourceWorkKey));
+      setFullSelectionScope(null);
+    }
+  }, [
+    fullSelectionScope,
+    selectionScope,
+    selectionComplete,
+    autoPaused,
+    error,
+    collectionState.error,
+    visible,
+  ]);
   const searchControl = (
     <form
       className="source-search"
@@ -1742,6 +1788,7 @@ export function SourceWorkbench({
                     onClick={() => {
                       setSelectionMode(!selectionMode);
                       setSelection([]);
+                      setFullSelectionScope(null);
                     }}
                   >
                     {selectionMode ? "退出多选" : "多选"}
@@ -1751,10 +1798,29 @@ export function SourceWorkbench({
                       type="button"
                       className="text-button"
                       data-testid="source-select-all"
-                      disabled={!visible.length}
-                      onClick={() => setSelection(visible.map(sourceWorkKey))}
+                      disabled={
+                        !visible.length ||
+                        Boolean(fullSelectionScope) ||
+                        (!selectionComplete && view !== "favorites")
+                      }
+                      onClick={() => {
+                        if (selectionComplete) {
+                          setSelection(selectable.map(sourceWorkKey));
+                          return;
+                        }
+                        setFullSelectionScope(selectionScope);
+                        collectionReadAll.current = true;
+                        setAutoPaused(false);
+                        resumeCollection(true);
+                      }}
                     >
-                      全选当前已读取范围
+                      {fullSelectionScope
+                        ? "正在读完收藏，完成后全选…"
+                        : selectionComplete
+                          ? "全选当前筛选范围"
+                          : view === "favorites"
+                            ? "读完收藏并全选当前筛选范围"
+                            : "读完后可全选当前筛选范围"}
                     </button>
                   )}
                 </div>
@@ -1992,7 +2058,11 @@ export function SourceWorkbench({
                   data-testid="source-selection-bar"
                 >
                   <strong>已选 {selectedWorks.length} 部</strong>
-                  <span>包含已读范围中未进入视口的作品</span>
+                  <span>
+                    {selectionComplete
+                      ? "包含当前筛选范围中未进入视口的作品"
+                      : "仅选择已读取作品，完整范围尚未读完"}
+                  </span>
                   <button
                     type="button"
                     className="text-button"
@@ -2009,14 +2079,16 @@ export function SourceWorkbench({
                       !onDownloadMany ||
                       !downloadReady ||
                       downloadBusy ||
-                      selectedWorks.length > 50
+                      selectedWorks.length > downloadSelectionLimit
                     }
                     onClick={() => onDownloadMany?.(selectedWorks)}
                   >
                     {downloadBusy ? "正在准备…" : "准备下载"}
                   </button>
-                  {selectedWorks.length > 50 && (
-                    <span>每批最多 50 本，请减少选择。</span>
+                  {selectedWorks.length > downloadSelectionLimit && (
+                    <span>
+                      一次最多选择 500 本，请缩小范围；没有截取后续作品。
+                    </span>
                   )}
                 </div>
               )}

@@ -217,6 +217,90 @@ async fn restart_requires_exact_source_bound_explicit_resume_and_old_scheduler_e
 }
 
 #[test]
+fn large_mixed_selection_validates_the_last_plan_before_one_atomic_admission() {
+    let f = fixture();
+    let mut plans: Vec<_> = (3000..3301)
+        .map(|id| prepare_id(&f, &id.to_string()))
+        .collect();
+    let library = f.store.read_library().unwrap();
+    plans.push(
+        f.service
+            .prepare_for_source(
+                &f.store,
+                &library.value.root.as_ref().unwrap().id,
+                library.value.generation,
+                Source::Pica,
+                JmDownloadMetadata {
+                    work_id: "111111111111111111111111".into(),
+                    title: "Synthetic Pica selection".into(),
+                    authors: Vec::new(),
+                    tags: Vec::new(),
+                    description: None,
+                },
+            )
+            .unwrap(),
+    );
+    let before = f.store.read_downloads().unwrap();
+    let mut choices: Vec<_> = plans.iter().map(selected).collect();
+    choices.last_mut().unwrap().expected_revision += 1;
+    assert_eq!(
+        f.service
+            .confirm_selection(&f.store, &choices)
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_PLAN_STALE"
+    );
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    choices.last_mut().unwrap().expected_revision -= 1;
+    let next = f.service.confirm_selection(&f.store, &choices).unwrap();
+    assert_eq!(next.revision, before.revision + 1);
+    assert_eq!(next.tasks.len(), 303);
+    assert_eq!(next.tasks.last().unwrap().source, Source::Pica);
+    assert!(next
+        .tasks
+        .iter()
+        .all(|task| task.phase == DownloadPhase::Queued));
+    assert!(fs::read_dir(&f.library).unwrap().next().is_none());
+    assert!(DownloadService::new()
+        .read(&f.store)
+        .unwrap()
+        .tasks
+        .iter()
+        .all(|task| task.phase == DownloadPhase::Paused));
+}
+
+#[test]
+fn selection_capacity_and_duplicate_failures_never_admit_a_prefix() {
+    let f = fixture();
+    let first = prepare_id(&f, "9001");
+    let other = prepare_id(&f, "9001");
+    let before = f.store.read_downloads().unwrap();
+    assert_eq!(
+        f.service
+            .confirm_selection(&f.store, &[selected(&first), selected(&other)])
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_ALREADY_PRESENT"
+    );
+    assert_eq!(
+        f.service
+            .confirm_selection(&f.store, &vec![selected(&first); 501])
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_BATCH_LIMIT"
+    );
+    // Existing fixture task + a 500-plan selection exceeds the durable capacity.
+    assert_eq!(
+        f.service
+            .confirm_selection(&f.store, &vec![selected(&first); 500])
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_LIMIT_REACHED"
+    );
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+}
+
+#[test]
 fn confirming_a_new_work_never_projects_older_unadmitted_restart_tasks_as_queued() {
     let f = fixture();
     let restored = DownloadService::new();

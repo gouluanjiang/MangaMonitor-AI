@@ -617,6 +617,60 @@ export default function App() {
     setSourceRequestKey((key) => key + 1);
     navigate("favorites");
   }
+  async function beginDownloadMany(works: SourceWork[]) {
+    if (!works.length) return;
+    if (works.every((work) => work.source === works[0].source)) {
+      return beginDownload(
+        works.map((work) => work.workId).join("\n"),
+        undefined,
+        works[0].source,
+      );
+    }
+    if (downloads.controller.getState().busy) return;
+    setDownloadFeedback(true);
+    const startingLibrary = library.controller.getState().snapshot;
+    if (!startingLibrary.rootId) {
+      chooseDownloadLibrary();
+      return;
+    }
+    const contexts: DownloadContexts = { JM: null, Pica: null };
+    for (const source of new Set(works.map((work) => work.source))) {
+      const scope = getDownloadScope(accountsRef.current, source);
+      if (!scope) {
+        setNotice(`请先连接${sourceLabel(source)}账号。`);
+        navigate("settings");
+        return;
+      }
+      contexts[source] = {
+        scope,
+        rootId: startingLibrary.rootId,
+        generation: startingLibrary.generation,
+      };
+    }
+    if (downloads.controller.getState().reading)
+      await downloads.controller.read(false);
+    await downloads.controller.read(true);
+    const current = downloads.controller.getState(),
+      currentLibrary = library.controller.getState().snapshot;
+    if (!current.ready || current.error || current.busy) return;
+    if (
+      currentLibrary.rootId !== startingLibrary.rootId ||
+      currentLibrary.generation !== startingLibrary.generation ||
+      Object.values(contexts).some(
+        (context) =>
+          context &&
+          getDownloadScope(accountsRef.current, context.scope.source)
+            ?.sessionId !== context.scope.sessionId,
+      )
+    ) {
+      setNotice("账号或电脑目录已改变，请核对后重新准备下载。");
+      return;
+    }
+    await downloads.controller.prepareSelection(
+      contexts,
+      works.map((work) => ({ source: work.source, input: work.workId })),
+    );
+  }
   const unavailableMembers =
     currentBooklist?.members.filter(
       (member) => !works.some((work) => referenceMatches(member, work)),
@@ -2283,6 +2337,8 @@ export default function App() {
                   density={appearance.density}
                   onOpenWork={openSourceWork}
                   onDownload={(work) => void beginDownload(work.workId, work)}
+                  onDownloadMany={(works) => void beginDownloadMany(works)}
+                  downloadBusy={downloads.busy}
                   onOpenLibrary={() => navigate("library")}
                   onOpenAccounts={() => navigate("settings")}
                 />
@@ -2306,14 +2362,7 @@ export default function App() {
                   navigation={discoveryNavigation}
                   onOpen={openEmbeddedWork}
                   onDownload={(work) => void beginDownload(work.workId, work)}
-                  onDownloadMany={(works) => {
-                    if (works.length)
-                      void beginDownload(
-                        works.map((work) => work.workId).join("\n"),
-                        undefined,
-                        works[0].source,
-                      );
-                  }}
+                  onDownloadMany={(works) => void beginDownloadMany(works)}
                   onAccounts={() => navigate("settings")}
                 />
               </div>
@@ -2326,14 +2375,7 @@ export default function App() {
                 embeddedSourceDetail ? returnFromEmbeddedDetail : undefined
               }
               onDownload={(work) => beginDownload(work.workId, work)}
-              onDownloadMany={(selected) => {
-                if (selected.length)
-                  void beginDownload(
-                    selected.map((work) => work.workId).join("\n"),
-                    undefined,
-                    selected[0].source,
-                  );
-              }}
+              onDownloadMany={(works) => void beginDownloadMany(works)}
               downloadInventory={downloadLibrary.snapshot}
               inventoryReady={downloadLibrary.ready && !downloadLibrary.error}
               downloadReady={downloads.ready}

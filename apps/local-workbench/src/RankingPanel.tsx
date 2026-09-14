@@ -11,6 +11,7 @@ import type {
 import { accountScope, sourceLabel, sourceWorkKey } from "./source-types.ts";
 import type { LibrarySnapshot } from "./library-types.ts";
 import type { DownloadInventorySnapshot } from "./download-types.ts";
+import { downloadSelectionLimit } from "./download-types.ts";
 import {
   createInventoryMatcher,
   inventoryFilterLabels,
@@ -288,6 +289,7 @@ export function RankingPanel({
             <div className="source-toolbar">
               <button
                 className="text-button"
+                disabled={!complete}
                 onClick={() =>
                   setSelection(
                     visible
@@ -296,18 +298,25 @@ export function RankingPanel({
                   )
                 }
               >
-                选择当前筛选范围
+                全选当前筛选范围
               </button>
               {selection.length > 0 && (
                 <>
                   <span>已选 {selected.length} 部</span>
                   <button
                     className="button primary"
-                    disabled={!library.rootId || !selected.length}
+                    disabled={
+                      !library.rootId ||
+                      !selected.length ||
+                      selected.length > downloadSelectionLimit
+                    }
                     onClick={() => onDownloadMany(selected)}
                   >
                     准备下载所选作品
                   </button>
+                  {selected.length > downloadSelectionLimit && (
+                    <span>一次最多选择 500 本，请缩小筛选范围。</span>
+                  )}
                   <button
                     className="text-button"
                     onClick={() => setSelection([])}

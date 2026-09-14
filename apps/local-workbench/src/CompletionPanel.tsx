@@ -9,6 +9,7 @@ import type {
 import { accountScope, sourceWorkKey, sourceLabel } from "./source-types.ts";
 import type { LibrarySnapshot } from "./library-types.ts";
 import type { DownloadInventorySnapshot } from "./download-types.ts";
+import { downloadSelectionLimit } from "./download-types.ts";
 import type { WorkReference } from "./booklists.ts";
 import type {
   CompletionAdapter,
@@ -45,6 +46,8 @@ interface Props {
   density: 5 | 7 | 9;
   onOpenWork(reference: WorkReference): void;
   onDownload(work: SourceWork): void;
+  onDownloadMany(works: SourceWork[]): void;
+  downloadBusy?: boolean;
   onOpenLibrary(): void;
   onOpenAccounts(): void;
 }
@@ -61,6 +64,8 @@ export function CompletionPanel({
   density,
   onOpenWork,
   onDownload,
+  onDownloadMany,
+  downloadBusy = false,
   onOpenLibrary,
   onOpenAccounts,
 }: Props) {
@@ -97,6 +102,11 @@ export function CompletionPanel({
     [query, setQuery] = useState("");
   const [source, setSource] = useState<Source | "all">("all");
   const [filter, setFilter] = useState<InventoryFilter>("missing");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selection, setSelection] = useState<string[]>([]);
+  useEffect(() => {
+    setSelection([]);
+  }, [scopeKey, author, source, filter, query, mode]);
   const connected = scopes.length === 2;
   const running = view?.run?.phase === "checking";
   const inventory = useMemo(
@@ -136,6 +146,7 @@ export function CompletionPanel({
   async function perform(action: () => Promise<DiscoverySnapshot | void>) {
     if (operation.current) return;
     operation.current = true;
+    setSelection([]);
     epoch.current++;
     const key = current.current.key;
     setBusy(true);
@@ -203,12 +214,22 @@ export function CompletionPanel({
   const visible = records.filter((record) =>
     inventoryFilterMatches(inventory(record.work), filter),
   );
+  const selectionKeys = new Set(selection);
+  const selectable = visible.filter(
+    (record) => inventory(record.work).kind !== "owned",
+  );
+  const selected = selectable
+    .filter((record) => selectionKeys.has(sourceWorkKey(record.work)))
+    .map((record) => record.work);
   const lastCheck = Math.max(
     0,
     ...ranges.map((range) => range.lastCompleteAt ?? range.lastAttemptAt ?? 0),
   );
   return (
-    <section className="completion-panel" data-testid="completion-panel">
+    <section
+      className={`completion-panel${selected.length ? " has-completion-selection" : ""}`}
+      data-testid="completion-panel"
+    >
       <header className="page-heading">
         <h1>{mode === "search" ? "作者搜索" : "作者更新"}</h1>
         <p>
@@ -401,6 +422,39 @@ export function CompletionPanel({
                   : "点击“检查作者更新”读取关注作者的作品。"}
             </p>
           )}
+          {visible.length > 0 && (
+            <div className="completion-controls" aria-label="作者作品多选">
+              <button
+                aria-pressed={selectionMode}
+                onClick={() => {
+                  setSelectionMode(!selectionMode);
+                  setSelection([]);
+                }}
+              >
+                {selectionMode ? "退出多选" : "多选"}
+              </button>
+              {selectionMode && (
+                <>
+                  <button
+                    data-testid="completion-select-all"
+                    disabled={!complete || !selectable.length}
+                    onClick={() =>
+                      setSelection(
+                        selectable.map((record) => sourceWorkKey(record.work)),
+                      )
+                    }
+                  >
+                    全选当前筛选范围 · {selectable.length} 本
+                  </button>
+                  <span className="source-muted">
+                    {complete
+                      ? "包含未滚动到的作品，已入库作品不选入。"
+                      : "当前检查范围未读完；可逐本勾选已读结果，读完后再全选。"}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
           <VirtualSourceGrid
             items={visible}
             density={density}
@@ -412,9 +466,31 @@ export function CompletionPanel({
               const stock = inventory(work);
               return (
                 <article
-                  className="source-card"
+                  className={`source-card${selectionKeys.has(sourceWorkKey(work)) ? " is-selected" : ""}`}
                   data-testid={"author-update-" + sourceWorkKey(work)}
                 >
+                  {selectionMode && (
+                    <label className="completion-select">
+                      <input
+                        type="checkbox"
+                        aria-label={"选择 " + work.title}
+                        disabled={stock.kind === "owned"}
+                        checked={selected.some(
+                          (item) => sourceWorkKey(item) === sourceWorkKey(work),
+                        )}
+                        onChange={(event) =>
+                          setSelection((previous) =>
+                            event.target.checked
+                              ? [...previous, sourceWorkKey(work)]
+                              : previous.filter(
+                                  (key) => key !== sourceWorkKey(work),
+                                ),
+                          )
+                        }
+                      />
+                      选择
+                    </label>
+                  )}
                   <button
                     className="source-card-open"
                     onClick={() =>
@@ -437,7 +513,9 @@ export function CompletionPanel({
                   </p>
                   <button
                     className="text-button"
-                    disabled={stock.kind === "owned" || !library.rootId}
+                    disabled={
+                      stock.kind === "owned" || !library.rootId || downloadBusy
+                    }
                     onClick={() => onDownload(work)}
                   >
                     {stock.kind === "owned" ? "已入库" : "下载到漫画库"}
@@ -446,6 +524,36 @@ export function CompletionPanel({
               );
             }}
           />
+          {selected.length > 0 && (
+            <div
+              className="source-selection-bar"
+              data-testid="completion-selection-bar"
+            >
+              <strong>已选 {selected.length} 本</strong>
+              <span>
+                {complete
+                  ? "当前筛选范围，包含未滚动到的作品"
+                  : "仅来自已读取结果，检查范围尚未完成"}
+              </span>
+              <button onClick={() => setSelection([])}>取消选择</button>
+              <button
+                className="primary-button"
+                disabled={
+                  downloadBusy ||
+                  !library.rootId ||
+                  selected.length > downloadSelectionLimit
+                }
+                onClick={() => onDownloadMany(selected)}
+              >
+                查看下载计划
+              </button>
+              {selected.length > downloadSelectionLimit && (
+                <span>
+                  一次最多选择 500 本，请缩小筛选范围；没有截取或忽略后续作品。
+                </span>
+              )}
+            </div>
+          )}
         </>
       )}
     </section>

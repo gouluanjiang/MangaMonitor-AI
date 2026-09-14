@@ -82,6 +82,10 @@
 .download-confirmation p {
   line-height: 1.7;
 }
+.download-confirmation progress {
+  width: 100%;
+  accent-color: #8560f2;
+}
 .download-confirmation .dialog-actions {
   margin-top: 24px;
   display: flex;

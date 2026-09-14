@@ -31,7 +31,7 @@ commands.allow = [
 [[permission]]
 identifier = "workbench-downloads"
 description = "Prepare and explicitly confirm JM/Pica downloads into a selected PC library, control the queue and organize completed history. No renderer paths or media URLs."
-commands.allow = ["jm_download_prepare", "jm_download_confirm", "jm_download_read", "download_inventory_read", "jm_download_control", "jm_download_batch_prepare", "jm_download_batch_confirm", "jm_download_pause_all", "jm_download_resume_many", "jm_download_history_remove"]
+commands.allow = ["jm_download_prepare", "jm_download_confirm", "jm_download_read", "download_inventory_read", "jm_download_control", "jm_download_batch_prepare", "jm_download_batch_confirm", "jm_download_selection_confirm", "jm_download_batch_cancel", "jm_download_pause_all", "jm_download_resume_many", "jm_download_history_remove"]
 
 [[permission]]
 identifier = "workbench-library"

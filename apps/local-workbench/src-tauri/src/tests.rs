@@ -508,6 +508,11 @@ fn download_commands_require_the_main_packaged_window() {
             "jm_download_batch_confirm",
             json!({"batchId":"a".repeat(64)}),
         ),
+        (
+            "jm_download_selection_confirm",
+            json!({"batchIds":["a".repeat(64), "b".repeat(64)]}),
+        ),
+        ("jm_download_batch_cancel", json!({})),
         ("jm_download_pause_all", json!({})),
         (
             "jm_download_resume_many",
@@ -588,6 +593,13 @@ fn reading_empty_download_queue_never_creates_media_or_changes_phone_inventory()
 fn unapproved_batch_never_enters_queue_or_creates_staging() {
     let (root, app) = fixture();
     let main = window(&app, "main");
+    assert!(invoke(
+        &main,
+        "jm_download_selection_confirm",
+        json!({"batchIds":["a".repeat(64), "b".repeat(64)]})
+    )
+    .is_err());
+    invoke(&main, "jm_download_batch_cancel", json!({})).unwrap();
     assert!(invoke(
         &main,
         "jm_download_batch_confirm",

@@ -206,7 +206,7 @@ test("weekly and Pica ranks share receipt filters while details preserve the sel
   await expect(
     page.getByRole("button", { name: "未入库 1", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  await page.getByTestId("discovery-Pica").click();
+  await page.getByTestId("ranking-panel").getByTestId("discovery-Pica").click();
   await expect(page.getByTestId("ranking-counts")).toContainText(
     "已入库 0 条 · 未入库 2 条",
   );
@@ -276,7 +276,7 @@ test("a late result cannot replace another source and downloading still requires
   await page.getByTestId("discovery-JM").click();
   await expect(page.getByText("正在读取来源榜单…")).toBeVisible();
   await page.waitForFunction(() => Boolean(window.rankingTest.release));
-  await page.getByTestId("discovery-Pica").click();
+  await page.getByTestId("ranking-panel").getByTestId("discovery-Pica").click();
   await expect(page.getByTestId("ranking-counts")).toContainText("未入库 2 条");
   await page.evaluate(() => window.rankingTest.release?.());
   await expect(page.getByTestId("rank-work-JM:2")).toHaveCount(0);

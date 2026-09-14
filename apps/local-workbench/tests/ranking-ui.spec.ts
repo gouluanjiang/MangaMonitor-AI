@@ -115,10 +115,14 @@ async function install(page: Page) {
                   args.source === "JM"
                     ? {
                         categories: [
-                          { id: "42", label: "合成第42期" },
+                          { id: "42", label: "2026第42期09.11 - 09.04" },
                           { id: "41", label: "合成第41期" },
                         ],
-                        periods: [{ id: "1", label: "热门推荐" }],
+                        periods: [
+                          { id: "hanman", label: "韓漫" },
+                          { id: "another", label: "其他" },
+                          { id: "manga", label: "日漫" },
+                        ],
                       }
                     : {
                         categories: [],
@@ -142,6 +146,11 @@ async function install(page: Page) {
               const items = works.filter(
                 (work) =>
                   work.source === args.source &&
+                  !(
+                    args.kind === "ranking" &&
+                    args.source === "JM" &&
+                    args.query === "hanman"
+                  ) &&
                   (args.kind !== "detail" || work.workId === args.query),
               );
               return {
@@ -190,6 +199,18 @@ test("weekly and Pica ranks share receipt filters while details preserve the sel
   await expect(page.getByTestId("ranking-counts")).toContainText(
     "已入库 1 条 · 未入库 1 条",
   );
+  await expect(page.getByLabel("排行类型")).toHaveValue("manga");
+  await expect(page.getByLabel("每周必看期数")).toContainText(
+    "2026第42期09.11 - 09.04",
+  );
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/jm-weekly.png" });
+  await page.getByLabel("排行类型").selectOption("hanman");
+  await expect(
+    page.getByText("本期该类型暂无作品，可以切换期数或类型。"),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.getByLabel("排行类型").selectOption("manga");
   await page.getByLabel("每周必看期数").selectOption("41");
   await expect(page.getByTestId("ranking-counts")).toContainText(
     "本次榜单已读完",
@@ -237,6 +258,7 @@ test("options can be retried and short or failed lists never claim complete", as
   });
   await page.getByTestId("discovery-JM").click();
   await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("alert")).not.toContainText("已读取榜单保留");
   await page.evaluate(() => {
     window.rankingTest.failOptions = false;
     window.rankingTest.partial = true;

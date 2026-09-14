@@ -23,6 +23,18 @@ fn token(value: &str) -> SourceResult<()> {
     }
     Ok(())
 }
+fn optional_label(value: &Value) -> SourceResult<Option<String>> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let text = value
+        .as_str()
+        .ok_or(protocol::error("SOURCE_RESPONSE_INVALID"))?;
+    if text.encode_utf16().take(2001).count() > 2000 {
+        return Err(protocol::error("SOURCE_RESPONSE_INVALID"));
+    }
+    Ok((!text.trim().is_empty()).then(|| text.trim().to_owned()))
+}
 fn options(value: &Value, time: bool) -> SourceResult<Vec<RankOption>> {
     let values = value
         .as_array()
@@ -34,11 +46,21 @@ fn options(value: &Value, time: bool) -> SourceResult<Vec<RankOption>> {
     for row in values {
         let id = protocol::required_text(&row["id"])?;
         token(&id)?;
-        let mut label = protocol::bounded_required_text(&row["title"], 2000)?;
-        if time && row["time"].as_str().is_some_and(|v| !v.is_empty()) {
-            label.push_str(" · ");
-            label.push_str(&protocol::bounded_required_text(&row["time"], 2000)?);
-        }
+        // JM regularly supplies an empty category title, including for the
+        // latest issue. The pinned upstream UI displays `time` for these rows.
+        // Presentation text must not discard an otherwise valid issue ID.
+        let label = if time {
+            match (
+                optional_label(&row["title"])?,
+                optional_label(&row["time"])?,
+            ) {
+                (Some(title), Some(time)) => format!("{title} · {time}"),
+                (Some(label), None) | (None, Some(label)) => label,
+                (None, None) => format!("期数 {id}"),
+            }
+        } else {
+            protocol::bounded_required_text(&row["title"], 2000)?
+        };
         if result.iter().any(|option: &RankOption| option.id == id) {
             return Err(protocol::error("SOURCE_RESPONSE_INVALID"));
         }

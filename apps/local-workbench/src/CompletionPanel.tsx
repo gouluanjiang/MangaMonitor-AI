@@ -23,6 +23,7 @@ import {
   inventoryFilterLabels,
   inventoryFilterMatches,
   inventoryLabel,
+  inventoryScopeNote,
 } from "./inventory-model.ts";
 import type { InventoryFilter } from "./inventory-model.ts";
 import { SourceCover } from "./SourceWorkbench.tsx";
@@ -353,8 +354,7 @@ export function CompletionPanel({
             {counts.unknown > 0 ? ` · 状态待核实 ${counts.unknown} 条` : ""}
           </p>
           <p className="source-muted">
-            按本软件对应来源的下载记录统计，JM
-            与哔咔分别计数。未选择下载的记录会继续保留。
+            {inventoryScopeNote} JM 与哔咔分别计数，未选择下载的记录会继续保留。
             {lastCheck > 0
               ? ` 上次检查：${new Date(lastCheck).toLocaleString()}`
               : " 尚未完成检查。"}

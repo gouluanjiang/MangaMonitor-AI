@@ -8,6 +8,7 @@ import { createInventoryMatcher, inventoryLabel } from "./inventory-model.ts";
 import {
   inventoryFilterLabels,
   inventoryFilterMatches,
+  inventoryScopeNote,
 } from "./inventory-model.ts";
 import type { InventoryFilter } from "./inventory-model.ts";
 import type { WorkReference } from "./booklists.ts";
@@ -1815,6 +1816,7 @@ export function SourceWorkbench({
                 )}
                 。
               </p>
+              <p className="source-muted">{inventoryScopeNote}</p>
               {visible.length === 0 && browsingWorks.length > 0 && (
                 <p className="source-empty">
                   当前筛选没有结果

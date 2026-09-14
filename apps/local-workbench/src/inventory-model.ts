@@ -13,6 +13,8 @@ export const readableLibraryItem = (item: LibraryItem) =>
   (item.pageCount ?? 0) > 0;
 export const libraryItemStatus = (item: LibraryItem) =>
   readableLibraryItem(item) ? "已入库 · 电脑漫画库" : "文件待核对";
+export const inventoryScopeNote =
+  "按本软件对应来源的下载记录和实际文件统计；未登记的旧漫画可能显示“未入库”。";
 export function createInventoryMatcher(
   library: LibrarySnapshot | undefined,
   downloads: DownloadInventorySnapshot | undefined,

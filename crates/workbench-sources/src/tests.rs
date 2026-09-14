@@ -68,6 +68,72 @@ async fn weekly_and_leaderboard_routes_preserve_source_order_and_cover_descripto
 }
 
 #[tokio::test]
+async fn weekly_issues_with_empty_titles_keep_their_date_and_query_identity() {
+    let sources = scripted(vec![
+        Ok(json!({
+            "categories":[
+                {"id":"43","title":"","time":"2026第42期09.11 - 09.04"},
+                {"id":"42","title":"Older issue","time":""},
+                {"id":"41","title":" \u{3000}","time":null}
+            ],
+            "type":[{"id":"manga","title":"日漫"}]
+        })),
+        Ok(json!({"total":1,"list":[{
+            "id":"123","name":"Synthetic weekly work","author":"Author",
+            "description":"","is_favorite":false
+        }]})),
+    ]);
+    let jm = session(Source::Jm);
+    let options = sources.ranking_options(&jm).await.unwrap();
+    assert_eq!(
+        options
+            .categories
+            .iter()
+            .map(|row| (row.id.as_str(), row.label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("43", "2026第42期09.11 - 09.04"),
+            ("42", "Older issue"),
+            ("41", "期数 41")
+        ]
+    );
+    let page = sources
+        .ranking(&jm, Some(&options.categories[0].id), &options.periods[0].id)
+        .await
+        .unwrap();
+    assert_eq!(
+        (page.items.len(), page.total, page.has_more),
+        (1, Some(1), Some(false))
+    );
+    assert_eq!(
+        sources.recorded.lock().unwrap()[1].2,
+        "/week/filter?id=43&type=manga"
+    );
+}
+
+#[tokio::test]
+async fn weekly_optional_labels_still_reject_invalid_shapes_and_oversized_values() {
+    for row in [
+        json!({"id":"42","title":{},"time":"Date"}),
+        json!({"id":"42","title":"","time":[]}),
+        json!({"id":"42","title":" ".repeat(2001),"time":"Date"}),
+        json!({"id":"42","title":"","time":"😀".repeat(1001)}),
+    ] {
+        let sources = scripted(vec![Ok(
+            json!({"categories":[row],"type":[{"id":"manga","title":"日漫"}]}),
+        )]);
+        assert_eq!(
+            sources
+                .ranking_options(&session(Source::Jm))
+                .await
+                .unwrap_err()
+                .code,
+            "SOURCE_RESPONSE_INVALID"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_short_weekly_list_is_partial_and_invalid_ranks_do_not_reach_network() {
     let sources = scripted(vec![
         Ok(json!({"total":"20","list":[{"id":"123","name":"Fixture"}]})),

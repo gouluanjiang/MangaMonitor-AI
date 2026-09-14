@@ -16,6 +16,7 @@ import {
   inventoryFilterLabels,
   inventoryFilterMatches,
   inventoryLabel,
+  inventoryScopeNote,
 } from "./inventory-model.ts";
 import type { InventoryFilter } from "./inventory-model.ts";
 import { sourceErrorMessage } from "./source-runtime.ts";
@@ -93,7 +94,13 @@ export function RankingPanel({
           return;
         setOptions(next);
         setCategory(next.categories[0]?.id ?? null);
-        setPeriod(next.periods[0]?.id ?? "");
+        setPeriod(
+          (source === "JM"
+            ? next.periods.find((option) => option.id === "manga")?.id
+            : undefined) ??
+            next.periods[0]?.id ??
+            "",
+        );
       })
       .catch((cause) => {
         if (request === epoch.current) setError(sourceErrorMessage(cause));
@@ -238,7 +245,7 @@ export function RankingPanel({
           </div>
           {error && (
             <p role="alert" className="source-notice">
-              {error} 已读取榜单保留。
+              {error} {data ? "已读取榜单保留。" : "请点击刷新榜单重试。"}
             </p>
           )}
           {busy && <p role="status">正在读取来源榜单…</p>}
@@ -274,7 +281,7 @@ export function RankingPanel({
           {data && (
             <p className="source-muted">
               来源排序 · {new Date(data.time).toLocaleString()} ·
-              入库状态按本软件对应来源的下载记录核实。
+              {inventoryScopeNote}
             </p>
           )}
           {visible.length > 0 && (
@@ -364,7 +371,13 @@ export function RankingPanel({
           />
           {!busy && !visible.length && (
             <p className="source-empty">
-              {data ? "当前筛选没有作品。" : "来源尚未返回可用榜单。"}
+              {data
+                ? complete && data.page.items.length === 0
+                  ? source === "JM"
+                    ? "本期该类型暂无作品，可以切换期数或类型。"
+                    : "来源当前榜单暂无作品。"
+                  : "当前筛选没有作品。"
+                : "来源尚未返回可用榜单。"}
             </p>
           )}
         </>

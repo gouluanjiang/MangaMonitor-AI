@@ -1,13 +1,6 @@
-import type {
-  LibraryItem,
-  LibraryReference,
-  LibrarySnapshot,
-} from "./library-types.ts";
+import type { LibraryItem, LibraryReference } from "./library-types.ts";
 import type { Source } from "./source-types.ts";
-import type { SourceMatchPair } from "./source-matches-types.ts";
-import { createSourceAliasResolver } from "./source-matches-model.ts";
 import {
-  candidateTitle,
   libraryReferences,
   libraryFilterMatches,
   compareAdded,
@@ -66,64 +59,3 @@ export function filterLibraryItems(
         a.id.localeCompare(b.id),
     );
 }
-export interface LibraryMatch {
-  kind: "unconfigured" | "exact" | "candidate" | "missing" | "incomplete";
-  items: LibraryItem[];
-}
-type SourceIdentity = { source: Source; workId: string; title: string };
-const key = (ref: LibraryReference) => ref.source + ":" + ref.workId;
-export function createLibraryMatcher(
-  snapshot: LibrarySnapshot | undefined,
-  pairs: SourceMatchPair[] = [],
-) {
-  const refs = new Map<string, LibraryItem[]>();
-  const titles = new Map<string, LibraryItem[]>();
-  const uncertain = new Map<string, LibraryItem[]>();
-  const aliases = createSourceAliasResolver(pairs);
-  for (const item of snapshot?.items ?? []) {
-    if (
-      item.state == "indexed" &&
-      item.errorCode === null &&
-      (item.pageCount ?? 0) > 0
-    )
-      for (const reference of libraryReferences(item).flatMap(aliases))
-        refs.set(key(reference), [
-          ...new Set([...(refs.get(key(reference)) ?? []), item]),
-        ]);
-    if (
-      item.state !== "indexed" ||
-      item.errorCode !== null ||
-      !(item.pageCount && item.pageCount > 0)
-    )
-      for (const reference of libraryReferences(item).flatMap(aliases))
-        uncertain.set(key(reference), [
-          ...new Set([...(uncertain.get(key(reference)) ?? []), item]),
-        ]);
-    const title = candidateTitle(item.title);
-    if (title) titles.set(title, [...(titles.get(title) ?? []), item]);
-  }
-  return (work: SourceIdentity): LibraryMatch => {
-    if (!snapshot?.rootId) return { kind: "unconfigured", items: [] };
-    const exact = refs.get(key(work));
-    if (exact?.length) return { kind: "exact", items: exact };
-    const candidates =
-      uncertain.get(key(work)) ?? titles.get(candidateTitle(work.title));
-    if (candidates?.length) return { kind: "candidate", items: candidates };
-    return {
-      kind: snapshot.phase === "complete" ? "missing" : "incomplete",
-      items: [],
-    };
-  };
-}
-export const matchLibraryWork = (
-  snapshot: LibrarySnapshot | undefined,
-  work: SourceIdentity,
-) => createLibraryMatcher(snapshot)(work);
-export const libraryMatchLabel = (match: LibraryMatch) =>
-  ({
-    unconfigured: "未选择漫画库",
-    exact: "已关联本地文件",
-    candidate: "同标题待确认",
-    missing: "目录内未匹配",
-    incomplete: "目录未读完，待核对",
-  })[match.kind];

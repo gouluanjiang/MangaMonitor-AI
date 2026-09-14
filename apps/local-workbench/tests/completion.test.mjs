@@ -2,321 +2,248 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createCompletionAdapter,
-  validateCompletionView,
-  validateCompletionSettings,
+  validateDiscoverySnapshot,
 } from "../src/completion-runtime.ts";
+import { createAuthorSearchAdapter } from "../src/author-search.ts";
+import { readCompleteSearch } from "../src/source-search.ts";
 
-// Synthetic metadata only. The native eligibility engine is tested in Rust;
-// these tests exercise the renderer boundary and explicit command intent.
 const scopes = [
-  { source: "JM", sessionId: "synthetic-JM-1" },
-  { source: "Pica", sessionId: "synthetic-Pica-1" },
+  { source: "JM", sessionId: "synthetic-jm" },
+  { source: "Pica", sessionId: "synthetic-pica" },
 ];
-const reference = { source: "Pica", workId: "0123456789abcdef01234567" };
-const groupId = "a".repeat(64);
-const evidenceHash = "b".repeat(64);
-const clone = (value) => structuredClone(value);
-const settings = { revision: 1, families: [], languages: [] };
-function view() {
-  const work = {
-    ...reference,
-    title: "Old translation [Chinese]",
-    authors: ["Synthetic Writer"],
-    description: null,
-    tags: ["Chinese"],
-    favorite: null,
-    chapterCount: 1,
-    pageCount: 20,
-    coverAvailable: false,
-  };
-  return {
-    discovery: {
-      scopes: clone(scopes),
-      revision: 4,
-      run: null,
-      authors: scopes.map((scope) => ({
-        source: scope.source,
-        author: "Synthetic Writer",
-        state: "partial",
-        lastAttemptAt: 100,
-        lastCompleteAt: null,
-        observedCount: 1,
-        pagesRead: 1,
-        errorCode: "SOURCE_UNAVAILABLE",
-      })),
-      records: [
-        {
-          work,
-          matchedAuthors: ["Synthetic Writer"],
-          authorVerified: true,
-          observedAt: 1,
-          scanId: "c".repeat(64),
-        },
-      ],
-    },
-    completeness: {
-      revision: 1,
-      phoneRevision: 2,
-      libraryRevision: 3,
-      matchesRevision: 0,
-      discoveryRevision: 4,
-      evidenceHash,
-      groups: [
-        {
-          groupId,
-          title: work.title,
-          authors: work.authors,
-          status: "translation_available",
-          reasons: [],
-          sources: [
-            {
-              reference: clone(reference),
-              title: work.title,
-              language: "chinese",
-              authorVerified: true,
-            },
-          ],
-          phone: [
-            {
-              member: { kind: "phone", name: "Original [Japanese]" },
-              name: "Original [Japanese]",
-              language: "japanese",
-            },
-          ],
-          computer: [],
-          eligible: {
-            groupId,
-            reference: clone(reference),
-            kind: "translation",
-            evidenceHash,
-          },
-        },
-      ],
-    },
-    automatic: {
-      runId: null,
-      phase: "idle",
-      queued: 0,
-      skipped: 0,
-      errorCode: null,
-    },
-  };
-}
-
-test("old omissions, partial source ranges and separate phone/PC language state survive the read-only boundary", () => {
-  const fixture = view(),
-    original = clone(fixture);
-  assert.deepEqual(validateCompletionView(fixture, scopes), fixture);
-  assert.deepEqual(fixture, original);
-  for (const status of [
-    "missing",
-    "downloaded",
-    "owned_chinese",
-    "waiting_translation",
-    "translation_downloaded",
-    "review_required",
-    "unknown",
-  ]) {
-    const next = view();
-    next.completeness.groups[0].status = status;
-    next.completeness.groups[0].eligible = null;
-    assert.equal(
-      validateCompletionView(next, scopes).completeness.groups[0].status,
-      status,
-    );
-    assert.equal(next.discovery.records[0].observedAt, 1);
-  }
-  const longTitle = view();
-  longTitle.discovery.records[0].work.title = "作".repeat(1500);
-  longTitle.completeness.groups[0].sources[0].title = "作".repeat(1500);
-  longTitle.completeness.groups[0].title = "作".repeat(1500);
-  assert.equal(
-    validateCompletionView(longTitle, scopes).completeness.groups[0].sources[0]
-      .title.length,
-    1500,
-  );
+const work = (source, n) => ({
+  source,
+  workId: source === "JM" ? String(n) : n.toString(16).padStart(24, "0"),
+  title: "Synthetic " + n,
+  authors: ["Writer"],
+  description: null,
+  tags: [],
+  favorite: null,
+  chapterCount: null,
+  pageCount: null,
+  coverAvailable: false,
 });
-
-test("account drift, malformed IDs, duplicated observations and mixed discovery generations are rejected", () => {
-  const changed = clone(scopes);
-  changed[1].sessionId = "synthetic-Pica-2";
-  assert.throws(() => validateCompletionView(view(), changed), /STALE_SESSION/);
-  const mutations = [
-    (v) => {
-      v.discovery.records.push(clone(v.discovery.records[0]));
-    },
-    (v) => {
-      v.completeness.discoveryRevision++;
-    },
-    (v) => {
-      v.completeness.groups[0].sources[0].reference.workId = "../private";
-    },
-    (v) => {
-      v.completeness.phoneRevision = Number.MAX_SAFE_INTEGER + 1;
-    },
-    (v) => {
-      v.discovery.authors[0].author = "bad\nname";
-    },
-    (v) => {
-      v.completeness.groups[0].status = "automatically_owned";
-    },
-  ];
-  for (const mutate of mutations) {
-    const invalid = view();
-    mutate(invalid);
-    assert.throws(
-      () => validateCompletionView(invalid, scopes),
-      /COMPLETENESS_INVALID|INVALID_RESPONSE/,
-    );
-  }
+const empty = () => ({
+  scopes,
+  revision: 0,
+  authors: [],
+  records: [],
+  run: null,
 });
+const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-test("eligible translation identity must agree with the enclosing group and evidence generation", () => {
-  for (const mutate of [
-    (v) => {
-      v.completeness.groups[0].eligible.groupId = "d".repeat(64);
-    },
-    (v) => {
-      v.completeness.groups[0].eligible.evidenceHash = "e".repeat(64);
-    },
-    (v) => {
-      v.completeness.groups[0].eligible.reference = {
-        source: "JM",
-        workId: "999",
-      };
-    },
-    (v) => {
-      v.completeness.groups[0].sources[0].authorVerified = false;
-    },
-    (v) => {
-      v.completeness.groups[0].sources[0].language = "unknown";
-    },
-  ]) {
-    const invalid = view();
-    mutate(invalid);
-    assert.throws(
-      () => validateCompletionView(invalid, scopes),
-      /COMPLETENESS_INVALID/,
-    );
-  }
-});
-
-test("reading and correction commands never silently start scanning or authorize downloads", async () => {
+test("opening author updates reads saved metadata only; explicit check invokes discovery without download authority", async () => {
   const calls = [];
   const adapter = createCompletionAdapter({
     native: true,
     invoke: async (command, args) => {
       calls.push({ command, args });
-      return command === "completeness_cancel"
-        ? undefined
-        : command === "completeness_read" || command === "completeness_start"
-          ? view()
-          : clone(settings);
+      if (command === "discovery_start")
+        return {
+          runId: "scan-1",
+          snapshot: {
+            ...empty(),
+            run: {
+              id: "scan-1",
+              phase: "checking",
+              currentAuthor: null,
+              currentSource: null,
+              currentPage: 0,
+              requestsUsed: 0,
+              completedScopes: 0,
+              totalScopes: 2,
+              errorCode: null,
+            },
+          },
+        };
+      return empty();
     },
   });
   await adapter.read(scopes);
-  await adapter.read(scopes, true);
-  await adapter.settings();
-  await adapter.family(1, [
-    { kind: "source", reference },
-    { kind: "phone", name: "Original [Japanese].zip" },
-  ]);
-  await adapter.language(
-    2,
-    { kind: "phone", name: "Original [Japanese]" },
-    "japanese",
+  assert.deepEqual(
+    calls.map((call) => call.command),
+    ["discovery_read"],
   );
-  await adapter.language(
-    3,
-    { kind: "phone", name: "Original [Japanese]" },
-    null,
+  await adapter.start(scopes, []);
+  await adapter.cancel("scan-1");
+  assert.deepEqual(
+    calls.map((call) => call.command),
+    ["discovery_read", "discovery_start", "discovery_cancel"],
   );
-  await adapter.unlink(4, groupId);
-  assert.equal(
-    calls.filter((call) => /start|download/.test(call.command)).length,
-    0,
-  );
-  assert.deepEqual(calls[1], {
-    command: "completeness_read",
-    args: { scopes, recheckFiles: true },
-  });
-  assert.deepEqual(calls[3].args, {
-    revision: 1,
-    members: [
-      { kind: "source", reference },
-      { kind: "phone", name: "Original [Japanese].zip" },
-    ],
-  });
-  await adapter.start(scopes, [], true, "f".repeat(64), 3);
-  assert.deepEqual(calls.at(-1), {
-    command: "completeness_start",
-    args: {
+  assert.deepEqual(calls[1].args, { scopes, authors: [] });
+});
+
+test("old session or malformed discovery snapshots cannot replace current results", () => {
+  assert.throws(() =>
+    validateDiscoverySnapshot(
+      { ...empty(), scopes: [{ ...scopes[0], sessionId: "old" }, scopes[1]] },
       scopes,
-      authors: [],
-      automatic: true,
-      rootId: "f".repeat(64),
-      generation: 3,
-    },
-  });
-  await adapter.start(scopes, ["Synthetic Writer"], false, null, 0);
-  assert.equal(calls.at(-1).args.automatic, false);
-  await adapter.cancel("c".repeat(64));
-  assert.deepEqual(calls.at(-1), {
-    command: "completeness_cancel",
-    args: { runId: "c".repeat(64) },
-  });
-});
-
-test("manual family and per-member language settings retain references and no file authority", () => {
-  const family = {
-    revision: 1,
-    families: [
+    ),
+  );
+  assert.throws(() =>
+    validateDiscoverySnapshot(
       {
-        id: groupId,
-        members: [
-          { kind: "source", reference },
-          { kind: "phone", name: "Original [Japanese]" },
+        ...empty(),
+        records: [
+          {
+            work: work("JM", 1),
+            matchedAuthors: [],
+            authorVerified: true,
+            observedAt: -1,
+            scanId: "x",
+          },
         ],
       },
-    ],
-    languages: [
-      {
-        member: { kind: "computer", itemId: "f".repeat(64) },
-        language: "chinese",
-      },
-    ],
+      scopes,
+    ),
+  );
+  assert.throws(() =>
+    validateDiscoverySnapshot(
+      { ...empty(), scopes: [scopes[0], scopes[0]] },
+      scopes,
+    ),
+  );
+});
+
+test("complete search reads all 1200 results sequentially and gives final counts only after the final page", async () => {
+  const calls = [],
+    seen = [];
+  let active = 0,
+    maxActive = 0;
+  const adapter = {
+    query: async (scope, query) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await flush();
+      active--;
+      calls.push(query.page);
+      return {
+        ...scope,
+        page: query.page,
+        pages: 60,
+        total: 1200,
+        hasMore: query.page < 60,
+        folders: [],
+        items: Array.from({ length: 20 }, (_, i) =>
+          work(scope.source, (query.page - 1) * 20 + i + 1),
+        ),
+      };
+    },
   };
-  assert.deepEqual(validateCompletionSettings(family), family);
-  assert.throws(
-    () =>
-      validateCompletionSettings({
-        ...family,
-        languages: [
-          { member: family.languages[0].member, language: "auto_chinese" },
-        ],
+  await readCompleteSearch(adapter, scopes[0], "Writer", {
+    current: () => true,
+    onPage: (value) => seen.push(value),
+  });
+  assert.equal(maxActive, 1);
+  assert.equal(calls.length, 60);
+  assert.equal(seen.at(-1).items.length, 1200);
+  assert.equal(seen.at(-1).complete, true);
+  assert.ok(seen.slice(0, -1).every((value) => !value.complete));
+});
+
+test("short, repeated and failed pages retain partial data and never report full coverage", async () => {
+  for (const mode of ["short", "repeat", "network"]) {
+    const seen = [];
+    const adapter = {
+      query: async (scope, query) => {
+        if (mode === "network" && query.page === 2)
+          throw new Error("synthetic");
+        return {
+          ...scope,
+          page: query.page,
+          pages: null,
+          total: 3,
+          hasMore: query.page < 2,
+          folders: [],
+          items: [work(scope.source, mode === "repeat" ? 1 : query.page)],
+        };
+      },
+    };
+    await assert.rejects(
+      readCompleteSearch(adapter, scopes[0], "Writer", {
+        current: () => true,
+        onPage: (value) => seen.push(value),
       }),
-    /COMPLETENESS_INVALID/,
+    );
+    assert.ok(seen.length);
+    assert.ok(seen.every((value) => !value.complete));
+  }
+});
+
+test("ad-hoc author lookup needs no following and visits both sources even when one fails", async () => {
+  const calls = [];
+  const adapter = createAuthorSearchAdapter({
+    query: async (scope, query) => {
+      calls.push([scope.source, query.page]);
+      if (scope.source === "JM" && query.page === 2)
+        throw new Error("synthetic");
+      return {
+        ...scope,
+        page: query.page,
+        pages: 2,
+        total: 2,
+        hasMore: query.page < 2,
+        folders: [],
+        items: [work(scope.source, query.page)],
+      };
+    },
+  });
+  await adapter.read(scopes);
+  assert.equal(calls.length, 0);
+  const start = await adapter.start(scopes, ["New Writer"]);
+  assert.equal(start.run.phase, "checking");
+  for (
+    let attempt = 0;
+    attempt < 10 && (await adapter.read(scopes)).run.phase === "checking";
+    attempt++
+  )
+    await flush();
+  const result = await adapter.read(scopes);
+  assert.deepEqual(calls, [
+    ["JM", 1],
+    ["JM", 2],
+    ["Pica", 1],
+    ["Pica", 2],
+  ]);
+  assert.equal(result.run.phase, "partial");
+  assert.equal(result.records.length, 3);
+  assert.equal(
+    result.authors.find((range) => range.source === "JM").state,
+    "error",
   );
 });
 
-test("browser-only adapters refuse IPC and private native error details never escape", async () => {
-  await assert.rejects(
-    createCompletionAdapter({
-      native: false,
-      invoke: async () => assert.fail("must not invoke"),
-    }).read(scopes),
-    /DESKTOP_REQUIRED/,
-  );
-  const native = createCompletionAdapter({
-    native: true,
-    invoke: async () => {
-      throw { code: "not a code", message: "PRIVATE PATH TOKEN" };
+test("cancellation and account changes reject late search responses and stop further requests", async () => {
+  let release,
+    count = 0;
+  const adapter = createAuthorSearchAdapter({
+    query: async (scope, query) => {
+      count++;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+      return {
+        ...scope,
+        page: query.page,
+        pages: 3,
+        total: 3,
+        hasMore: true,
+        folders: [],
+        items: [work(scope.source, query.page)],
+      };
     },
   });
-  await assert.rejects(
-    native.read(scopes),
-    (error) =>
-      error.code === "COMPLETENESS_UNAVAILABLE" &&
-      !String(error).includes("PRIVATE"),
-  );
+  const started = await adapter.start(scopes, ["Writer"]);
+  await adapter.cancel(started.run.id);
+  release();
+  await flush();
+  assert.equal(count, 1);
+  assert.equal((await adapter.read(scopes)).records.length, 0);
+  await adapter.start(scopes, ["Writer"]);
+  const newScopes = [{ ...scopes[0], sessionId: "new-account" }, scopes[1]];
+  await adapter.read(newScopes);
+  release();
+  await flush();
+  assert.equal((await adapter.read(newScopes)).records.length, 0);
+  assert.equal(count, 2);
 });

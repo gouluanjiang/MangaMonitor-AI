@@ -117,6 +117,14 @@ impl DownloadService {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Read completion receipts and stat only their recorded files. Keep this
+    /// separate from queue polling so a large completed library is not checked
+    /// or serialized again for every image-progress update.
+    pub fn inventory(&self, store: &WorkbenchStore) -> Result<crate::DownloadInventorySnapshot> {
+        let downloads = self.load_shared(store)?;
+        let library = store.read_library_shared()?;
+        Ok(crate::inventory::project(&downloads, &library))
+    }
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Runtime>> {
         self.runtime
             .lock()
@@ -1209,39 +1217,15 @@ fn check_new_download(
         }
     }
     let mut missing = BTreeSet::new();
+    // Only a stale row at the exact selected output path can be retired here.
+    // Metadata IDs and historical matching links do not block another download.
     for old in &library.records {
-        let matches_reference = old.item.references().any(|reference| {
-            reference.source == record.source && reference.work_id == record.metadata.work_id
-        });
-        let previous_association = downloads.tasks.iter().any(|task| {
-            task.root == record.root
-                && task.source == record.source
-                && task.metadata.work_id == record.metadata.work_id
-                && (task.library_entry_id.as_ref() == Some(&old.item.id)
-                    || library
-                        .relocated_path(&task.destination)
-                        .is_some_and(|v| v.new_item_id == old.item.id))
-        }) || downloads.history_evidence.iter().any(|task| {
-            task.root == record.root
-                && task.source == record.source
-                && task.work_id == record.metadata.work_id
-                && (task.library_entry_id == old.item.id
-                    || library
-                        .relocated_path(&task.destination)
-                        .is_some_and(|v| v.new_item_id == old.item.id))
-        });
-        if !matches_reference {
-            if old.item.relative_path == record.destination
-                || (old.manual_override && previous_association)
-            {
-                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
+        if old.item.relative_path == record.destination {
+            if presence::probe_path(&root, &old.item.relative_path)?.is_some() {
+                return Err(error("DOWNLOAD_DESTINATION_EXISTS"));
             }
-            continue;
+            missing.insert(old.item.id.clone());
         }
-        if presence::probe_path(&root, &old.item.relative_path)?.is_some() {
-            return Err(error("DOWNLOAD_ALREADY_PRESENT"));
-        }
-        missing.insert(old.item.id.clone());
     }
     if root
         .names()?

@@ -43,6 +43,82 @@ pub(crate) fn check(record: &DownloadRecord) -> LocalFiles {
     check_inner(record).unwrap_or(LocalFiles::Unavailable)
 }
 
+/// Clearing queue history retains a receipt, not a manga identity relation.
+/// The recorded path and current file identity are the only library evidence
+/// used here. Titles, source metadata and old manual links are irrelevant.
+pub(crate) fn check_history(
+    receipt: &workbench_storage::DownloadHistoryEvidence,
+    relocated: Option<&workbench_storage::LibraryRelocation>,
+    record: Option<&workbench_storage::LibraryRecord>,
+) -> LocalFiles {
+    let result = (|| -> Result<LocalFiles> {
+        let open_root = || -> Result<Directory> {
+            let root = Directory::open(std::path::Path::new(&receipt.root.path))?;
+            if root.key()? != receipt.root.file_key {
+                return Err(error("DOWNLOAD_ROOT_CHANGED"));
+            }
+            Ok(root)
+        };
+        let root = open_root()?;
+        let path = relocated.map_or(receipt.destination.as_str(), |v| &v.new_path);
+        let Some(kind) = probe_path(&root, path)? else {
+            open_root()?;
+            return Ok(LocalFiles::Missing);
+        };
+        let Some(record) = record else {
+            return Ok(LocalFiles::Unavailable);
+        };
+        let Some(expected) = relocated.map(|v| &v.identity).or(record.identity.as_ref()) else {
+            return Ok(LocalFiles::Unavailable);
+        };
+        if record.item.relative_path != path
+            || record.item.state != workbench_storage::LibraryItemState::Indexed
+            || record.item.error_code.is_some()
+            || record.item.page_count.is_none_or(|pages| pages == 0)
+        {
+            return Ok(LocalFiles::Incomplete);
+        }
+        let mut parts = path.split('/').peekable();
+        let mut parent = None;
+        let mut leaf = "";
+        while let Some(part) = parts.next() {
+            if parts.peek().is_none() {
+                leaf = part;
+            } else {
+                parent = Some(parent.as_ref().unwrap_or(&root).child(part)?);
+            }
+        }
+        let directory = parent.as_ref().unwrap_or(&root);
+        let file = match kind {
+            EntryKind::File(bytes) if bytes == expected.bytes && bytes > 0 => {
+                directory.read(leaf)?
+            }
+            EntryKind::Directory => directory.child(leaf)?.file,
+            _ => return Ok(LocalFiles::Incomplete),
+        };
+        let metadata = file.metadata().map_err(|_| error("DOWNLOAD_READ_FAILED"))?;
+        #[cfg(windows)]
+        let modified = {
+            use std::os::windows::fs::MetadataExt;
+            metadata.last_write_time().to_string()
+        };
+        #[cfg(unix)]
+        let modified = {
+            use std::os::unix::fs::MetadataExt;
+            format!("{}:{}", metadata.mtime(), metadata.mtime_nsec())
+        };
+        let state =
+            if crate::fs::file_key(&file)? == expected.file_key && modified == expected.modified {
+                LocalFiles::Present
+            } else {
+                LocalFiles::Incomplete
+            };
+        open_root()?;
+        Ok(state)
+    })();
+    result.unwrap_or(LocalFiles::Unavailable)
+}
+
 pub(crate) fn relocation<'a>(
     record: &DownloadRecord,
     library: &'a workbench_storage::LibraryDocument,

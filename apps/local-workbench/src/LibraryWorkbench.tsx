@@ -9,16 +9,10 @@ import {
 import type {
   LibraryAdapter,
   LibraryItem,
-  LibraryReference,
   LibrarySnapshot,
 } from "./library-types.ts";
 import { LibraryController, libraryErrorMessage } from "./library-runtime.ts";
-import {
-  filterLibraryItems,
-  normalizeLibraryText,
-  parseLibraryReference,
-  createLibraryMatcher,
-} from "./library-model.ts";
+import { filterLibraryItems, normalizeLibraryText } from "./library-model.ts";
 import { getLibraryCoverCache } from "./library-cover-cache.ts";
 import type {
   LibraryCoverLease,
@@ -32,7 +26,6 @@ import "./library-workbench.css";
 import {
   libraryFilterLabels,
   libraryFilterMatches,
-  libraryReferences,
 } from "./library-matching.ts";
 import type { LibraryFilter, LibrarySort } from "./library-matching.ts";
 
@@ -312,23 +305,11 @@ function LibraryDetail({
   item,
   library,
   onBack,
-  externalWork,
-  pairs = [],
 }: {
   item: LibraryItem;
   library: LibraryState;
   onBack(): void;
-  externalWork?: SourceWork | null;
-  pairs?: import("./source-matches-types.ts").SourceMatchPair[];
 }) {
-  const [source, setSource] = useState<"JM" | "Pica">(
-    externalWork?.source ?? item.sourceRef?.source ?? "JM",
-  );
-  const [input, setInput] = useState(
-    externalWork?.workId ?? item.sourceRef?.workId ?? "",
-  );
-  const [notice, setNotice] = useState("");
-  const ref = parseLibraryReference(source, input);
   return (
     <div className="source-detail" data-testid="library-detail">
       <button
@@ -393,92 +374,6 @@ function LibraryDetail({
               {libraryErrorMessage(item.errorCode)} 请核对文件后重新读取漫画库。
             </p>
           )}
-          <section className="library-link-form">
-            <h2>关联来源作品</h2>
-            <p className="source-muted">
-              标题相似只作为候选。确认来源与编号后，才能与在线收藏准确对应。这里只保存关联，不访问网站。
-            </p>
-            {item.sourceRef && (
-              <p data-testid="library-reference">
-                当前：{item.sourceRef.source} · {item.sourceRef.workId}（
-                {item.identityEvidence === "manual"
-                  ? "手动确认"
-                  : item.identityEvidence === "metadata"
-                    ? "漫画信息文件"
-                    : "文件名编号"}
-                ）
-              </p>
-            )}
-            {(item.links ?? []).map((link) => (
-              <p
-                key={link.reference.source}
-                data-testid="library-extra-reference"
-              >
-                {link.reference.source} · {link.reference.workId}（
-                {link.evidence === "manual"
-                  ? "已确认"
-                  : "标题、作者和页数一致，自动关联"}
-                ）
-              </p>
-            ))}
-            <div className="source-actions">
-              <select
-                aria-label="关联来源"
-                data-testid="library-source"
-                value={source}
-                onChange={(event) =>
-                  setSource(event.target.value as "JM" | "Pica")
-                }
-              >
-                <option>JM</option>
-                <option>Pica</option>
-              </select>
-              <input
-                aria-label="来源作品编号"
-                data-testid="library-source-id"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder={source === "JM" ? "JM 编号" : "24 位 Pica 编号"}
-              />
-              <button
-                className="button secondary"
-                data-testid="library-link"
-                disabled={!ref || library.busy}
-                onClick={() => {
-                  if (!ref) return;
-                  if (
-                    libraryReferences(item).some(
-                      (value) => value.source !== ref.source,
-                    )
-                  )
-                    void library.controller.associate(item.id, ref);
-                  else void library.controller.link(item.id, ref);
-                }}
-              >
-                确认关联
-              </button>
-              {libraryReferences(item).length > 0 && (
-                <button
-                  className="text-button"
-                  data-testid="library-unlink"
-                  disabled={library.busy}
-                  onClick={() => void library.controller.link(item.id, null)}
-                >
-                  清空来源关联
-                </button>
-              )}
-            </div>
-            {input && !ref && (
-              <p role="status" className="source-muted">
-                请输入有效的 {source} 作品编号。
-              </p>
-            )}
-          </section>
-          {(notice || library.error) && (
-            <p role="status" className="source-notice">
-              {library.error || notice}
-            </p>
-          )}
           <h2>电脑位置</h2>
           <p className="library-path">{item.relativePath}</p>
           <p className="source-muted">
@@ -503,7 +398,6 @@ export function LibraryWorkbench({
   query,
   externalWork,
   externalEntryId,
-  pairs = [],
   requestKey = 0,
 }: {
   library: LibraryState;
@@ -513,7 +407,6 @@ export function LibraryWorkbench({
   query: string;
   externalWork?: SourceWork | null;
   externalEntryId?: string | null;
-  pairs?: import("./source-matches-types.ts").SourceMatchPair[];
   requestKey?: number;
 }) {
   const [sort, setSort] = useState<LibrarySort>("added-desc"),
@@ -545,10 +438,9 @@ export function LibraryWorkbench({
   useEffect(() => {
     if (!externalWork || requestKey === 0) return;
     setFilter("all");
-    const match = createLibraryMatcher(library.snapshot, pairs)(externalWork);
-    const exact =
-      library.snapshot.items.find((item) => item.id === externalEntryId) ??
-      (match.kind === "exact" ? match.items[0] : undefined);
+    const exact = library.snapshot.items.find(
+      (item) => item.id === externalEntryId,
+    );
     setDetailId(exact?.id ?? null);
   }, [requestKey]);
   useLayoutEffect(() => {
@@ -599,9 +491,7 @@ export function LibraryWorkbench({
           key={detail.id}
           item={detail}
           library={library}
-          pairs={pairs}
           onBack={back}
-          externalWork={externalWork}
         />
       ) : (
         <>
@@ -609,7 +499,7 @@ export function LibraryWorkbench({
             <div>
               <div className="product-name">MangaMonitor</div>
               <h1>漫画库</h1>
-              <p>浏览电脑中的作品，查找与核对来源关联</p>
+              <p>浏览电脑漫画库中的作品与文件信息</p>
             </div>
           </div>
           <div className="library-toolbar">

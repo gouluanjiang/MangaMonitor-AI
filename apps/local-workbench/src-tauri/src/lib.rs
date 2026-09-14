@@ -1,10 +1,7 @@
 mod accounts;
-mod completeness;
 mod discovery;
 mod downloads;
 mod library;
-mod matches;
-mod phone;
 
 use accounts::DesktopAccounts;
 use std::{
@@ -157,7 +154,6 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .manage(Arc::new(library::DesktopLibrary::default()))
         .manage(Arc::new(downloads::DesktopDownloads::default()))
-        .manage(Arc::new(completeness::DesktopCompleteness::default()))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_preferences,
@@ -168,37 +164,21 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             discovery::discovery_read,
             discovery::discovery_start,
             discovery::discovery_cancel,
-            completeness::completeness_read,
-            completeness::completeness_start,
-            completeness::completeness_cancel,
-            completeness::completeness_settings_read,
-            completeness::completeness_family_confirm,
-            completeness::completeness_family_unlink,
-            completeness::completeness_language_set,
             downloads::jm_download_prepare,
             downloads::jm_download_confirm,
             downloads::jm_download_read,
+            downloads::download_inventory_read,
             downloads::jm_download_control,
             downloads::jm_download_batch_prepare,
             downloads::jm_download_batch_confirm,
             downloads::jm_download_pause_all,
             downloads::jm_download_resume_many,
             downloads::jm_download_history_remove,
-            matches::source_matches_read,
-            matches::source_matches_confirm,
-            matches::source_matches_unlink,
             library::library_read,
             library::library_choose,
             library::library_import_paths,
             library::library_scan,
             library::library_cover,
-            library::library_link,
-            library::library_associate,
-            library::library_reconcile,
-            phone::phone_library_read,
-            phone::phone_library_import,
-            phone::phone_library_mark,
-            phone::phone_library_unmark,
             accounts::source_accounts,
             accounts::source_login,
             accounts::source_logout,

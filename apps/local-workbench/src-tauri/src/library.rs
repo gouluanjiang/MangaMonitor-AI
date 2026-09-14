@@ -2,9 +2,7 @@ use crate::{require_main, DesktopStore};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Runtime, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
-use workbench_library::{
-    LibraryCover, LibraryReference, LibraryService, LibrarySnapshot, ScanAction,
-};
+use workbench_library::{LibraryCover, LibraryService, LibrarySnapshot, ScanAction};
 use workbench_storage::{StoreError, WorkbenchStore};
 
 #[derive(Default)]
@@ -45,43 +43,6 @@ pub(crate) async fn library_read<R: Runtime>(
         Arc::clone(library.inner()),
         Arc::clone(store.inner()),
         |service, store| service.read_current_files(store),
-    )
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn library_reconcile<R: Runtime>(
-    window: WebviewWindow<R>,
-    library: State<'_, Arc<DesktopLibrary>>,
-    store: State<'_, Arc<DesktopStore>>,
-    root_id: String,
-    generation: u64,
-    works: Vec<workbench_storage::LibraryMatchWork>,
-) -> Result<workbench_library::LibraryReconcileResult, StoreError> {
-    require_main(window.label())?;
-    with_library(
-        Arc::clone(library.inner()),
-        Arc::clone(store.inner()),
-        move |service, store| service.reconcile(store, &root_id, generation, &works, true),
-    )
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn library_associate<R: Runtime>(
-    window: WebviewWindow<R>,
-    library: State<'_, Arc<DesktopLibrary>>,
-    store: State<'_, Arc<DesktopStore>>,
-    root_id: String,
-    generation: u64,
-    entry_id: String,
-    reference: LibraryReference,
-) -> Result<LibrarySnapshot, StoreError> {
-    require_main(window.label())?;
-    with_library(
-        Arc::clone(library.inner()),
-        Arc::clone(store.inner()),
-        move |service, store| service.associate(store, &root_id, generation, &entry_id, reference),
     )
     .await
 }
@@ -198,25 +159,6 @@ pub(crate) async fn library_cover<R: Runtime>(
         Arc::clone(library.inner()),
         Arc::clone(store.inner()),
         move |service, store| service.cover(store, &root_id, generation, &entry_id),
-    )
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn library_link<R: Runtime>(
-    window: WebviewWindow<R>,
-    library: State<'_, Arc<DesktopLibrary>>,
-    store: State<'_, Arc<DesktopStore>>,
-    root_id: String,
-    generation: u64,
-    entry_id: String,
-    reference: Option<LibraryReference>,
-) -> Result<LibrarySnapshot, StoreError> {
-    require_main(window.label())?;
-    with_library(
-        Arc::clone(library.inner()),
-        Arc::clone(store.inner()),
-        move |service, store| service.link(store, &root_id, generation, &entry_id, reference),
     )
     .await
 }

@@ -41,32 +41,57 @@ const snapshot = (items = [item]) => ({
   updatedAt: 1,
 });
 
-test("renamed real PC identities are owned, unavailable files require review, and partial catalogs never prove absence", () => {
-  assert.equal(createInventoryMatcher(snapshot())(work).kind, "owned");
-  for (const invalid of [
-    { state: "unreadable" },
-    { errorCode: "LIBRARY_FILE_CHANGED" },
-    { pageCount: 0 },
-  ])
+const receipt = (state = "present") => ({
+  revision: 1,
+  libraryRevision: 1,
+  rootId,
+  items: [
+    { source: "JM", workId: "123", libraryEntryId: entryId, localFiles: state },
+  ],
+});
+test("only same-source download receipts grant ownership; metadata, title and manual links do not", () => {
+  assert.equal(
+    createInventoryMatcher(snapshot(), { ...receipt(), items: [] })(work).kind,
+    "missing",
+  );
+  assert.equal(
+    createInventoryMatcher(snapshot(), receipt())(work).kind,
+    "owned",
+  );
+  assert.equal(
+    createInventoryMatcher(
+      snapshot(),
+      receipt(),
+    )({ ...work, source: "Pica", workId: "0123456789abcdef01234567" }).kind,
+    "missing",
+  );
+  assert.equal(
+    createInventoryMatcher(snapshot(), receipt("missing"))(work).kind,
+    "missing",
+  );
+  for (const state of ["incomplete", "unavailable"])
     assert.equal(
-      createInventoryMatcher(snapshot([{ ...item, ...invalid }]))(work).kind,
-      "candidate",
+      createInventoryMatcher(snapshot(), receipt(state))(work).kind,
+      "unknown",
     );
   assert.equal(
-    createInventoryMatcher(snapshot(), [], true, false)(work).kind,
+    createInventoryMatcher(snapshot(), receipt(), false)(work).kind,
     "unknown",
   );
   assert.equal(
-    createInventoryMatcher(snapshot(), [], false)(work).kind,
+    createInventoryMatcher(snapshot(), {
+      ...receipt(),
+      rootId: "c".repeat(64),
+    })(work).kind,
     "unknown",
   );
-  assert.equal(createInventoryMatcher(snapshot([]))(work).kind, "missing");
   assert.equal(
-    createInventoryMatcher({ ...snapshot([]), phase: "paused" })(work).kind,
-    "incomplete",
+    createInventoryMatcher({ ...snapshot(), phase: "paused" }, receipt())(work)
+      .kind,
+    "owned",
   );
   assert.equal(
-    createInventoryMatcher(emptyLibrary())(work).kind,
+    createInventoryMatcher(emptyLibrary(), receipt())(work).kind,
     "unconfigured",
   );
 });

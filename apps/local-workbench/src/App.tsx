@@ -60,8 +60,7 @@ import type {
 } from "./download-types.ts";
 import { parseLibraryReference } from "./library-model.ts";
 import { NativeBooklistMembers } from "./NativeBooklistMembers.tsx";
-import { createSourceMatchesAdapter } from "./source-matches-runtime.ts";
-import { useSourceMatches } from "./SourceMatchesPanel.tsx";
+import { useDownloadInventory } from "./download-inventory.ts";
 import { createInventoryMatcher } from "./inventory-model.ts";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
 import { boundSourceCache } from "./source-memory.ts";
@@ -75,7 +74,6 @@ import type {
 const sourceAdapter = createSourceAdapter();
 const libraryAdapter = createLibraryAdapter();
 const downloadAdapter = createDownloadAdapter();
-const sourceMatchesAdapter = createSourceMatchesAdapter();
 const persistence = createWorkbenchPersistence({ fixture: activeFixture });
 const workReference = (work: Work): WorkReference => ({
   source: work.source,
@@ -100,6 +98,7 @@ type Page =
   | "library"
   | "favorites"
   | "discovery"
+  | "author-search"
   | "completion"
   | "queue"
   | "authors"
@@ -109,7 +108,8 @@ const pageNames: Record<Page, string> = {
   library: "漫画库",
   favorites: "在线收藏",
   discovery: "发现",
-  completion: "作者作品补全",
+  completion: "作者更新",
+  "author-search": "作者搜索",
   queue: "下载队列",
   authors: "关注",
   settings: "设置",
@@ -185,25 +185,6 @@ export default function App() {
     useState<DownloadTask | null>(null);
   const [libraryNavigationKey, setLibraryNavigationKey] = useState(0);
   const library = useLibrary(libraryAdapter, persistence.native);
-  const sourceMatches = useSourceMatches(
-    sourceMatchesAdapter,
-    persistence.native,
-  );
-  const downloadInventory = useMemo(
-    () =>
-      createInventoryMatcher(
-        library.snapshot,
-        sourceMatches.snapshot.pairs,
-        sourceMatches.ready,
-        !library.error,
-      ),
-    [
-      library.snapshot,
-      sourceMatches.snapshot.pairs,
-      sourceMatches.ready,
-      library.error,
-    ],
-  );
   const [requestedLibraryWork, setRequestedLibraryWork] =
     useState<SourceWork | null>(null);
   const [libraryRequestKey, setLibraryRequestKey] = useState(0);
@@ -327,6 +308,29 @@ export default function App() {
     persistence.native ? { ...initialDemoState(), tasks: [] } : readSavedDemo(),
   );
   const [page, setPage] = useState<Page>("library");
+  const downloadLibrary = useDownloadInventory(
+    downloadAdapter,
+    persistence.native,
+    library.snapshot,
+    downloads.snapshot,
+    page,
+  );
+  const downloadInventory = useMemo(
+    () =>
+      createInventoryMatcher(
+        library.snapshot,
+        downloadLibrary.snapshot,
+        downloadLibrary.ready && !downloadLibrary.error,
+        !library.error,
+      ),
+    [
+      library.snapshot,
+      library.error,
+      downloadLibrary.snapshot,
+      downloadLibrary.ready,
+      downloadLibrary.error,
+    ],
+  );
   const [detail, setDetail] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState("chapters");
   const [filter, setFilter] = useState<Filter>("all");
@@ -550,41 +554,6 @@ export default function App() {
     }
     const id =
       work?.workId ?? parseLibraryReference(requestedSource, input)?.workId;
-    const missingEntries = new Set(
-      currentDownloads.snapshot.tasks
-        .filter(
-          (task) =>
-            task.source === requestedSource &&
-            task.workId === id &&
-            task.phase === "downloaded" &&
-            task.localFiles === "missing",
-        )
-        .map((task) => task.libraryEntryId),
-    );
-    const existing = id
-      ? currentLibrary.items.find(
-          (item) =>
-            item.sourceRef?.source === requestedSource &&
-            item.sourceRef.workId === id &&
-            !missingEntries.has(item.id),
-        )
-      : undefined;
-    if (existing && id) {
-      setNotice("电脑已有该作品副本，请先核对电脑文件。");
-      showDownloadLibrary({
-        source: requestedSource,
-        workId: id,
-        title: existing.title,
-        authors: existing.authors,
-        description: existing.description,
-        tags: existing.tags,
-        favorite: null,
-        chapterCount: null,
-        pageCount: existing.pageCount,
-        coverAvailable: existing.coverAvailable,
-      });
-      return;
-    }
     void downloads.controller.prepare(downloadContext, id ?? input);
   }
   function openSourceFavorites(source: Source) {
@@ -2013,9 +1982,14 @@ export default function App() {
               ["queue", "download"],
               ["authors", "people"],
               ["completion", "completeness"],
+              ["author-search", "search"],
             ] as const
           )
-            .filter(([value]) => persistence.native || value !== "completion")
+            .filter(
+              ([value]) =>
+                persistence.native ||
+                !["completion", "author-search"].includes(value),
+            )
             .map(([value, icon]) => (
               <button
                 key={value}
@@ -2192,7 +2166,6 @@ export default function App() {
               query={query}
               externalWork={requestedLibraryWork}
               externalEntryId={requestedLibraryEntryId}
-              pairs={sourceMatches.snapshot.pairs}
               requestKey={libraryRequestKey}
             />
           )}
@@ -2223,29 +2196,31 @@ export default function App() {
                   void beginDownload(task.workId, undefined, task.source);
               }}
               showFeedback={downloadFeedback}
-              inventoryHint={(plan) => {
-                const match = downloadInventory(plan);
-                if (match.kind !== "owned") return null;
-                return match.items.some(
-                  (item) => item.sourceRef?.source !== plan.source,
-                )
-                  ? "已确认的另一来源版本在漫画库中存在，请核对是否需要再保存当前来源的副本。"
-                  : "漫画库已有此作品，请核对版本后确认是否保留另一份副本。";
-              }}
+              inventoryHint={(plan) =>
+                downloadInventory(plan).kind === "owned"
+                  ? "该来源作品已下载并保存在漫画库中。"
+                  : null
+              }
             />
           )}
-          {persistence.native && page === "completion" && (
-            <CompletionPanel
-              accounts={accounts}
-              sourceAdapter={sourceAdapter}
-              library={library.snapshot}
-              density={appearance.density}
-              onOpenWork={openSourceWork}
-              onDownload={(work) => void beginDownload(work.workId, work)}
-              onOpenLibrary={() => navigate("library")}
-              onOpenAccounts={() => navigate("settings")}
-            />
-          )}
+          {persistence.native &&
+            ["completion", "author-search"].includes(page) && (
+              <CompletionPanel
+                key={page}
+                mode={page === "author-search" ? "search" : "updates"}
+                accounts={accounts}
+                sourceAdapter={sourceAdapter}
+                library={library.snapshot}
+                inventorySnapshot={downloadLibrary.snapshot}
+                inventoryReady={downloadLibrary.ready && !downloadLibrary.error}
+                onRefreshInventory={downloadLibrary.refresh}
+                density={appearance.density}
+                onOpenWork={openSourceWork}
+                onDownload={(work) => void beginDownload(work.workId, work)}
+                onOpenLibrary={() => navigate("library")}
+                onOpenAccounts={() => navigate("settings")}
+              />
+            )}
           {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
@@ -2258,31 +2233,12 @@ export default function App() {
                     selected[0].source,
                   );
               }}
-              matches={sourceMatches}
+              downloadInventory={downloadLibrary.snapshot}
+              inventoryReady={downloadLibrary.ready && !downloadLibrary.error}
               downloadReady={downloads.ready}
               downloadBusy={downloads.busy}
               librarySnapshot={library.snapshot}
               libraryReady={!library.error}
-              libraryBusy={library.busy}
-              onReconcileLibrary={(works) =>
-                library.controller.reconcile(
-                  works.map(
-                    ({ source, workId, title, authors, pageCount }) => ({
-                      source,
-                      workId,
-                      title,
-                      authors,
-                      pageCount,
-                    }),
-                  ),
-                )
-              }
-              onAssociateLibrary={(entryId, work) =>
-                library.controller.associate(entryId, {
-                  source: work.source,
-                  workId: work.workId,
-                })
-              }
               onOpenLibrary={(work, entryId) => {
                 setRequestedLibraryEntryId(entryId ?? null);
                 navigate("library");
@@ -2311,7 +2267,7 @@ export default function App() {
           )}
           {sourceActive ||
           libraryActive ||
-          (persistence.native && page === "completion")
+          (persistence.native && ["completion", "author-search"].includes(page))
             ? null
             : currentWork
               ? renderDetail(currentWork)

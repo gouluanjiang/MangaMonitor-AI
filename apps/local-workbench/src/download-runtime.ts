@@ -12,6 +12,7 @@ import type {
   DownloadTask,
   DownloadBatchPlan,
   DownloadTaskRevision,
+  DownloadInventorySnapshot,
 } from "./download-types.ts";
 import type { AccountSummary } from "./source-types.ts";
 export class DownloadError extends Error {
@@ -210,6 +211,42 @@ export function validateDownloadBatchPlan(value: unknown): DownloadBatchPlan {
   });
   return { batchId, plans, issues };
 }
+export function validateDownloadInventory(
+  value: unknown,
+): DownloadInventorySnapshot {
+  const raw = record(value);
+  if (!Array.isArray(raw.items) || raw.items.length > 20500) return invalid();
+  const rootId = raw.rootId === null ? null : rootIdentity(raw.rootId);
+  const items = raw.items.map((value) => {
+    const item = record(value),
+      source = downloadSource(item.source);
+    if (
+      !["present", "missing", "incomplete", "unavailable"].includes(
+        String(item.localFiles),
+      )
+    )
+      return invalid();
+    return {
+      source,
+      workId: workId(source, item.workId),
+      libraryEntryId: rootIdentity(item.libraryEntryId),
+      localFiles:
+        item.localFiles as DownloadInventorySnapshot["items"][number]["localFiles"],
+    };
+  });
+  if (
+    (rootId === null && items.length > 0) ||
+    new Set(items.map((item) => item.source + ":" + item.workId)).size !==
+      items.length
+  )
+    return invalid();
+  return {
+    revision: integer(raw.revision),
+    libraryRevision: integer(raw.libraryRevision),
+    rootId,
+    items,
+  };
+}
 function taskRevisions(tasks: DownloadTaskRevision[]): DownloadTaskRevision[] {
   if (
     !Array.isArray(tasks) ||
@@ -252,6 +289,8 @@ export function createDownloadAdapter(
     }
   }
   return {
+    inventory: async () =>
+      validateDownloadInventory(await call("download_inventory_read")),
     read: async (recheckFiles = true) => {
       if (typeof recheckFiles !== "boolean") return invalid();
       return validateDownloadSnapshot(

@@ -7,7 +7,6 @@ import type {
   LibraryReference,
   LibraryScanAction,
   LibrarySnapshot,
-  LibraryMatchWork,
 } from "./library-types.ts";
 import { parseLibraryReference } from "./library-model.ts";
 
@@ -180,32 +179,6 @@ export function createLibraryAdapter(
     }
   }
   return {
-    reconcile: async (rootId, generation, works) => {
-      const raw = record(
-        await call("library_reconcile", {
-          rootId: id(rootId),
-          generation: integer(generation),
-          works,
-        }),
-      );
-      const snapshot = validateLibrarySnapshot(raw.snapshot);
-      if (snapshot.rootId !== rootId || snapshot.generation !== generation)
-        return bad();
-      return {
-        snapshot,
-        linked: integer(raw.linked),
-        examined: integer(raw.examined),
-      };
-    },
-    associate: async (rootId, generation, entryId, ref) =>
-      validateLibrarySnapshot(
-        await call("library_associate", {
-          rootId: id(rootId),
-          generation: integer(generation),
-          entryId: id(entryId),
-          reference: reference(ref),
-        }),
-      ),
     read: async () => validateLibrarySnapshot(await call("library_read")),
     choose: async () => {
       const result = await call("library_choose");
@@ -238,15 +211,6 @@ export function createLibraryAdapter(
         }),
       );
     },
-    link: async (rootId, generation, entryId, ref) =>
-      validateLibrarySnapshot(
-        await call("library_link", {
-          rootId: id(rootId),
-          generation: integer(generation),
-          entryId: id(entryId),
-          reference: reference(ref),
-        }),
-      ),
     cover: async (rootId, generation, entryId) => {
       id(rootId);
       integer(generation);
@@ -452,55 +416,6 @@ export class LibraryController {
         return bad();
       return snapshot;
     }, action !== "pause");
-  }
-  link(entryId: string, reference: LibraryReference | null) {
-    const { rootId, generation } = this.state.snapshot;
-    if (!rootId) return Promise.resolve();
-    return this.run(async () => {
-      const snapshot = await this.adapter.link(
-        rootId,
-        generation,
-        entryId,
-        reference,
-      );
-      if (snapshot.rootId !== rootId || snapshot.generation !== generation)
-        return bad();
-      return snapshot;
-    }, true);
-  }
-  async reconcile(works: LibraryMatchWork[]): Promise<number | null> {
-    const { rootId, generation } = this.state.snapshot;
-    if (!rootId || this.state.busy || !this.adapter.reconcile) return null;
-    let linked: number | null = null;
-    await this.run(async () => {
-      const result = await this.adapter.reconcile!(rootId, generation, works);
-      if (
-        result.snapshot.rootId !== rootId ||
-        result.snapshot.generation !== generation
-      )
-        return bad();
-      linked = result.linked;
-      return result.snapshot;
-    });
-    return linked;
-  }
-  async associate(entryId: string, ref: LibraryReference): Promise<boolean> {
-    const { rootId, generation } = this.state.snapshot;
-    if (!rootId || this.state.busy || !this.adapter.associate) return false;
-    let saved = false;
-    await this.run(async () => {
-      const snapshot = await this.adapter.associate!(
-        rootId,
-        generation,
-        entryId,
-        ref,
-      );
-      if (snapshot.rootId !== rootId || snapshot.generation !== generation)
-        return bad();
-      saved = true;
-      return snapshot;
-    });
-    return saved;
   }
   dispose() {
     this.epoch++;

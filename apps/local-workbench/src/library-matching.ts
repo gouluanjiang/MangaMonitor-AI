@@ -4,22 +4,11 @@ export const libraryReferences = (item: LibraryItem): LibraryReference[] => [
   ...(item.sourceRef ? [item.sourceRef] : []),
   ...(item.links ?? []).map((link) => link.reference),
 ];
-export const matchingText = (text: string) =>
-  text.normalize("NFKC").toLowerCase().replace(/\s/g, "");
-/** Broad normalization only proposes candidates. It never grants ownership. */
-export function candidateTitle(title: string): string {
-  let value = matchingText(title).replace(/\.(zip|cbz)$/, "");
-  for (;;) {
-    const next = value.replace(/^\(c\d{2,3}\)/, "").replace(/^\[[^\]]*\]/, "");
-    if (next === value) return value;
-    value = next;
-  }
-}
 export const fileNeedsReview = (item: LibraryItem) =>
   item.state !== "indexed" ||
   item.errorCode !== null ||
   !(item.pageCount && item.pageCount > 0);
-export type LibraryFilter = "all" | "owned" | "review" | "unlinked";
+export type LibraryFilter = "all" | "owned" | "review";
 export type LibrarySort = "title" | "modified" | "added-desc" | "added-asc";
 export function compareAdded(
   a: LibraryItem,
@@ -35,16 +24,11 @@ export function compareAdded(
 export function libraryFilterMatches(item: LibraryItem, filter: LibraryFilter) {
   return (
     filter === "all" ||
-    (filter === "review"
-      ? fileNeedsReview(item)
-      : filter === "unlinked"
-        ? !fileNeedsReview(item) && libraryReferences(item).length === 0
-        : !fileNeedsReview(item))
+    (filter === "review" ? fileNeedsReview(item) : !fileNeedsReview(item))
   );
 }
 export const libraryFilterLabels: Record<LibraryFilter, string> = {
   all: "全部",
-  owned: "已入库",
+  owned: "文件可用",
   review: "文件待核对",
-  unlinked: "来源待关联",
 };

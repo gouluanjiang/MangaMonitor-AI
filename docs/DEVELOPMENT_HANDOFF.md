@@ -1,4 +1,20 @@
+> 2026-09-14 最新进展：用户已明确要求按路线继续开发，程序开发已恢复。当前在可写隔离工作区落实下载记录入库、取消身份关联、完整分页和手动作者检查。以下历史暂停记录不再阻止本轮代码开发；真实漫画库操作仍不在本轮范围内。验证结果以最新开发报告为准。
+
 # Active development handoff
+
+## Latest scope: source-specific download records; association and dislike cancelled (2026-09-14)
+
+The user has accepted the simplified ownership boundary: mark a source work owned only from its corresponding successful download record and actual saved file. Read [the current V1 scope and continuation plan](V1_SCOPE_MANUAL_UPDATES_2026-09-14.md) before any older roadmap. Unregistered old manga and copies on another source are not automatically recognized, paired or jointly counted; the user accepts skipping them manually. This is a product-scope decision, not authorization to start implementation or real-library operations in this planning turn.
+
+Cancel all manga identity association features, including assisted existing-library reconciliation, manual cross-source pairing, "I already own this", association/unassociation controls and automatic identity/version/language inference. Existing-library reconciliation is no longer a V1 prerequisite or a paused future assignment. Also cancel dislike, hidden-item counts, viewing and undo. Do not replace these with equivalent ignore or manual ownership-marking features. Preserve legitimate source-specific download receipts, target/file checks and the accepted re-download behavior; old association data must not be treated as successful downloads or used to propagate ownership. Private historical records and manga are not deleted by this scope change.
+
+Author checks run only while the application is open and after the user clicks the check button. Check followed authors on both JM and Pica, retain unregistered older records, and let the user select downloads. Do not check automatically at startup, on a periodic background schedule, or after exit. Only verified, successfully saved downloads register ownership for the same source and work ID across favorites, searches, author updates, rankings and details. Cross-source duplicate recognition is not required; same-source duplicate-task and existing-target protection remain.
+
+The user explicitly accepted reading all pages before final totals. Show progress and provisional counts while reading, identify unfinished source scopes on failure, and never present a partial scan as complete or claim all author works are owned from it. Searches do not require following the author. Keep owned/unowned filtering, source/range/time information, manual author updates, JM weekly recommendations and Pica rankings in V1. The end-to-end acceptance scenario is manual author check, selected downloads, automatic registration, arbitrary new-author search, complete results, unowned filtering and further selected downloads.
+
+The runtime cloud discovery / inventory-completion sync loop and translation-download automation remain cancelled. CI remains part of engineering verification. The other cancelled maintenance/offline/import/automatic-replacement items are listed in the linked scope. Reader and in-app updater remain outside current work for post-V1 discussion. Do not use old issues or historical acceptance of manual pairing to reintroduce cancelled work.
+
+Current position: the simplified scope is confirmed; code and real-library work remain paused. Next implementation stages are source-specific download registration/state, consistent filters and complete search scopes, manual author checks, remaining rankings/batch/UI work, and an integrated V1 candidate. Do not restart A normalization, phone transfer or private reconciliation. This update changes documentation only: no code, private state, source requests, downloads, tests/builds, installer, commit/push or remote issue changes. Keep production disabled and batch these docs with the next necessary implementation push.
 
 ## B usability follow-up (2026-09-13)
 

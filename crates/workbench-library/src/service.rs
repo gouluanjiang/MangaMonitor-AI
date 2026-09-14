@@ -36,7 +36,7 @@ impl LibraryService {
         Ok(snapshot(document, live))
     }
 
-    /// Explicit completeness refresh: check only previously indexed entries,
+    /// Check previously indexed files: check only previously indexed entries,
     /// without enumerating new media or decoding covers. Changed/missing files
     /// lose positive PC evidence until the user refreshes the library scan.
     pub fn recheck_known_entries(&mut self, store: &WorkbenchStore) -> Result<LibrarySnapshot> {
@@ -59,7 +59,7 @@ impl LibraryService {
             return Ok(snapshot(document, false));
         };
         if !allow_partial && document.value.phase != LibraryPhase::Complete {
-            return Err(error("COMPLETENESS_LIBRARY_NOT_READY"));
+            return Err(error("LIBRARY_NOT_READY"));
         }
         let root = Root::restore(saved)?;
         let mut changed = false;
@@ -92,62 +92,6 @@ impl LibraryService {
         }
         let live = self.job_matches(&document);
         Ok(snapshot(document, live))
-    }
-
-    /// Before reusing a translated PC copy, verify that specific known work.
-    /// This never walks unrelated works or imports newly discovered siblings.
-    pub fn verify_known_copies(
-        &mut self,
-        store: &WorkbenchStore,
-        ids: &[String],
-    ) -> Result<LibrarySnapshot> {
-        if ids.len() > MAX_LIBRARY_ITEMS || ids.iter().any(|id| !library_hash_is_valid(id)) {
-            return Err(error("LIBRARY_ENTRY_MISSING"));
-        }
-        let mut document = store.read_library()?;
-        if ids.is_empty() {
-            return Ok(snapshot(document, false));
-        }
-        if document.value.phase != LibraryPhase::Complete {
-            return Err(error("COMPLETENESS_LIBRARY_NOT_READY"));
-        }
-        let root = Root::restore(
-            document
-                .value
-                .root
-                .as_ref()
-                .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
-        )?;
-        let ids: std::collections::HashSet<_> = ids.iter().collect();
-        let mut changed = false;
-        for record in &mut document.value.records {
-            if !ids.contains(&record.item.id)
-                || record.item.state != crate::LibraryItemState::Indexed
-            {
-                continue;
-            }
-            let valid = if record.item.format == LibraryFormat::Directory {
-                completed_work(&root, &record.item.relative_path).is_ok_and(|(current, _, _)| {
-                    current.item.page_count == record.item.page_count
-                        && current.item.bytes == record.item.bytes
-                        && current.identity == record.identity
-                })
-            } else {
-                verify_record(&root, record).is_ok()
-            };
-            if !valid {
-                record.item.state = crate::LibraryItemState::Unreadable;
-                record.item.error_code = Some("LIBRARY_FILE_CHANGED".into());
-                record.item.cover_available = false;
-                record.cover = None;
-                changed = true;
-            }
-        }
-        root.verify()?;
-        if changed {
-            document = store.write_library(document.revision, document.value)?;
-        }
-        Ok(snapshot(document, false))
     }
 
     /// The path comes exclusively from the native folder picker, never IPC.
@@ -324,59 +268,6 @@ impl LibraryService {
         })
     }
 
-    pub fn link(
-        &mut self,
-        store: &WorkbenchStore,
-        root_id: &str,
-        generation: u64,
-        entry_id: &str,
-        reference: Option<LibraryReference>,
-    ) -> Result<LibrarySnapshot> {
-        let reference = reference.map(|mut value| {
-            value.work_id.make_ascii_lowercase();
-            value
-        });
-        if reference.as_ref().is_some_and(|v| !v.is_valid()) {
-            return Err(error("VALIDATION_FAILED"));
-        }
-        let mut document = store.read_library()?;
-        require_scope(&document.value, root_id, generation)?;
-        let root = Root::restore(
-            document
-                .value
-                .root
-                .as_ref()
-                .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
-        )?;
-        verify_record(&root, find_record(&document.value, entry_id)?)?;
-        let was_live = self.job_matches(&document);
-        let record = document
-            .value
-            .records
-            .iter_mut()
-            .find(|r| r.item.id == entry_id)
-            .ok_or(error("LIBRARY_ENTRY_UNKNOWN"))?;
-        record.item.identity_evidence = reference.as_ref().map(|_| LibraryEvidence::Manual);
-        record.item.source_ref = reference;
-        // This explicit editor replaces the whole association set.
-        record.item.links.clear();
-        record.manual_override = true;
-        if record.item.error_code.as_deref() == Some("LIBRARY_IDENTITY_CONFLICT") {
-            record.item.error_code = None;
-        }
-        document.value.updated_at = Some(now());
-        root.verify()?;
-        let saved = store.write_library(document.revision, document.value)?;
-        if was_live {
-            if let Some(job) = &mut self.job {
-                job.revision = saved.revision;
-            }
-        } else {
-            self.job = None;
-        }
-        Ok(snapshot(saved, was_live))
-    }
-
     /// Adds a private PC-index record for one command-finalized directory or ZIP.
     /// This is not a download completion, promotion or phone-presence authority.
     /// The command must have already validated its exact media tree and hashes.
@@ -406,27 +297,6 @@ impl LibraryService {
         ) {
             return Err(error("LIBRARY_BUSY"));
         }
-        // Never alias an existing work under a second path, or revise a prior
-        // manual unlink/association as a side effect of download registration.
-        for old in &document.value.records {
-            if old.item.relative_path != relative_path
-                && old
-                    .item
-                    .references()
-                    .any(|reference| reference == expected_reference)
-            {
-                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
-            }
-            if old.item.relative_path == relative_path
-                && (!matches!(
-                    old.item.format,
-                    LibraryFormat::Directory | LibraryFormat::Zip
-                ) || (old.manual_override
-                    && old.item.source_ref.as_ref() != Some(expected_reference)))
-            {
-                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
-            }
-        }
         let root = Root::restore(
             document
                 .value
@@ -450,22 +320,8 @@ impl LibraryService {
         if let Some(index) = existing {
             let old = &document.value.records[index];
             record.item.added_at = old.item.added_at;
-            record.item.links = old.item.links.clone();
             if old.identity.is_none() || old.identity != record.identity {
                 return Err(error("LIBRARY_FILE_CHANGED"));
-            }
-            if old
-                .item
-                .source_ref
-                .as_ref()
-                .is_some_and(|reference| reference != expected_reference)
-            {
-                return Err(error("LIBRARY_IDENTITY_CONFLICT"));
-            }
-            if old.manual_override {
-                record.manual_override = true;
-                record.item.source_ref = old.item.source_ref.clone();
-                record.item.identity_evidence = old.item.identity_evidence;
             }
             if old == &record {
                 let latest = store.read_library()?;

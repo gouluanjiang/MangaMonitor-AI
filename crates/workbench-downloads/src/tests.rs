@@ -24,6 +24,8 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[path = "inventory_tests.rs"]
+mod inventory_tests;
 #[path = "pica_tests.rs"]
 mod pica_tests;
 #[path = "queue_tests.rs"]
@@ -468,33 +470,29 @@ fn an_unavailable_or_recreated_root_needs_a_new_picker_identity_before_confirmat
 }
 
 #[test]
-fn manual_unlink_or_reassociation_is_not_removed_by_a_later_download_confirmation() {
+fn legacy_associations_do_not_block_explicit_downloads_or_change_private_history() {
     for replacement in [None, Some("999999")] {
         let f = fixture();
         let old = complete_for_presence(&f, record(&f));
-        workbench_library::LibraryService::new()
-            .link(
-                &f.store,
-                &old.root.id,
-                old.generation,
-                old.library_entry_id.as_deref().unwrap(),
-                replacement.map(|id| workbench_storage::LibraryReference {
-                    source: Source::Jm,
-                    work_id: id.into(),
-                }),
-            )
+        let mut previous = f.store.read_library().unwrap();
+        let row = previous.value.records.first_mut().unwrap();
+        row.item.source_ref = replacement.map(|id| workbench_storage::LibraryReference {
+            source: Source::Jm,
+            work_id: id.into(),
+        });
+        row.item.identity_evidence =
+            replacement.map(|_| workbench_storage::LibraryEvidence::Manual);
+        row.manual_override = true;
+        f.store
+            .write_library(previous.revision, previous.value)
             .unwrap();
         fs::remove_dir_all(f.library.join(&old.destination)).unwrap();
         let before = f.store.read_library().unwrap();
         let mut metadata = old.metadata.clone();
         metadata.title = "A different new destination".into();
-        assert_eq!(
-            f.service
-                .prepare(&f.store, &old.root.id, old.generation, metadata)
-                .unwrap_err()
-                .code,
-            "LIBRARY_IDENTITY_CONFLICT"
-        );
+        f.service
+            .prepare(&f.store, &old.root.id, old.generation, metadata)
+            .unwrap();
         assert_eq!(f.store.read_library().unwrap(), before);
     }
 }

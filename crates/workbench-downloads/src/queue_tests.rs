@@ -369,22 +369,21 @@ fn clearing_completed_history_preserves_files_library_and_compact_duplicate_evid
 }
 
 #[test]
-fn history_clear_retains_manual_unlink_and_reassociation_authority_after_original_files_disappear()
-{
+fn history_clear_does_not_restore_cancelled_manual_association_authority() {
     for replacement in [None, Some("999999")] {
         let f = fixture();
         let completed = complete_for_presence(&f, record(&f));
-        workbench_library::LibraryService::new()
-            .link(
-                &f.store,
-                &completed.root.id,
-                completed.generation,
-                completed.library_entry_id.as_deref().unwrap(),
-                replacement.map(|id| workbench_storage::LibraryReference {
-                    source: Source::Jm,
-                    work_id: id.into(),
-                }),
-            )
+        let mut previous = f.store.read_library().unwrap();
+        let row = previous.value.records.first_mut().unwrap();
+        row.item.source_ref = replacement.map(|id| workbench_storage::LibraryReference {
+            source: Source::Jm,
+            work_id: id.into(),
+        });
+        row.item.identity_evidence =
+            replacement.map(|_| workbench_storage::LibraryEvidence::Manual);
+        row.manual_override = true;
+        f.store
+            .write_library(previous.revision, previous.value)
             .unwrap();
         f.service
             .remove_history(&f.store, &[task_selected(&completed)])
@@ -393,13 +392,9 @@ fn history_clear_retains_manual_unlink_and_reassociation_authority_after_origina
         let library_before = f.store.read_library().unwrap();
         let mut metadata = completed.metadata.clone();
         metadata.title = "A different new destination".into();
-        assert_eq!(
-            f.service
-                .prepare(&f.store, &completed.root.id, completed.generation, metadata)
-                .unwrap_err()
-                .code,
-            "LIBRARY_IDENTITY_CONFLICT"
-        );
+        f.service
+            .prepare(&f.store, &completed.root.id, completed.generation, metadata)
+            .unwrap();
         assert_eq!(f.store.read_library().unwrap(), library_before);
     }
 }

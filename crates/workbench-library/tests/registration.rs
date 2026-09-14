@@ -341,36 +341,10 @@ fn changed_scope_and_active_or_paused_full_scan_cannot_register() {
 }
 
 #[test]
-fn replacing_a_registered_directory_or_manually_unlinking_it_cannot_be_silently_overwritten() {
+fn replacing_a_registered_directory_cannot_be_silently_overwritten() {
     let mut fixture = fixture();
     work(fixture.media.path(), "valid", "123", 1);
-    let registered = register(&mut fixture, "valid", "123", 1).unwrap();
-    fixture
-        .service
-        .link(
-            &fixture.store,
-            registered.root_id.as_deref().unwrap(),
-            registered.generation,
-            &registered.items[0].id,
-            None,
-        )
-        .unwrap();
-    let before = persisted(&fixture);
-    assert_eq!(
-        register(&mut fixture, "valid", "123", 1).unwrap_err().code,
-        "LIBRARY_IDENTITY_CONFLICT"
-    );
-    assert_eq!(persisted(&fixture), before);
-    fixture
-        .service
-        .link(
-            &fixture.store,
-            registered.root_id.as_deref().unwrap(),
-            registered.generation,
-            &registered.items[0].id,
-            Some(reference("123")),
-        )
-        .unwrap();
+    register(&mut fixture, "valid", "123", 1).unwrap();
     fs::rename(
         fixture.media.path().join("valid"),
         fixture.media.path().join("preserved original"),

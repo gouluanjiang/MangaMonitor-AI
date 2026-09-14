@@ -9,10 +9,12 @@ import type {
 } from "../src/source-types.ts";
 import type { BooklistsDocument } from "../src/booklists.ts";
 import type { WorkbenchPreferences } from "../src/preferences.ts";
-import type {
-  SourceMatchesSnapshot,
-  SourceMatchWork,
-} from "../src/source-matches-types.ts";
+// Inert legacy fixtures prove that removed matching documents are never requested.
+type SourceMatchWork = { source: Source; workId: string; title: string };
+type SourceMatchesSnapshot = {
+  revision: number;
+  pairs: { id: string; jm: SourceMatchWork; pica: SourceMatchWork }[];
+};
 
 // These are Chromium browser-preview integration tests using synthetic Tauri IPC.
 // They do not contact source sites, use real credentials, run native WebViews,
@@ -1319,171 +1321,6 @@ test("favorites status filtering clears hidden selection and offers a direct ful
   );
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({ path: "visual-evidence/favorites-usability.png" });
-});
-
-test("a renamed local candidate can be confirmed from the source detail without typing IDs or replacing its other source", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1672, height: 941 });
-  await installMock(page, { crossSourcePC: true, libraryCandidate: true });
-  await openFavorites(page);
-  await page.getByTestId("source-filter-candidate").click();
-  await expect(page.getByTestId("source-card-JM:123")).toBeVisible();
-  await page.getByTestId("source-open-JM:123").click();
-  await expect(page.getByTestId("library-candidates")).toBeVisible();
-  await expect(
-    page.getByTestId("confirm-library-candidate-" + "e".repeat(64)),
-  ).toBeInViewport();
-  await expect(page.getByTestId("source-match-id")).toHaveCount(0);
-  await mkdir("visual-evidence", { recursive: true });
-  await page.screenshot({ path: "visual-evidence/matching-candidates.png" });
-  await page.getByTestId("confirm-library-candidate-" + "e".repeat(64)).click();
-  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
-  await expect(page.getByTestId("library-candidates")).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () =>
-        window.sourceTest.calls.filter(
-          (call) => call.command === "library_associate",
-        ).length,
-    ),
-  ).toBe(1);
-});
-async function favoritePages(page: Page) {
-  return page.evaluate(() =>
-    window.sourceTest.calls
-      .filter(
-        (call) =>
-          call.command === "source_query" &&
-          call.kind === "favorites" &&
-          call.source === "JM",
-      )
-      .map((call) => call.page),
-  );
-}
-async function picaFavoritePages(page: Page, reverse: boolean) {
-  return page.evaluate(
-    (direction) =>
-      window.sourceTest.calls
-        .filter(
-          (call) =>
-            call.command === "source_query" &&
-            call.kind === "favorites" &&
-            call.source === "Pica" &&
-            Boolean(call.reverse) === direction,
-        )
-        .map((call) => call.page),
-    reverse,
-  );
-}
-async function openAccounts(page: Page) {
-  await page.getByTestId("nav-settings").click();
-  await page.getByTestId("settings-accounts").click();
-  await expect(page.getByTestId("source-account-settings")).toBeVisible();
-}
-async function connectJM(page: Page) {
-  await page.getByTestId("account-connect-JM").click();
-  await page.getByTestId("account-username").fill("synthetic-user");
-  await page.getByTestId("account-password").fill("fixture-only-password");
-  await page.getByTestId("account-login-submit").click();
-}
-async function detail(page: Page, source: Source = "JM") {
-  await openFavorites(page);
-  await page.getByTestId("source-tab-" + source).click();
-  await page.getByTestId("source-open-" + source + ":123").click();
-  await expect(page.getByTestId("source-detail")).toContainText(
-    "合成验收 " + source,
-  );
-}
-async function createFromDetail(page: Page, name: string) {
-  await page.getByTestId("source-detail-booklist").click();
-  await page.getByTestId("booklist-picker-create").click();
-  await page.getByTestId("booklist-picker-name").fill(name);
-  await page.getByTestId("booklist-picker-save").click();
-  await expect(page.getByTestId("booklist-picker")).toBeHidden();
-  await expect(page.getByTestId("source-detail")).toBeVisible();
-  return page.evaluate(() => window.sourceTest.booklists.value.lists[0].id);
-}
-
-test("manual cross-source confirmation projects the PC ZIP, survives restart and unlinks without reading retired phone evidence", async ({
-  page,
-}) => {
-  const picaId = "0123456789abcdef01234567";
-  await installMock(page, { crossSourcePhone: true, crossSourcePC: true });
-  await detail(page);
-  await expect(page.getByTestId("source-detail-stock")).toContainText(
-    "漫画库内未匹配",
-  );
-  await page.getByTestId("source-match-id").fill(picaId);
-  expect(
-    await page.evaluate(() =>
-      window.sourceTest.calls.filter(
-        (call) => call.command === "source_matches_confirm",
-      ),
-    ),
-  ).toEqual([]);
-  await page.getByTestId("source-match-lookup").click();
-  await expect(page.getByTestId("source-match-preview")).toContainText(
-    "JM · 123",
-  );
-  await expect(page.getByTestId("source-match-preview")).toContainText(
-    "哔咔 · " + picaId,
-  );
-  await expect(page.getByTestId("source-match-confirm")).toBeDisabled();
-  await page.getByLabel("我已核对内容与版本，确认是同一作品").check();
-  await page.getByTestId("source-match-confirm").click();
-  await expect(page.getByTestId("source-match-confirmed")).toContainText(
-    "已手动确认同一作品",
-  );
-  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
-  await page.reload();
-  await detail(page);
-  await expect(page.getByTestId("source-match-confirmed")).toContainText(
-    picaId,
-  );
-  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
-  await page.getByTestId("source-match-unlink").click();
-  await expect(page.getByTestId("source-detail-stock")).toContainText("已入库");
-  await page.getByTestId("source-match-unlink-confirm").click();
-  await expect(page.getByTestId("source-match-confirmed")).toHaveCount(0);
-  await expect(page.getByTestId("source-detail-stock")).toContainText(
-    "漫画库内未匹配",
-  );
-  expect(await page.evaluate(() => window.sourceTest.matches.pairs)).toEqual(
-    [],
-  );
-  expect(
-    await page.evaluate(() =>
-      window.sourceTest.calls.filter((call) =>
-        /phone_library_|read_booklists|library_link|jm_download_(prepare|confirm)/.test(
-          call.command,
-        ),
-      ),
-    ),
-  ).toEqual([]);
-});
-
-test("editing the opposite ID discards a late detail response before manual confirmation", async ({
-  page,
-}) => {
-  await installMock(page, { holdMatchDetail: true });
-  await detail(page);
-  await page.getByTestId("source-match-id").fill("0123456789abcdef01234567");
-  await page.getByTestId("source-match-lookup").click();
-  await expect
-    .poll(() => page.evaluate(() => window.sourceTest.matchHeld))
-    .toBe(true);
-  await page.getByTestId("source-match-id").fill("fedcba9876543210fedcba98");
-  await page.evaluate(() => window.sourceTest.releaseMatch!());
-  await expect(page.getByTestId("source-match-lookup")).toBeEnabled();
-  await expect(page.getByTestId("source-match-preview")).toHaveCount(0);
-  expect(
-    await page.evaluate(() =>
-      window.sourceTest.calls.filter(
-        (call) => call.command === "source_matches_confirm",
-      ),
-    ),
-  ).toEqual([]);
 });
 
 test("disconnected source opens account settings; pending login clears secret and preserves retry input", async ({

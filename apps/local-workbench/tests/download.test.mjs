@@ -12,7 +12,32 @@ import {
   canControlDownload,
   validateDownloadPlan,
   validateDownloadSnapshot,
+  validateDownloadInventory,
 } from "../src/download-runtime.ts";
+
+test("download inventory validates source namespaces, file states and roots without accepting duplicate receipts", () => {
+  const value = {
+    revision: 1,
+    libraryRevision: 2,
+    rootId: "a".repeat(64),
+    items: [
+      {
+        source: "JM",
+        workId: "123",
+        libraryEntryId: "b".repeat(64),
+        localFiles: "present",
+      },
+    ],
+  };
+  assert.deepEqual(validateDownloadInventory(value), value);
+  for (const invalid of [
+    { ...value, rootId: null },
+    { ...value, items: [...value.items, ...value.items] },
+    { ...value, items: [{ ...value.items[0], source: "Pica" }] },
+    { ...value, items: [{ ...value.items[0], localFiles: "guessed" }] },
+  ])
+    assert.throws(() => validateDownloadInventory(invalid));
+});
 
 test("media failures distinguish transport, redirects and invalid images without exposing raw errors", () => {
   for (const [code, expected] of [

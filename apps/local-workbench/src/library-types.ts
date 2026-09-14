@@ -49,17 +49,6 @@ export interface LibraryCover {
   dataUrl: string | null;
 }
 export interface LibraryAdapter {
-  reconcile?(
-    rootId: string,
-    generation: number,
-    works: LibraryMatchWork[],
-  ): Promise<{ snapshot: LibrarySnapshot; linked: number; examined: number }>;
-  associate?(
-    rootId: string,
-    generation: number,
-    entryId: string,
-    reference: LibraryReference,
-  ): Promise<LibrarySnapshot>;
   read(): Promise<LibrarySnapshot>;
   choose(): Promise<LibrarySnapshot | null>;
   importPaths(
@@ -76,17 +65,6 @@ export interface LibraryAdapter {
     generation: number,
     entryId: string,
   ): Promise<LibraryCover>;
-  link(
-    rootId: string,
-    generation: number,
-    entryId: string,
-    reference: LibraryReference | null,
-  ): Promise<LibrarySnapshot>;
-}
-export interface LibraryMatchWork extends LibraryReference {
-  title: string;
-  authors: string[];
-  pageCount: number | null;
 }
 export interface LibraryMigrationResult {
   snapshot: LibrarySnapshot;

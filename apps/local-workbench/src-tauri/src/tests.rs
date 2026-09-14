@@ -3,59 +3,74 @@ use serde_json::{json, Value};
 use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 
 #[test]
-fn completion_commands_keep_main_origin_and_typed_authority_boundaries() {
+fn manual_discovery_and_download_inventory_keep_main_origin_boundaries() {
     let (_root, app) = fixture();
     let main = window(&app, "main");
     let other = window(&app, "secondary");
     let scopes = json!([{"source":"JM","sessionId":"synthetic-jm"},{"source":"Pica","sessionId":"synthetic-pica"}]);
-    let commands = [
+    for (command, body) in [
         ("discovery_read", json!({"scopes":scopes})),
         ("discovery_start", json!({"scopes":scopes,"authors":[]})),
-        ("discovery_cancel", json!({"runId":"a".repeat(64)})),
-        (
-            "completeness_read",
-            json!({"scopes":scopes,"recheckFiles":false}),
-        ),
-        (
-            "completeness_start",
-            json!({"scopes":scopes,"authors":[],"automatic":true,"rootId":"b".repeat(64),"generation":1}),
-        ),
-        ("completeness_cancel", json!({"runId":"a".repeat(64)})),
-        ("completeness_settings_read", json!({})),
-        (
-            "completeness_family_confirm",
-            json!({"revision":0,"members":[{"kind":"source","reference":{"source":"JM","workId":"123"}},{"kind":"phone","name":"Synthetic"}]}),
-        ),
-        (
-            "completeness_family_unlink",
-            json!({"revision":0,"familyId":"c".repeat(64)}),
-        ),
-        (
-            "completeness_language_set",
-            json!({"revision":0,"member":{"kind":"source","reference":{"source":"JM","workId":"123"}},"language":"chinese"}),
-        ),
-    ];
-    for (command, body) in commands {
-        assert!(invoke(&other, command, body.clone()).is_err(), "{command}");
-        assert!(
-            invoke_from(&main, "https://example.invalid", command, body).is_err(),
-            "{command}"
-        );
+        ("discovery_cancel", json!({"runId":"synthetic"})),
+        ("download_inventory_read", json!({})),
+    ] {
+        assert!(invoke(&other, command, body.clone()).is_err());
+        assert!(invoke_from(&main, "https://example.invalid", command, body).is_err());
     }
-    let settings = invoke(&main, "completeness_settings_read", json!({})).unwrap();
-    assert_eq!(settings, json!({"revision":0,"families":[],"languages":[]}));
     let before = invoke(&main, "jm_download_read", json!({})).unwrap();
-    assert!(invoke(&main, "completeness_read", json!({"scopes":scopes})).is_err());
     assert!(invoke(
         &main,
-        "completeness_start",
-        json!({"scopes":scopes,"authors":[],"automatic":true,"rootId":null,"generation":0})
+        "discovery_start",
+        json!({"scopes":scopes,"authors":[]})
     )
     .is_err());
+    assert_eq!(
+        invoke(&main, "download_inventory_read", json!({})).unwrap(),
+        json!({"revision":0,"libraryRevision":0,"rootId":null,"items":[]})
+    );
     assert_eq!(
         invoke(&main, "jm_download_read", json!({})).unwrap(),
         before
     );
+}
+
+#[test]
+fn retired_matching_phone_and_automatic_download_commands_are_unavailable() {
+    let (root, app) = fixture();
+    let main = window(&app, "main");
+    for command in [
+        "library_link",
+        "library_associate",
+        "library_reconcile",
+        "source_matches_read",
+        "source_matches_confirm",
+        "source_matches_unlink",
+        "phone_library_read",
+        "phone_library_import",
+        "phone_library_mark",
+        "phone_library_unmark",
+        "completeness_read",
+        "completeness_start",
+        "completeness_cancel",
+        "completeness_settings_read",
+        "completeness_family_confirm",
+        "completeness_family_unlink",
+        "completeness_language_set",
+    ] {
+        assert!(invoke(&main, command, json!({})).is_err(), "{command}");
+    }
+    for name in [
+        "source-matches.json",
+        "phone-library.json",
+        "completeness.json",
+        "downloads.json",
+    ] {
+        assert!(!root
+            .path()
+            .join(workbench_storage::PRIVATE_DIRECTORY)
+            .join(name)
+            .exists());
+    }
 }
 
 fn fixture() -> (tempfile::TempDir, tauri::App<MockRuntime>) {
@@ -543,7 +558,6 @@ fn download_commands_require_the_main_packaged_window() {
 fn reading_empty_download_queue_never_creates_media_or_changes_phone_inventory() {
     let (root, app) = fixture();
     let main = window(&app, "main");
-    let phone = invoke(&main, "phone_library_read", json!({})).unwrap();
     let library = invoke(&main, "library_read", json!({})).unwrap();
     let queue = invoke(&main, "jm_download_read", json!({})).unwrap();
     assert_eq!(queue, json!({"revision":0,"tasks":[]}));
@@ -554,48 +568,12 @@ fn reading_empty_download_queue_never_creates_media_or_changes_phone_inventory()
     ] {
         assert_eq!(invoke(&main, "jm_download_read", body).unwrap(), queue);
     }
-    assert_eq!(
-        invoke(&main, "phone_library_read", json!({})).unwrap(),
-        phone
-    );
     assert_eq!(invoke(&main, "library_read", json!({})).unwrap(), library);
     assert!(!root
         .path()
         .join(workbench_storage::PRIVATE_DIRECTORY)
         .join("download-staging-v1")
         .exists());
-}
-
-#[test]
-fn manual_source_match_ipc_roundtrip_preserves_both_libraries_and_downloads() {
-    let (_root, app) = fixture();
-    let main = window(&app, "main");
-    let phone = invoke(&main, "phone_library_read", json!({})).unwrap();
-    let pc = invoke(&main, "library_read", json!({})).unwrap();
-    let queue = invoke(&main, "jm_download_read", json!({})).unwrap();
-    assert_eq!(
-        invoke(&main, "source_matches_read", json!({})).unwrap(),
-        json!({"revision":0,"pairs":[]})
-    );
-    let pair = invoke(&main, "source_matches_confirm", json!({"revision":0,"jm":{"source":"JM","workId":"123","title":"Synthetic JM"},"pica":{"source":"Pica","workId":"0123456789abcdef01234567","title":"Synthetic Pica"}})).unwrap();
-    assert_eq!(pair["pairs"][0]["evidence"], json!("manual"));
-    assert_eq!(
-        invoke(&main, "source_matches_read", json!({})).unwrap(),
-        pair
-    );
-    let removed = invoke(
-        &main,
-        "source_matches_unlink",
-        json!({"revision":pair["revision"],"pairId":pair["pairs"][0]["id"]}),
-    )
-    .unwrap();
-    assert_eq!(removed["pairs"], json!([]));
-    assert_eq!(
-        invoke(&main, "phone_library_read", json!({})).unwrap(),
-        phone
-    );
-    assert_eq!(invoke(&main, "library_read", json!({})).unwrap(), pc);
-    assert_eq!(invoke(&main, "jm_download_read", json!({})).unwrap(), queue);
 }
 
 #[test]
@@ -667,58 +645,6 @@ fn pica_prepare_never_reads_a_live_source_in_ci_or_without_a_current_account() {
         invoke(&main, "jm_download_read", json!({})).unwrap(),
         before
     );
-}
-
-#[test]
-fn phone_marks_survive_native_restart_without_removing_pc_copy() {
-    let (root, app) = fixture();
-    let main = window(&app, "main");
-    let pc = root.path().join("pc-copy.zip");
-    std::fs::write(&pc, b"retained PC bytes").unwrap();
-    let initial = invoke(&main, "phone_library_read", json!({})).unwrap();
-    assert_eq!(initial["importedNames"], json!([]));
-    let marked = invoke(
-        &main,
-        "phone_library_mark",
-        json!({
-            "revision":initial["revision"],"name":"Example / subtitle.zip",
-            "reference":{"source":"JM","workId":"123"}
-        }),
-    )
-    .unwrap();
-    assert_eq!(
-        marked["manualEntries"][0]["name"],
-        json!("Example / subtitle.zip")
-    );
-    assert_eq!(
-        invoke(&main, "phone_library_read", json!({})).unwrap(),
-        marked
-    );
-    drop(main);
-    drop(app);
-    let app = app_with_root(Ok(root.path().to_owned()));
-    let main = window(&app, "main");
-    assert_eq!(
-        invoke(&main, "phone_library_read", json!({})).unwrap(),
-        marked
-    );
-    assert_eq!(
-        invoke(
-            &main,
-            "phone_library_mark",
-            json!({"revision":0,"name":"Another","reference":null})
-        )
-        .unwrap_err(),
-        json!({"code":"REVISION_CONFLICT"})
-    );
-    let unmarked = invoke(
-        &main,
-        "phone_library_unmark",
-        json!({"revision":marked["revision"],"entryId":marked["manualEntries"][0]["id"]}),
-    )
-    .unwrap();
-    assert_eq!(unmarked["manualEntries"], json!([]));
-    assert_eq!(std::fs::read(&pc).unwrap(), b"retained PC bytes");
 }
 
 #[test]

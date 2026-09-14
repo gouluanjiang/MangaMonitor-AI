@@ -61,39 +61,25 @@
 .completion-status {
   color: #c7b3ff;
 }
-.completion-review {
-  position: fixed;
-  z-index: 20;
-  top: 6vh;
-  left: 12vw;
-  right: 6vw;
-  max-height: 87vh;
-  overflow: auto;
-  padding: 2rem;
-  background: #18151d;
-  border: 1px solid #77668b;
-  border-radius: 12px;
-  box-shadow: 0 1rem 4rem #0009;
-}
-.completion-review h2 {
-  flex: 1;
-}
-.completion-member {
+
+.completion-panel .source-card-open {
   display: flex;
-  gap: 0.7rem;
-  align-items: center;
-  margin: 1rem 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
 }
-.completion-member label {
-  flex: 1;
-  overflow-wrap: anywhere;
+.completion-panel .source-card-open strong,
+.completion-panel .source-card-open span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
-.completion-phone-results {
-  max-height: 14rem;
-  overflow: auto;
-}
-.completion-phone-results label,
-.completion-review details label {
-  display: block;
-  margin: 0.6rem 0;
+.completion-panel .source-tabs button[aria-pressed="true"] {
+  border-color: #8560f2;
+  background: #372566;
 }

@@ -137,18 +137,6 @@ fn explicit_zip_mapping_preserves_old_receipt_and_projects_current_history_path(
     let mut indexer = workbench_library::LibraryService::new();
     let original_index = f.store.read_library().unwrap();
     let old_id = original_index.value.records[0].item.id.clone();
-    indexer
-        .link(
-            &f.store,
-            &completed.root.id,
-            completed.generation,
-            &old_id,
-            Some(workbench_storage::LibraryReference {
-                source: Source::Jm,
-                work_id: completed.metadata.work_id.clone(),
-            }),
-        )
-        .unwrap();
     let before = f.store.read_downloads().unwrap();
     let destination = "[Example author] Migrated.zip";
     let output = f.library.join(destination);

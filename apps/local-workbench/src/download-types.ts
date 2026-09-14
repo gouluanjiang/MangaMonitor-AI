@@ -61,7 +61,25 @@ export interface DownloadSnapshot {
   revision: number;
   tasks: DownloadTask[];
 }
+export interface DownloadInventorySnapshot {
+  revision: number;
+  libraryRevision: number;
+  rootId: string | null;
+  items: {
+    source: DownloadSource;
+    workId: string;
+    libraryEntryId: string;
+    localFiles: DownloadLocalFiles;
+  }[];
+}
+export const emptyDownloadInventory = (): DownloadInventorySnapshot => ({
+  revision: 0,
+  libraryRevision: 0,
+  rootId: null,
+  items: [],
+});
 export interface DownloadAdapter {
+  inventory(): Promise<DownloadInventorySnapshot>;
   read(recheckFiles?: boolean): Promise<DownloadSnapshot>;
   prepare(context: DownloadContext, input: string): Promise<DownloadPlan>;
   confirm(planId: string, expectedRevision: number): Promise<DownloadSnapshot>;

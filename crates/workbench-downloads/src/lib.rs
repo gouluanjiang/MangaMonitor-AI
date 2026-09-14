@@ -2,10 +2,12 @@
 //! phone-library mutation, restart-time network execution, overwrite, or deletion.
 mod adapter;
 mod fs;
+mod inventory;
 mod materialize;
 mod naming;
 mod presence;
 mod service;
+pub use inventory::{DownloadInventoryItem, DownloadInventorySnapshot};
 pub use presence::LocalFiles;
 pub use service::{
     AwaitingIndexReceipt, Control, DownloadPlan, DownloadService, DownloadSnapshot, DownloadTask,

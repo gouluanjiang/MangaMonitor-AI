@@ -1,7 +1,14 @@
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import type { LibrarySnapshot } from "../src/library-types.ts";
-import type { PhoneLibrarySnapshot } from "../src/phone-library-types.ts";
+// Legacy fixture is intentionally inaccessible to the product.
+type PhoneLibrarySnapshot = {
+  revision: number;
+  importedNames: string[];
+  importedAt: number | null;
+  importFileName: string | null;
+  manualEntries: any[];
+};
 
 // Synthetic Chromium/native-IPC interaction only. This suite never reads a real
 // TXT, PC directory, phone, archive, credential, website or production inventory.
@@ -444,7 +451,7 @@ test("library admission sorting and state filters combine with search and preser
   await page.getByTestId("library-filter-review").click();
   await expect(cards).toHaveCount(1);
   await expect(cards.first()).toHaveAttribute("data-library-id", id(3));
-  await page.getByTestId("library-filter-unlinked").click();
+  await page.getByTestId("library-filter-owned").click();
   await expect(cards).toHaveCount(3);
   await page.getByTestId("search-input").fill("0004");
   await expect(cards).toHaveCount(1);

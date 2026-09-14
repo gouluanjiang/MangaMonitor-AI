@@ -1,585 +1,365 @@
+import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
-import type { AccountSummary, SourceWork } from "../src/source-types.ts";
-import type { LibrarySnapshot } from "../src/library-types.ts";
-import type { PhoneLibrarySnapshot } from "../src/phone-library-types.ts";
-import type {
-  CompletionGroup,
-  CompletionMember,
-  CompletionSettings,
-  CompletionView,
-} from "../src/completion-types.ts";
+import { initialPreferences } from "../src/preferences.ts";
+import { emptyLibrary } from "../src/library-types.ts";
+import type { DiscoverySnapshot } from "../src/completion-types.ts";
+import type { DownloadInventorySnapshot } from "../src/download-types.ts";
+import type { SourceWork } from "../src/source-types.ts";
 
-// Browser IPC fixtures only. No website requests, credentials, phone transfer,
-// real file operations or downloads are performed by this suite.
-type Hooks = {
-  calls: { command: string; args: Record<string, unknown> }[];
-  view: CompletionView;
-  settings: CompletionSettings;
-  accounts: AccountSummary[];
-  phone: PhoneLibrarySnapshot;
-  library: LibrarySnapshot;
-  holdNext: boolean;
-  held: boolean;
-  release?: () => void;
-};
+// Synthetic desktop IPC only. No real source, credentials, files or downloads.
 declare global {
   interface Window {
-    completionTest: Hooks;
+    authorTest: {
+      calls: { command: string; args: Record<string, unknown> }[];
+      view: DiscoverySnapshot;
+      inventory: DownloadInventorySnapshot;
+      hold: boolean;
+      release?: () => void;
+      readFailure: boolean;
+    };
   }
 }
-const errors = new WeakMap<Page, string[]>();
 test.use({ storageState: { cookies: [], origins: [] } });
+const errors = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
-  const collected: string[] = [];
-  errors.set(page, collected);
-  page.on("pageerror", (error) => collected.push(error.message));
+  const captured: string[] = [];
+  errors.set(page, captured);
+  page.on("pageerror", (error) => captured.push(error.message));
   await page.setViewportSize({ width: 1672, height: 1020 });
 });
 test.afterEach(async ({ page }) => {
   expect(errors.get(page) ?? []).toEqual([]);
-  const forbidden = await page.evaluate(() =>
-    (window.completionTest?.calls ?? []).filter((call) =>
-      /download_(prepare|confirm|control)|phone_library_(mark|unmark)|delete|promote|remove_file|move_file/.test(
-        call.command,
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /download_(prepare|confirm|control)|completeness_|source_matches_|phone_library_|source_follow$|source_favorite$/.test(
+          call.command,
+        ),
       ),
     ),
-  );
-  expect(forbidden).toEqual([]);
+  ).toEqual([]);
 });
-
-function fixtures() {
-  const accounts: AccountSummary[] = (["JM", "Pica"] as const).map(
-    (source) => ({
-      source,
-      sessionId: "synthetic-" + source + "-1",
-      accountId: "synthetic-account-" + source,
-      displayName: "合成账号 " + source,
-      state: "connected",
-      remembered: false,
-      errorCode: null,
-    }),
-  );
-  const makeWork = (
-    source: "JM" | "Pica",
-    workId: string,
-    title: string,
-  ): SourceWork => ({
+async function install(page: Page) {
+  const accounts = (["JM", "Pica"] as const).map((source) => ({
     source,
-    workId,
-    title,
-    authors: ["合成作者"],
-    description: null,
-    tags: [],
-    favorite: null,
-    chapterCount: 1,
-    pageCount: 20,
-    coverAvailable: false,
-  });
-  const works = [
-    makeWork("JM", "123", "01 旧作遗漏 [Chinese]"),
-    makeWork("JM", "456", "02 已入库原版 [Japanese]"),
-    makeWork("Pica", "0123456789abcdef01234567", "02 已入库汉化 [Chinese]"),
-    makeWork("JM", "789", "03 待替换原版 [Japanese]"),
-    makeWork("Pica", "1123456789abcdef01234567", "03 电脑已有汉化 [Chinese]"),
-    makeWork("JM", "555", "04 身份待核对汉化 [Chinese]"),
-    makeWork("JM", "999", "05 语言与作者待核对"),
-  ];
-  const hash = "f".repeat(64);
-  const source = (
-    work: SourceWork,
-    language: "chinese" | "japanese" | "unknown",
-    verified = true,
-  ) => ({
-    reference: { source: work.source, workId: work.workId },
-    title: work.title,
-    language,
-    authorVerified: verified,
-  });
-  const makeGroup = (
-    letter: string,
-    work: SourceWork,
-    status: CompletionGroup["status"],
-  ): CompletionGroup => ({
-    groupId: letter.repeat(64),
-    title: work.title,
-    authors: work.authors,
-    status,
-    reasons: [],
-    sources: [source(work, "chinese")],
-    phone: [],
-    computer: [],
-    eligible: null,
-  });
-  const missing = makeGroup("a", works[0], "missing");
-  const owned = makeGroup("b", works[1], "owned_chinese");
-  owned.sources = [source(works[1], "japanese"), source(works[2], "chinese")];
-  owned.phone = [
+    sessionId: "synthetic-" + source,
+    accountId: "synthetic-account-" + source,
+    displayName: "合成账号",
+    state: "connected",
+    remembered: false,
+    errorCode: null,
+  }));
+  const works: SourceWork[] = [
     {
-      member: { kind: "phone", name: "合成手机中文本 [Chinese]" },
-      name: "合成手机中文本 [Chinese]",
-      language: "chinese",
+      source: "JM",
+      workId: "123",
+      title: "合成作者 · 已下载作品",
+      authors: ["合成作者"],
+      description: null,
+      tags: [],
+      favorite: null,
+      chapterCount: 1,
+      pageCount: 20,
+      coverAvailable: true,
     },
-  ];
-  const downloaded = makeGroup("c", works[3], "translation_downloaded");
-  downloaded.sources = [
-    source(works[3], "japanese"),
-    source(works[4], "chinese"),
-  ];
-  downloaded.phone = [
     {
-      member: { kind: "phone", name: "待替换原版 [Japanese]" },
-      name: "待替换原版 [Japanese]",
-      language: "japanese",
+      source: "JM",
+      workId: "456",
+      title: "合成作者 · 上次未选择的作品",
+      authors: ["合成作者"],
+      description: null,
+      tags: [],
+      favorite: null,
+      chapterCount: 1,
+      pageCount: 20,
+      coverAvailable: true,
     },
-  ];
-  downloaded.computer = [
     {
-      member: { kind: "computer", itemId: "9".repeat(64) },
-      name: "03 电脑已有汉化 [Chinese].zip",
-      language: "chinese",
+      source: "Pica",
+      workId: "0123456789abcdef01234567",
+      title: "合成作者 · 已下载作品",
+      authors: ["合成作者"],
+      description: null,
+      tags: [],
+      favorite: null,
+      chapterCount: 1,
+      pageCount: 20,
+      coverAvailable: true,
     },
   ];
-  const review = makeGroup("d", works[5], "review_required");
-  review.reasons = ["VERSION_IDENTITY_UNCONFIRMED"];
-  const unknown = makeGroup("e", works[6], "review_required");
-  unknown.sources = [source(works[6], "unknown", false)];
-  unknown.reasons = ["SOURCE_LANGUAGE_OR_AUTHOR_UNCONFIRMED"];
-  const view: CompletionView = {
-    discovery: {
-      scopes: accounts.map((a) => ({
-        source: a.source,
-        sessionId: a.sessionId!,
-      })),
-      revision: 4,
-      run: null,
-      authors: accounts.map((a) => ({
-        source: a.source,
-        author: "合成作者",
-        state: "partial",
-        lastAttemptAt: 1,
-        lastCompleteAt: null,
-        observedCount: 3,
-        pagesRead: 1,
-        errorCode: "SOURCE_UNAVAILABLE",
-      })),
-      records: works.map((work) => ({
-        work,
-        matchedAuthors: ["合成作者"],
-        authorVerified: work.workId !== "999",
-        observedAt: 1,
-        scanId: "7".repeat(64),
-      })),
-    },
-    completeness: {
-      revision: 0,
-      phoneRevision: 1,
-      libraryRevision: 1,
-      matchesRevision: 0,
-      discoveryRevision: 4,
-      evidenceHash: hash,
-      groups: [missing, owned, downloaded, review, unknown],
-    },
-    automatic: {
-      runId: null,
-      phase: "idle",
-      queued: 0,
-      skipped: 0,
-      errorCode: null,
-    },
-  };
-  const phone: PhoneLibrarySnapshot = {
+  const rootId = "a".repeat(64),
+    libraryEntryId = "b".repeat(64);
+  const library = {
+    ...emptyLibrary(),
     revision: 1,
-    importedNames: [
-      "合成电脑原版 [Japanese].zip",
-      "合成手机中文本 [Chinese].zip",
-    ],
-    importedAt: 1,
-    importFileName: "synthetic-phone.txt",
-    manualEntries: [],
-  };
-  const library: LibrarySnapshot = {
-    revision: 1,
-    rootId: "8".repeat(64),
-    rootPath: "C:\\Synthetic\\Comics",
+    rootId,
+    rootPath: "C:\\Synthetic",
     generation: 1,
     phase: "complete",
     freshness: "live",
-    items: [
-      {
-        id: "7".repeat(64),
-        relativePath: "Synthetic.zip",
-        fileName: "Synthetic.zip",
-        format: "zip",
-        title: "合成电脑原版 [Japanese].zip",
-        authors: ["合成作者"],
-        description: null,
-        tags: [],
-        bytes: 1234,
-        modifiedAt: 1,
-        pageCount: 20,
-        coverAvailable: false,
-        state: "indexed",
-        errorCode: null,
-        sourceRef: null,
-        identityEvidence: null,
-      },
-    ],
-    visited: 1,
-    skipped: 0,
-    updatedAt: 1,
-    errorCode: null,
   };
-  return { accounts, view, phone, library };
-}
-
-async function install(page: Page) {
-  await page.addInitScript((fixture: ReturnType<typeof fixtures>) => {
-    const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-    const hooks: Hooks = (window.completionTest = {
-      ...fixture,
-      calls: [],
-      settings: { revision: 0, families: [], languages: [] },
-      holdNext: false,
-      held: false,
-    });
-    const preferences = {
-      revision: 0,
-      value: {
-        version: 1,
-        appearance: {
-          backgroundMode: "B",
-          density: 7,
-          backgroundImage: null,
-          backgroundName: null,
-        },
-        resources: {
-          profile: "balanced",
-          simultaneousWorks: 2,
-          imageRequests: 4,
-        },
-      },
-    };
-    Object.defineProperty(window, "__TAURI_INTERNALS__", {
-      configurable: true,
-      value: {
-        invoke: async (command: string, args: Record<string, unknown> = {}) => {
-          hooks.calls.push({ command, args: clone(args) });
-          if (command === "read_preferences") return clone(preferences);
-          if (command === "read_booklists")
-            return { revision: 0, value: { version: 1, lists: [] } };
-          if (command === "source_accounts") return clone(hooks.accounts);
-          if (command === "source_matches_read")
-            return { revision: 0, pairs: [] };
-          if (command === "phone_library_read") return clone(hooks.phone);
-          if (command === "library_read") return clone(hooks.library);
-          if (command === "jm_download_read") return { revision: 0, tasks: [] };
-          if (command === "source_following")
-            return {
-              source: args.source,
-              sessionId: args.sessionId,
-              revision: 0,
-              works: [],
-              authors: ["合成作者"],
-            };
-          if (command === "source_catalog")
-            return {
-              source: args.source,
-              sessionId: args.sessionId,
-              snapshot: null,
-              completeSnapshot: null,
-            };
-          if (command === "source_cover")
-            return {
-              source: args.source,
-              sessionId: args.sessionId,
-              workId: args.workId,
-              dataUrl: null,
-            };
-          if (command === "source_query")
-            return {
-              source: args.source,
-              sessionId: args.sessionId,
-              items: hooks.view.discovery.records
-                .filter(
-                  (r) =>
-                    r.work.source === args.source &&
-                    r.work.workId === args.query,
-                )
-                .map((r) => r.work),
-              page: 1,
-              total: 1,
-              pages: 1,
-              hasMore: false,
-              folders: [],
-            };
-          if (command === "completeness_read") {
-            const result = clone(hooks.view);
-            if (hooks.holdNext) {
-              hooks.holdNext = false;
-              hooks.held = true;
-              await new Promise<void>((resolve) => {
-                hooks.release = resolve;
-              });
-            }
-            return result;
-          }
-          if (command === "completeness_start") {
-            hooks.view.discovery.run = {
-              id: "6".repeat(64),
-              phase: "checking",
-              currentAuthor: "合成作者",
-              currentSource: "JM",
-              currentPage: 1,
-              requestsUsed: 0,
-              completedScopes: 0,
-              totalScopes: 2,
-              errorCode: null,
-            };
-            hooks.view.automatic = {
-              runId: "6".repeat(64),
-              phase: args.automatic ? "waiting" : "idle",
-              queued: 0,
-              skipped: 0,
-              errorCode: null,
-            };
-            return clone(hooks.view);
-          }
-          if (command === "completeness_cancel") {
-            hooks.view.discovery.run!.phase = "cancelled";
-            hooks.view.automatic.phase = "cancelled";
-            return;
-          }
-          if (command === "completeness_settings_read")
-            return clone(hooks.settings);
-          if (command === "completeness_family_confirm") {
-            if (args.revision !== hooks.settings.revision)
-              throw { code: "REVISION_CONFLICT" };
-            const members = clone(args.members as CompletionMember[]);
-            hooks.settings = {
-              ...hooks.settings,
-              revision: hooks.settings.revision + 1,
-              families: [{ id: "2".repeat(64), members }],
-            };
-            hooks.view.completeness.revision = hooks.settings.revision;
-            const group = hooks.view.completeness.groups.find(
-              (g) => g.groupId === "d".repeat(64),
-            )!;
-            group.computer = members
-              .filter((m) => m.kind === "computer")
-              .map((member) => ({
-                member,
-                name: hooks.library.items.find(
-                  (item) => item.id === member.itemId,
-                )!.title,
-                language: "japanese",
-              }));
-            group.status = "translation_available";
-            group.reasons = [];
-            group.eligible = {
-              groupId: group.groupId,
-              reference: group.sources[0].reference,
-              kind: "translation",
-              evidenceHash: hooks.view.completeness.evidenceHash,
-            };
-            return clone(hooks.settings);
-          }
-          if (command === "completeness_language_set") {
-            if (args.revision !== hooks.settings.revision)
-              throw { code: "REVISION_CONFLICT" };
-            const member = args.member as CompletionMember;
-            hooks.settings.revision++;
-            hooks.view.completeness.revision = hooks.settings.revision;
-            if (member.kind === "computer" && args.language === "chinese") {
-              const group = hooks.view.completeness.groups.find(
-                (g) => g.groupId === "d".repeat(64),
-              )!;
-              group.computer[0].language = "chinese";
-              group.status = "owned_chinese";
-              group.eligible = null;
-            }
-            return clone(hooks.settings);
-          }
-          throw { code: "SYNTHETIC_UNSUPPORTED_COMMAND" };
-        },
-      },
-    });
-  }, fixtures());
-  await page.goto("/");
-  await page.getByTestId("nav-completion").click();
-  await expect(page.getByTestId("completion-panel")).toBeVisible();
-  await expect(
-    page.getByTestId("completion-group-" + "a".repeat(64)),
-  ).toBeVisible();
-}
-
-async function calls(page: Page, command: string) {
-  return page.evaluate(
-    (value) =>
-      window.completionTest.calls.filter((call) => call.command === value),
-    command,
-  );
-}
-
-test("opening author completion keeps old omissions, Chinese PC copies and uncertain candidates visible without starting work", async ({
-  page,
-}) => {
-  await install(page);
-  const panel = page.getByTestId("completion-panel");
-  await expect(panel).toContainText("01 旧作遗漏");
-  await expect(panel).toContainText("汉化已入库");
-  await expect(panel).toContainText("需要核对");
-  await expect(
-    page.getByTestId("completion-group-" + "b".repeat(64)),
-  ).toHaveCount(0);
-  await page.getByRole("combobox", { name: "补全状态" }).selectOption("all");
-  const owned = page.getByTestId("completion-group-" + "b".repeat(64));
-  await expect(owned).toContainText("汉化已入库");
-  await expect(owned).toContainText("JM · Pica");
-  await expect(owned.getByRole("button", { name: "准备下载" })).toHaveCount(0);
-  await page.getByRole("button", { name: "刷新入库状态", exact: true }).click();
-  await expect
-    .poll(async () =>
-      (await calls(page, "completeness_read")).some(
-        (call) => call.args.recheckFiles === true,
-      ),
-    )
-    .toBe(true);
-  expect(await calls(page, "completeness_start")).toEqual([]);
-  expect(await calls(page, "completeness_family_confirm")).toEqual([]);
-});
-
-test("only an explicit check sends automatic permission, author union and current destination; stop cancels that run", async ({
-  page,
-}) => {
-  await install(page);
-  expect(await calls(page, "completeness_start")).toEqual([]);
-  await page.getByTestId("completion-start").click();
-  await expect(
-    page.getByRole("button", { name: "停止本次检查与自动下载" }),
-  ).toBeVisible();
-  await expect
-    .poll(async () => (await calls(page, "completeness_start")).length)
-    .toBe(1);
-  const start = (await calls(page, "completeness_start"))[0].args;
-  expect(start).toEqual({
-    scopes: fixtures().view.discovery.scopes,
-    authors: [],
-    automatic: true,
-    rootId: "8".repeat(64),
-    generation: 1,
-  });
-  await page.getByRole("button", { name: "停止本次检查与自动下载" }).click();
-  await expect(page.getByTestId("completion-panel")).toContainText(
-    "本次检查已停止",
-  );
-  expect((await calls(page, "completeness_cancel"))[0].args).toEqual({
-    runId: "6".repeat(64),
-  });
-  await page
-    .getByRole("checkbox", { name: "发现对应汉化后自动下载到电脑" })
-    .uncheck();
-  await page.getByTestId("completion-start").click();
-  await expect
-    .poll(async () => (await calls(page, "completeness_start")).length)
-    .toBe(2);
-  expect((await calls(page, "completeness_start"))[1].args.automatic).toBe(
-    false,
-  );
-});
-
-test("an explicit computer-file relation and language correction update projection without media changes or automatic start", async ({
-  page,
-}) => {
-  await install(page);
-  const group = page.getByTestId("completion-group-" + "d".repeat(64));
-  await group.getByRole("button", { name: "核对版本" }).click();
-  const dialog = page.getByRole("dialog", { name: "核对作品版本" });
-  await dialog.getByRole("checkbox", { name: /JM · 555/ }).check();
-  await dialog
-    .getByRole("textbox", { name: "搜索电脑漫画库" })
-    .fill("合成电脑原版");
-  await dialog
-    .getByRole("checkbox", { name: "合成电脑原版 [Japanese].zip", exact: true })
-    .check();
-  await dialog
-    .getByRole("button", { name: "确认所选版本属于同一作品" })
-    .click();
-  await expect(group).toContainText("发现汉化 · 待下载");
-  const relation = (await calls(page, "completeness_family_confirm"))[0].args;
-  expect(relation).toEqual({
-    revision: 0,
-    members: [
-      { kind: "source", reference: { source: "JM", workId: "555" } },
-      { kind: "computer", itemId: "7".repeat(64) },
-    ],
-  });
-  await page.getByRole("combobox", { name: "补全状态" }).selectOption("all");
-  await dialog
-    .getByRole("combobox", {
-      name: "语言：合成电脑原版 [Japanese].zip",
-      exact: true,
-    })
-    .selectOption("chinese");
-  await expect(group).toContainText("汉化已入库");
-  expect((await calls(page, "completeness_language_set"))[0].args).toEqual({
+  const view: DiscoverySnapshot = {
+    scopes: accounts.map((a) => ({ source: a.source, sessionId: a.sessionId })),
     revision: 1,
-    member: { kind: "computer", itemId: "7".repeat(64) },
-    language: "chinese",
-  });
-  expect(await calls(page, "completeness_start")).toEqual([]);
-  expect(
-    await page.evaluate(() => window.completionTest.phone.importedNames),
-  ).toEqual(fixtures().phone.importedNames);
-});
+    run: null,
+    authors: accounts.map((a) => ({
+      source: a.source,
+      author: "合成作者",
+      state: "partial",
+      lastAttemptAt: 1800000000000,
+      lastCompleteAt: null,
+      observedCount: a.source === "JM" ? 2 : 1,
+      pagesRead: 1,
+      errorCode: "SOURCE_UNAVAILABLE",
+    })),
+    records: works.map((work) => ({
+      work,
+      matchedAuthors: ["合成作者"],
+      authorVerified: true,
+      observedAt: 1800000000000,
+      scanId: "old-scan",
+    })),
+  };
+  const inventory: DownloadInventorySnapshot = {
+    rootId,
+    revision: 1,
+    libraryRevision: 1,
+    items: [
+      { source: "JM", workId: "123", libraryEntryId, localFiles: "present" },
+    ],
+  };
+  await page.addInitScript(
+    ({ accounts, works, library, view, inventory, preferences }) => {
+      const hooks = (window.authorTest = {
+        calls: [],
+        view,
+        inventory,
+        hold: false,
+        readFailure: false,
+      } as Window["authorTest"]);
+      const clone = (value: unknown) => structuredClone(value);
+      Object.defineProperty(window, "__TAURI_INTERNALS__", {
+        configurable: true,
+        value: {
+          invoke: async (
+            command: string,
+            args: Record<string, unknown> = {},
+          ) => {
+            hooks.calls.push({
+              command,
+              args: clone(args) as Record<string, unknown>,
+            });
+            if (command === "read_preferences")
+              return { revision: 0, value: preferences };
+            if (command === "library_read") return clone(library);
+            if (command === "download_inventory_read")
+              return clone(hooks.inventory);
+            if (command === "source_accounts") return clone(accounts);
+            if (command === "jm_download_read")
+              return { revision: 0, tasks: [] };
+            if (command === "source_following")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                revision: 0,
+                works: [],
+                authors: [],
+              };
+            if (command === "source_cover")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                workId: args.workId,
+                dataUrl:
+                  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+              };
+            if (command === "discovery_read") {
+              if (hooks.readFailure) throw { code: "SOURCE_UNAVAILABLE" };
+              const result = clone(hooks.view);
+              if (hooks.hold) {
+                hooks.hold = false;
+                await new Promise<void>((resolve) => {
+                  hooks.release = resolve;
+                });
+              }
+              return result;
+            }
+            if (command === "discovery_start") {
+              hooks.view.run = {
+                id: "scan-2",
+                phase: "checking",
+                currentAuthor: "合成作者",
+                currentSource: "JM",
+                currentPage: 1,
+                requestsUsed: 1,
+                completedScopes: 0,
+                totalScopes: 2,
+                errorCode: null,
+              };
+              for (const range of hooks.view.authors) range.state = "checking";
+              return { runId: "scan-2", snapshot: clone(hooks.view) };
+            }
+            if (command === "discovery_cancel") {
+              hooks.view.run!.phase = "cancelled";
+              for (const range of hooks.view.authors) range.state = "cancelled";
+              return clone(hooks.view.run);
+            }
+            if (command === "source_query") {
+              const sourceWorks = works.filter(
+                (work) => work.source === args.source,
+              );
+              const items =
+                args.kind === "detail"
+                  ? sourceWorks.filter((work) => work.workId === args.query)
+                  : [sourceWorks[Number(args.page) - 1]].filter(Boolean);
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items,
+                page: args.page,
+                pages: args.kind === "detail" ? 1 : sourceWorks.length,
+                total:
+                  args.kind === "detail" ? items.length : sourceWorks.length,
+                hasMore:
+                  args.kind !== "detail" &&
+                  Number(args.page) < sourceWorks.length,
+                folders: [],
+              };
+            }
+            throw { code: "UNEXPECTED_SYNTHETIC_COMMAND" };
+          },
+        },
+      });
+    },
+    {
+      accounts,
+      works,
+      library,
+      view,
+      inventory,
+      preferences: initialPreferences(),
+    },
+  );
+  await page.goto("/");
+}
+const open = async (page: Page) => {
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已记录 3 条",
+  );
+};
 
-test("a delayed old-account response cannot replace the newly connected account view", async ({
+test("saved omissions remain visible, same-source receipts filter ownership, and entering the page never starts a check", async ({
   page,
 }) => {
   await install(page);
-  await page.evaluate(() => {
-    window.completionTest.holdNext = true;
-  });
-  await page.getByRole("button", { name: "刷新入库状态", exact: true }).click();
-  await expect
-    .poll(() => page.evaluate(() => window.completionTest.held))
-    .toBe(true);
+  await open(page);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已入库 1 条 · 未入库 2 条 · 当前显示 2 条",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(
+    page.getByTestId("author-update-Pica:0123456789abcdef01234567"),
+  ).toBeVisible();
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter(
+        (call) => call.command === "discovery_start",
+      ),
+    ),
+  ).toEqual([]);
   await page.getByTestId("nav-settings").click();
-  await page.getByTestId("settings-accounts").click();
+  await open(page);
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/manual-author-updates.png" });
+});
+
+test("checking and stopping are explicit, preserve old results and do not download", async ({
+  page,
+}) => {
+  await install(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "正在检查",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await page.getByRole("button", { name: "停止本次检查" }).click();
+  await expect(page.getByTestId("completion-progress")).toHaveCount(0);
+  await expect(
+    page.getByText("检查范围尚未读完", { exact: false }),
+  ).toBeVisible();
+});
+
+test("valid new receipts refresh counts, but all-owned is withheld until both source ranges finish", async ({
+  page,
+}) => {
+  await install(page);
+  await open(page);
   await page.evaluate(() => {
-    const hooks = window.completionTest;
-    hooks.accounts = hooks.accounts.map((account) => ({
-      ...account,
-      sessionId: "synthetic-" + account.source + "-2",
+    const h = window.authorTest;
+    h.inventory.items = h.view.records.map((r) => ({
+      source: r.work.source,
+      workId: r.work.workId,
+      libraryEntryId: "b".repeat(64),
+      localFiles: "present",
     }));
-    hooks.view.discovery.scopes = hooks.accounts.map((account) => ({
-      source: account.source,
-      sessionId: account.sessionId!,
-    }));
-    hooks.view.discovery.records[0].work.title = "新账号目录";
-    hooks.view.completeness.groups[0].title = "新账号目录";
-    hooks.view.completeness.groups[0].sources[0].title = "新账号目录";
+    h.inventory.revision++;
   });
-  await page
-    .getByRole("button", { name: "重新读取账号状态", exact: true })
-    .click();
-  await expect
-    .poll(
-      async () =>
-        (await calls(page, "source_accounts")).filter(
-          (call) => call.args.refresh === true,
-        ).length,
-    )
-    .toBeGreaterThan(0);
-  await page.getByTestId("nav-completion").click();
-  await expect(page.getByTestId("completion-panel")).toContainText(
-    "新账号目录",
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已入库 3 条 · 未入库 0 条",
   );
-  await page.evaluate(() => window.completionTest.release?.());
-  await expect(page.getByTestId("completion-panel")).not.toContainText(
-    "01 旧作遗漏",
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  await page.evaluate(() => {
+    for (const range of window.authorTest.view.authors) {
+      range.state = "complete";
+      range.errorCode = null;
+      range.lastCompleteAt = 1800000001000;
+    }
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(page.getByTestId("completion-all-owned")).toContainText(
+    "JM 与哔咔",
   );
-  await expect(page.getByTestId("completion-panel")).toContainText(
-    "新账号目录",
+  await page.evaluate(() => {
+    window.authorTest.inventory.items[0].localFiles = "missing";
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "未入库 1 条",
   );
-  expect(await calls(page, "completeness_start")).toEqual([]);
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+});
+
+test("a new author is searched across every page of both sources without requiring a follow", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByTestId("nav-author-search").click();
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
+  await page.getByRole("button", { name: "搜索两站作品" }).click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完 · 已记录 3 条",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((c) => c.command === "source_query")
+        .map((c) => [c.args.source, c.args.page]),
+    ),
+  ).toEqual([
+    ["JM", 1],
+    ["JM", 2],
+    ["Pica", 1],
+  ]);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已入库 1 条 · 未入库 2 条 · 当前显示 2 条",
+  );
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/dual-source-author-search.png",
+  });
 });

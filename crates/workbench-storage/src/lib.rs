@@ -3,24 +3,18 @@
 //! Library root paths are stored only as private metadata selected by the native picker.
 mod background;
 mod cache;
-mod completeness;
 mod discovery;
 mod downloads;
 mod library;
-mod library_matching;
-mod matches;
 mod model;
 mod phone;
 mod store;
 
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
 pub use cache::{AccountCache, CacheEntry};
-pub use completeness::*;
 pub use discovery::*;
 pub use downloads::*;
 pub use library::*;
-pub use library_matching::*;
-pub use matches::*;
 pub use model::{
     AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,
     FollowedWork, ResourcePreferences, ResourceProfile, Source, WorkIdentity, WorkbenchPreferences,

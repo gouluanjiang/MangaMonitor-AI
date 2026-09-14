@@ -1,17 +1,10 @@
 import type { LibraryItem, LibrarySnapshot } from "./library-types.ts";
 import type { SourceWork } from "./source-types.ts";
-import type { SourceMatchPair } from "./source-matches-types.ts";
-import { createLibraryMatcher } from "./library-model.ts";
+import type { DownloadInventorySnapshot } from "./download-types.ts";
 
-/** Ownership comes from the current computer library, never a historical list. */
+/** Source-specific download receipts and files are the only ownership evidence. */
 export interface InventoryMatch {
-  kind:
-    | "owned"
-    | "candidate"
-    | "missing"
-    | "incomplete"
-    | "unconfigured"
-    | "unknown";
+  kind: "owned" | "missing" | "unconfigured" | "unknown";
   items: LibraryItem[];
 }
 export const readableLibraryItem = (item: LibraryItem) =>
@@ -22,37 +15,55 @@ export const libraryItemStatus = (item: LibraryItem) =>
   readableLibraryItem(item) ? "已入库 · 电脑漫画库" : "文件待核对";
 export function createInventoryMatcher(
   library: LibrarySnapshot | undefined,
-  pairs: SourceMatchPair[] = [],
-  matchesReady = true,
+  downloads: DownloadInventorySnapshot | undefined,
+  downloadsReady = true,
   libraryReady = true,
 ) {
-  const match = createLibraryMatcher(library, matchesReady ? pairs : []);
+  const entries = new Map(
+    (library?.items ?? []).map((item) => [item.id, item]),
+  );
+  const registered = new Map(
+    (downloads?.items ?? []).map((item) => [
+      item.source + ":" + item.workId,
+      item,
+    ]),
+  );
   return (
     work: Pick<SourceWork, "source" | "workId" | "title">,
   ): InventoryMatch => {
-    const result = match(work);
-    if (!libraryReady || !matchesReady || library?.phase === "error")
-      return { kind: "unknown", items: result.items };
-    return { ...result, kind: result.kind === "exact" ? "owned" : result.kind };
+    if (!library?.rootId) return { kind: "unconfigured", items: [] };
+    if (
+      !libraryReady ||
+      !downloadsReady ||
+      !downloads ||
+      downloads.rootId !== library.rootId ||
+      library.phase === "error"
+    )
+      return { kind: "unknown", items: [] };
+    const download = registered.get(work.source + ":" + work.workId);
+    const item = download && entries.get(download.libraryEntryId);
+    const items = item ? [item] : [];
+    if (!download || download.localFiles === "missing")
+      return { kind: "missing", items: [] };
+    return {
+      kind: download.localFiles === "present" ? "owned" : "unknown",
+      items,
+    };
   };
 }
 export const inventoryLabel = (match: InventoryMatch) =>
   ({
     owned: "已入库 · 电脑漫画库",
-    candidate: "待确认匹配",
-    missing: "漫画库内未匹配",
-    incomplete: "漫画库目录未读完",
+    missing: "未入库",
     unconfigured: "尚未设置漫画库",
-    unknown: "文件或关联未核对",
+    unknown: "入库状态待核实",
   })[match.kind];
 
-export type InventoryFilter =
-  "all" | "owned" | "candidate" | "missing" | "unknown";
+export type InventoryFilter = "all" | "owned" | "missing" | "unknown";
 export const inventoryFilterLabels: Record<InventoryFilter, string> = {
   all: "全部",
   owned: "已入库",
-  candidate: "待确认匹配",
-  missing: "未匹配",
+  missing: "未入库",
   unknown: "状态待核对",
 };
 export function inventoryFilterMatches(
@@ -62,7 +73,7 @@ export function inventoryFilterMatches(
   return (
     filter === "all" ||
     (filter === "unknown"
-      ? ["unknown", "unconfigured", "incomplete"].includes(match.kind)
+      ? ["unknown", "unconfigured"].includes(match.kind)
       : match.kind === filter)
   );
 }

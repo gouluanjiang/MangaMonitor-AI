@@ -26,6 +26,49 @@ impl LibraryService {
         Self::default()
     }
 
+    /// Reveal one indexed item through the native host. Renderer paths are not
+    /// accepted; verified root and item handles live through the host call.
+    pub fn with_verified_location<T>(
+        &mut self,
+        store: &WorkbenchStore,
+        root_id: &str,
+        generation: u64,
+        entry_id: &str,
+        reveal: impl FnOnce(&Path) -> Result<T>,
+    ) -> Result<T> {
+        let document = store.read_library()?;
+        require_scope(&document.value, root_id, generation)?;
+        let record = find_record(&document.value, entry_id)?;
+        let root = Root::restore(
+            document
+                .value
+                .root
+                .as_ref()
+                .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
+        )?;
+        let node = root.node(&record.item.relative_path)?;
+        let identity = match &node {
+            Node::File(file) if record.item.format != LibraryFormat::Directory => {
+                paths::identity(&file.file)?
+            }
+            Node::Directory(directory) if record.item.format == LibraryFormat::Directory => {
+                paths::identity(&directory.file)?
+            }
+            _ => return Err(error("LIBRARY_FILE_CHANGED")),
+        };
+        if record.identity.as_ref() != Some(&identity) {
+            return Err(error("LIBRARY_FILE_CHANGED"));
+        }
+        root.verify()?;
+        let latest = store.read_library()?;
+        require_scope(&latest.value, root_id, generation)?;
+        if latest.revision != document.revision {
+            return Err(error("LIBRARY_STALE_SNAPSHOT"));
+        }
+        let path = Path::new(&root.saved.path).join(&record.item.relative_path);
+        reveal(&path)
+    }
+
     /// Restores only private metadata. Does not enumerate or decode user files.
     pub fn read(&mut self, store: &WorkbenchStore) -> Result<LibrarySnapshot> {
         let document = store.read_library()?;

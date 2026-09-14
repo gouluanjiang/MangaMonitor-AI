@@ -864,3 +864,19 @@ fieldset.settings-panel {
   margin: 0;
   min-width: 0;
 }
+.diagnostic-summary {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 180px;
+  padding: 12px;
+  margin: 12px 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: rgba(20, 18, 26, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}

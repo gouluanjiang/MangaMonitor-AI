@@ -14,16 +14,8 @@ import type {
   WorkbenchPreferences,
 } from "./preferences.ts";
 import "./settings.css";
-
-type SettingsPage =
-  "accounts" | "library" | "appearance" | "resources" | "network";
-const pages: { id: SettingsPage; label: string }[] = [
-  { id: "accounts", label: "账号与收藏" },
-  { id: "library", label: "漫画库" },
-  { id: "appearance", label: "外观" },
-  { id: "resources", label: "下载与资源" },
-  { id: "network", label: "网络与诊断" },
-];
+import { matchingSettingsPages } from "./settings-navigation.ts";
+import type { SettingsPage } from "./settings-navigation.ts";
 
 function sameAppearance(a: AppearancePreferences, b: AppearancePreferences) {
   return (
@@ -43,10 +35,14 @@ function sameResources(a: ResourcePreferences, b: ResourcePreferences) {
 }
 
 export interface WorkbenchSettingsProps {
+  page: SettingsPage;
+  onPageChange(page: SettingsPage): void;
+  networkPanel?: ReactNode;
   accountPanel?: ReactNode;
   libraryPanel?: ReactNode;
   downloadPanel?: ReactNode;
   preferences: WorkbenchPreferences;
+  preferencesReady?: boolean;
   onSave(next: WorkbenchPreferences): Promise<boolean>;
   storageLabel: string;
   saveDisabled: boolean;
@@ -59,10 +55,14 @@ export interface WorkbenchSettingsProps {
 }
 
 export function WorkbenchSettings({
+  page,
+  onPageChange,
+  networkPanel,
   accountPanel,
   libraryPanel,
   downloadPanel,
   preferences,
+  preferencesReady = true,
   onSave,
   storageLabel,
   saveDisabled,
@@ -73,7 +73,13 @@ export function WorkbenchSettings({
   searchQuery,
   onBackgroundValidated,
 }: WorkbenchSettingsProps) {
-  const [page, setPage] = useState<SettingsPage>("accounts");
+  const visiblePages = matchingSettingsPages(searchQuery);
+  const activePage = visiblePages.length ? page : null;
+  useEffect(() => {
+    const matches = matchingSettingsPages(searchQuery);
+    if (matches.length && !matches.some((item) => item.id === page))
+      onPageChange(matches[0].id);
+  }, [searchQuery, page, onPageChange]);
   const [appearance, setAppearance] = useState(preferences.appearance);
   const [resources, setResources] = useState(preferences.resources);
   const [readingImage, setReadingImage] = useState(false);
@@ -102,8 +108,10 @@ export function WorkbenchSettings({
   }, [preferences]);
 
   useEffect(() => {
-    previewCallback.current(page === "appearance" ? appearance : null);
-  }, [page, appearance]);
+    previewCallback.current(
+      page === "appearance" && preferencesReady ? appearance : null,
+    );
+  }, [page, appearance, preferencesReady]);
 
   useEffect(
     () => () => {
@@ -117,7 +125,9 @@ export function WorkbenchSettings({
   const resourcesDirty = !sameResources(resources, preferences.resources);
   const currentDirty = page === "appearance" ? appearanceDirty : resourcesDirty;
   const editablePage =
-    page === "appearance" || (page === "resources" && !downloadPanel);
+    visiblePages.length > 0 &&
+    preferencesReady &&
+    (page === "appearance" || (page === "resources" && !downloadPanel));
   const defaults = initialPreferences();
   const canRestorePage =
     page === "appearance"
@@ -233,52 +243,49 @@ export function WorkbenchSettings({
       </div>
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label="设置分类">
-          {pages
-            .filter((item) => item.label.includes(searchQuery.trim()))
-            .map((item) => {
-              const dirty =
-                (item.id === "appearance" && appearanceDirty) ||
-                (item.id === "resources" && resourcesDirty);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  disabled={saving}
-                  aria-label={item.label}
-                  aria-current={page === item.id ? "page" : undefined}
-                  data-testid={`settings-${item.id}`}
-                  onClick={() => {
-                    setPage(item.id);
-                    clearFeedback();
-                  }}
-                >
-                  {item.label}
-                  {dirty && (
-                    <span aria-hidden="true" title="有未保存的修改">
-                      ·
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+          {visiblePages.map((item) => {
+            const dirty =
+              (item.id === "appearance" && appearanceDirty) ||
+              (item.id === "resources" && resourcesDirty);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={saving}
+                aria-label={item.label}
+                aria-current={activePage === item.id ? "page" : undefined}
+                data-testid={`settings-${item.id}`}
+                onClick={() => {
+                  onPageChange(item.id);
+                  clearFeedback();
+                }}
+              >
+                {item.label}
+                {dirty && (
+                  <span aria-hidden="true" title="有未保存的修改">
+                    ·
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
         <fieldset
           className="settings-panel"
           disabled={saving}
           aria-busy={saving}
         >
-          {searchQuery.trim() &&
-            !pages.some((item) => item.label.includes(searchQuery.trim())) && (
-              <p role="status" className="settings-notice">
-                没有匹配的设置分类，请试试账号、漫画库、外观、下载或网络。
-              </p>
-            )}
+          {visiblePages.length === 0 && (
+            <p role="status" className="settings-notice">
+              没有找到相关设置，请试试登录、目录、背景、下载或版本。
+            </p>
+          )}
           {storageFailed && (
             <p className="settings-notice warning" role="status">
               本机存储当前不可用。修改会保留在本页草稿中，保存成功后才能在重开时恢复。
             </p>
           )}
-          {page === "accounts" &&
+          {activePage === "accounts" &&
             (accountPanel ?? (
               <section
                 className="settings-card"
@@ -305,7 +312,7 @@ export function WorkbenchSettings({
                 </p>
               </section>
             ))}
-          {page === "library" &&
+          {activePage === "library" &&
             (libraryPanel ?? (
               <section
                 className="settings-card"
@@ -339,7 +346,12 @@ export function WorkbenchSettings({
                 </p>
               </section>
             ))}
-          {page === "appearance" && (
+          {activePage === "appearance" && !preferencesReady && (
+            <p role="status">
+              外观设置尚未读入，请使用上方的重新读取设置按钮。
+            </p>
+          )}
+          {activePage === "appearance" && preferencesReady && (
             <section
               className="settings-card"
               aria-labelledby="appearance-title"
@@ -410,7 +422,8 @@ export function WorkbenchSettings({
               <p className="settings-help">
                 支持 PNG、JPEG、WebP，最大{" "}
                 {onNativeChooseBackground ? "8" : "2"} MiB、单边 8192 像素、总计
-                2400 万像素。图片仅保存在{storageLabel}，不会上传。
+                2400 万像素。图片仅保存在{storageLabel}
+                ，不会上传。
                 {onNativeChooseBackground &&
                   "保存后使用本机缓存，原图片移动不影响已保存背景。"}
               </p>
@@ -509,7 +522,7 @@ export function WorkbenchSettings({
               </div>
             </section>
           )}
-          {page === "resources" &&
+          {activePage === "resources" &&
             (downloadPanel ?? (
               <section
                 className="settings-card"
@@ -618,68 +631,72 @@ export function WorkbenchSettings({
                 </p>
               </section>
             ))}
-          {page === "network" &&
-            (downloadPanel ? (
-              <section
-                className="settings-card"
-                aria-labelledby="network-title"
-              >
-                <h2 id="network-title">网络与诊断</h2>
-                <p className="settings-copy">
-                  JM
-                  和哔咔的连接状态可在“账号”页查看。下载中遇到的问题会保留在下载队列，按任务提示继续或重试。
-                </p>
-                <p className="settings-help">代理设置和诊断报告尚未接入。</p>
-              </section>
-            ) : (
-              <>
+          {activePage === "network" &&
+            (networkPanel ??
+              (downloadPanel ? (
                 <section
                   className="settings-card"
                   aria-labelledby="network-title"
                 >
                   <h2 id="network-title">网络与诊断</h2>
                   <p className="settings-copy">
-                    来源连接检测、代理配置与诊断日志将在本地服务接入后提供。
+                    JM
+                    和哔咔的连接状态可在“账号”页查看。下载中遇到的问题会保留在下载队列，按任务提示继续或重试。
                   </p>
-                  <dl className="settings-facts">
-                    <div>
-                      <dt>JM／哔咔连接</dt>
-                      <dd>待接入</dd>
-                    </div>
-                    <div>
-                      <dt>本地下载器</dt>
-                      <dd>尚未连接</dd>
-                    </div>
-                    <div>
-                      <dt>诊断数据</dt>
-                      <dd>当前没有采集网络或账号日志</dd>
-                    </div>
-                  </dl>
+                  <p className="settings-help">代理设置和诊断报告尚未接入。</p>
                 </section>
-                <section className="settings-card" aria-labelledby="demo-title">
-                  <h2 id="demo-title">关于这个样例</h2>
-                  <p className="settings-copy">
-                    作品、封面和队列状态均为演示内容。外观与资源偏好单独保存在
-                    {storageLabel}，不会影响真实漫画库或线上账号。
-                  </p>
-                  <div className="settings-reset-row">
-                    <div>
-                      <h3>重新体验</h3>
-                      <p className="settings-help">
-                        重置模拟队列和页面选择，保留外观与资源偏好。
-                      </p>
+              ) : (
+                <>
+                  <section
+                    className="settings-card"
+                    aria-labelledby="network-title"
+                  >
+                    <h2 id="network-title">网络与诊断</h2>
+                    <p className="settings-copy">
+                      来源连接检测、代理配置与诊断日志将在本地服务接入后提供。
+                    </p>
+                    <dl className="settings-facts">
+                      <div>
+                        <dt>JM／哔咔连接</dt>
+                        <dd>待接入</dd>
+                      </div>
+                      <div>
+                        <dt>本地下载器</dt>
+                        <dd>尚未连接</dd>
+                      </div>
+                      <div>
+                        <dt>诊断数据</dt>
+                        <dd>当前没有采集网络或账号日志</dd>
+                      </div>
+                    </dl>
+                  </section>
+                  <section
+                    className="settings-card"
+                    aria-labelledby="demo-title"
+                  >
+                    <h2 id="demo-title">关于这个样例</h2>
+                    <p className="settings-copy">
+                      作品、封面和队列状态均为演示内容。外观与资源偏好单独保存在
+                      {storageLabel}，不会影响真实漫画库或线上账号。
+                    </p>
+                    <div className="settings-reset-row">
+                      <div>
+                        <h3>重新体验</h3>
+                        <p className="settings-help">
+                          重置模拟队列和页面选择，保留外观与资源偏好。
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={onResetDemo}
+                      >
+                        重置样例
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={onResetDemo}
-                    >
-                      重置样例
-                    </button>
-                  </div>
-                </section>
-              </>
-            ))}
+                  </section>
+                </>
+              )))}
           {editablePage && (
             <div className="settings-savebar">
               <div

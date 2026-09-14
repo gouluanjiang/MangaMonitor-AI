@@ -17,6 +17,8 @@ import {
 import type { DemoTask, TaskStage, Work } from "./types.ts";
 import { Icon } from "./icons.tsx";
 import { WorkbenchSettings } from "./WorkbenchSettings.tsx";
+import { DiagnosticsPanel } from "./DiagnosticsPanel.tsx";
+import type { SettingsPage } from "./settings-navigation.ts";
 import { initialPreferences, decodeBackgroundImage } from "./preferences.ts";
 import type { WorkbenchPreferences } from "./preferences.ts";
 
@@ -342,6 +344,7 @@ export default function App() {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>("accounts");
   const [source, setSource] = useState("all");
   const [sort, setSort] = useState("updated");
   const [selection, setSelection] = useState<string[]>([]);
@@ -563,7 +566,7 @@ export default function App() {
     setDownloadFeedback(true);
     if (!downloadScope) {
       setNotice(`请先连接${sourceLabel(requestedSource)}账号。`);
-      navigate("settings");
+      openSettings("accounts");
       return;
     }
     if (!downloadContext) {
@@ -638,7 +641,7 @@ export default function App() {
       const scope = getDownloadScope(accountsRef.current, source);
       if (!scope) {
         setNotice(`请先连接${sourceLabel(source)}账号。`);
-        navigate("settings");
+        openSettings("accounts");
         return;
       }
       contexts[source] = {
@@ -962,6 +965,11 @@ export default function App() {
     if (task) return { text: displayStage(task), tone: "muted" };
     return { text: "可下载", tone: "muted" };
   };
+  function openSettings(target: SettingsPage = settingsPage) {
+    setSettingsQuery("");
+    setSettingsPage(target);
+    navigate("settings");
+  }
   const navigate = (next: Page) => {
     setEmbeddedSourceDetail(false);
     if (next === page && !detail) return;
@@ -2007,8 +2015,45 @@ export default function App() {
   }
 
   function renderSettings() {
-    return preferencesReady ? (
+    return preferencesReady || persistence.native ? (
       <WorkbenchSettings
+        page={settingsPage}
+        onPageChange={setSettingsPage}
+        preferencesReady={preferencesReady}
+        networkPanel={
+          persistence.native ? (
+            <DiagnosticsPanel
+              state={{
+                accounts,
+                accountsLoading: loadingAccounts,
+                accountsFailed: Boolean(accountsError),
+                library: library.snapshot,
+                libraryFailed: Boolean(library.error),
+                downloads: downloads.snapshot,
+                downloadsReady: downloads.ready,
+                downloadsFailed: Boolean(downloads.error),
+                preferencesReady: Boolean(preferencesSnapshot.current),
+                preferencesFailed:
+                  preferencesFailed ||
+                  storageFailed ||
+                  Boolean(preferencesError),
+              }}
+              onOpenSettings={openSettings}
+              onOpenQueue={() => navigate("queue")}
+              onReloadAccounts={async () => {
+                if (loadingAccounts) return;
+                setLoadingAccounts(true);
+                try {
+                  mergeAccounts(await sourceAdapter.accounts(true));
+                } catch (cause) {
+                  setAccountsError(sourceErrorMessage(cause));
+                } finally {
+                  setLoadingAccounts(false);
+                }
+              }}
+            />
+          ) : undefined
+        }
         downloadPanel={
           persistence.native ? (
             <DownloadSettingsPanel
@@ -2133,7 +2178,7 @@ export default function App() {
             aria-label="设置"
             title="设置"
             aria-current={page === "settings" ? "page" : undefined}
-            onClick={() => navigate("settings")}
+            onClick={() => openSettings()}
           >
             <Icon name="settings" size={19} />
             <span className="nav-tooltip">设置</span>
@@ -2302,7 +2347,7 @@ export default function App() {
               onInputChange={setDownloadInput}
               onPrepare={() => beginDownload(downloadInput)}
               onChooseLibrary={chooseDownloadLibrary}
-              onOpenAccounts={() => navigate("settings")}
+              onOpenAccounts={() => openSettings("accounts")}
               onConfirmed={() => navigate("queue")}
               onOpenDownloaded={openDownloaded}
               onReprepare={(task) => {
@@ -2339,8 +2384,8 @@ export default function App() {
                   onDownload={(work) => void beginDownload(work.workId, work)}
                   onDownloadMany={(works) => void beginDownloadMany(works)}
                   downloadBusy={downloads.busy}
-                  onOpenLibrary={() => navigate("library")}
-                  onOpenAccounts={() => navigate("settings")}
+                  onOpenLibrary={() => openSettings("library")}
+                  onOpenAccounts={() => openSettings("accounts")}
                 />
               </div>
             )}
@@ -2363,7 +2408,7 @@ export default function App() {
                   onOpen={openEmbeddedWork}
                   onDownload={(work) => void beginDownload(work.workId, work)}
                   onDownloadMany={(works) => void beginDownloadMany(works)}
-                  onAccounts={() => navigate("settings")}
+                  onAccounts={() => openSettings("accounts")}
                 />
               </div>
             )}
@@ -2394,7 +2439,7 @@ export default function App() {
               onAccountsChange={mergeAccounts}
               onOpenAccounts={(source) => {
                 setRequestedSource(source);
-                navigate("settings");
+                openSettings("accounts");
               }}
               onWorksChanged={cacheSourceWorks}
               view={sourceView}

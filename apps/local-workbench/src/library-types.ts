@@ -49,6 +49,7 @@ export interface LibraryCover {
   dataUrl: string | null;
 }
 export interface LibraryAdapter {
+  reveal(rootId: string, generation: number, entryId: string): Promise<void>;
   read(): Promise<LibrarySnapshot>;
   choose(): Promise<LibrarySnapshot | null>;
   importPaths(

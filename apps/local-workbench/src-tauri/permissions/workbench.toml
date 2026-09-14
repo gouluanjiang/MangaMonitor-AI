@@ -7,6 +7,7 @@ commands.allow = [
   "read_booklists",
   "write_booklists",
   "choose_background",
+  "workbench_info",
 ]
 
 [[permission]]
@@ -36,4 +37,4 @@ commands.allow = ["jm_download_prepare", "jm_download_confirm", "jm_download_rea
 [[permission]]
 identifier = "workbench-library"
 description = "Read the native-picked existing comic library and update its private index and verified download path locations; no media writes or execution authority."
-commands.allow = ["library_read", "library_choose", "library_import_paths", "library_scan", "library_cover"]
+commands.allow = ["library_read", "library_choose", "library_import_paths", "library_scan", "library_cover", "library_reveal"]

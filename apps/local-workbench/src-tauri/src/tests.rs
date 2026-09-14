@@ -3,6 +3,38 @@ use serde_json::{json, Value};
 use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 
 #[test]
+fn app_information_and_file_reveal_keep_native_origin_and_item_boundaries() {
+    let (_root, app) = fixture();
+    let main = window(&app, "main");
+    let other = window(&app, "secondary");
+    let info = invoke(&main, "workbench_info", json!({})).unwrap();
+    assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(info.as_object().unwrap().len(), 3);
+    for (command, body) in [
+        ("workbench_info", json!({})),
+        (
+            "library_reveal",
+            json!({"rootId":"a".repeat(64),"generation":1,"entryId":"b".repeat(64)}),
+        ),
+    ] {
+        assert!(invoke(&other, command, body.clone()).is_err());
+        assert!(invoke_from(&main, "https://example.invalid", command, body).is_err());
+    }
+    assert!(invoke(
+        &main,
+        "library_reveal",
+        json!({"path":"C:\\Untrusted\\file.exe"})
+    )
+    .is_err());
+    assert!(invoke(
+        &main,
+        "library_reveal",
+        json!({"rootId":"a".repeat(64),"generation":1,"entryId":"b".repeat(64)})
+    )
+    .is_err());
+}
+
+#[test]
 fn manual_discovery_and_download_inventory_keep_main_origin_boundaries() {
     let (_root, app) = fixture();
     let main = window(&app, "main");

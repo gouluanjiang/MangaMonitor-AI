@@ -15,6 +15,8 @@ type PhoneLibrarySnapshot = {
 test.use({ storageState: { cookies: [], origins: [] } });
 type Call = { command: string; args: Record<string, unknown> };
 type Options = {
+  failRevealOnce?: boolean;
+  failPreferences?: boolean;
   pcCount?: number;
   phoneCount?: number;
   covers?: boolean;
@@ -31,6 +33,7 @@ type Options = {
   usability?: boolean;
 };
 type Hooks = {
+  copiedSummary?: string;
   calls: Call[];
   pc: LibrarySnapshot;
   phone: PhoneLibrarySnapshot;
@@ -202,11 +205,33 @@ async function installMock(page: Page, options: Options = {}) {
       },
     };
     const booklists = { revision: 0, value: { version: 1, lists: [] } };
+    let revealFailed = false;
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           hooks.calls.push({ command, args: clone(args) });
+          if (command === "read_preferences" && options.failPreferences)
+            throw { code: "STORAGE_UNAVAILABLE" };
+          if (command === "workbench_info")
+            return {
+              version: "0.3.4",
+              revision: "b".repeat(40),
+              platform: "windows",
+            };
+          if (command === "library_reveal") {
+            if (
+              args.rootId !== hooks.pc.rootId ||
+              args.generation !== hooks.pc.generation ||
+              !hooks.pc.items.some((item) => item.id === args.entryId)
+            )
+              throw { code: "LIBRARY_STALE_SNAPSHOT" };
+            if (options.failRevealOnce && !revealFailed) {
+              revealFailed = true;
+              throw { code: "LIBRARY_ENTRY_MISSING" };
+            }
+            return null;
+          }
           if (command === "jm_download_read") return { revision: 0, tasks: [] };
           if (command === "source_matches_read")
             return { revision: 0, pairs: [] };
@@ -440,6 +465,161 @@ async function installMock(page: Page, options: Options = {}) {
   await page.goto("/");
   await expect(page.getByTestId("library-workbench")).toBeVisible();
 }
+
+test("library detail reveals only the selected item and retains missing-file feedback for retry", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { pcCount: 3, failRevealOnce: true });
+  await page.getByTestId("library-open-" + id(1)).click();
+  expect(await commands(page, "library_reveal")).toEqual([]);
+  await page.getByTestId("library-reveal").click();
+  await expect(page.getByTestId("library-location-status")).toContainText(
+    "当前作品文件未找到",
+  );
+  await page.getByTestId("library-reveal").click();
+  await expect(page.getByTestId("library-location-status")).toContainText(
+    "文件资源管理器",
+  );
+  const calls = await commands(page, "library_reveal");
+  expect(calls).toHaveLength(2);
+  expect(calls[0].args).toEqual({
+    rootId: "a".repeat(64),
+    generation: 1,
+    entryId: id(1),
+  });
+  expect(await commands(page, "library_scan")).toEqual([]);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/library-file-location.png" });
+});
+
+test("native diagnostics show real snapshot states, omit private data and link to the right settings", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { pcCount: 4, usability: true });
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-network").click();
+  await expect(page.getByTestId("diagnostics-version")).toContainText(
+    "0.3.4 · bbbbbbb",
+  );
+  const report = await page.getByTestId("diagnostic-summary").inputValue();
+  expect(report).toContain("目录记录：4 · 文件待核对：1");
+  expect(report).toContain("JM 会话：未连接");
+  expect(report).not.toMatch(
+    /Synthetic PC Library|合成电脑作品|合成作者|sessionId/,
+  );
+  expect(await commands(page, "library_scan")).toEqual([]);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/native-diagnostics.png" });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          window.libraryTest.copiedSummary = text;
+        },
+      },
+    });
+  });
+  await page.getByRole("button", { name: "复制诊断摘要", exact: true }).click();
+  await expect(
+    page.getByText("诊断摘要已复制。", { exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.libraryTest.copiedSummary)).toBe(
+    report,
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new Error("synthetic clipboard unavailable");
+        },
+      },
+    });
+  });
+  await page.getByRole("button", { name: "复制诊断摘要", exact: true }).click();
+  await expect(
+    page.getByText("无法自动复制，请复制下方已选中的文字。"),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 900, height: 720 });
+  expect(
+    await page
+      .locator("main")
+      .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await page.getByRole("button", { name: "漫画库设置", exact: true }).click();
+  await expect(page.getByTestId("settings-library")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.getByTestId("library-import-paths")).toBeVisible();
+  await page.getByTestId("settings-network").click();
+  await page.getByRole("button", { name: "管理账号", exact: true }).click();
+  await expect(page.getByTestId("source-account-settings")).toBeVisible();
+  await page.getByTestId("settings-network").click();
+  const count = (await commands(page, "source_accounts")).length;
+  await page
+    .getByRole("button", { name: "重新读取账号状态", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await commands(page, "source_accounts")).length)
+    .toBe(count + 1);
+  await page.getByRole("button", { name: "查看下载队列", exact: true }).click();
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("settings-network")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
+test("diagnostics stay reachable when preferences cannot be read, without allowing a default overwrite", async ({
+  page,
+}) => {
+  await installMock(page, { pcCount: 3, failPreferences: true });
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-network").click();
+  await expect(page.getByTestId("diagnostic-summary")).toHaveValue(
+    /设置：读取或保存有问题/,
+  );
+  await page.getByTestId("settings-appearance").click();
+  await expect(
+    page.getByText("外观设置尚未读入", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("save-settings-page")).toHaveCount(0);
+  expect(await commands(page, "write_preferences")).toEqual([]);
+});
+
+test("settings keywords select matching sections and preserve appearance drafts while searching", async ({
+  page,
+}) => {
+  await installMock(page, { pcCount: 3 });
+  await page.getByTestId("nav-settings").click();
+  const search = page.getByRole("textbox", { name: "搜索设置", exact: true });
+  await search.fill("壁纸");
+  await expect(page.getByTestId("settings-appearance")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await page.getByTestId("settings-density-5").click();
+  await search.fill("版本");
+  await expect(page.getByTestId("diagnostics-panel")).toBeVisible();
+  await search.fill("no-such-setting");
+  await expect(
+    page.getByText("没有找到相关设置", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId("diagnostics-panel")).toHaveCount(0);
+  await search.fill("");
+  await page.getByTestId("settings-appearance").click();
+  await expect(page.getByTestId("settings-density-5")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("save-settings-page")).toBeEnabled();
+  expect(await commands(page, "write_preferences")).toEqual([]);
+});
 
 test("library admission sorting and state filters combine with search and preserve unknown dates", async ({
   page,

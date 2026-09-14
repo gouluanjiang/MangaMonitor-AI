@@ -1693,7 +1693,7 @@ export function SourceWorkbench({
                 <div className="source-author-head">
                   <span>作者</span>
                   <span>来源</span>
-                  <span>检查状态</span>
+                  <span>检查方式</span>
                   <span>操作</span>
                 </div>
                 {(following?.authors ?? [])
@@ -1702,7 +1702,7 @@ export function SourceWorkbench({
                     <div className="source-author-row" key={author}>
                       <strong>{author}</strong>
                       <span>{sourceLabel(source)}</span>
-                      <span className="source-muted">尚未自动检查</span>
+                      <span className="source-muted">手动查看与检查</span>
                       <div className="source-actions">
                         <button
                           type="button"
@@ -2098,7 +2098,7 @@ export function SourceWorkbench({
       )}
       {view === "following" && followingTab === "works" && !authorSearch && (
         <p className="source-muted">
-          这里的作品关注保存在本机当前账号下，仅手动查看来源，尚未启用自动监控。
+          作品关注保存在本机当前账号下，选择作品即可查看来源详情。作者更新由你在“作者更新”页手动检查。
         </p>
       )}
     </>

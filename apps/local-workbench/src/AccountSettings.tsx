@@ -121,7 +121,7 @@ export function AccountSettings({
     try {
       onAccountsChange([await adapter.logout(scope)]);
       setNotice(
-        sourceLabel(account.source) + " 已退出登录。本地书单和文件保留。",
+        sourceLabel(account.source) + " 已退出登录。电脑漫画与下载记录保留。",
       );
     } catch (cause) {
       setError(sourceErrorMessage(cause));
@@ -227,7 +227,7 @@ export function AccountSettings({
         “记住会话”仅将登录会话保存在系统安全存储，密码不写入普通配置或日志。
       </p>
       <p className="settings-help">
-        当前手动读取收藏；自动发现调度尚未接入。账号操作独立完成，不需要点击其他设置页的保存按钮。
+        收藏与作者更新由你手动检查。账号操作独立完成，不需要点击其他设置页的保存按钮。
       </p>
       {error && !loginSource && (
         <p className="source-warning" role="alert">

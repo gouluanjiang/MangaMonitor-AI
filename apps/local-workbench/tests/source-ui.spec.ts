@@ -1595,7 +1595,7 @@ test("following conflict reload keeps the requested action for explicit retry an
     "合成外部作者",
   );
   await expect(page.getByTestId("source-workbench")).toContainText(
-    "尚未自动检查",
+    "手动查看与检查",
   );
 });
 

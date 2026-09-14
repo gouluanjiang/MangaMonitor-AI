@@ -47,6 +47,61 @@ fn image_bytes() -> Vec<u8> {
     output.into_inner()
 }
 
+#[test]
+fn file_location_uses_verified_item_and_never_opens_changed_or_unscoped_paths() {
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let name = "[Synthetic 作者] title, part 1.zip";
+    let path = root.path().join(name);
+    archive(&path, &[("1.png", &image_bytes())]);
+    let original = fs::read(&path).unwrap();
+    let mut service = LibraryService::new();
+    let start = service.choose(&store, root.path()).unwrap();
+    let ready = finish(&mut service, &store, start);
+    let root_id = ready.root_id.as_deref().unwrap();
+    let entry_id = &ready.items[0].id;
+    let mut calls = 0;
+    service
+        .with_verified_location(&store, root_id, ready.generation, entry_id, |location| {
+            calls += 1;
+            assert_eq!(location, fs::canonicalize(&path).unwrap());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(calls, 1);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(service.read(&store).unwrap().revision, ready.revision);
+    for (scope, generation, item) in [
+        (root_id, ready.generation + 1, entry_id.as_str()),
+        (root_id, ready.generation, "../../untrusted"),
+        ("not-a-root", ready.generation, entry_id.as_str()),
+    ] {
+        assert!(service
+            .with_verified_location(&store, scope, generation, item, |_| {
+                calls += 1;
+                Ok(())
+            })
+            .is_err());
+    }
+    fs::write(&path, b"replaced file").unwrap();
+    assert!(service
+        .with_verified_location(&store, root_id, ready.generation, entry_id, |_| {
+            calls += 1;
+            Ok(())
+        })
+        .is_err());
+    fs::remove_file(&path).unwrap();
+    assert!(service
+        .with_verified_location(&store, root_id, ready.generation, entry_id, |_| {
+            calls += 1;
+            Ok(())
+        })
+        .is_err());
+    assert_eq!(calls, 1);
+    assert_eq!(service.read(&store).unwrap().revision, ready.revision);
+}
+
 fn archive(path: &Path, entries: &[(&str, &[u8])]) {
     let mut writer = ZipWriter::new(File::create(path).unwrap());
     for (name, bytes) in entries {

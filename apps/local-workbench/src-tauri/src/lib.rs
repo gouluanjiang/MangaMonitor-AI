@@ -150,6 +150,25 @@ async fn choose_background<R: Runtime>(
     })?
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkbenchInfo {
+    version: &'static str,
+    revision: Option<&'static str>,
+    platform: &'static str,
+}
+
+#[tauri::command]
+fn workbench_info<R: Runtime>(window: WebviewWindow<R>) -> Result<WorkbenchInfo, StoreError> {
+    require_main(window.label())?;
+    Ok(WorkbenchInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        revision: option_env!("MANGAMONITOR_BUILD_REVISION")
+            .filter(|value| value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit())),
+        platform: std::env::consts::OS,
+    })
+}
+
 fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .manage(Arc::new(library::DesktopLibrary::default()))
@@ -161,6 +180,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             read_booklists,
             write_booklists,
             choose_background,
+            workbench_info,
             discovery::discovery_read,
             discovery::discovery_start,
             discovery::discovery_cancel,
@@ -181,6 +201,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             library::library_import_paths,
             library::library_scan,
             library::library_cover,
+            library::library_reveal,
             accounts::source_accounts,
             accounts::source_login,
             accounts::source_logout,

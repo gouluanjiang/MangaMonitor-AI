@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=MANGAMONITOR_BUILD_REVISION");
     // Application commands otherwise bypass Tauri's capability checks by default.
     let manifest = tauri_build::AppManifest::new().commands(&[
         "read_preferences",
@@ -6,6 +7,7 @@ fn main() {
         "read_booklists",
         "write_booklists",
         "choose_background",
+        "workbench_info",
         "discovery_read",
         "discovery_start",
         "discovery_cancel",
@@ -26,6 +28,7 @@ fn main() {
         "library_import_paths",
         "library_scan",
         "library_cover",
+        "library_reveal",
         "source_accounts",
         "source_login",
         "source_logout",

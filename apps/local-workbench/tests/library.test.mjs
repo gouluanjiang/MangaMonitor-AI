@@ -67,6 +67,38 @@ const empty = () => ({
 });
 const clone = (value) => structuredClone(value);
 
+test("file location IPC accepts only validated library scope and item identity", async () => {
+  const calls = [];
+  const adapter = createLibraryAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return null;
+    },
+  });
+  await adapter.reveal(rootId, 1, entryId(1));
+  assert.deepEqual(calls, [
+    {
+      command: "library_reveal",
+      args: { rootId, generation: 1, entryId: entryId(1) },
+    },
+  ]);
+  await assert.rejects(adapter.reveal(rootId, 1, "../untrusted"));
+  assert.equal(calls.length, 1);
+  const failed = createLibraryAdapter({
+    native: true,
+    invoke: async () => {
+      throw { code: "LIBRARY_ENTRY_MISSING", message: "private path" };
+    },
+  });
+  await assert.rejects(
+    failed.reveal(rootId, 1, entryId(1)),
+    (error) =>
+      error.code === "LIBRARY_ENTRY_MISSING" &&
+      !error.message.includes("private"),
+  );
+});
+
 test("admission sorting keeps unknown history last and keeps only actual file filters", () => {
   const entries = [
     item(1, { addedAt: null }),

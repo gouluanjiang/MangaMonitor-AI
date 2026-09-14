@@ -277,11 +277,11 @@ export function LibrarySettingsPanel({ library }: { library: LibraryState }) {
       <h2 id="library-title">漫画库</h2>
       <LibraryControls library={library} />
       <p className="settings-help">
-        以电脑漫画库中的实际文件判断已入库。新下载一本一个
+        这里浏览电脑中的实际文件。在线页面按该来源的成功下载记录与实际文件标记已入库；未登记的旧漫画不会自动匹配。新下载一本一个
         ZIP，封面仅在本次运行内缓存。
       </p>
       <p className="settings-help">
-        整理过文件名或格式后，可以导入整理时生成的路径映射，保留来源关联与下载记录，再重新读取目录。
+        整理过文件名或格式后，可以导入整理时生成的路径映射，保留已有下载记录的文件位置，再重新读取目录。
       </p>
       <button
         className="button secondary"
@@ -310,6 +310,40 @@ function LibraryDetail({
   library: LibraryState;
   onBack(): void;
 }) {
+  const [opening, setOpening] = useState(false);
+  const [locationMessage, setLocationMessage] = useState("");
+  const request = useRef(0);
+  const openingLock = useRef(false);
+  useEffect(() => {
+    request.current += 1;
+    openingLock.current = false;
+    setOpening(false);
+    setLocationMessage("");
+    return () => {
+      request.current += 1;
+    };
+  }, [item.id, library.snapshot.rootId, library.snapshot.generation]);
+  async function reveal() {
+    const { rootId, generation } = library.snapshot;
+    if (!rootId || openingLock.current) return;
+    openingLock.current = true;
+    setOpening(true);
+    setLocationMessage("");
+    const current = ++request.current;
+    try {
+      await library.controller.adapter.reveal(rootId, generation, item.id);
+      if (request.current === current)
+        setLocationMessage("已请求在文件资源管理器中显示此作品。");
+    } catch (cause) {
+      if (request.current === current)
+        setLocationMessage(libraryErrorMessage(cause));
+    } finally {
+      if (request.current === current) {
+        openingLock.current = false;
+        setOpening(false);
+      }
+    }
+  }
   return (
     <div className="source-detail" data-testid="library-detail">
       <button
@@ -375,6 +409,25 @@ function LibraryDetail({
             </p>
           )}
           <h2>电脑位置</h2>
+          <div className="source-actions">
+            <button
+              className="button primary"
+              data-testid="library-reveal"
+              disabled={opening || library.busy || !library.snapshot.rootId}
+              onClick={() => void reveal()}
+            >
+              {opening ? "正在打开…" : "打开文件位置"}
+            </button>
+          </div>
+          {locationMessage && (
+            <p
+              className="source-notice"
+              role="status"
+              data-testid="library-location-status"
+            >
+              {locationMessage}
+            </p>
+          )}
           <p className="library-path">{item.relativePath}</p>
           <p className="source-muted">
             {item.bytes.toLocaleString()} 字节 · 文件保持原样。

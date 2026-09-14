@@ -179,6 +179,13 @@ export function createLibraryAdapter(
     }
   }
   return {
+    reveal: async (rootId, generation, entryId) => {
+      await call("library_reveal", {
+        rootId: id(rootId),
+        generation: integer(generation),
+        entryId: id(entryId),
+      });
+    },
     read: async () => validateLibrarySnapshot(await call("library_read")),
     choose: async () => {
       const result = await call("library_choose");
@@ -238,15 +245,22 @@ export function libraryErrorMessage(cause: unknown): string {
   const code =
     typeof cause === "string" ? cause : (cause as { code?: string })?.code;
   switch (code) {
+    case "LIBRARY_REVEAL_FAILED":
+      return "暂时无法打开文件位置，请稍后重试。";
+    case "LIBRARY_REVEAL_UNSUPPORTED":
+      return "此系统暂不支持打开文件位置。";
+    case "LIBRARY_ENTRY_MISSING":
+    case "LIBRARY_ENTRY_UNKNOWN":
+      return "当前作品文件未找到，请刷新漫画库后核对。";
     case "LIBRARY_MIGRATION_INVALID":
     case "LIBRARY_MIGRATION_ROOT_MISMATCH":
       return "映射文件与当前漫画库不符，请选择此目录整理时生成的 JSON 映射。";
     case "LIBRARY_MIGRATION_ORIGINAL_PRESENT":
-      return "映射中的原文件仍存在，请先核对整理结果。关联未改变。";
+      return "映射中的原文件仍存在，请先核对整理结果。原记录未改变。";
     case "LIBRARY_MIGRATION_FILE_CHANGED":
-      return "整理后的 ZIP 与映射记录不一致，关联未改变。请核对文件。";
+      return "整理后的 ZIP 与映射记录不一致，原记录未改变。请核对文件。";
     case "LIBRARY_MIGRATION_CONFLICT":
-      return "原作品与 ZIP 的来源关联冲突，请核对后再导入。";
+      return "原作品与 ZIP 的来源资料冲突，请核对后再导入。";
     case "LIBRARY_BUSY":
       return "漫画库正在读取或处理任务，请完成后再试。";
     case "LIBRARY_FILE_CHANGED":
@@ -273,7 +287,7 @@ export function libraryErrorMessage(cause: unknown): string {
     case "LIBRARY_COVER_ONLY":
       return "目前只有封面，未读到正文图片。";
     case "LIBRARY_IDENTITY_CONFLICT":
-      return "文件名与元数据中的来源编号不一致，请手动确认关联。";
+      return "文件名与元数据中的来源编号不一致，请核对文件资料。";
     case "LIBRARY_METADATA_INVALID":
     case "LIBRARY_METADATA_LIMIT":
       return "作品元数据未能读取，已保留文件名和可读取的图片信息。";

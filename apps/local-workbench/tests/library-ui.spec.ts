@@ -716,13 +716,19 @@ test("retired phone and classification lists neither appear nor load, while PC s
   expect(await commands(page, "phone_library_read")).toEqual([]);
   expect(await commands(page, "read_booklists")).toEqual([]);
   await page.getByTestId("library-open-" + id(1)).click();
-  await page.getByTestId("library-source-id").fill("123");
-  await page.getByTestId("library-link").click();
-  await expect(page.getByTestId("library-reference")).toContainText("123");
+  await expect(page.getByTestId("library-source-id")).toHaveCount(0);
+  await expect(page.getByTestId("library-link")).toHaveCount(0);
+  const title = await page
+    .getByTestId("library-detail")
+    .getByRole("heading", { level: 1 })
+    .innerText();
   await expect(page.getByTestId("phone-mark")).toHaveCount(0);
   await page.reload();
   await page.getByTestId("library-open-" + id(1)).click();
-  await expect(page.getByTestId("library-reference")).toContainText("123");
+  await expect(
+    page.getByTestId("library-detail").getByRole("heading", { level: 1 }),
+  ).toHaveText(title);
+  expect(await commands(page, "library_link")).toEqual([]);
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({ path: "visual-evidence/pc-library-detail.png" });
   await expect(page.getByTestId("library-detail-stock")).toContainText(

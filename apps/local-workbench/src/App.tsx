@@ -2105,8 +2105,8 @@ export default function App() {
           {!sourceActive &&
             !(
               persistence.native &&
-              page === "discovery" &&
-              discoveryPane !== "search"
+              (["completion", "author-search"].includes(page) ||
+                (page === "discovery" && discoveryPane !== "search"))
             ) && (
               <label className="search-box">
                 <Icon name="search" size={17} />

@@ -162,9 +162,11 @@ export function RankingPanel({
   const complete = !error && !busy && data?.page.hasMore === false;
   return (
     <section className="source-workbench" data-testid="ranking-panel">
-      <div className="page-heading">
-        <h1>发现</h1>
-        <p>从来源推荐中浏览作品</p>
+      <div className="page-heading source-heading">
+        <div>
+          <h1>发现</h1>
+          <p>从来源推荐中浏览作品</p>
+        </div>
       </div>
       {navigation}
       <h2>{source === "JM" ? "JM · 每周必看" : "哔咔 · 排行榜"}</h2>
@@ -240,7 +242,7 @@ export function RankingPanel({
             </p>
           )}
           {busy && <p role="status">正在读取来源榜单…</p>}
-          <div className="result-filters" aria-label="榜单入库筛选">
+          <div className="source-tabs" aria-label="榜单入库筛选">
             {(Object.keys(inventoryFilterLabels) as InventoryFilter[]).map(
               (value) => (
                 <button

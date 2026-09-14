@@ -62,6 +62,12 @@ Do **not** dynamically trust domains discovered from remote pages without a sepa
 
 ## Scaling implications
 
+### Desktop weekly recommendations and rankings (2026-09-14)
+
+The read-only desktop ranking routes were checked against the existing local source snapshots at the pinned lanyeeee revisions above. `jmcomic-downloader/src-tauri/src/jm_client.rs` provides `get_weekly_info` (`GET /week`, `categories` and `type`) and `get_weekly` (`GET /week/filter?id=…&type=…`, `total` and ordered `list`). `picacomic-downloader/src-tauri/src/pica_client.rs` provides `GET comics/leaderboard?tt=H24|D7|D30&ct=VC`, with ordered `comics` records. Neither upstream method offers pagination for this endpoint. JM count mismatches remain visibly partial; the application does not invent additional rank pages.
+
+The desktop code reuses existing authenticated source clients, response parsers and runtime-only cover descriptors. No new host, credential destination, download transform or media-transfer behavior is introduced. Synthetic tests cover endpoint selection, ordering, short lists, malformed options, sessions and renderer boundaries. Live source acceptance of these new routes remains a separate user step.
+
 The 2026-09-12 batch queue review reopened all three pinned download implementations. Their bounded scheduling and all-image completion requirements remain references; desktop cross-work scheduling now wraps the existing verified single-work path and waits through PC registration before dispatching the next explicitly confirmed work. No source pins, media transport, retry policy, output layout or production flags change. See `BATCH_QUEUE_AND_MATCHING_2026-09-12.md`.
 
 The live six-author JM+Pica validation established that real source traffic is substantial. For hundreds of authors, retain these upstream-inspired principles:

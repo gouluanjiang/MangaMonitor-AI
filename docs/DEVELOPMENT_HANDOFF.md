@@ -1,10 +1,16 @@
-> 2026-09-14 最新进展：用户已明确要求按路线继续开发，程序开发已恢复。当前在可写隔离工作区落实下载记录入库、取消身份关联、完整分页和手动作者检查。以下历史暂停记录不再阻止本轮代码开发；真实漫画库操作仍不在本轮范围内。验证结果以最新开发报告为准。
-
 # Active development handoff
 
-## Latest scope: source-specific download records; association and dislike cancelled (2026-09-14)
+## Current implementation: manual author workflows and source rankings (2026-09-14)
 
-The user has accepted the simplified ownership boundary: mark a source work owned only from its corresponding successful download record and actual saved file. Read [the current V1 scope and continuation plan](V1_SCOPE_MANUAL_UPDATES_2026-09-14.md) before any older roadmap. Unregistered old manga and copies on another source are not automatically recognized, paired or jointly counted; the user accepts skipping them manually. This is a product-scope decision, not authorization to start implementation or real-library operations in this planning turn.
+The user explicitly resumed development. Read [the current implementation and verification report](V1_MANUAL_WORKFLOW_2026-09-14.md) and [the accepted scope](V1_SCOPE_MANUAL_UPDATES_2026-09-14.md). Stages 1–3 and the ranking portion of stage 4 are implemented and undergoing CI: receipt-only same-source ownership, complete source and dual-source author searches, manual author checks, JM weekly recommendations and Pica ranks. Stage 4 large-selection scheduling and remaining UI/settings review, followed by stage 5 integrated live acceptance, remain open. Do not label this V1 complete.
+
+All formal checks/builds remain CI-only. The active code branch is `codex/local-workbench-preview`, draft PR #19, from baseline `41afe39b94880aacaf93b9bfa0df4c3e788172bf`; current exact checks are in the report. Keep the Dev version 0.3.4, no small installer delivery, no merge or production enable. This turn does not authorize a real library scan, account query, media download or private-data cleanup.
+
+Retired matching, manual association, language-completeness and automatic translation-download IPC routes have been removed. Legacy private data formats remain readable where needed for compatibility and verified path migration, but old relationships never establish downloaded ownership. Preserved compact completed-history receipts continue to count only when the corresponding root and actual files can be verified.
+
+## Accepted scope: source-specific download records; association and dislike cancelled (2026-09-14)
+
+The user has accepted the simplified ownership boundary: mark a source work owned only from its corresponding successful download record and actual saved file. Read [the current V1 scope and continuation plan](V1_SCOPE_MANUAL_UPDATES_2026-09-14.md) before any older roadmap. Unregistered old manga and copies on another source are not automatically recognized, paired or jointly counted; the user accepts skipping them manually. The later explicit development request authorizes implementation; it does not authorize real-library operations.
 
 Cancel all manga identity association features, including assisted existing-library reconciliation, manual cross-source pairing, "I already own this", association/unassociation controls and automatic identity/version/language inference. Existing-library reconciliation is no longer a V1 prerequisite or a paused future assignment. Also cancel dislike, hidden-item counts, viewing and undo. Do not replace these with equivalent ignore or manual ownership-marking features. Preserve legitimate source-specific download receipts, target/file checks and the accepted re-download behavior; old association data must not be treated as successful downloads or used to propagate ownership. Private historical records and manga are not deleted by this scope change.
 
@@ -14,7 +20,8 @@ The user explicitly accepted reading all pages before final totals. Show progres
 
 The runtime cloud discovery / inventory-completion sync loop and translation-download automation remain cancelled. CI remains part of engineering verification. The other cancelled maintenance/offline/import/automatic-replacement items are listed in the linked scope. Reader and in-app updater remain outside current work for post-V1 discussion. Do not use old issues or historical acceptance of manual pairing to reintroduce cancelled work.
 
-Current position: the simplified scope is confirmed; code and real-library work remain paused. Next implementation stages are source-specific download registration/state, consistent filters and complete search scopes, manual author checks, remaining rankings/batch/UI work, and an integrated V1 candidate. Do not restart A normalization, phone transfer or private reconciliation. This update changes documentation only: no code, private state, source requests, downloads, tests/builds, installer, commit/push or remote issue changes. Keep production disabled and batch these docs with the next necessary implementation push.
+The earlier planning pause is superseded by the implementation section above. Real source and user acceptance are still separate. Do not restart A normalization, phone transfer, private reconciliation, cancelled runtime cloud work or excluded features. Historical sections below describe their original scope and must not override the accepted scope or current implementation.
+
 
 ## B usability follow-up (2026-09-13)
 

@@ -276,58 +276,120 @@ async fn first_scan_publishes_old_works_and_searches_each_followed_author_on_bot
 }
 
 #[tokio::test]
-async fn author_metadata_is_checked_and_unknown_detail_is_review_not_false_complete() {
+async fn keyword_scope_retains_variant_blank_and_other_author_results_without_detail_fanout() {
     let (_root, backend, service, scopes) = setup().await;
     follow(&service, &scopes[0], "A", true).await;
-    backend.put(
-        Source::Jm,
-        "A",
-        1,
-        page(
+    for source in [Source::Jm, Source::Pica] {
+        let id = |number: u64| {
+            if source == Source::Jm {
+                number.to_string()
+            } else {
+                format!("{number:024x}")
+            }
+        };
+        backend.put(
+            source,
+            "A",
             1,
-            3,
-            vec![
-                work(Source::Jm, "100", &[]),
-                work(Source::Jm, "101", &[]),
-                work(Source::Jm, "102", &["unrelated"]),
-            ],
-        ),
-    );
-    backend
-        .0
-        .details
-        .lock()
-        .unwrap()
-        .insert("100".into(), Ok(work(Source::Jm, "100", &["A"])));
+            page(
+                1,
+                6,
+                vec![
+                    work(source, &id(100), &["A"]),
+                    work(source, &id(101), &["Circle (A)"]),
+                    work(source, &id(102), &["A B"]),
+                ],
+            ),
+        );
+        backend.put(
+            source,
+            "A",
+            2,
+            page(
+                2,
+                6,
+                vec![
+                    work(source, &id(103), &[]),
+                    work(source, &id(104), &["a"]),
+                    work(source, &id(105), &["another writer"]),
+                ],
+            ),
+        );
+    }
     service
         .discovery_start(scopes.clone(), vec![])
         .await
         .unwrap();
     let snapshot = finish(&service, &scopes).await;
-    assert_eq!(snapshot.records.len(), 2);
-    assert!(
+    assert_eq!(snapshot.records.len(), 12);
+    assert_eq!(
         snapshot
             .records
             .iter()
-            .find(|record| record.work.work_id == "100")
-            .unwrap()
-            .author_verified
+            .filter(|record| record.author_verified)
+            .count(),
+        2
     );
-    assert!(
-        !snapshot
-            .records
-            .iter()
-            .find(|record| record.work.work_id == "101")
-            .unwrap()
-            .author_verified
+    assert!(snapshot
+        .records
+        .iter()
+        .all(|record| record.matched_authors == ["A"]));
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(snapshot.run.unwrap().phase, DiscoveryPhase::Complete);
+    assert!(snapshot.authors.iter().all(|range| range.pages_read == 2
+        && range.observed_count == 6
+        && range.error_code.is_none()
+        && range.last_complete_at.is_some()));
+}
+
+#[tokio::test]
+async fn shared_keyword_hits_persist_both_query_scopes_and_keep_old_omissions() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    follow(&service, &scopes[1], "B", true).await;
+    backend.put(
+        Source::Jm,
+        "A",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["A"])]),
     );
-    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(snapshot.run.unwrap().phase, DiscoveryPhase::Partial);
+    backend.put(
+        Source::Jm,
+        "B",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &[])]),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let snapshot = finish(&service, &scopes).await;
+    assert_eq!(snapshot.records.len(), 1);
+    assert_eq!(snapshot.records[0].matched_authors, ["B", "A"]);
+    assert_eq!(snapshot.records[0].work.authors, ["A"]);
+    assert!(!snapshot.records[0].author_verified);
+    assert!(snapshot
+        .authors
+        .iter()
+        .filter(|range| range.source == storage_source(Source::Jm))
+        .all(|range| range.observed_count == 1));
+    let stored = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
     assert_eq!(
-        snapshot.authors[0].error_code.as_deref(),
-        Some("DISCOVERY_AUTHOR_UNCONFIRMED")
+        stored.value.accounts[0].records[0].matched_authors,
+        ["B", "A"]
     );
-    assert_eq!(snapshot.authors[0].last_complete_at, None);
+    backend.0.pages.lock().unwrap().clear();
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let later = finish(&service, &scopes).await;
+    assert_eq!(later.records.len(), 1);
+    assert_eq!(later.records[0].matched_authors, ["B", "A"]);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

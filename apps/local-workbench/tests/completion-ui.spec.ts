@@ -314,6 +314,42 @@ test("checking and stopping are explicit, preserve old results and do not downlo
   ).toBeVisible();
 });
 
+test("keyword hits remain selectable without literal author identity and empty complete queries are explicit", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const record = window.authorTest.view.records[1];
+    record.work.authors = ["合成社团 (合成作者)"];
+    record.authorVerified = false;
+  });
+  await open(page);
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(page.getByTestId("completion-query-scope")).toContainText(
+    "作者关键词",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "未入库 2 条",
+  );
+  await page.getByTestId("nav-settings").click();
+  await page.evaluate(() => {
+    window.authorTest.view.records = [];
+    for (const range of window.authorTest.view.authors) {
+      range.state = "complete";
+      range.observedCount = 0;
+      range.errorCode = null;
+      range.lastCompleteAt = Date.now();
+    }
+  });
+  await page.getByTestId("nav-completion").click();
+  await expect(
+    page.getByText("本次完整查询没有返回作品。请核对作者名称或切换来源查看。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+});
+
 test("narrowing the title filter to an owned work does not claim the author's missing works are complete", async ({
   page,
 }) => {

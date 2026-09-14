@@ -381,6 +381,9 @@ export function CompletionPanel({
               ? ` 上次检查：${new Date(lastCheck).toLocaleString()}`
               : " 尚未完成检查。"}
           </p>
+          <p className="source-muted" data-testid="completion-query-scope">
+            搜索与更新均保留来源按作者关键词返回的结果，可能包含合著或其他关键词命中，由你挑选下载。
+          </p>
           {source !== "Pica" && (
             <p className="source-muted">{jmSearchScopeNote}</p>
           )}
@@ -415,11 +418,13 @@ export function CompletionPanel({
             )}
           {visible.length === 0 && (
             <p className="source-empty">
-              {records.length > 0
+              {scopedRecords.length > 0
                 ? "当前筛选没有结果。"
-                : mode === "search"
-                  ? "输入作者名，点击“搜索两站作品”读取结果。"
-                  : "点击“检查作者更新”读取关注作者的作品。"}
+                : complete
+                  ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
+                  : mode === "search"
+                    ? "输入作者名，点击“搜索两站作品”读取结果。"
+                    : "点击“检查作者更新”读取关注作者的作品。"}
             </p>
           )}
           {visible.length > 0 && (

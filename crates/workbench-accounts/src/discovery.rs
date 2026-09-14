@@ -741,7 +741,6 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         author: &str,
         source: Source,
         page: u64,
-        detail: Option<&str>,
     ) -> Result<SourcePage> {
         #[cfg(not(test))]
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -753,14 +752,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .query(
                 source,
                 &scope.session_id,
-                if detail.is_some() {
-                    QueryKind::Detail
-                } else {
-                    QueryKind::Search
-                },
-                detail.unwrap_or(author),
+                QueryKind::Search,
+                author,
                 None,
-                if detail.is_some() { 1 } else { page },
+                page,
             )
             .await;
         self.discovery_guard(context, run_id).await?;
@@ -818,11 +813,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 range.error_code = None;
                 document = self.discovery_commit(context, run_id, document).await?;
                 let mut traversal = Traversal::default();
-                let mut unresolved = false;
                 let mut page = 1;
                 loop {
                     let response = self
-                        .discovery_query(context, run_id, author, source, page, None)
+                        .discovery_query(context, run_id, author, source, page)
                         .await;
                     let response = match response {
                         Ok(response) => response,
@@ -859,47 +853,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                             break;
                         }
                     };
-                    for mut work in response.items {
-                        let mut verified =
-                            work.authors.iter().any(|name| name.trim() == author.trim());
-                        if !verified && work.authors.is_empty() {
-                            match self
-                                .discovery_query(
-                                    context,
-                                    run_id,
-                                    author,
-                                    source,
-                                    page,
-                                    Some(&work.work_id),
-                                )
-                                .await
-                            {
-                                Ok(detail) => {
-                                    if detail.items.len() != 1
-                                        || detail.items[0].work_id != work.work_id
-                                        || detail.items[0].source != source
-                                    {
-                                        return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
-                                    }
-                                    work =
-                                        detail.items.into_iter().next().ok_or_else(unavailable)?;
-                                    verified = work
-                                        .authors
-                                        .iter()
-                                        .any(|name| name.trim() == author.trim());
-                                }
-                                Err(error) if stops_run(error.code) => return Err(error),
-                                Err(_) => {
-                                    unresolved = true;
-                                }
-                            }
-                        }
-                        if !verified && !work.authors.is_empty() {
-                            continue;
-                        }
-                        if !verified {
-                            unresolved = true;
-                        }
+                    for work in response.items {
+                        // Updates retain the same keyword-query scope as ad-hoc
+                        // search. Author labels are metadata, not an exclusion
+                        // gate: lists can join, truncate or omit author names.
+                        let verified = work.authors.iter().any(|name| name.trim() == author.trim());
                         merge_record(
                             &mut document.value.accounts[index],
                             DiscoveryRecord {
@@ -924,20 +882,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     range.pages_read = page;
                     range.observed_count = observed_count;
                     if complete {
-                        range.state = if unresolved {
-                            DiscoveryRangeState::Partial
-                        } else {
-                            DiscoveryRangeState::Complete
-                        };
-                        range.error_code =
-                            unresolved.then(|| "DISCOVERY_AUTHOR_UNCONFIRMED".into());
-                        if !unresolved {
-                            range.last_complete_at = Some(now()?);
-                        }
+                        range.state = DiscoveryRangeState::Complete;
+                        range.last_complete_at = Some(now()?);
                     }
                     document = self.discovery_commit(context, run_id, document).await?;
                     if complete {
-                        partial |= unresolved;
                         break;
                     }
                     page += 1;
@@ -1009,33 +958,25 @@ fn merge_record(account: &mut DiscoveryAccount, mut incoming: DiscoveryRecord) -
     if let Some(existing) = account.records.iter_mut().find(|record| {
         record.work.source == incoming.work.source && record.work.work_id == incoming.work.work_id
     }) {
-        // Unresolved search metadata cannot downgrade an already verified identity.
-        if existing.author_verified && !incoming.author_verified {
-            for author in incoming.matched_authors {
-                if !existing.matched_authors.contains(&author)
-                    && existing
-                        .work
-                        .authors
-                        .iter()
-                        .any(|name| name.trim() == author.trim())
-                {
-                    existing.matched_authors.push(author);
-                }
-            }
-            return Ok(());
+        // Preserve useful prior metadata when a later list omits authors, but
+        // keep every query that returned this source ID. A query association
+        // does not assert an author identity and never grants ownership.
+        if incoming.work.authors.is_empty() && !existing.work.authors.is_empty() {
+            incoming.work = existing.work.clone();
         }
         for author in &existing.matched_authors {
-            if !incoming.matched_authors.contains(author)
-                && (!incoming.author_verified
-                    || incoming
-                        .work
-                        .authors
-                        .iter()
-                        .any(|name| name.trim() == author.trim()))
-            {
+            if !incoming.matched_authors.contains(author) {
                 incoming.matched_authors.push(author.clone());
             }
         }
+        // This legacy evidence flag remains strict; it is not a display filter.
+        incoming.author_verified = incoming.matched_authors.iter().all(|author| {
+            incoming
+                .work
+                .authors
+                .iter()
+                .any(|name| name.trim() == author.trim())
+        });
         *existing = incoming;
     } else {
         if account.records.len() >= MAX_DISCOVERY_RECORDS {

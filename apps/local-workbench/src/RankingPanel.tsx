@@ -309,7 +309,7 @@ export function RankingPanel({
               )}
             </div>
           )}
-          <VirtualSourceGrid
+          <VirtualSourceGrid<SourceWork>
             items={visible}
             density={density}
             itemKey={sourceWorkKey}

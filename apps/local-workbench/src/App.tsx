@@ -312,7 +312,8 @@ export default function App() {
   const [discoveryPane, setDiscoveryPane] = useState<"search" | Source>(
     "search",
   );
-  const [rankingDetail, setRankingDetail] = useState(false);
+  const [embeddedSourceDetail, setEmbeddedSourceDetail] = useState(false);
+  const embeddedScroll = useRef(0);
   const downloadLibrary = useDownloadInventory(
     downloadAdapter,
     persistence.native,
@@ -414,10 +415,18 @@ export default function App() {
     persistence.native && page === "library" && !booklistView;
   const sourceActive =
     persistence.native &&
-    ["favorites", "discovery", "authors"].includes(page) &&
-    (page !== "discovery" || discoveryPane === "search" || rankingDetail);
-  const sourceView =
-    page === "favorites"
+    [
+      "favorites",
+      "discovery",
+      "authors",
+      ...(embeddedSourceDetail ? ["completion", "author-search"] : []),
+    ].includes(page) &&
+    (page !== "discovery" ||
+      discoveryPane === "search" ||
+      embeddedSourceDetail);
+  const sourceView = embeddedSourceDetail
+    ? "search"
+    : page === "favorites"
       ? "favorites"
       : page === "discovery"
         ? "search"
@@ -446,7 +455,24 @@ export default function App() {
       ))}
     </div>
   );
+  function openEmbeddedWork(ref: WorkReference) {
+    embeddedScroll.current = contentRef.current?.scrollTop ?? 0;
+    setRequestedSource(ref.source);
+    setRequestedWork(ref);
+    setSourceRequestKey((value) => value + 1);
+    setEmbeddedSourceDetail(true);
+  }
+  function returnFromEmbeddedDetail() {
+    setEmbeddedSourceDetail(false);
+    requestAnimationFrame(() =>
+      contentRef.current?.scrollTo(0, embeddedScroll.current),
+    );
+  }
   function openSourceWork(ref: WorkReference) {
+    if (["completion", "author-search"].includes(page)) {
+      openEmbeddedWork(ref);
+      return;
+    }
     setDiscoveryPane("search");
     setRequestedSource(ref.source);
     setRequestedWork(ref);
@@ -883,7 +909,7 @@ export default function App() {
     return { text: "可下载", tone: "muted" };
   };
   const navigate = (next: Page) => {
-    setRankingDetail(false);
+    setEmbeddedSourceDetail(false);
     if (next === page && !detail) return;
     if (next === "settings") {
       settingsOrigin.current = { page, anchor: captureAnchor(), detail };
@@ -2242,26 +2268,30 @@ export default function App() {
           )}
           {persistence.native &&
             ["completion", "author-search"].includes(page) && (
-              <CompletionPanel
-                key={page}
-                mode={page === "author-search" ? "search" : "updates"}
-                accounts={accounts}
-                sourceAdapter={sourceAdapter}
-                library={library.snapshot}
-                inventorySnapshot={downloadLibrary.snapshot}
-                inventoryReady={downloadLibrary.ready && !downloadLibrary.error}
-                onRefreshInventory={downloadLibrary.refresh}
-                density={appearance.density}
-                onOpenWork={openSourceWork}
-                onDownload={(work) => void beginDownload(work.workId, work)}
-                onOpenLibrary={() => navigate("library")}
-                onOpenAccounts={() => navigate("settings")}
-              />
+              <div hidden={embeddedSourceDetail}>
+                <CompletionPanel
+                  key={page}
+                  mode={page === "author-search" ? "search" : "updates"}
+                  accounts={accounts}
+                  sourceAdapter={sourceAdapter}
+                  library={library.snapshot}
+                  inventorySnapshot={downloadLibrary.snapshot}
+                  inventoryReady={
+                    downloadLibrary.ready && !downloadLibrary.error
+                  }
+                  onRefreshInventory={downloadLibrary.refresh}
+                  density={appearance.density}
+                  onOpenWork={openSourceWork}
+                  onDownload={(work) => void beginDownload(work.workId, work)}
+                  onOpenLibrary={() => navigate("library")}
+                  onOpenAccounts={() => navigate("settings")}
+                />
+              </div>
             )}
           {persistence.native &&
             page === "discovery" &&
             discoveryPane !== "search" && (
-              <div hidden={rankingDetail}>
+              <div hidden={embeddedSourceDetail}>
                 <RankingPanel
                   key={discoveryPane}
                   source={discoveryPane}
@@ -2274,12 +2304,7 @@ export default function App() {
                   }
                   density={appearance.density}
                   navigation={discoveryNavigation}
-                  onOpen={(work) => {
-                    setRequestedSource(work.source);
-                    setRequestedWork(work);
-                    setSourceRequestKey((value) => value + 1);
-                    setRankingDetail(true);
-                  }}
+                  onOpen={openEmbeddedWork}
                   onDownload={(work) => void beginDownload(work.workId, work)}
                   onDownloadMany={(works) => {
                     if (works.length)
@@ -2298,7 +2323,7 @@ export default function App() {
               adapter={sourceAdapter}
               discoveryNavigation={discoveryNavigation}
               onDetailBack={
-                rankingDetail ? () => setRankingDetail(false) : undefined
+                embeddedSourceDetail ? returnFromEmbeddedDetail : undefined
               }
               onDownload={(work) => beginDownload(work.workId, work)}
               onDownloadMany={(selected) => {

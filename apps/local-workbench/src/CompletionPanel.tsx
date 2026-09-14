@@ -176,16 +176,19 @@ export function CompletionPanel({
     ranges.length > 0 &&
     ranges.every((range) => range.state === "complete");
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
-  const records = (view?.records ?? []).filter(
+  const scopedRecords = (view?.records ?? []).filter(
     (record) =>
       (!author || record.matchedAuthors.includes(author)) &&
-      (source === "all" || record.work.source === source) &&
-      (!terms ||
-        [record.work.title, ...record.work.authors]
-          .join(" ")
-          .normalize("NFKC")
-          .toLocaleLowerCase()
-          .includes(terms)),
+      (source === "all" || record.work.source === source),
+  );
+  const records = scopedRecords.filter(
+    (record) =>
+      !terms ||
+      [record.work.title, ...record.work.authors]
+        .join(" ")
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .includes(terms),
   );
   const counts = Object.fromEntries(
     (Object.keys(inventoryFilterLabels) as InventoryFilter[]).map((kind) => [
@@ -298,7 +301,7 @@ export function CompletionPanel({
               {view?.run?.currentSource
                 ? sourceLabel(view.run.currentSource)
                 : "准备中"}{" "}
-              · 第 {view?.run?.currentPage ?? 0} 页 · 已完成{" "}
+              · 第 {view?.run?.currentPage ?? 0} 页 · 已检查{" "}
               {view?.run?.completedScopes ?? 0} / {view?.run?.totalScopes ?? 0}{" "}
               个来源范围
             </p>
@@ -357,8 +360,10 @@ export function CompletionPanel({
               : " 尚未完成检查。"}
           </p>
           {complete &&
-            records.length > 0 &&
-            counts.owned === records.length && (
+            scopedRecords.length > 0 &&
+            scopedRecords.every(
+              (record) => inventory(record.work).kind === "owned",
+            ) && (
               <p role="status" data-testid="completion-all-owned">
                 本次查询结果已全部入库。范围：
                 {source === "all" ? "JM 与哔咔" : sourceLabel(source)}，
@@ -387,7 +392,9 @@ export function CompletionPanel({
             <p className="source-empty">
               {records.length > 0
                 ? "当前筛选没有结果。"
-                : "点击“检查作者更新”读取关注作者的作品。"}
+                : mode === "search"
+                  ? "输入作者名，点击“搜索两站作品”读取结果。"
+                  : "点击“检查作者更新”读取关注作者的作品。"}
             </p>
           )}
           <VirtualSourceGrid

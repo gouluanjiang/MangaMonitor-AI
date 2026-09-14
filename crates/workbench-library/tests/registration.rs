@@ -143,17 +143,27 @@ fn registers_only_the_named_finalized_work_and_survives_restart_without_media_or
 }
 
 #[test]
-fn rejects_a_second_path_for_the_same_source_without_replacing_the_existing_record() {
+fn metadata_in_an_unrelated_path_does_not_claim_download_ownership_or_replace_existing_files() {
     let mut fixture = fixture();
     work(fixture.media.path(), "first", "123", 1);
-    register(&mut fixture, "first", "123", 1).unwrap();
+    let first = register(&mut fixture, "first", "123", 1)
+        .unwrap()
+        .items
+        .remove(0);
     work(fixture.media.path(), "second", "123", 1);
-    let before = persisted(&fixture);
+    let after = register(&mut fixture, "second", "123", 1).unwrap();
+    assert_eq!(after.items.len(), 2);
     assert_eq!(
-        register(&mut fixture, "second", "123", 1).unwrap_err().code,
-        "LIBRARY_IDENTITY_CONFLICT"
+        after.items.iter().find(|item| item.id == first.id),
+        Some(&first)
     );
-    assert_eq!(persisted(&fixture), before);
+    assert!(fixture
+        .store
+        .read_downloads()
+        .unwrap()
+        .value
+        .tasks
+        .is_empty());
     assert!(fixture
         .media
         .path()

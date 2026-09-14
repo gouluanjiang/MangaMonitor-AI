@@ -293,6 +293,25 @@ test("checking and stopping are explicit, preserve old results and do not downlo
   ).toBeVisible();
 });
 
+test("narrowing the title filter to an owned work does not claim the author's missing works are complete", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    for (const range of window.authorTest.view.authors) {
+      range.state = "complete";
+      range.lastCompleteAt = Date.now();
+    }
+  });
+  await open(page);
+  await page.getByLabel("更新来源").selectOption("JM");
+  await page.getByLabel("筛选作者更新").fill("已下载作品");
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已入库 1 条 · 未入库 0 条",
+  );
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+});
+
 test("valid new receipts refresh counts, but all-owned is withheld until both source ranges finish", async ({
   page,
 }) => {
@@ -362,4 +381,26 @@ test("a new author is searched across every page of both sources without requiri
   await page.screenshot({
     path: "visual-evidence/dual-source-author-search.png",
   });
+  await page
+    .getByTestId("author-update-JM:456")
+    .getByRole("button")
+    .first()
+    .click();
+  await expect(page.getByTestId("source-detail-back")).toBeVisible();
+  await page.getByTestId("source-detail-back").click();
+  await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
+    "新作者",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完 · 已记录 3 条",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        window.authorTest.calls.filter(
+          (call) =>
+            call.command === "source_query" && call.args.kind === "search",
+        ).length,
+    ),
+  ).toBe(3);
 });

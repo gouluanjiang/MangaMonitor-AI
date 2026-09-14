@@ -29,6 +29,7 @@ import type { InventoryFilter } from "./inventory-model.ts";
 import { SourceCover } from "./SourceWorkbench.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { createAuthorSearchAdapter } from "./author-search.ts";
+import { jmSearchScopeNote } from "./source-search.ts";
 import "./completion.css";
 
 const nativeAdapter = createCompletionAdapter();
@@ -359,6 +360,9 @@ export function CompletionPanel({
               ? ` 上次检查：${new Date(lastCheck).toLocaleString()}`
               : " 尚未完成检查。"}
           </p>
+          {source !== "Pica" && (
+            <p className="source-muted">{jmSearchScopeNote}</p>
+          )}
           {complete &&
             scopedRecords.length > 0 &&
             scopedRecords.every(

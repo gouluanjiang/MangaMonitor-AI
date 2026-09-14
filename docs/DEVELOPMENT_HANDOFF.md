@@ -1,10 +1,16 @@
 # Active development handoff
 
+## Current search scope clarification (2026-09-14)
+
+The user's requested Chrome retest found that two website/API count differences exactly equal the website's English Manga category totals (145 - 54 = 91; 112 - 4 = 108). Bounded public source checks verified both API final pages (80 + 11; 80 + 28); no missed pagination was found. The user explicitly chose to exclude English Manga from V1 search for now and label that boundary. Source search, author search and author updates now share a JM scope notice; standalone Pica and favorites retain their own scope. Search completion refers to all pages of the current source query, not all website categories. No source transport, account, inventory or download behavior changes. New text awaits its own CI/delivery evidence; the preceding weekly fix's passed runs do not validate this new revision. See [the combined repair record](JM_WEEKLY_FIX_2026-09-14.md).
+
 ## Current acceptance repair: JM weekly options and ownership explanation (2026-09-14)
 
 The user reported JM weekly rankings failing and zero registered ownership for an author whose older files are in the library. Read [the repair record](JM_WEEKLY_FIX_2026-09-14.md). A bounded anonymous public-interface diagnostic reproduced the cause: 174 of 256 category titles were empty, including the current issue; the pinned upstream UI uses each category's `time` label. The repair retains valid issue IDs with date/identifier labels, prefers JM's `manga` type when available (the initially selected `hanman` list was genuinely empty), distinguishes first-load failure from retained results, and explains download-receipt statistics on source/author/ranking pages. No inventory semantics, download behavior or personal data change.
 
 The user's newest decision defers human-assisted reconciliation of existing old manga until after V1. This supersedes the earlier permanent cancellation of that specific data task, not the cancellation of programmatic matching, cross-source guessing or association controls. V1 continues to use same-source successful download receipts and verified files. Do not reconcile the private library now or fabricate download receipts later. Continue the remaining V1 roadmap after the repair's engineering checks; real repaired-app acceptance is separate.
+
+Repair head `524f25673ad465210a72a567c7ef9cdbe33a0e2f` passed all required CI: frontend run `34826250893` (139 logic / 96 UI tests), baseline `34826250889`, desktop `34826250960` (including actual WebView launch/restart). Dev artifact `10340790412` is delivered in `MangaMonitor-Dev-20260914-524f256` under Documents/Codex; 0.3.4, no installer or automatic launch. The repair report records verified hashes and the remaining user retest. The canonical checkout is synchronized; final report/evidence-only updates are local for the next necessary code push. Preserve them and the scoped backups/stash of the original reports.
 
 ## Current implementation: manual author workflows and source rankings (2026-09-14)
 

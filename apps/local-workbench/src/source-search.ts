@@ -7,6 +7,9 @@ import type {
 import { mergeSourceWorks } from "./source-types.ts";
 import { SourceError } from "./source-runtime.ts";
 
+export const jmSearchScopeNote =
+  "JM 搜索范围：不含网页端的 English Manga（英文漫画）分类；“已读完”表示本次返回的全部分页已读取。";
+
 export interface SearchProgress {
   items: SourceWork[];
   page: SourceQueryResult;

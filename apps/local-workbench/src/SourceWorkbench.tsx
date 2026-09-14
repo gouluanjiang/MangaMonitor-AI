@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { readCompleteSearch } from "./source-search.ts";
+import { jmSearchScopeNote, readCompleteSearch } from "./source-search.ts";
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LibrarySnapshot } from "./library-types.ts";
@@ -1810,13 +1810,18 @@ export function SourceWorkbench({
                     (view === "favorites" && collectionState.error !== null)
                       ? "本次读取未完成，保留上次已读结果"
                       : complete
-                        ? "已读取完整范围"
+                        ? searching
+                          ? "已读完当前来源的搜索范围"
+                          : "已读取完整范围"
                         : "范围尚未读全，未读取作品尚未参与筛选"}
                   </span>
                 )}
                 。
               </p>
               <p className="source-muted">{inventoryScopeNote}</p>
+              {searching && source === "JM" && (
+                <p className="source-muted">{jmSearchScopeNote}</p>
+              )}
               {visible.length === 0 && browsingWorks.length > 0 && (
                 <p className="source-empty">
                   当前筛选没有结果

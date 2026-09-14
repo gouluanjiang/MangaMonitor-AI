@@ -135,6 +135,13 @@ fn explicit_zip_mapping_preserves_old_receipt_and_projects_current_history_path(
     let f = fixture();
     let completed = complete_for_presence(&f, record(&f));
     let mut indexer = workbench_library::LibraryService::new();
+    let mut legacy = f.store.read_library().unwrap();
+    legacy.value.records[0].manual_override = true;
+    legacy.value.records[0].item.identity_evidence =
+        Some(workbench_storage::LibraryEvidence::Manual);
+    f.store
+        .write_library(legacy.revision, legacy.value)
+        .unwrap();
     let original_index = f.store.read_library().unwrap();
     let old_id = original_index.value.records[0].item.id.clone();
     let before = f.store.read_downloads().unwrap();

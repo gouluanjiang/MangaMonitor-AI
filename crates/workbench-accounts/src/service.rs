@@ -498,6 +498,26 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         result
     }
 
+    pub async fn ranking_options(
+        &self,
+        source: Source,
+        session_id: &str,
+    ) -> Result<crate::RankOptionsResult> {
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
+        let session = slot
+            .session
+            .as_ref()
+            .ok_or(AccountError::new("AUTH_REQUIRED"))?;
+        let response = self.backend.ranking_options(session).await;
+        let options = self.finish(&mut slot, response)?;
+        Ok(crate::RankOptionsResult {
+            source,
+            session_id: session_id.into(),
+            options,
+        })
+    }
+
     pub async fn query(
         &self,
         source: Source,
@@ -554,6 +574,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     .await
             }
             QueryKind::Search => self.backend.search(session, query.trim(), page).await,
+            QueryKind::Ranking => {
+                if page != 1 {
+                    return Err(AccountError::new("QUERY_INVALID"));
+                }
+                self.backend
+                    .ranking(session, folder_id.as_deref(), query)
+                    .await
+            }
             QueryKind::Detail => self
                 .backend
                 .detail(session, query.trim())

@@ -50,14 +50,20 @@ export async function readCompleteSearch(
     const merged = mergeSourceWorks(items, result.items);
     const terminal =
       result.hasMore === false ||
-      (result.pages !== null && page === Math.max(1, result.pages));
+      (result.pages !== null && page === Math.max(1, result.pages)) ||
+      (result.total !== null &&
+        recordsRead + result.items.length === result.total &&
+        result.hasMore !== true &&
+        result.pages === null);
     const contradictory =
       (result.hasMore === true &&
         result.pages !== null &&
         page >= Math.max(1, result.pages)) ||
       (result.hasMore === false &&
         result.pages !== null &&
-        page < result.pages);
+        page < result.pages) ||
+      (result.total !== null &&
+        recordsRead + result.items.length > result.total);
     recordsRead += result.items.length;
     const stalled = result.items.length === 0 && !terminal;
     const repeated =

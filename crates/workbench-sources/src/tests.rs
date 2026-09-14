@@ -8,6 +8,128 @@ use image::ImageEncoder;
 
 const PICA_ID: &str = "0123456789abcdef01234567";
 
+#[tokio::test]
+async fn weekly_and_leaderboard_routes_preserve_source_order_and_cover_descriptors() {
+    let sources = scripted(vec![
+        Ok(
+            json!({"categories":[{"id":42,"title":"Weekly","time":"2026-09-14"}],"type":[{"id":"1","title":"Popular"}]}),
+        ),
+        Ok(
+            json!({"total":"2","list":[{"id":"456","name":"Second","author":"Author"},{"id":"123","name":"First"}]}),
+        ),
+        Ok(
+            json!({"comics":[{"_id":PICA_ID,"title":"Pica","thumb":{"fileServer":"https://storage1.picacomic.com","path":"cover/test.jpg"}}]}),
+        ),
+        Ok(json!({"comics":[]})),
+        Ok(json!({"comics":[]})),
+    ]);
+    let jm = session(Source::Jm);
+    let pica = session(Source::Pica);
+    let options = sources.ranking_options(&jm).await.unwrap();
+    assert_eq!(options.categories[0].id, "42");
+    assert_eq!(options.categories[0].label, "Weekly · 2026-09-14");
+    let page = sources.ranking(&jm, Some("42"), "1").await.unwrap();
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|work| work.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["456", "123"]
+    );
+    assert_eq!((page.total, page.has_more), (Some(2), Some(false)));
+    let options = sources.ranking_options(&pica).await.unwrap();
+    assert!(options.categories.is_empty());
+    for (index, period) in options.periods.iter().enumerate() {
+        let page = sources.ranking(&pica, None, &period.id).await.unwrap();
+        assert_eq!(page.has_more, Some(false));
+        assert_eq!(page.items.len(), usize::from(index == 0));
+    }
+    assert!(matches!(
+        pica.covers.lock().unwrap().lookup(PICA_ID),
+        CoverLookup::Ready(_)
+    ));
+    assert_eq!(
+        sources
+            .recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, _, route)| route.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "/week",
+            "/week/filter?id=42&type=1",
+            "comics/leaderboard?tt=D7&ct=VC",
+            "comics/leaderboard?tt=H24&ct=VC",
+            "comics/leaderboard?tt=D30&ct=VC"
+        ]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_short_weekly_list_is_partial_and_invalid_ranks_do_not_reach_network() {
+    let sources = scripted(vec![
+        Ok(json!({"total":"20","list":[{"id":"123","name":"Fixture"}]})),
+        Ok(json!({"total":0,"list":[{"id":"123","name":"Fixture"}]})),
+        Ok(json!({"total":2,"list":[{"id":"123","name":"Fixture"},{"id":"123","name":"Fixture"}]})),
+    ]);
+    let jm = session(Source::Jm);
+    let partial = sources.ranking(&jm, Some("42"), "1").await.unwrap();
+    assert_eq!(
+        (partial.total, partial.pages, partial.has_more),
+        (Some(20), None, None)
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            sources
+                .ranking(&jm, Some("42"), "1")
+                .await
+                .unwrap_err()
+                .code,
+            "SOURCE_PAGINATION_INVALID"
+        );
+    }
+    for (category, period) in [
+        (None, "1"),
+        (Some("42&host=evil"), "1"),
+        (Some("42"), "../logout"),
+    ] {
+        assert_eq!(
+            sources
+                .ranking(&jm, category, period)
+                .await
+                .unwrap_err()
+                .code,
+            "SOURCE_RANK_INVALID"
+        );
+    }
+    let pica = session(Source::Pica);
+    for (category, period) in [(Some("42"), "week"), (None, "year"), (None, "D7&ct=evil")] {
+        assert_eq!(
+            sources
+                .ranking(&pica, category, period)
+                .await
+                .unwrap_err()
+                .code,
+            "SOURCE_RANK_INVALID"
+        );
+    }
+    assert_eq!(sources.recorded.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn malformed_weekly_options_cannot_become_renderer_navigation() {
+    let sources = scripted(vec![
+        Ok(json!({"categories":[{"id":"../../login","title":"T"}],"type":[]})),
+        Ok(json!({"categories":[{"id":"1","title":"T"},{"id":"1","title":"Other"}],"type":[]})),
+        Ok(json!({"categories":[],"type":null})),
+    ]);
+    for _ in 0..3 {
+        assert!(sources.ranking_options(&session(Source::Jm)).await.is_err());
+    }
+}
+
 fn session(source: Source) -> SourceSession {
     new_session(
         source,

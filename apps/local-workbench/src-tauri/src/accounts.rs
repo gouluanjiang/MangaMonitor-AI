@@ -278,3 +278,17 @@ mod tests {
         }
     }
 }
+
+#[tauri::command]
+pub(super) async fn source_rank_options<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    source: Source,
+    session_id: String,
+) -> Result<workbench_accounts::RankOptionsResult, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .ranking_options(source, &session_id)
+        .await
+}

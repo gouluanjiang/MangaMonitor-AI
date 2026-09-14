@@ -2,6 +2,7 @@
 //! filesystem writes, automatic pagination, retries, or production-state access.
 mod cover;
 mod protocol;
+mod ranking;
 mod thumbnail;
 mod types;
 

@@ -1,3 +1,4 @@
+import { RankingPanel } from "./RankingPanel.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { works, activeFixture } from "./catalog.ts";
@@ -308,6 +309,10 @@ export default function App() {
     persistence.native ? { ...initialDemoState(), tasks: [] } : readSavedDemo(),
   );
   const [page, setPage] = useState<Page>("library");
+  const [discoveryPane, setDiscoveryPane] = useState<"search" | Source>(
+    "search",
+  );
+  const [rankingDetail, setRankingDetail] = useState(false);
   const downloadLibrary = useDownloadInventory(
     downloadAdapter,
     persistence.native,
@@ -408,7 +413,9 @@ export default function App() {
   const libraryActive =
     persistence.native && page === "library" && !booklistView;
   const sourceActive =
-    persistence.native && ["favorites", "discovery", "authors"].includes(page);
+    persistence.native &&
+    ["favorites", "discovery", "authors"].includes(page) &&
+    (page !== "discovery" || discoveryPane === "search" || rankingDetail);
   const sourceView =
     page === "favorites"
       ? "favorites"
@@ -418,7 +425,29 @@ export default function App() {
           ? "following"
           : lastSourceView.current;
   lastSourceView.current = sourceView;
+  const discoveryNavigation = (
+    <div className="source-tabs" role="group" aria-label="发现分类">
+      {(
+        [
+          ["search", "来源搜索"],
+          ["JM", "JM 每周必看"],
+          ["Pica", "哔咔排行榜"],
+        ] as const
+      ).map(([value, label]) => (
+        <button
+          key={value}
+          aria-pressed={discoveryPane === value}
+          className={discoveryPane === value ? "active" : ""}
+          data-testid={"discovery-" + value}
+          onClick={() => setDiscoveryPane(value)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
   function openSourceWork(ref: WorkReference) {
+    setDiscoveryPane("search");
     setRequestedSource(ref.source);
     setRequestedWork(ref);
     setSourceRequestKey((key) => key + 1);
@@ -854,6 +883,7 @@ export default function App() {
     return { text: "可下载", tone: "muted" };
   };
   const navigate = (next: Page) => {
+    setRankingDetail(false);
     if (next === page && !detail) return;
     if (next === "settings") {
       settingsOrigin.current = { page, anchor: captureAnchor(), detail };
@@ -2046,48 +2076,55 @@ export default function App() {
             ref={setSourceSearchHost}
             hidden={!sourceActive}
           />
-          {!sourceActive && (
-            <label className="search-box">
-              <Icon name="search" size={17} />
-              <input
-                data-testid="search-input"
-                aria-label={page === "settings" ? "搜索设置" : "搜索作品或作者"}
-                placeholder={
-                  page === "settings" ? "搜索设置…" : "搜索作品、作者…"
-                }
-                value={page === "settings" ? settingsQuery : query}
-                onChange={(event) => {
-                  if (page === "settings") {
-                    setSettingsQuery(event.target.value);
-                    return;
+          {!sourceActive &&
+            !(
+              persistence.native &&
+              page === "discovery" &&
+              discoveryPane !== "search"
+            ) && (
+              <label className="search-box">
+                <Icon name="search" size={17} />
+                <input
+                  data-testid="search-input"
+                  aria-label={
+                    page === "settings" ? "搜索设置" : "搜索作品或作者"
                   }
-                  setQuery(event.target.value);
-                  clearScopeSelection();
-                  setDetail(null);
-                  if (!["library", "favorites", "discovery"].includes(page)) {
-                    setPage("discovery");
-                    setFilter("all");
-                    setSource("all");
+                  placeholder={
+                    page === "settings" ? "搜索设置…" : "搜索作品、作者…"
                   }
-                }}
-              />
-              {(page === "settings" ? settingsQuery : query) && (
-                <button
-                  className="icon-button"
-                  aria-label="清空搜索"
-                  onClick={() => {
-                    if (page === "settings") setSettingsQuery("");
-                    else {
-                      setQuery("");
-                      clearScopeSelection();
+                  value={page === "settings" ? settingsQuery : query}
+                  onChange={(event) => {
+                    if (page === "settings") {
+                      setSettingsQuery(event.target.value);
+                      return;
+                    }
+                    setQuery(event.target.value);
+                    clearScopeSelection();
+                    setDetail(null);
+                    if (!["library", "favorites", "discovery"].includes(page)) {
+                      setPage("discovery");
+                      setFilter("all");
+                      setSource("all");
                     }
                   }}
-                >
-                  <Icon name="close" size={14} />
-                </button>
-              )}
-            </label>
-          )}
+                />
+                {(page === "settings" ? settingsQuery : query) && (
+                  <button
+                    className="icon-button"
+                    aria-label="清空搜索"
+                    onClick={() => {
+                      if (page === "settings") setSettingsQuery("");
+                      else {
+                        setQuery("");
+                        clearScopeSelection();
+                      }
+                    }}
+                  >
+                    <Icon name="close" size={14} />
+                  </button>
+                )}
+              </label>
+            )}
           <div className="demo-label" data-testid="demo-label">
             <span />
             {persistence.native
@@ -2221,9 +2258,48 @@ export default function App() {
                 onOpenAccounts={() => navigate("settings")}
               />
             )}
+          {persistence.native &&
+            page === "discovery" &&
+            discoveryPane !== "search" && (
+              <div hidden={rankingDetail}>
+                <RankingPanel
+                  key={discoveryPane}
+                  source={discoveryPane}
+                  accounts={accounts}
+                  adapter={sourceAdapter}
+                  library={library.snapshot}
+                  inventorySnapshot={downloadLibrary.snapshot}
+                  inventoryReady={
+                    downloadLibrary.ready && !downloadLibrary.error
+                  }
+                  density={appearance.density}
+                  navigation={discoveryNavigation}
+                  onOpen={(work) => {
+                    setRequestedSource(work.source);
+                    setRequestedWork(work);
+                    setSourceRequestKey((value) => value + 1);
+                    setRankingDetail(true);
+                  }}
+                  onDownload={(work) => void beginDownload(work.workId, work)}
+                  onDownloadMany={(works) => {
+                    if (works.length)
+                      void beginDownload(
+                        works.map((work) => work.workId).join("\n"),
+                        undefined,
+                        works[0].source,
+                      );
+                  }}
+                  onAccounts={() => navigate("settings")}
+                />
+              </div>
+            )}
           {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
+              discoveryNavigation={discoveryNavigation}
+              onDetailBack={
+                rankingDetail ? () => setRankingDetail(false) : undefined
+              }
               onDownload={(work) => beginDownload(work.workId, work)}
               onDownloadMany={(selected) => {
                 if (selected.length)
@@ -2266,6 +2342,9 @@ export default function App() {
             />
           )}
           {sourceActive ||
+          (persistence.native &&
+            page === "discovery" &&
+            discoveryPane !== "search") ||
           libraryActive ||
           (persistence.native && ["completion", "author-search"].includes(page))
             ? null

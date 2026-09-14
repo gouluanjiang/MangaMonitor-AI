@@ -48,6 +48,20 @@ pub trait SourceBackend: Send + Sync + 'static {
         session: &Self::Session,
         input: &str,
     ) -> impl Future<Output = Result<SourceWork>> + Send;
+    fn ranking_options(
+        &self,
+        _session: &Self::Session,
+    ) -> impl Future<Output = Result<workbench_sources::RankOptions>> + Send {
+        std::future::ready(Err(AccountError::new("SOURCE_RANK_UNSUPPORTED")))
+    }
+    fn ranking(
+        &self,
+        _session: &Self::Session,
+        _category: Option<&str>,
+        _period: &str,
+    ) -> impl Future<Output = Result<SourcePage>> + Send {
+        std::future::ready(Err(AccountError::new("SOURCE_RANK_UNSUPPORTED")))
+    }
     fn favorite(
         &self,
         session: &Self::Session,
@@ -63,6 +77,24 @@ pub trait SourceBackend: Send + Sync + 'static {
 
 impl SourceBackend for WorkbenchSources {
     type Session = SourceSession;
+    async fn ranking_options(
+        &self,
+        session: &Self::Session,
+    ) -> Result<workbench_sources::RankOptions> {
+        WorkbenchSources::ranking_options(self, session)
+            .await
+            .map_err(|e| AccountError::new(e.code))
+    }
+    async fn ranking(
+        &self,
+        session: &Self::Session,
+        category: Option<&str>,
+        period: &str,
+    ) -> Result<SourcePage> {
+        WorkbenchSources::ranking(self, session, category, period)
+            .await
+            .map_err(|e| AccountError::new(e.code))
+    }
 
     fn pica_download_credential(&self, session: &Self::Session) -> Result<StoredCredential> {
         session

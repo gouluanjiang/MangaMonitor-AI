@@ -55,6 +55,7 @@ pub struct AccountSummary {
 pub enum QueryKind {
     Favorites,
     Search,
+    Ranking,
     Detail,
 }
 
@@ -65,6 +66,14 @@ pub struct QueryResult {
     pub session_id: String,
     #[serde(flatten)]
     pub page: SourcePage,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankOptionsResult {
+    pub source: Source,
+    pub session_id: String,
+    pub options: workbench_sources::RankOptions,
 }
 
 #[derive(Serialize)]

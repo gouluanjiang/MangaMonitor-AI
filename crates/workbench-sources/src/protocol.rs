@@ -73,7 +73,7 @@ fn within_text_limit(value: &str, maximum: usize) -> bool {
     value.encode_utf16().take(maximum + 1).count() <= maximum
 }
 
-fn bounded_required_text(value: &Value, maximum: usize) -> SourceResult<String> {
+pub(crate) fn bounded_required_text(value: &Value, maximum: usize) -> SourceResult<String> {
     required_text(value).and_then(|text| {
         if within_text_limit(&text, maximum) {
             Ok(text)

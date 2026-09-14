@@ -56,6 +56,20 @@ pub struct SourceFolder {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RankOption {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankOptions {
+    pub categories: Vec<RankOption>,
+    pub periods: Vec<RankOption>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SourcePage {
     pub page: u64,
     pub total: Option<u64>,

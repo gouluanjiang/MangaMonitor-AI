@@ -719,15 +719,16 @@ test("a missing PC root routes to directory selection without preparation or med
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
 });
 
-test("an exact existing PC reference opens its copy instead of creating another download", async ({
+test("an unregistered PC metadata reference does not override explicit source download selection", async ({
   page,
 }) => {
   await install(page, { existing: true });
   await page.getByTestId("nav-queue").click();
   await page.getByTestId("download-input").fill("JM123");
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("library-detail")).toBeVisible();
-  expect(await calls(page, "jm_download_prepare")).toEqual([]);
+  await expect(page.getByTestId("download-plan-source")).toContainText("JM");
+  expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
+  await page.getByTestId("download-cancel").click();
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
 });
 
@@ -1145,7 +1146,7 @@ test("Pica missing-file reprepare selects the original task source and creates a
 });
 
 for (const fixtureSource of ["JM", "Pica"] as const)
-  test(`Pica preparation distinguishes an existing ${fixtureSource} PC reference`, async ({
+  test(`Pica preparation ignores an unregistered ${fixtureSource} PC metadata reference`, async ({
     page,
   }) => {
     await install(page, { existing: true, fixtureSource });
@@ -1153,20 +1154,11 @@ for (const fixtureSource of ["JM", "Pica"] as const)
     await page.getByTestId("download-source").selectOption("Pica");
     await page.getByTestId("download-input").fill(picaWorkId);
     await page.getByTestId("download-prepare").click();
-    if (fixtureSource === "JM") {
-      await expect(page.getByTestId("download-plan-source")).toContainText(
-        "哔咔",
-      );
-      await page.getByTestId("download-cancel").click();
-    } else {
-      await expect(page.getByTestId("library-detail")).toBeVisible();
-      await expect(page.getByTestId("library-reference")).toContainText(
-        `Pica · ${picaWorkId}`,
-      );
-    }
-    expect(await calls(page, "jm_download_prepare")).toHaveLength(
-      fixtureSource === "JM" ? 1 : 0,
+    await expect(page.getByTestId("download-plan-source")).toContainText(
+      "哔咔",
     );
+    await page.getByTestId("download-cancel").click();
+    expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
     expect(await calls(page, "jm_download_confirm")).toEqual([]);
   });
 

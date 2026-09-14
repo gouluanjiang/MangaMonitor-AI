@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { readCompleteSearch } from "./source-search.ts";
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -39,6 +40,8 @@ import "./source-workbench.css";
 
 export interface SourceWorkbenchProps {
   adapter: SourceAdapter;
+  discoveryNavigation?: ReactNode;
+  onDetailBack?(): void;
   onDownload?(work: SourceWork): void;
   onDownloadMany?(works: SourceWork[]): void;
   downloadInventory?: DownloadInventorySnapshot;
@@ -246,6 +249,8 @@ const scopeKey = (scope: SourceScope | null) =>
   scope ? scope.source + ":" + scope.sessionId : "";
 export function SourceWorkbench({
   adapter,
+  discoveryNavigation,
+  onDetailBack,
   onDownload,
   onDownloadMany,
   downloadInventory,
@@ -833,6 +838,7 @@ export function SourceWorkbench({
     setDetailRef(null);
     setDetail(null);
     pendingAnchor.current = savedAnchor.current;
+    onDetailBack?.();
   }
   function updateWork(work: SourceWork) {
     setDetail(work);
@@ -1398,6 +1404,7 @@ export function SourceWorkbench({
         </div>
         {!searchHost && searchControl}
       </div>
+      {view === "search" && discoveryNavigation}
       <div className="source-tabs" role="group" aria-label="来源">
         {sources.map((item) => (
           <button

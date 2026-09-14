@@ -25,6 +25,14 @@ export interface SourcePage {
   hasMore: boolean | null;
   folders: SourceFolder[];
 }
+export interface RankOption {
+  id: string;
+  label: string;
+}
+export interface RankOptions {
+  categories: RankOption[];
+  periods: RankOption[];
+}
 export interface SourceFolder {
   id: string;
   name: string;
@@ -58,7 +66,7 @@ export interface AccountSummary {
   errorCode: string | null;
 }
 export interface SourceQuery {
-  kind: "favorites" | "search" | "detail";
+  kind: "favorites" | "search" | "detail" | "ranking";
   query: string;
   folderId: string | null;
   page: number;
@@ -96,6 +104,7 @@ export interface SourceAdapter {
     sessionId: string | null;
   }): Promise<AccountSummary>;
   query(scope: SourceScope, query: SourceQuery): Promise<SourceQueryResult>;
+  rankingOptions(scope: SourceScope): Promise<RankOptions>;
   catalog(scope: SourceScope, request: CatalogRequest): Promise<CatalogResult>;
   favorite(
     scope: SourceScope,

@@ -57,7 +57,9 @@ test.afterEach(async ({ page }) => {
   const forbidden = await page.evaluate(() =>
     (window.libraryTest?.calls ?? []).filter(
       (call) =>
-        call.command !== "jm_download_read" &&
+        !["jm_download_read", "download_inventory_read"].includes(
+          call.command,
+        ) &&
         /download|enqueue|delete|remove_file|move_file|source_set_favorite|source_favorite|production|promote/.test(
           call.command,
         ),

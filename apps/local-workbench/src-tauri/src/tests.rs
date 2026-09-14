@@ -388,6 +388,14 @@ fn account_commands() -> Vec<(&'static str, Value)> {
         ),
         ("source_logout", json!({"source":"JM","sessionId":null})),
         (
+            "source_rank_options",
+            json!({"source":"JM","sessionId":"stale"}),
+        ),
+        (
+            "source_query",
+            json!({"source":"Pica","sessionId":"stale","kind":"ranking","query":"week","folderId":null,"page":1}),
+        ),
+        (
             "source_query",
             json!({"source":"JM","sessionId":"stale","kind":"favorites","query":"","folderId":null,"page":1}),
         ),

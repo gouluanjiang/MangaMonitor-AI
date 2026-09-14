@@ -10,6 +10,7 @@ import type {
   SourceQueryResult,
   SourceScope,
   SourceWork,
+  RankOptions,
 } from "./source-types.ts";
 import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
@@ -419,12 +420,14 @@ export function createSourceAdapter(
     async query(scope, query) {
       checkScope(scope);
       if (
-        !["favorites", "search", "detail"].includes(query.kind) ||
+        !["favorites", "search", "detail", "ranking"].includes(query.kind) ||
         !text(query.query, 4096) ||
         !integer(query.page) ||
         query.page < 1 ||
         !(query.folderId === null || identity(query.folderId)) ||
         (scope.source === "Pica" && query.folderId !== null) ||
+        (query.kind === "ranking" &&
+          (query.page !== 1 || query.reverse === true)) ||
         (query.reverse !== undefined && typeof query.reverse !== "boolean")
       )
         throw new SourceError("INVALID_INPUT");
@@ -439,6 +442,38 @@ export function createSourceAdapter(
       );
       if (result.page !== query.page || result.items.length > 1000) invalid();
       return result;
+    },
+    async rankingOptions(scope) {
+      checkScope(scope);
+      const result = await call("source_rank_options", { ...scope });
+      scoped(result, scope);
+      const value = result.options as RankOptions;
+      if (
+        !value ||
+        !Array.isArray(value.categories) ||
+        !Array.isArray(value.periods)
+      )
+        invalid();
+      const parse = (rows: RankOptions["periods"]) => {
+        if (
+          rows.length > 1000 ||
+          rows.some(
+            (row) =>
+              !row ||
+              typeof row.id !== "string" ||
+              !/^[A-Za-z0-9_-]{1,80}$/.test(row.id) ||
+              !text(row.label, 4096) ||
+              !row.label.trim(),
+          ) ||
+          new Set(rows.map((row) => row.id)).size !== rows.length
+        )
+          invalid();
+        return rows.map((row) => ({ id: row.id, label: row.label }));
+      };
+      return {
+        categories: parse(value.categories),
+        periods: parse(value.periods),
+      };
     },
     async catalog(scope, request) {
       checkScope(scope);

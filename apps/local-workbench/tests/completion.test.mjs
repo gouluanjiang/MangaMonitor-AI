@@ -32,6 +32,32 @@ const empty = () => ({
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+test("JM total-only pagination finishes exactly at the reported total without a spurious extra request", async () => {
+  const calls = [],
+    seen = [];
+  await readCompleteSearch(
+    {
+      query: async (scope, query) => {
+        calls.push(query.page);
+        return {
+          ...scope,
+          items: [work(scope.source, query.page)],
+          page: query.page,
+          total: 2,
+          pages: null,
+          hasMore: null,
+          folders: [],
+        };
+      },
+    },
+    scopes[0],
+    "Writer",
+    { current: () => true, onPage: (value) => seen.push(value) },
+  );
+  assert.deepEqual(calls, [1, 2]);
+  assert.equal(seen.at(-1).complete, true);
+});
+
 test("opening author updates reads saved metadata only; explicit check invokes discovery without download authority", async () => {
   const calls = [];
   const adapter = createCompletionAdapter({

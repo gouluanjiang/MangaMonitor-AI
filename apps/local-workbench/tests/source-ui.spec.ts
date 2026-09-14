@@ -688,7 +688,9 @@ test.afterEach(async ({ page }) => {
   const forbidden = await page.evaluate(() =>
     (window.sourceTest?.calls ?? []).filter(
       (call) =>
-        call.command !== "jm_download_read" &&
+        !["jm_download_read", "download_inventory_read"].includes(
+          call.command,
+        ) &&
         /download|enqueue|delete|remove_file|move_file|production|promote/.test(
           call.command,
         ),
@@ -1782,3 +1784,54 @@ test("source search stays right-aligned at baseline width and fits a narrow wind
   expect(narrow.right).toBeLessThanOrEqual(390);
   expect(narrow.width).toBeGreaterThan(250);
 });
+
+async function favoritePages(page: Page) {
+  return page.evaluate(() =>
+    window.sourceTest.calls
+      .filter(
+        (call) =>
+          call.command === "source_query" &&
+          call.kind === "favorites" &&
+          call.source === "JM",
+      )
+      .map((call) => call.page),
+  );
+}
+
+async function picaFavoritePages(page: Page, reverse: boolean) {
+  return page.evaluate(
+    (direction) =>
+      window.sourceTest.calls
+        .filter(
+          (call) =>
+            call.command === "source_query" &&
+            call.kind === "favorites" &&
+            call.source === "Pica" &&
+            Boolean(call.reverse) === direction,
+        )
+        .map((call) => call.page),
+    reverse,
+  );
+}
+
+async function openAccounts(page: Page) {
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-accounts").click();
+  await expect(page.getByTestId("source-account-settings")).toBeVisible();
+}
+
+async function connectJM(page: Page) {
+  await page.getByTestId("account-connect-JM").click();
+  await page.getByTestId("account-username").fill("synthetic-user");
+  await page.getByTestId("account-password").fill("fixture-only-password");
+  await page.getByTestId("account-login-submit").click();
+}
+
+async function detail(page: Page, source: Source = "JM") {
+  await openFavorites(page);
+  await page.getByTestId("source-tab-" + source).click();
+  await page.getByTestId("source-open-" + source + ":123").click();
+  await expect(page.getByTestId("source-detail")).toContainText(
+    "合成验收 " + source,
+  );
+}

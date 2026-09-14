@@ -380,7 +380,7 @@ fn existing_incomplete_and_reappearing_destinations_never_authorize_replacement(
 }
 
 #[test]
-fn an_existing_indexed_alias_still_blocks_when_the_historical_destination_is_missing() {
+fn unregistered_renames_and_legacy_links_do_not_override_download_receipts() {
     let f = fixture();
     let old = complete_for_presence(&f, record(&f));
     let alias = "user renamed work";
@@ -400,12 +400,9 @@ fn an_existing_indexed_alias_still_blocks_when_the_historical_destination_is_mis
         f.service.read(&f.store).unwrap().tasks[0].local_files,
         Some(LocalFiles::Missing)
     );
-    assert_eq!(
-        prepare_same(&f).unwrap_err().code,
-        "DOWNLOAD_ALREADY_PRESENT"
-    );
+    prepare_same(&f).unwrap();
     assert!(f.library.join(alias).join("0001-123456/0001.gif").is_file());
-    // A separately associated source has the same duplicate-prevention effect.
+    // Cancelled association records likewise do not become download receipts.
     let mut document = f.store.read_library().unwrap();
     let item = &mut document.value.records[0].item;
     let reference = item.source_ref.take().unwrap();
@@ -418,10 +415,7 @@ fn an_existing_indexed_alias_still_blocks_when_the_historical_destination_is_mis
     f.store
         .write_library(document.revision, document.value)
         .unwrap();
-    assert_eq!(
-        prepare_same(&f).unwrap_err().code,
-        "DOWNLOAD_ALREADY_PRESENT"
-    );
+    prepare_same(&f).unwrap();
 }
 
 #[test]

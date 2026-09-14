@@ -1175,6 +1175,7 @@ fn check_new_download(
         return Err(error("LIBRARY_BUSY"));
     }
     let root = materialize::require_root(record)?;
+    let mut missing = BTreeSet::new();
     for old in &downloads.tasks {
         if old.source != record.source
             || old.metadata.work_id != record.metadata.work_id
@@ -1192,7 +1193,17 @@ fn check_new_download(
             continue;
         }
         match presence::check_with_library(old, library) {
-            LocalFiles::Missing => {}
+            LocalFiles::Missing => {
+                if let Some(id) = &old.library_entry_id {
+                    if library
+                        .records
+                        .iter()
+                        .any(|row| row.item.id == *id && row.item.relative_path == old.destination)
+                    {
+                        missing.insert(id.clone());
+                    }
+                }
+            }
             LocalFiles::Present => return Err(error("DOWNLOAD_ALREADY_PRESENT")),
             LocalFiles::Incomplete => return Err(error("DOWNLOAD_LOCAL_FILES_INCOMPLETE")),
             LocalFiles::Unavailable => return Err(error("DOWNLOAD_LOCAL_FILES_UNAVAILABLE")),
@@ -1216,7 +1227,6 @@ fn check_new_download(
             return Err(error("DOWNLOAD_ALREADY_PRESENT"));
         }
     }
-    let mut missing = BTreeSet::new();
     // Only a stale row at the exact selected output path can be retired here.
     // Metadata IDs and historical matching links do not block another download.
     for old in &library.records {

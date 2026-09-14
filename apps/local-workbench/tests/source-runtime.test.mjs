@@ -88,6 +88,66 @@ const page = (overrides = {}) => ({
 });
 const query = { kind: "favorites", query: "", folderId: null, page: 1 };
 
+test("ranking choices are scoped metadata and ranking requests use a single source list", async () => {
+  const calls = [];
+  const choices = {
+    categories: [{ id: "42", label: "Week 42", ignored: "secret" }],
+    periods: [{ id: "1", label: "Popular" }],
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return command === "source_rank_options"
+        ? { ...scope, options: choices }
+        : page({ total: 20, items: [work()] });
+    },
+  });
+  assert.deepEqual(await adapter.rankingOptions(scope), {
+    categories: [{ id: "42", label: "Week 42" }],
+    periods: [{ id: "1", label: "Popular" }],
+  });
+  const request = { kind: "ranking", page: 1, query: "1", folderId: "42" };
+  const partial = await adapter.query(scope, request);
+  assert.equal(partial.hasMore, null);
+  assert.equal(partial.total, 20);
+  assert.equal(calls[1].args.kind, "ranking");
+  for (const invalid of [
+    { ...request, page: 2 },
+    { ...request, reverse: true },
+  ])
+    await assert.rejects(adapter.query(scope, invalid), {
+      code: "INVALID_INPUT",
+    });
+  assert.equal(calls.length, 2);
+});
+
+test("ranking choices reject stale scope, malformed options and untrusted IDs", async () => {
+  const choices = { categories: [], periods: [{ id: "week", label: "Week" }] };
+  for (const response of [
+    { source: "Pica", sessionId: scope.sessionId, options: choices },
+    { ...scope, sessionId: "stale", options: choices },
+    { ...scope, options: { ...choices, periods: [null] } },
+    {
+      ...scope,
+      options: { ...choices, periods: [{ id: "x&url=evil", label: "X" }] },
+    },
+    {
+      ...scope,
+      options: {
+        ...choices,
+        periods: [choices.periods[0], choices.periods[0]],
+      },
+    },
+  ]) {
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => response,
+    });
+    await assert.rejects(adapter.rankingOptions(scope), SourceError);
+  }
+});
+
 test("browser sources are unavailable and never invoke a native or synthetic login", async () => {
   let invoked = 0;
   const adapter = createSourceAdapter({

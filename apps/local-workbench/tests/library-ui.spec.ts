@@ -543,6 +543,9 @@ test("native diagnostics show real snapshot states, omit private data and link t
   await expect(
     page.getByText("无法自动复制，请复制下方已选中的文字。"),
   ).toBeVisible();
+  await page.screenshot({
+    path: "visual-evidence/native-diagnostics-copy.png",
+  });
   await page.setViewportSize({ width: 900, height: 720 });
   expect(
     await page

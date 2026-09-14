@@ -53,7 +53,7 @@ export function DiagnosticsPanel({
   }
   return (
     <section
-      className="settings-card"
+      className="settings-card diagnostics-card"
       aria-labelledby="diagnostics-title"
       data-testid="diagnostics-panel"
     >

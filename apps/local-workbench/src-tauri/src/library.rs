@@ -45,7 +45,13 @@ fn with_shell_item(
         System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED},
         UI::Shell::SHParseDisplayName,
     };
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Shell parsing rejects the canonical verbatim prefix. Simplify only when
+    // that preserves the filesystem meaning (not reserved or trailing-dot names).
+    let wide: Vec<u16> = dunce::simplified(path)
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
     // Pass a filesystem item ID, never a command line or a file to execute.
     let result = unsafe {
         let initialized = CoInitializeEx(ptr::null(), COINIT_APARTMENTTHREADED as u32);

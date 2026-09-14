@@ -30,6 +30,7 @@ zeroize = "=1.9.0"
 serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
+dunce = "=1.0.5"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
 
 [dev-dependencies]

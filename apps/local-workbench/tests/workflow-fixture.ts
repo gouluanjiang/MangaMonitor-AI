@@ -365,9 +365,21 @@ export async function installWorkflow(page: Page) {
                 });
               }
               case "library_read":
+                if (hooks.failLibraryRead)
+                  throw { code: "LIBRARY_UNAVAILABLE" };
+                return clone(hooks.library);
               case "library_scan":
                 if (hooks.failLibraryRead)
                   throw { code: "LIBRARY_UNAVAILABLE" };
+                if (
+                  args.action !== "start" ||
+                  args.generation !== hooks.library.generation
+                )
+                  throw { code: "LIBRARY_RESPONSE_INVALID" };
+                hooks.library.generation++;
+                hooks.library.revision++;
+                hooks.inventory.libraryRevision = hooks.library.revision;
+                save();
                 return clone(hooks.library);
               case "download_inventory_read":
                 return clone(hooks.inventory);

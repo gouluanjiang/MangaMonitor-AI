@@ -283,7 +283,11 @@ test("library read failure makes author and ranking ownership unknown until a su
     window.workflowTest.failLibraryRead = false;
   });
   await page.getByTestId("library-retry").click();
+  await expect(page.getByTestId("library-refresh")).toBeEnabled();
   await expect(page.getByTestId("library-retry")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => window.workflowTest.library.generation),
+  ).toBe(2);
   await page.getByTestId("nav-completion").click();
   await expect(counts(page)).toContainText("已入库 1 条 · 未入库 4 条");
 });

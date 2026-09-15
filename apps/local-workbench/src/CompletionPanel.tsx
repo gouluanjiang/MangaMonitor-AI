@@ -35,6 +35,7 @@ import "./completion.css";
 
 const nativeAdapter = createCompletionAdapter();
 interface Props {
+  active?: boolean;
   mode?: "updates" | "search";
   accounts: AccountSummary[];
   sourceAdapter: SourceAdapter;
@@ -53,6 +54,7 @@ interface Props {
 }
 
 export function CompletionPanel({
+  active = true,
   mode = "updates",
   accounts,
   sourceAdapter,
@@ -133,16 +135,30 @@ export function CompletionPanel({
     setError("");
     setAuthor("");
     setQuery("");
-    void load();
+    setSearchAuthor("");
+    setSource("all");
+    setFilter("missing");
+    // Invalidate the previous session's in-flight search, including logout.
+    // Reading this in-memory adapter never starts a source request.
+    if (mode === "search") void searchAdapter.read(current.current.scopes);
+  }, [scopeKey, mode, searchAdapter]);
+  useEffect(
+    () => () => {
+      if (mode === "search") void searchAdapter.read([]);
+    },
+    [mode, searchAdapter],
+  );
+  useEffect(() => {
+    if (active) void load();
     return () => {
       epoch.current++;
     };
-  }, [load, scopeKey]);
+  }, [load, scopeKey, active]);
   useEffect(() => {
-    if (!running || busy || error) return;
+    if (!active || !running || busy || error) return;
     const timer = setTimeout(() => void load(), 1500);
     return () => clearTimeout(timer);
-  }, [load, running, busy, error, view]);
+  }, [load, running, busy, error, view, active]);
   async function perform(action: () => Promise<DiscoverySnapshot | void>) {
     if (operation.current) return;
     operation.current = true;
@@ -175,6 +191,9 @@ export function CompletionPanel({
       return adapter.start(captured.scopes, selected);
     });
   }
+  // Retain the run's state without rendering covers, counting hidden grids or
+  // polling result snapshots while another page is visible.
+  if (!active) return null;
   const authors = [
     ...new Set(view?.authors.map((range) => range.author) ?? []),
   ];

@@ -311,6 +311,13 @@ export default function App() {
     persistence.native ? { ...initialDemoState(), tasks: [] } : readSavedDemo(),
   );
   const [page, setPage] = useState<Page>("library");
+  const [authorPages, setAuthorPages] = useState<Page[]>([]);
+  useEffect(() => {
+    if (page === "completion" || page === "author-search")
+      setAuthorPages((previous) =>
+        previous.includes(page) ? previous : [...previous, page],
+      );
+  }, [page]);
   const [discoveryPane, setDiscoveryPane] = useState<"search" | Source>(
     "search",
   );
@@ -2366,17 +2373,22 @@ export default function App() {
             />
           )}
           {persistence.native &&
-            ["completion", "author-search"].includes(page) && (
-              <div hidden={embeddedSourceDetail}>
+            authorPages.map((authorPage) => (
+              <div
+                key={authorPage}
+                hidden={embeddedSourceDetail || page !== authorPage}
+              >
                 <CompletionPanel
-                  key={page}
-                  mode={page === "author-search" ? "search" : "updates"}
+                  active={page === authorPage}
+                  mode={authorPage === "author-search" ? "search" : "updates"}
                   accounts={accounts}
                   sourceAdapter={sourceAdapter}
                   library={library.snapshot}
                   inventorySnapshot={downloadLibrary.snapshot}
                   inventoryReady={
-                    downloadLibrary.ready && !downloadLibrary.error
+                    downloadLibrary.ready &&
+                    !downloadLibrary.error &&
+                    !library.error
                   }
                   onRefreshInventory={downloadLibrary.refresh}
                   density={appearance.density}
@@ -2388,7 +2400,7 @@ export default function App() {
                   onOpenAccounts={() => openSettings("accounts")}
                 />
               </div>
-            )}
+            ))}
           {persistence.native &&
             page === "discovery" &&
             discoveryPane !== "search" && (
@@ -2401,7 +2413,9 @@ export default function App() {
                   library={library.snapshot}
                   inventorySnapshot={downloadLibrary.snapshot}
                   inventoryReady={
-                    downloadLibrary.ready && !downloadLibrary.error
+                    downloadLibrary.ready &&
+                    !downloadLibrary.error &&
+                    !library.error
                   }
                   density={appearance.density}
                   navigation={discoveryNavigation}

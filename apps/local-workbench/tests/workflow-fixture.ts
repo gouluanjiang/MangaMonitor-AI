@@ -14,6 +14,7 @@ declare global {
   interface Window {
     workflowTest: {
       calls: { command: string; args: Record<string, unknown> }[];
+      unexpectedCommands: string[];
       accounts: AccountSummary[];
       library: LibrarySnapshot;
       inventory: DownloadInventorySnapshot;
@@ -150,6 +151,7 @@ export async function installWorkflow(page: Page) {
       );
       const hooks = (window.workflowTest = {
         calls: [],
+        unexpectedCommands: [],
         accounts,
         library,
         inventory,
@@ -367,7 +369,7 @@ export async function installWorkflow(page: Page) {
                 if (hooks.failLibraryRead)
                   throw { code: "LIBRARY_UNAVAILABLE" };
                 return clone(hooks.library);
-              case "inventory_read":
+              case "download_inventory_read":
                 return clone(hooks.inventory);
               case "jm_download_read":
                 return clone(hooks.queue);
@@ -429,6 +431,7 @@ export async function installWorkflow(page: Page) {
                   ),
                 );
               default:
+                hooks.unexpectedCommands.push(command);
                 throw new Error(
                   "Unexpected synthetic workflow command: " + command,
                 );

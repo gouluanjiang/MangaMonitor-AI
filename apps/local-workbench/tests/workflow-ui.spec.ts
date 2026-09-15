@@ -29,6 +29,9 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async ({ page }) => {
   expect(errors.get(page) ?? []).toEqual([]);
   expect(
+    await page.evaluate(() => window.workflowTest.unexpectedCommands),
+  ).toEqual([]);
+  expect(
     await page.evaluate(() =>
       window.workflowTest.calls.filter((call) =>
         /source_(follow|favorite)$|source_matches_|phone_library_|completeness_|delete|promote|replace/.test(

@@ -38,6 +38,10 @@ test("diagnostics report only allowed statuses and counts, even with private DTO
           state: "unreadable",
           errorCode: "private-error",
         },
+        { state: "indexed", errorCode: null, pageCount: 0 },
+        { state: "indexed", errorCode: null, pageCount: null },
+        { state: "indexed", errorCode: "private-error", pageCount: 12 },
+        { state: "indexed", errorCode: null, pageCount: 12 },
       ],
     },
     libraryFailed: false,
@@ -63,7 +67,7 @@ test("diagnostics report only allowed statuses and counts, even with private DTO
   const text = diagnosticSummary(state);
   assert.match(text, /已下载且文件存在：1/);
   assert.match(text, /需处理：2/);
-  assert.match(text, /文件待核对：1/);
+  assert.match(text, /目录记录：5 · 文件待核对：4/);
   assert.doesNotMatch(text, /private-|do-not-copy|C:\//);
   assert.match(
     diagnosticSummary({

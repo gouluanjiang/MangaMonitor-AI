@@ -2,6 +2,7 @@ import type { AccountSummary } from "./source-types.ts";
 import type { LibrarySnapshot } from "./library-types.ts";
 import type { DownloadSnapshot } from "./download-types.ts";
 import { isDownloadPresent } from "./download-runtime.ts";
+import { fileNeedsReview } from "./library-matching.ts";
 
 export interface WorkbenchInfo {
   version: string;
@@ -69,7 +70,7 @@ export function diagnosticSummary(state: DiagnosticState): string {
     `漫画库：${state.libraryFailed ? "读取未完成" : !library.rootId ? "未选择目录" : libraryPhaseLabels[library.phase]}`,
   );
   lines.push(
-    `目录记录：${library.items.length} · 文件待核对：${library.items.filter((item) => item.state !== "indexed" || item.errorCode).length} · 跳过：${library.skipped}`,
+    `目录记录：${library.items.length} · 文件待核对：${library.items.filter(fileNeedsReview).length} · 跳过：${library.skipped}`,
   );
   lines.push(
     `队列：${state.downloadsFailed ? "读取或操作有问题" : state.downloadsReady ? "已读取" : "尚未读取"}`,

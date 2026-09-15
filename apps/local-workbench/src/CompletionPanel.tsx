@@ -30,6 +30,7 @@ import type { InventoryFilter } from "./inventory-model.ts";
 import { SourceCover } from "./SourceWorkbench.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { createAuthorSearchAdapter } from "./author-search.ts";
+import { partitionAuthorRecords } from "./author-evidence.ts";
 import { jmSearchScopeNote } from "./source-search.ts";
 import "./completion.css";
 
@@ -104,16 +105,21 @@ export function CompletionPanel({
     [query, setQuery] = useState("");
   const [source, setSource] = useState<Source | "all">("all");
   const [filter, setFilter] = useState<InventoryFilter>("missing");
+  const [showOther, setShowOther] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   useEffect(() => {
     setSelection([]);
-  }, [scopeKey, author, source, filter, query, mode]);
+  }, [scopeKey, author, source, filter, query, mode, showOther]);
   const connected = scopes.length === 2;
   const running = view?.run?.phase === "checking";
   const inventory = useMemo(
     () => createInventoryMatcher(library, inventorySnapshot, inventoryReady),
     [library, inventorySnapshot, inventoryReady],
+  );
+  const authorResults = useMemo(
+    () => partitionAuthorRecords(view?.records ?? [], author, source),
+    [view, author, source],
   );
   const load = useCallback(async () => {
     const captured = current.current,
@@ -138,6 +144,7 @@ export function CompletionPanel({
     setSearchAuthor("");
     setSource("all");
     setFilter("missing");
+    setShowOther(false);
     // Invalidate the previous session's in-flight search, including logout.
     // Reading this in-memory adapter never starts a source request.
     if (mode === "search") void searchAdapter.read(current.current.scopes);
@@ -182,6 +189,7 @@ export function CompletionPanel({
     }
   }
   function startCheck() {
+    setShowOther(false);
     const captured = current.current;
     const selected =
       mode === "search" ? [searchAuthor.trim()] : author ? [author] : [];
@@ -208,11 +216,9 @@ export function CompletionPanel({
     ranges.length > 0 &&
     ranges.every((range) => range.state === "complete");
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
-  const scopedRecords = (view?.records ?? []).filter(
-    (record) =>
-      (!author || record.matchedAuthors.includes(author)) &&
-      (source === "all" || record.work.source === source),
-  );
+  const scopedRecords = showOther
+    ? authorResults.other
+    : authorResults.confirmed;
   const records = scopedRecords.filter(
     (record) =>
       !terms ||
@@ -235,7 +241,7 @@ export function CompletionPanel({
   );
   const selectionKeys = new Set(selection);
   const selectable = visible.filter(
-    (record) => inventory(record.work).kind !== "owned",
+    (record) => !showOther && inventory(record.work).kind !== "owned",
   );
   const selected = selectable
     .filter((record) => selectionKeys.has(sourceWorkKey(record.work)))
@@ -375,6 +381,29 @@ export function CompletionPanel({
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
+          {(showOther || authorResults.other.length > 0) && (
+            <div
+              className="source-notice"
+              data-testid="completion-other-results"
+            >
+              <span>
+                作者作品 {authorResults.confirmed.length} 条 · 其他关键词结果{" "}
+                {authorResults.other.length}{" "}
+                条。其他结果的作者字段未对应上，保留供查看，不计入作者统计或批量下载。
+              </span>{" "}
+              <button
+                aria-pressed={showOther}
+                onClick={() => {
+                  setShowOther(!showOther);
+                  setSelectionMode(false);
+                  setSelection([]);
+                  setFilter("all");
+                }}
+              >
+                {showOther ? "返回作者作品" : "查看其他关键词结果"}
+              </button>
+            </div>
+          )}
           <div className="source-tabs" aria-label="作者更新入库筛选">
             {(Object.keys(inventoryFilterLabels) as InventoryFilter[]).map(
               (value) => (
@@ -389,6 +418,7 @@ export function CompletionPanel({
             )}
           </div>
           <p data-testid="completion-counts">
+            {showOther ? "其他关键词结果（未确认作者归属） · " : ""}
             {complete ? "当前检查范围已读完" : "检查范围尚未读完"} · 已记录{" "}
             {records.length} 条 · 已入库 {counts.owned} 条 · 未入库{" "}
             {counts.missing} 条 · 当前显示 {visible.length} 条
@@ -401,18 +431,20 @@ export function CompletionPanel({
               : " 尚未完成检查。"}
           </p>
           <p className="source-muted" data-testid="completion-query-scope">
-            搜索与更新均保留来源按作者关键词返回的结果，可能包含合著或其他关键词命中，由你挑选下载。
+            读完来源的作者关键词查询，再按作者字段区分结果。作者作品包含明确列出的合著者和“社团（作者）”；名称不同或信息缺失的记录保留在其他关键词结果中。
           </p>
           {source !== "Pica" && (
             <p className="source-muted">{jmSearchScopeNote}</p>
           )}
           {complete &&
+            !showOther &&
+            authorResults.other.length === 0 &&
             scopedRecords.length > 0 &&
             scopedRecords.every(
               (record) => inventory(record.work).kind === "owned",
             ) && (
               <p role="status" data-testid="completion-all-owned">
-                本次查询结果已全部入库。范围：
+                本次作者作品已全部入库。范围：
                 {source === "all" ? "JM 与哔咔" : sourceLabel(source)}，
                 {author || authors.join("、")}，
                 {new Date(lastCheck).toLocaleString()}。
@@ -439,14 +471,18 @@ export function CompletionPanel({
             <p className="source-empty">
               {scopedRecords.length > 0
                 ? "当前筛选没有结果。"
-                : complete
-                  ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
-                  : mode === "search"
-                    ? "输入作者名，点击“搜索两站作品”读取结果。"
-                    : "点击“检查作者更新”读取关注作者的作品。"}
+                : showOther
+                  ? "当前范围没有其他关键词结果。"
+                  : !showOther && authorResults.other.length > 0
+                    ? "尚未确认该作者的作品，可查看其他关键词结果。"
+                    : complete
+                      ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
+                      : mode === "search"
+                        ? "输入作者名，点击“搜索两站作品”读取结果。"
+                        : "点击“检查作者更新”读取关注作者的作品。"}
             </p>
           )}
-          {visible.length > 0 && (
+          {visible.length > 0 && !showOther && (
             <div className="completion-controls" aria-label="作者作品多选">
               <button
                 aria-pressed={selectionMode}
@@ -483,7 +519,7 @@ export function CompletionPanel({
             items={visible}
             density={density}
             itemKey={(record) => sourceWorkKey(record.work)}
-            key={scopeKey + author + source + filter + query}
+            key={scopeKey + author + source + filter + query + showOther}
             renderItem={(record) => {
               const work = record.work,
                 scope = scopes.find((value) => value.source === work.source)!;
@@ -493,7 +529,7 @@ export function CompletionPanel({
                   className={`source-card${selectionKeys.has(sourceWorkKey(work)) ? " is-selected" : ""}`}
                   data-testid={"author-update-" + sourceWorkKey(work)}
                 >
-                  {selectionMode && (
+                  {selectionMode && !showOther && (
                     <label className="completion-select">
                       <input
                         type="checkbox"
@@ -527,23 +563,28 @@ export function CompletionPanel({
                       work={work}
                     />
                     <strong>{work.title}</strong>
-                    <span>
-                      {work.authors.join("、") ||
-                        record.matchedAuthors.join("、")}
-                    </span>
+                    <span>{work.authors.join("、") || "作者信息未提供"}</span>
                   </button>
                   <p>
                     {sourceLabel(work.source)} · {inventoryLabel(stock)}
                   </p>
-                  <button
-                    className="text-button"
-                    disabled={
-                      stock.kind === "owned" || !library.rootId || downloadBusy
-                    }
-                    onClick={() => onDownload(work)}
-                  >
-                    {stock.kind === "owned" ? "已入库" : "下载到漫画库"}
-                  </button>
+                  {showOther ? (
+                    <p className="source-muted">
+                      作者归属未确认，可打开详情核对。
+                    </p>
+                  ) : (
+                    <button
+                      className="text-button"
+                      disabled={
+                        stock.kind === "owned" ||
+                        !library.rootId ||
+                        downloadBusy
+                      }
+                      onClick={() => onDownload(work)}
+                    >
+                      {stock.kind === "owned" ? "已入库" : "下载到漫画库"}
+                    </button>
+                  )}
                 </article>
               );
             }}

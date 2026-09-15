@@ -1,6 +1,10 @@
 # MangaMonitor V1 当前范围：手动检查作者更新与下载记录入库
 
+Latest steering (2026-09-15): repair author attribution before further V1 work. [The shared author-evidence repair](AUTHOR_ATTRIBUTION_FIX_2026-09-15.md) separates explicit author metadata from other keyword results while preserving complete pagination and inspection access. This supersedes treating every keyword hit as an author work. Engineering and repaired native acceptance are pending; the earlier wrong-author sample only established download/receipt behavior.
+
 2026-09-14 整理最新用户决定。用户已接受：V1 只根据对应来源的下载记录和实际文件判断“已入库”，不要求识别未登记的旧漫画或跨站同一本；完整分页保留，程序内漫画关联和“不喜欢”取消。用户在本日后续反馈中将现有旧漫画的人机辅助核对留到 V1 完成后处理，当前不实施、不恢复自动匹配。本文件是当前产品范围与接续顺序的依据；与旧路线、历史报告或旧事项冲突时，以本文件及后续用户决定为准。
+
+**2026-09-15 最新位置：阶段 5，作者归属问题阻止真实验收通过。** `672cf4a` 工程检查、诊断修复、样本下载后入库同步与重启保留已验证。用户指出样本属于其他作者，代码核查确认通用关键词结果混入作者页；“全部分页读完”不足以证明作者作品准确。此前允许保留关键词命中的实现需要重新审视，不能以该边界说明代替作者功能验收。先确定不误收无关作品、也不重现合著／社团漏项的方案，再修改作者行为。新增下载及之前请求填写 `santa` 的输入验收暂缓。详见 [最新验收报告](V1_LIVE_ACCEPTANCE_2026-09-15.md)；其他已确定的下载记录入库与取消项不因此恢复。
 
 **当前位置：阶段 5 连续流程工程检查完成，V1 候选版已交付，等待集中真实验收。** `ff05992` 修复跨页面作者搜索结果丢失和目录失败统计差异，145 条逻辑／108 条 Chromium 用例、基础与 Windows 桌面检查全部通过；见 [本批报告与路线图](V1_INTEGRATION_BATCH_2026-09-15.md) 和 [连续验收说明](V1_ACCEPTANCE_2026-09-15.md)。前批文件位置、设置搜索／快捷跳转和诊断见 [界面与设置报告](UI_SETTINGS_BATCH_2026-09-14.md)。此前完整范围选书及原 50＋新增 50 位作者的两站抽查已完成，见 [选书报告](FULL_SELECTION_BATCH_2026-09-14.md) 与 [抽查汇总](AUTHOR_SAMPLE_AUDIT_2026-09-14.md)。Pica 短关键词精度及网页／原生逐编号一致性仍有已记录的验证边界；工程完成不替代用户验收，存量核对留到 V1 后。
 

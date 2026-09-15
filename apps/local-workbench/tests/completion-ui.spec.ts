@@ -13,6 +13,7 @@ declare global {
       calls: { command: string; args: Record<string, unknown> }[];
       view: DiscoverySnapshot;
       inventory: DownloadInventorySnapshot;
+      searchRecords: SourceWork[];
       hold: boolean;
       release?: () => void;
       readFailure: boolean;
@@ -134,6 +135,7 @@ async function install(page: Page) {
         calls: [],
         view,
         inventory,
+        searchRecords: structuredClone(works),
         hold: false,
         readFailure: false,
       } as Window["authorTest"]);
@@ -226,9 +228,9 @@ async function install(page: Page) {
               return clone(hooks.view.run);
             }
             if (command === "source_query") {
-              const sourceWorks = works.filter(
-                (work) => work.source === args.source,
-              );
+              const sourceWorks = (
+                args.kind === "detail" ? works : hooks.searchRecords
+              ).filter((work) => work.source === args.source);
               const items =
                 args.kind === "detail"
                   ? sourceWorks.filter((work) => work.workId === args.query)
@@ -314,7 +316,7 @@ test("checking and stopping are explicit, preserve old results and do not downlo
   ).toBeVisible();
 });
 
-test("keyword hits remain selectable without literal author identity and empty complete queries are explicit", async ({
+test("explicit circle membership remains selectable without literal equality and empty complete queries are explicit", async ({
   page,
 }) => {
   await install(page);
@@ -348,6 +350,130 @@ test("keyword hits remain selectable without literal author identity and empty c
     }),
   ).toBeVisible();
   await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+});
+
+test("saved unrelated and missing author fields stay outside author totals, ownership completion and selection", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.view.records[1].work.authors = ["另一个作者"];
+    h.view.records[2].work.authors = [];
+    for (const range of h.view.authors) {
+      range.state = "complete";
+      range.lastCompleteAt = Date.now();
+      range.errorCode = null;
+    }
+  });
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已记录 1 条 · 已入库 1 条 · 未入库 0 条",
+  );
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "其他关键词结果 2 条",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  await page.getByRole("button", { name: "查看其他关键词结果" }).click();
+  await expect(page.getByTestId("author-update-JM:456")).toContainText(
+    "另一个作者",
+  );
+  await expect(
+    page.getByTestId("author-update-Pica:0123456789abcdef01234567"),
+  ).toContainText("作者信息未提供");
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "其他关键词结果（未确认作者归属）",
+  );
+  await expect(
+    page.getByRole("button", { name: "多选", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "下载到漫画库", exact: true }),
+  ).toHaveCount(0);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/author-other-keyword-results.png",
+  });
+  await page.getByRole("button", { name: "返回作者作品" }).click();
+  await expect(page.getByTestId("author-update-JM:123")).toBeVisible();
+  await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
+});
+
+test("full author selection includes circle members but never other keyword hits", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.view.records[1].work.authors = ["合成社团 (合成作者)"];
+    h.view.records[1].authorVerified = false;
+    const other = structuredClone(h.view.records[1]);
+    other.work.workId = "789";
+    other.work.authors = ["合成作者二号"];
+    h.view.records.push(other);
+    for (const range of h.view.authors) {
+      range.state = "complete";
+      range.lastCompleteAt = Date.now();
+      range.errorCode = null;
+    }
+  });
+  await open(page);
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await page.getByTestId("completion-select-all").click();
+  await expect(page.getByTestId("completion-selection-bar")).toContainText(
+    "已选 2 本",
+  );
+  await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
+  await page.getByRole("button", { name: "查看下载计划", exact: true }).click();
+  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  const inputs = await page.evaluate(() =>
+    window.authorTest.calls
+      .filter((call) => call.command === "jm_download_batch_prepare")
+      .flatMap((call) => call.args.inputs as string[]),
+  );
+  expect(inputs.sort()).toEqual(["456", "0123456789abcdef01234567"].sort());
+});
+
+test("ad-hoc author search classifies every source page, retaining unrelated results for inspection", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const works = window.authorTest.searchRecords;
+    works[0].authors = ["新社团（新作者）"];
+    works[1].authors = ["新作者二号"];
+    works[2].authors = [];
+  });
+  await page.getByTestId("nav-author-search").click();
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
+  await page.getByRole("button", { name: "搜索两站作品" }).click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完 · 已记录 1 条",
+  );
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "其他关键词结果 2 条",
+  );
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "source_query")
+        .map((call) => [call.args.source, call.args.page]),
+    ),
+  ).toEqual([
+    ["JM", 1],
+    ["JM", 2],
+    ["Pica", 1],
+  ]);
+  await page.getByRole("button", { name: "全部 1", exact: true }).click();
+  await expect(page.getByTestId("author-update-JM:123")).toContainText(
+    "新社团（新作者）",
+  );
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/author-confirmed-results.png",
+  });
 });
 
 test("narrowing the title filter to an owned work does not claim the author's missing works are complete", async ({
@@ -414,6 +540,10 @@ test("a new author is searched across every page of both sources without requiri
   page,
 }) => {
   await install(page);
+  await page.evaluate(() => {
+    for (const work of window.authorTest.searchRecords)
+      work.authors = ["新作者"];
+  });
   await page.getByTestId("nav-author-search").click();
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
   await page.getByRole("button", { name: "搜索两站作品" }).click();

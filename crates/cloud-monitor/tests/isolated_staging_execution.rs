@@ -6,11 +6,13 @@ use cloud_monitor::{
     monitor::{hash, Target},
     source_bridge_request,
     source_completion::PaginationProof,
-    source_media_descriptors::{MediaChapterDescriptors, MediaDescriptor, SourceMediaDescriptorSet},
+    source_media_descriptors::{
+        MediaChapterDescriptors, MediaDescriptor, SourceMediaDescriptorSet,
+    },
     source_preflight::{self, PreflightChapter, SourcePreflightEvidence, SourcePreflightProof},
 };
-use serde_json::Value;
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
+use serde_json::Value;
 use state_model::Version;
 use std::{
     fs,
@@ -248,6 +250,615 @@ fn temp_staging(label: &str) -> PathBuf {
     fs::create_dir(&root).unwrap();
     fs::create_dir(root.join("commands")).unwrap();
     root
+}
+
+fn multi_page_jm() -> Fixture {
+    multi_page_jm_with_count(5)
+}
+
+fn multi_page_jm_with_count(count: u64) -> Fixture {
+    let mut f = fixture("jm");
+    f.descriptors.chapters[0].media = (1..=count)
+        .map(|n| MediaDescriptor {
+            image_index: n,
+            source_media_id: format!("{n:03}.gif"),
+            request_url: format!("https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/{n:03}.gif"),
+            source_format: "gif".into(),
+            transform: "NONE".into(),
+            transform_parameter: 0,
+            relative_path: format!("chapters/000001-123456/{n:06}.gif"),
+        })
+        .collect();
+    f.evidence.chapters[0].expected_images = count;
+    let request = source_bridge_request::build(&f.plan).unwrap();
+    f.proof = source_preflight::validate(&f.plan, &request, &f.evidence).unwrap();
+    f.authorization
+        .preflight_hash
+        .clone_from(&f.proof.preflight_hash);
+    f.authorization.expected_content_units = count;
+    f.descriptors
+        .preflight_hash
+        .clone_from(&f.proof.preflight_hash);
+    f.descriptors.expected_content_units = count;
+    f
+}
+
+struct ActiveFetch(std::rc::Rc<std::cell::Cell<usize>>);
+impl Drop for ActiveFetch {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
+}
+
+#[tokio::test]
+async fn jpeg_staging_rejects_disguised_webp_and_resumes_exact_jpeg_prefix() {
+    use std::cell::RefCell;
+    let mut f = fixture("jm");
+    let media = &mut f.descriptors.chapters[0].media[0];
+    media.source_media_id = "001.webp".into();
+    media.request_url = media.request_url.replace(".gif", ".webp");
+    media.source_format = "webp".into();
+    media.transform = "JM_SCRAMBLE_BLOCKS".into();
+    media.relative_path = media.relative_path.replace(".gif", ".webp");
+    let legacy_descriptors = f.descriptors.clone();
+    cloud_monitor::source_media_descriptors::jm_jpeg_output(&mut f.descriptors).unwrap();
+    let root = temp_staging("jpeg-bytes");
+    let error = isolated_staging_execution::execute_resumable_with_prefetch(
+        execution_context(&root, &f),
+        None,
+        2,
+        |d| async move { Ok(processed(&d)) }, // WEBP bytes cannot be saved under .jpg.
+        || Ok(f.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "PROCESSED_MEDIA_INVALID_IMAGE_BYTES");
+    fs::remove_dir_all(root).unwrap();
+
+    let root = temp_staging("jpeg-resume");
+    let checkpoint = RefCell::new(None);
+    let jpeg = fake_bytes("jpg");
+    let fetch = |d: MediaDescriptor| {
+        let bytes = jpeg.clone();
+        async move {
+            let mut p = processed(&d);
+            p.bytes = bytes;
+            Ok(p)
+        }
+    };
+    let error = isolated_staging_execution::execute_resumable_with_prefetch(
+        execution_context(&root, &f),
+        None,
+        2,
+        fetch,
+        || Ok(f.authorization.clone()),
+        |value| {
+            *checkpoint.borrow_mut() = Some(value.clone());
+            if value.pending.is_some() {
+                Err("SYNTHETIC_INTERRUPTION".into())
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "SYNTHETIC_INTERRUPTION");
+    let checkpoint = checkpoint.into_inner().unwrap();
+    let path = root
+        .join(&f.plan.staging_subdir)
+        .join(&checkpoint.pending.as_ref().unwrap().relative_path);
+    fs::write(&path, &jpeg[..jpeg.len() / 2]).unwrap();
+    let result = isolated_staging_execution::execute_resumable_with_prefetch(
+        execution_context(&root, &f),
+        Some(&checkpoint),
+        2,
+        fetch,
+        || Ok(f.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), jpeg);
+    assert!(result.filesystem_verification.filesystem_verified);
+    f.descriptors = legacy_descriptors;
+    let error = isolated_staging_execution::execute_resumable_with_prefetch(
+        execution_context(&root, &f),
+        Some(&checkpoint),
+        2,
+        |_| async { panic!("format mismatch must fail before fetching") },
+        || Ok(f.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "STAGING_CHECKPOINT_GENERATION_CHANGED");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn two_in_flight_fetches_complete_out_of_order_but_persist_in_page_order() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+    let f = multi_page_jm();
+    let root = temp_staging("two-prefetch");
+    let active = Rc::new(Cell::new(0_usize));
+    let high = Rc::new(Cell::new(0_usize));
+    let even_finished = Rc::new(Cell::new(0_u64));
+    let finished = Rc::new(RefCell::new(Vec::new()));
+    let checkpoints = RefCell::new(Vec::new());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        isolated_staging_execution::execute_resumable_with_prefetch(
+            execution_context(&root, &f),
+            None,
+            2,
+            |descriptor| {
+                let (active, high, even_finished, finished) = (
+                    active.clone(),
+                    high.clone(),
+                    even_finished.clone(),
+                    finished.clone(),
+                );
+                async move {
+                    active.set(active.get() + 1);
+                    let _guard = ActiveFetch(active.clone());
+                    high.set(high.get().max(active.get()));
+                    let n = descriptor.image_index;
+                    if n % 2 == 1 && n < 5 {
+                        while even_finished.get() <= n {
+                            tokio::task::yield_now().await;
+                        }
+                    } else {
+                        tokio::task::yield_now().await;
+                        even_finished.set(n);
+                    }
+                    finished.borrow_mut().push(n);
+                    Ok(processed(&descriptor))
+                }
+            },
+            || Ok(f.authorization.clone()),
+            |checkpoint| {
+                checkpoints.borrow_mut().push(checkpoint.clone());
+                Ok(())
+            },
+        ),
+    )
+    .await
+    .expect("serial fetching would deadlock the paired fixture")
+    .unwrap();
+    assert_eq!(high.get(), 2);
+    assert_eq!(active.get(), 0);
+    assert_eq!(*finished.borrow(), vec![2, 1, 4, 3, 5]);
+    let paths: Vec<_> = f.descriptors.chapters[0]
+        .media
+        .iter()
+        .map(|d| d.relative_path.clone())
+        .collect();
+    for checkpoint in checkpoints.borrow().iter() {
+        let saved: Vec<_> = checkpoint
+            .artifacts
+            .iter()
+            .map(|a| a.relative_path.clone())
+            .collect();
+        assert_eq!(saved, paths[..saved.len()]);
+    }
+    assert_eq!(result.source_completion.manifest.completed_content_units, 5);
+    assert!(!result.inventory_mutation_authorized);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn twenty_slots_include_completed_results_waiting_for_the_first_page() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::Duration,
+    };
+    use tokio::sync::{Barrier, Semaphore};
+
+    let f = multi_page_jm_with_count(41);
+    let root = temp_staging("twenty-window");
+    let barrier = Rc::new(Barrier::new(20));
+    let later_completed = Rc::new(Semaphore::new(0));
+    let active = Rc::new(Cell::new(0_usize));
+    let high_active = Rc::new(Cell::new(0_usize));
+    let dispatched = Rc::new(Cell::new(0_usize));
+    let persisted = Rc::new(Cell::new(0_usize));
+    let high_outstanding = Cell::new(0_usize);
+    let finished = Rc::new(RefCell::new(Vec::new()));
+    let paths: Vec<_> = f.descriptors.chapters[0]
+        .media
+        .iter()
+        .map(|d| d.relative_path.clone())
+        .collect();
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_staging_execution::execute_resumable_with_prefetch(
+            execution_context(&root, &f),
+            None,
+            20,
+            |descriptor| {
+                dispatched.set(dispatched.get() + 1);
+                let outstanding = dispatched.get() - persisted.get();
+                assert!(
+                    outstanding <= 20,
+                    "ready results still occupy their dispatch slots"
+                );
+                high_outstanding.set(high_outstanding.get().max(outstanding));
+                let (
+                    barrier,
+                    later_completed,
+                    active,
+                    high_active,
+                    dispatched,
+                    persisted,
+                    finished,
+                ) = (
+                    barrier.clone(),
+                    later_completed.clone(),
+                    active.clone(),
+                    high_active.clone(),
+                    dispatched.clone(),
+                    persisted.clone(),
+                    finished.clone(),
+                );
+                async move {
+                    active.set(active.get() + 1);
+                    high_active.set(high_active.get().max(active.get()));
+                    let _guard = ActiveFetch(active);
+                    let n = descriptor.image_index;
+                    if n <= 20 {
+                        // No first-window task can finish until all 20 are polled.
+                        barrier.wait().await;
+                        if n == 1 {
+                            let _permit = later_completed.acquire_many(19).await.unwrap();
+                            assert_eq!(dispatched.get(), 20);
+                            assert_eq!(persisted.get(), 0);
+                            assert_eq!(finished.borrow().len(), 19);
+                        }
+                    }
+                    let media = processed(&descriptor);
+                    finished.borrow_mut().push(n);
+                    if (2..=20).contains(&n) {
+                        later_completed.add_permits(1);
+                    }
+                    Ok(media)
+                }
+            },
+            || Ok(f.authorization.clone()),
+            |checkpoint| {
+                let saved: Vec<_> = checkpoint
+                    .artifacts
+                    .iter()
+                    .map(|a| a.relative_path.clone())
+                    .collect();
+                assert_eq!(saved, paths[..saved.len()]);
+                if let Some(pending) = &checkpoint.pending {
+                    assert_eq!(pending.relative_path, paths[saved.len()]);
+                }
+                persisted.set(saved.len());
+                assert!(dispatched.get() - persisted.get() <= 20);
+                Ok(())
+            },
+        ),
+    )
+    .await
+    .expect("all 20 slots must start before the barrier can open")
+    .unwrap();
+
+    assert_eq!(high_active.get(), 20);
+    assert_eq!(high_outstanding.get(), 20);
+    assert_eq!(active.get(), 0);
+    assert_eq!(dispatched.get(), 41);
+    assert_eq!(persisted.get(), 41);
+    assert_eq!(finished.borrow().iter().position(|n| *n == 1), Some(19));
+    assert_eq!(
+        result.source_completion.manifest.completed_content_units,
+        41
+    );
+    let manifest_paths: Vec<_> = result
+        .source_completion
+        .manifest
+        .artifacts
+        .iter()
+        .map(|a| a.relative_path.clone())
+        .collect();
+    assert_eq!(manifest_paths, paths);
+    assert!(result.filesystem_verification.filesystem_verified);
+    assert!(!result.inventory_mutation_authorized);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn pausing_twenty_slots_drops_the_remainder_and_reuses_only_a_verified_prefix() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::Duration,
+    };
+    use tokio::sync::{Barrier, Semaphore};
+
+    let f = multi_page_jm_with_count(41);
+    let root = temp_staging("twenty-pause");
+    let barrier = Rc::new(Barrier::new(20));
+    let first_results = Rc::new(Semaphore::new(0));
+    let ready = Rc::new(Cell::new(0_usize));
+    let active = Rc::new(Cell::new(0_usize));
+    let high_active = Rc::new(Cell::new(0_usize));
+    let allowed = Cell::new(true);
+    let persisted = Cell::new(0_usize);
+    let started = RefCell::new(Vec::new());
+    let checkpoint = RefCell::new(None);
+    let error = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_staging_execution::execute_resumable_with_prefetch(
+            execution_context(&root, &f),
+            None,
+            20,
+            |descriptor| {
+                started.borrow_mut().push(descriptor.image_index);
+                assert!(started.borrow().len() - persisted.get() <= 20);
+                let (barrier, first_results, ready, active, high_active) = (
+                    barrier.clone(),
+                    first_results.clone(),
+                    ready.clone(),
+                    active.clone(),
+                    high_active.clone(),
+                );
+                async move {
+                    active.set(active.get() + 1);
+                    high_active.set(high_active.get().max(active.get()));
+                    let _guard = ActiveFetch(active);
+                    if descriptor.image_index <= 20 {
+                        barrier.wait().await;
+                    }
+                    if descriptor.image_index > 10 {
+                        std::future::pending::<()>().await;
+                    }
+                    if descriptor.image_index == 1 {
+                        let _permit = first_results.acquire_many(9).await.unwrap();
+                    }
+                    let media = processed(&descriptor);
+                    ready.set(ready.get() + 1);
+                    if (2..=10).contains(&descriptor.image_index) {
+                        first_results.add_permits(1);
+                    }
+                    Ok(media)
+                }
+            },
+            || {
+                if allowed.get() {
+                    Ok(f.authorization.clone())
+                } else {
+                    Err("PAUSED".into())
+                }
+            },
+            |value| {
+                persisted.set(value.artifacts.len());
+                *checkpoint.borrow_mut() = Some(value.clone());
+                if value.pending.is_none() && value.artifacts.len() == 3 {
+                    allowed.set(false);
+                }
+                Ok(())
+            },
+        ),
+    )
+    .await
+    .expect("the first three pages must finish after all 20 tasks enter")
+    .unwrap_err();
+    assert_eq!(error, "PAUSED");
+    assert_eq!(high_active.get(), 20);
+    assert_eq!(
+        ready.get(),
+        10,
+        "seven ready results must be discarded alongside pending futures"
+    );
+    assert_eq!(
+        active.get(),
+        0,
+        "pause drops every still-pending fetch future"
+    );
+    assert_eq!(&started.borrow()[..20], &(1..=20).collect::<Vec<_>>());
+    assert!(
+        started.borrow().len() <= 22,
+        "saving three pages must not grow the 20-slot window"
+    );
+    let checkpoint = checkpoint.into_inner().unwrap();
+    assert_eq!(checkpoint.artifacts.len(), 3);
+    assert!(checkpoint.pending.is_none());
+    let command_root = root.join(&f.plan.staging_subdir);
+    let prefix: Vec<_> = f.descriptors.chapters[0]
+        .media
+        .iter()
+        .take(3)
+        .map(|d| (command_root.join(&d.relative_path), fake_bytes("gif")))
+        .collect();
+    for (path, bytes) in &prefix {
+        assert_eq!(fs::read(path).unwrap(), *bytes);
+    }
+    for descriptor in &f.descriptors.chapters[0].media[3..] {
+        assert!(!command_root.join(&descriptor.relative_path).exists());
+    }
+
+    // A prior prefix is reusable evidence only while its saved hash still agrees.
+    let mut changed_prefix = prefix[0].1.clone();
+    changed_prefix[0] ^= 1;
+    fs::write(&prefix[0].0, &changed_prefix).unwrap();
+    let error = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_staging_execution::execute_resumable_with_prefetch(
+            execution_context(&root, &f),
+            Some(&checkpoint),
+            20,
+            |_| async { panic!("a changed prefix must fail before dispatch") },
+            || Ok(f.authorization.clone()),
+            |_| Ok(()),
+        ),
+    )
+    .await
+    .expect("prefix validation must terminate without fetching")
+    .unwrap_err();
+    assert_eq!(error, "STAGING_CHECKPOINT_FILE_CHANGED");
+    assert_eq!(fs::read(&prefix[0].0).unwrap(), changed_prefix);
+    fs::write(&prefix[0].0, &prefix[0].1).unwrap();
+
+    let resumed = RefCell::new(Vec::new());
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_staging_execution::execute_resumable_with_prefetch(
+            execution_context(&root, &f),
+            Some(&checkpoint),
+            20,
+            |descriptor| {
+                resumed.borrow_mut().push(descriptor.image_index);
+                async move { Ok(processed(&descriptor)) }
+            },
+            || Ok(f.authorization.clone()),
+            |_| Ok(()),
+        ),
+    )
+    .await
+    .expect("the remaining pages should resume independently of cancelled futures")
+    .unwrap();
+    assert_eq!(*resumed.borrow(), (4..=41).collect::<Vec<_>>());
+    for (path, bytes) in &prefix {
+        assert_eq!(fs::read(path).unwrap(), *bytes);
+    }
+    assert!(result.staging_execution_completed);
+    assert_eq!(
+        result.source_completion.manifest.completed_content_units,
+        41
+    );
+    assert!(!result.inventory_mutation_authorized);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn pause_drops_prefetch_and_resumes_only_the_verified_prefix() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+    let f = multi_page_jm();
+    let root = temp_staging("pause-prefetch");
+    let allowed = Cell::new(true);
+    let checkpoint = RefCell::new(None);
+    let active = Rc::new(Cell::new(0_usize));
+    let started = RefCell::new(Vec::new());
+    let error = isolated_staging_execution::execute_resumable_with_prefetch(
+        execution_context(&root, &f),
+        None,
+        2,
+        |descriptor| {
+            started.borrow_mut().push(descriptor.image_index);
+            let active = active.clone();
+            async move {
+                active.set(active.get() + 1);
+                let _guard = ActiveFetch(active);
+                if descriptor.image_index > 1 {
+                    std::future::pending::<()>().await;
+                }
+                Ok(processed(&descriptor))
+            }
+        },
+        || {
+            if allowed.get() {
+                Ok(f.authorization.clone())
+            } else {
+                Err("PAUSED".into())
+            }
+        },
+        |value| {
+            *checkpoint.borrow_mut() = Some(value.clone());
+            if value.artifacts.len() == 1 {
+                allowed.set(false);
+            }
+            Ok(())
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "PAUSED");
+    assert_eq!(*started.borrow(), vec![1, 2]);
+    assert_eq!(
+        active.get(),
+        0,
+        "dropping the worker must drop unjoined requests"
+    );
+    let checkpoint = checkpoint.into_inner().unwrap();
+    assert_eq!(checkpoint.artifacts.len(), 1);
+    assert!(checkpoint.pending.is_none());
+    assert!(!root
+        .join(&f.plan.staging_subdir)
+        .join(&f.descriptors.chapters[0].media[1].relative_path)
+        .exists());
+    let resumed = RefCell::new(Vec::new());
+    let result = isolated_staging_execution::execute_resumable_with_prefetch(
+        execution_context(&root, &f),
+        Some(&checkpoint),
+        2,
+        |descriptor| {
+            resumed.borrow_mut().push(descriptor.image_index);
+            async move { Ok(processed(&descriptor)) }
+        },
+        || Ok(f.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(*resumed.borrow(), vec![2, 3, 4, 5]);
+    assert!(result.staging_execution_completed);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn prefetched_failure_cancels_other_requests_without_completion_or_file_write() {
+    use std::{cell::Cell, rc::Rc};
+    let f = multi_page_jm();
+    let root = temp_staging("error-prefetch");
+    let active = Rc::new(Cell::new(0_usize));
+    let completed = Cell::new(0);
+    let error = isolated_staging_execution::execute_resumable_with_prefetch(
+        execution_context(&root, &f),
+        None,
+        2,
+        |descriptor| {
+            let active = active.clone();
+            async move {
+                active.set(active.get() + 1);
+                let _guard = ActiveFetch(active);
+                if descriptor.image_index == 1 {
+                    std::future::pending::<()>().await;
+                }
+                Err("SYNTHETIC_FETCH_FAILURE".into())
+            }
+        },
+        || Ok(f.authorization.clone()),
+        |checkpoint| {
+            completed.set(checkpoint.artifacts.len());
+            Ok(())
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "SYNTHETIC_FETCH_FAILURE");
+    assert_eq!(active.get(), 0);
+    assert_eq!(completed.get(), 0);
+    assert_eq!(
+        fs::read_dir(
+            root.join(&f.plan.staging_subdir)
+                .join("chapters/000001-123456")
+        )
+        .unwrap()
+        .count(),
+        0
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

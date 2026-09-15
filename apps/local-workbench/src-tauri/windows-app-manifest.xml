@@ -1,0 +1,17 @@
+<!-- Same Common-Controls dependency as Tauri's default Windows manifest.
+     Embedded by the linker so the app and the unit-test executable both use v6.
+     https://github.com/tauri-apps/tauri/blob/tauri-v2.11.5/crates/tauri-build/src/windows-app-manifest.xml -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

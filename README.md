@@ -1,10 +1,12 @@
 # MangaMonitor-AI
 
-MangaMonitor-AI is a safety-first manga monitoring and automation system for JM and Pica. The project is no longer targeting an indefinitely expanding collection of isolated features: the immediate release goal is a narrow V1 that can run the complete real-world pipeline safely and repeatedly, from cloud discovery to verified local inventory completion.
+> Current scope and delivery status (2026-09-13): read the [active handoff](docs/DEVELOPMENT_HANDOFF.md), [scope audit](docs/SCOPE_AUDIT_AND_V1_FREEZE_2026-09-13.md), and [corrected V1 roadmap](docs/ROADMAP_ZIP_LIBRARY_V1_2026-09-13.md). Native JM/Pica browsing/download/queue work has since been delivered and accepted; the older frontend-sample status below is historical. The accepted next target is a PC-based, one-ZIP-per-work library, with classification booklists cancelled. JM weekly recommendations and Pica rankings remain required for V1. Author completeness still needs PC-model adaptation and real acceptance; original cloud publication/final acceptance remain separate obligations. Reader/updater are deferred after V1; PDF/CBZ export is cancelled. Historical backend snapshots and forecasts below must not override these later user decisions or stand in for current delivery evidence.
 
-This repository has moved far beyond the original Phase 1A smoke test. The README is the primary project handoff and roadmap for new development sessions. Always combine it with the current repository state, `AGENTS.md`, current tests, and the safety documents referenced below; current code and GitHub state win if any historical note becomes stale.
+MangaMonitor-AI is a deterministic JM/Pica manga monitoring and desktop-workbench project. Current scope and acceptance status are recorded in [docs/DEVELOPMENT_HANDOFF.md](docs/DEVELOPMENT_HANDOFF.md).
 
-The current development boundary is recorded in [docs/DEVELOPMENT_HANDOFF.md](docs/DEVELOPMENT_HANDOFF.md). On 2026-09-08 the user requested continued backend/cloud work and a stop **before constructing the local downloader frontend**, so its local interface and implementation can be discussed together. Existing command-line modules do not imply that a desktop downloader has been delivered.
+This README retains the original cloud/add-only architecture and acceptance reference. Read the latest applicable handoff section for resumed work, and consult the sections below only when relevant. Later explicit user decisions supersede historical plans; implementation and CI evidence do not grant execution authority or establish live acceptance.
+
+The latest recorded planning decision is [the ZIP-library-to-V1 roadmap](docs/ROADMAP_ZIP_LIBRARY_V1_2026-09-13.md). Earlier frontend stops and sample-only descriptions are historical. A roadmap does not authorize migration, file cleanup, implementation or production enablement by itself.
 
 ## V1 product target
 
@@ -71,11 +73,11 @@ Replacement, deletion, larger concurrency, and advanced maintenance can be added
 | Persistent catalog, review, decisions, pending tasks | Implemented |
 | Assistant read-only views / review exports | Implemented |
 | Discovery → review → human decision → pending E2E | Implemented as an offline regression |
-| Resume/checkpoint and replay | Implemented; fail-closed |
+| Resume/checkpoint and replay | Implemented; explicit authority-drift full recovery and legacy checkpoint binding added in PR #18 |
 | Physical request accounting | Explicit `RequestTrace` accounting with per-batch budget |
 | Single-author JM+Pica concurrent acquisition | Implemented and retained as validation/fallback evidence |
 | Three-author bounded concurrent acquisition | **Integrated into the formal Phase3B runner/scheduler; three clean live soak rounds plus failure/resume and budget-exhaustion regressions passed** |
-| Cloud production readiness | Historical source/concurrency milestone reached; final recovery, durability and end-to-end production acceptance remain separate |
+| Cloud production readiness | Source/concurrency and authority-drift recovery milestones reached; final durability and end-to-end production acceptance remain separate |
 | First durable bootstrap | Completed for the current six-author registry: 399 physical requests across two batches, 358 catalog/review records |
 | Trusted new-work scope certificates (A03) | Local certifier, strict consumer and publication path merged in PR #10; no real certificate has been issued |
 | Local staging/execution proof chain | **Repository thaw gate accepted for approved new-work `download` tasks; real local staging acceptance still requires one genuine current approved task** |
@@ -83,7 +85,7 @@ Replacement, deletion, larger concurrency, and advanced maintenance can be added
 | Inventory mutation | V1.7 exact add-only inventory apply implemented in PR #16, including atomic write/reread and exact retry; real inventory acceptance remains outstanding |
 | Task completion | V1.8 exact task completion implemented in PR #17; real end-to-end completion remains outstanding |
 | Local result publication | Verified inventory/completion publication back to public main remains outstanding (Issue #7) |
-| Local downloader frontend | Not implemented; explicit user discussion stop before construction |
+| Local downloader frontend | First React/TypeScript interaction sample in `apps/local-workbench`; simulated library, details, batch confirmation and queue. Native shell/backend integration outstanding |
 | Replacement / physical deletion | Not authorized and not required for V1 |
 | Production monitor | **Disabled**: `production_enabled=false` |
 
@@ -106,7 +108,7 @@ Development should proceed in this order. The cloud milestones and repository-si
 7. ✅ Restore/accept only the real-download capabilities required by the V1 add-only source→media→isolated-staging pipeline.
 8. 🟨 Complete `task → command → isolated staging → manifest/proof/receipt` with one guarded **real local** download; repository implementation is ready, but acceptance is waiting for a genuine current approved new-work task.
 9. ✅ Implement narrow add-only library import/rescan, V1.7 inventory apply and V1.8 exact completion. These code milestones are merged; real local acceptance is still required.
-10. ⬜ Finish backend correctness/recovery gates, then **stop before constructing the local downloader frontend and discuss its interface with the user**.
+10. ✅ Complete pre-downloader reliability fixes (PR #18), reach the frontend discussion stop, and record the confirmed local workbench product behavior. Final V1 acceptance remains outstanding.
 11. ⬜ Integrate the agreed local application, verified inventory/completion publication, and current certificate/inventory reconciliation.
 12. ⬜ Prove one real complete task and run end-to-end crash/retry/idempotence soak.
 13. ⬜ Perform a final V1 production acceptance review.
@@ -451,8 +453,9 @@ If any step fails or becomes stale, the task remains incomplete and recoverable.
 
 ## Key documentation
 
-- `README.md` — V1 product target, current roadmap, production acceptance definition, and new-session handoff.
-- `docs/DEVELOPMENT_HANDOFF.md` — active work, verification evidence and the user-requested local-frontend discussion stop.
+- `README.md` — historical cloud/add-only architecture and production acceptance reference.
+- `docs/DEVELOPMENT_HANDOFF.md` — latest scope, continuation and acceptance status; older milestones for traceability.
+- `docs/LOCAL_WORKBENCH_V1_DESIGN.md` — confirmed local workbench behavior and pending implementation/acceptance criteria.
 - `AGENTS.md` — repository-wide development guardrails and the currently thawed authority boundary.
 - `docs/CLOUD_PRODUCTION_READINESS.md` — accepted cloud runner/soak/failure/resume/budget readiness evidence.
 - `docs/V1_ADD_ONLY_DOWNLOAD_THAW_2026-09-08.md` — accepted repository-side thaw review and exact add-only staging authority.
@@ -467,41 +470,9 @@ Older phase/result documents are retained for traceability, but when they confli
 
 ## New development-session handoff
 
-A new development conversation should not require a large copied prompt. Start by reading this README and then obtain the **current real GitHub state** before doing work.
+For resumed work, read the latest applicable section of `docs/DEVELOPMENT_HANDOFF.md`, follow `AGENTS.md`, and inspect the relevant working-tree changes. Consult linked contracts as needed. Refresh the specific remote branch/PR/CI state when it affects the requested decision or delivery; unrelated edits do not require fetching every branch or reading the full README.
 
-At the start of a new session:
-
-1. Read `README.md`, `AGENTS.md` and `docs/DEVELOPMENT_HANDOFF.md`.
-2. Fetch the current `main` head, open PRs/branches relevant to the current work, and recent GitHub Actions results.
-3. If real-download/local execution work is about to begin, read the current thaw/upstream documents required by `AGENTS.md` in that same development session. Do not assume the accepted scope covers a new authority expansion.
-4. Continue from the most advanced real repository state; do not restart an already completed phase merely because an older result document contains stale wording.
-5. Keep `production_enabled=false` until final V1 acceptance and explicit user approval.
-6. Preserve all safety invariants and favor stability over throughput.
-
-For autonomous project execution, the working rule is:
-
-```text
-read current state
-        ↓
-identify the next unblocked engineering action
-        ↓
-execute it
-        ↓
-test / inspect the result
-        ↓
-fix or continue
-```
-
-Do **not** stop merely because analysis or planning has finished. "The next step is ..." is not a completion condition.
-
-Stop and return to the user only when one of these is true:
-
-- the requested/current phase is genuinely complete;
-- a product, safety, or production decision requires the user;
-- only an external wait such as GitHub Actions remains **and** there is no independent unblocked work left;
-- an external dependency makes further safe progress impossible.
-
-If GitHub Actions are running while independent work remains, continue that work. If CI is the only remaining activity, do not waste time polling continuously; report that only CI remains and wait for the user to notify when it finishes.
+Complete the authorized task and its necessary verification, preserving accepted work and all execution boundaries. Planning-only requests end with the plan. For implementation that requires CI, continue independent work while it runs, use bounded waits with backoff, and inspect the required results before claiming verification complete. If waiting cannot continue, report CI as pending and preserve a resumable handoff; do not label it passed or require the user to relay CI results as the default workflow.
 
 ## Production boundary
 

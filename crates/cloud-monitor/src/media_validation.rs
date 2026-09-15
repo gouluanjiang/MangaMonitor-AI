@@ -23,6 +23,10 @@ fn format(format: &str) -> Option<ImageFormat> {
 /// The original bytes remain unchanged for no-op/animated formats, but they
 /// must still be decodable before downstream staging treats them as success.
 pub(crate) fn validate(format_name: &str, bytes: &[u8]) -> Result<(), String> {
+    decode(format_name, bytes).map(|_| ())
+}
+
+pub(crate) fn decode(format_name: &str, bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let format = format(format_name).ok_or("UNSUPPORTED_IMAGE_FORMAT")?;
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     let mut limits = Limits::default();
@@ -30,12 +34,14 @@ pub(crate) fn validate(format_name: &str, bytes: &[u8]) -> Result<(), String> {
     limits.max_image_height = Some(MAX_IMAGE_HEIGHT);
     limits.max_alloc = Some(MAX_IMAGE_ALLOC_BYTES);
     reader.limits(limits);
-    reader.decode().map(|_| ()).map_err(|_| match format_name {
-        "gif" => "IMAGE_GIF_DECODE_FAILED",
-        "webp" => "IMAGE_WEBP_DECODE_FAILED",
-        "jpg" | "jpeg" => "IMAGE_JPEG_DECODE_FAILED",
-        "png" => "IMAGE_PNG_DECODE_FAILED",
-        _ => "UNSUPPORTED_IMAGE_FORMAT",
-    }
-    .to_owned())
+    reader.decode().map_err(|_| {
+        match format_name {
+            "gif" => "IMAGE_GIF_DECODE_FAILED",
+            "webp" => "IMAGE_WEBP_DECODE_FAILED",
+            "jpg" | "jpeg" => "IMAGE_JPEG_DECODE_FAILED",
+            "png" => "IMAGE_PNG_DECODE_FAILED",
+            _ => "UNSUPPORTED_IMAGE_FORMAT",
+        }
+        .to_owned()
+    })
 }

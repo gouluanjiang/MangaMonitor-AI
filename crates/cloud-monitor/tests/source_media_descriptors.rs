@@ -2,7 +2,9 @@ use cloud_monitor::{
     image_download_authorization::ImageDownloadAuthorization,
     monitor::hash,
     source_completion::PaginationProof,
-    source_media_descriptors::{self, MediaChapterDescriptors, MediaDescriptor, SourceMediaDescriptorSet},
+    source_media_descriptors::{
+        self, MediaChapterDescriptors, MediaDescriptor, SourceMediaDescriptorSet,
+    },
     source_preflight::{PreflightChapter, SourcePreflightEvidence, SourcePreflightProof},
 };
 
@@ -140,7 +142,8 @@ fn jm_set() -> SourceMediaDescriptorSet {
                 MediaDescriptor {
                     image_index: 1,
                     source_media_id: "001.webp".into(),
-                    request_url: "https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/001.webp".into(),
+                    request_url: "https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/001.webp"
+                        .into(),
                     source_format: "webp".into(),
                     transform: "JM_SCRAMBLE_BLOCKS".into(),
                     transform_parameter: 10,
@@ -149,7 +152,8 @@ fn jm_set() -> SourceMediaDescriptorSet {
                 MediaDescriptor {
                     image_index: 2,
                     source_media_id: "002.gif".into(),
-                    request_url: "https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/002.gif".into(),
+                    request_url: "https://cdn-msp2.jmapiproxy2.cc/media/photos/123456/002.gif"
+                        .into(),
                     source_format: "gif".into(),
                     transform: "NONE".into(),
                     transform_parameter: 0,
@@ -200,7 +204,8 @@ fn pica_set() -> SourceMediaDescriptorSet {
                 MediaDescriptor {
                     image_index: 2,
                     source_media_id: "333333333333333333333333".into(),
-                    request_url: "https://storage.example.invalid/static/media/path/002.webp".into(),
+                    request_url: "https://storage.example.invalid/static/media/path/002.webp"
+                        .into(),
                     source_format: "webp".into(),
                     transform: "NONE".into(),
                     transform_parameter: 0,
@@ -227,6 +232,59 @@ fn exact_jm_descriptors_are_bound_to_authorization_paths_and_preflight_scope() {
         &jm_set(),
     )
     .unwrap();
+}
+
+#[test]
+fn jpeg_output_binds_source_transform_suffix_and_exact_checkpoint_hash() {
+    let legacy = jm_set();
+    let mut jpeg = legacy.clone();
+    source_media_descriptors::jm_jpeg_output(&mut jpeg).unwrap();
+    source_media_descriptors::validate(
+        &authorization("jm"),
+        &evidence("jm"),
+        &preflight("jm"),
+        &jpeg,
+    )
+    .unwrap();
+    assert_ne!(hash(&jpeg), hash(&legacy));
+    for (old, new) in legacy.chapters[0].media.iter().zip(&jpeg.chapters[0].media) {
+        assert_eq!(old.request_url, new.request_url);
+        assert_eq!(old.source_format, new.source_format);
+        if old.source_format == "webp" {
+            assert_eq!(new.stored_format(), "jpg");
+            assert!(new.relative_path.ends_with(".jpg"));
+        } else {
+            assert_eq!(old, new);
+        }
+    }
+    let webp = jpeg.chapters[0]
+        .media
+        .iter_mut()
+        .find(|m| m.source_format == "webp")
+        .unwrap();
+    webp.relative_path = webp.relative_path.replace(".jpg", ".webp");
+    assert!(source_media_descriptors::validate(
+        &authorization("jm"),
+        &evidence("jm"),
+        &preflight("jm"),
+        &jpeg
+    )
+    .is_err());
+    assert!(source_media_descriptors::jm_jpeg_output(&mut pica_set()).is_err());
+    let mut gif = legacy;
+    let media = gif.chapters[0]
+        .media
+        .iter_mut()
+        .find(|m| m.source_format == "gif")
+        .unwrap();
+    media.transform = "JM_SCRAMBLE_BLOCKS_JPEG".into();
+    assert!(source_media_descriptors::validate(
+        &authorization("jm"),
+        &evidence("jm"),
+        &preflight("jm"),
+        &gif
+    )
+    .is_err());
 }
 
 #[test]
@@ -273,13 +331,8 @@ fn forged_proof_and_descriptors_cannot_reuse_old_preflight_hash() {
         media.relative_path = media.relative_path.replace("-123456/", "-654321/");
     }
     assert_eq!(
-        source_media_descriptors::validate(
-            &auth,
-            &original_evidence,
-            &forged_proof,
-            &forged_set,
-        )
-        .unwrap_err(),
+        source_media_descriptors::validate(&auth, &original_evidence, &forged_proof, &forged_set,)
+            .unwrap_err(),
         "SOURCE_MEDIA_PREFLIGHT_PROOF_EVIDENCE_MISMATCH"
     );
 }
@@ -299,13 +352,8 @@ fn exact_preflight_chapter_identity_and_per_chapter_count_are_mandatory() {
     let mut set = jm_set();
     set.chapters[0].media.pop();
     assert_eq!(
-        source_media_descriptors::validate(
-            &auth,
-            &original_evidence,
-            &preflight("jm"),
-            &set,
-        )
-        .unwrap_err(),
+        source_media_descriptors::validate(&auth, &original_evidence, &preflight("jm"), &set,)
+            .unwrap_err(),
         "SOURCE_MEDIA_PREFLIGHT_SCOPE_MISMATCH"
     );
 }
@@ -343,14 +391,17 @@ fn wrong_jm_host_filename_format_or_transform_fails_closed() {
     let evidence = evidence("jm");
     let proof = preflight("jm");
     let mut set = jm_set();
-    set.chapters[0].media[0].request_url = "https://evil.invalid/media/photos/123456/001.webp".into();
+    set.chapters[0].media[0].request_url =
+        "https://evil.invalid/media/photos/123456/001.webp".into();
     assert_eq!(
         source_media_descriptors::validate(&auth, &evidence, &proof, &set).unwrap_err(),
         "INVALID_JM_MEDIA_DESCRIPTOR"
     );
 
     let mut set = jm_set();
-    set.chapters[0].media[0].request_url.push_str("?token=secret");
+    set.chapters[0].media[0]
+        .request_url
+        .push_str("?token=secret");
     assert_eq!(
         source_media_descriptors::validate(&auth, &evidence, &proof, &set).unwrap_err(),
         "INVALID_JM_MEDIA_DESCRIPTOR"
@@ -385,14 +436,17 @@ fn pica_rejects_credentials_query_format_mismatch_and_downstream_authority() {
     let evidence = evidence("pica");
     let proof = preflight("pica");
     let mut set = pica_set();
-    set.chapters[0].media[0].request_url = "https://user:pass@storage.example.invalid/static/1.jpg".into();
+    set.chapters[0].media[0].request_url =
+        "https://user:pass@storage.example.invalid/static/1.jpg".into();
     assert_eq!(
         source_media_descriptors::validate(&auth, &evidence, &proof, &set).unwrap_err(),
         "INVALID_PICA_MEDIA_DESCRIPTOR"
     );
 
     let mut set = pica_set();
-    set.chapters[0].media[0].request_url.push_str("?token=secret");
+    set.chapters[0].media[0]
+        .request_url
+        .push_str("?token=secret");
     assert_eq!(
         source_media_descriptors::validate(&auth, &evidence, &proof, &set).unwrap_err(),
         "INVALID_PICA_MEDIA_DESCRIPTOR"

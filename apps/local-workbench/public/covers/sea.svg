@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560" role="img" aria-labelledby="title desc">
+  <title id="title">海街来信</title>
+  <desc id="desc">原创虚构漫画封面。青绿色海面、层叠港口民居、灯塔与一封飘向海风的信。</desc>
+  <defs>
+    <linearGradient id="water" x2="0" y2="1"><stop stop-color="#4f9a94"/><stop offset="1" stop-color="#1f626a"/></linearGradient>
+    <pattern id="paper" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M1 2h1m3 4h1" stroke="#153c40" stroke-width=".7" opacity=".18"/></pattern>
+    <pattern id="waves" width="65" height="27" patternUnits="userSpaceOnUse"><path d="M5 10h25m13 13h16" stroke="#a2d0bc" stroke-width="1" opacity=".38"/></pattern>
+  </defs>
+  <rect width="400" height="560" fill="#e4e9d7"/>
+  <circle cx="90" cy="214" r="95" fill="#d1deca"/>
+  <path d="M0 214q77-24 153 8t247-10v348H0Z" fill="url(#water)"/>
+  <path d="M0 263q65-20 131-5t153-8 116-10" fill="none" stroke="#9ac4ae" stroke-width="1"/>
+  <rect y="278" width="400" height="282" fill="url(#waves)"/>
+  <path d="m0 246 41-8 45 12 18 21 44 3 53 47 65 23-21 20-86-30-74-13L0 296Z" fill="#ead8b7"/>
+  <path d="m0 278 84 25 71 9 90 39-1 13-86-30-74-13L0 296Z" fill="#bbad90"/>
+  <g stroke="#3c6b68" stroke-width="1.2">
+    <path d="M-12 189h56v73l-56-15z" fill="#e9dcc0"/><path d="m-19 188 36-22 35 19-7 9H-12Z" fill="#9e6c52"/>
+    <path d="M46 216h49v63l-49-13z" fill="#f0e3c5"/><path d="m40 216 31-22 32 21-7 7H46Z" fill="#58796d"/>
+    <path d="M94 243h39v48l-39-12z" fill="#d5c99f"/><path d="m91 243 22-19 25 19-5 5H94Z" fill="#a76d50"/>
+    <path d="M133 269h41v36l-41-14z" fill="#eee0bc"/><path d="m126 269 27-15 27 17-6 5h-39Z" fill="#4e7267"/>
+  </g>
+  <g fill="#376d6a"><path d="M4 207h10v14H4zM24 210h10v14H24zM17 238h12v16H17zM55 232h10v12H55zM76 232h10v12H76zM67 257h10v18H67zM103 260h10v11h-10zM144 283h9v12h-9z"/></g>
+  <path d="m150 298 79 29 3 7-83-31z" fill="#4c7368"/>
+  <path d="M161 301v-14m17 21v-15m18 22v-14m18 20v-13" stroke="#50786c" stroke-width="2"/>
+  <path d="m204 294 16-92h16l17 105z" fill="#f4e5c4" stroke="#57867c"/>
+  <path d="m216 224 23 1 4 18-30-4zm-7 39 38 5 3 16-44-8z" fill="#c9714e"/>
+  <path d="M218 190h21v17h-21z" fill="#385f5b"/><path d="m213 190 16-12 15 12z" fill="#9c6249"/>
+  <path d="M227 191h5v11h-5z" fill="#edcd88"/>
+  <path d="m269 364 50-4-11 15-31-1z" fill="#f0deba"/>
+  <path d="M293 358v-61l25 52h-22z" fill="#d8e5ce"/>
+  <path d="m289 306-20 41 20 4z" fill="#abc9b8"/>
+  <path d="m261 384 50-3m-35 12h24" stroke="#a7cab4" opacity=".6"/>
+  <path d="m90 435 102-45 67 63-106 43z" fill="#173f48" opacity=".3"/>
+  <g transform="translate(75 415) rotate(-17)">
+    <rect width="155" height="89" rx="1" fill="#f2e5c7" stroke="#c4b998"/>
+    <path d="m0 0 78 51L155 0M0 89l58-51m97 51-58-51" fill="none" stroke="#b6aa8e"/>
+    <rect x="122" y="11" width="21" height="27" fill="#97b6a4" stroke="#fff4dc" stroke-width="3" stroke-dasharray="2 2"/>
+    <path d="M129 30v-11h7v11m-10 1h13" stroke="#4a8275" fill="none"/>
+  </g>
+  <path d="m255 143 10-3 9 4m41 48 8-3 8 3m-142-36 7-3 8 3" fill="none" stroke="#4d7870" stroke-width="1.5"/>
+  <rect width="400" height="560" fill="url(#paper)"/>
+  <g fill="#295e5a" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,serif">
+    <text x="34" y="72" font-size="45" letter-spacing="6">海街来信</text>
+    <text x="36" y="103" font-size="10" letter-spacing="2.5">潮汐会替我们记住地址</text>
+    <text x="36" y="134" font-size="10" font-family="Georgia,serif" letter-spacing="2">LETTERS FROM THE SEASIDE</text>
+  </g>
+  <text x="34" y="525" fill="#e5e8cb" font-family="'Noto Serif SC',SimSun,serif" font-size="14" letter-spacing="5">七岛灯</text>
+  <text x="365" y="526" text-anchor="end" fill="#c5d4ba" font-family="Georgia,serif" font-size="26">01</text>
+  <text x="35" y="544" fill="#b6cbb4" font-family="sans-serif" font-size="7" letter-spacing="2.7">FICTIONAL COVER / ORIGINAL ART</text>
+</svg>

@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560" role="img" aria-labelledby="title desc">
+  <title id="title">星光回声</title>
+  <desc id="desc">原创虚构漫画封面。紫色星空中的金色星轨掠过城市屋顶，一座深夜电台接收着来自远方的音乐。</desc>
+  <defs>
+    <linearGradient id="night" x2=".5" y2="1"><stop stop-color="#312d58"/><stop offset=".6" stop-color="#635379"/><stop offset="1" stop-color="#927185"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#e6c399" stop-opacity=".65"/><stop offset="1" stop-color="#c1979d" stop-opacity="0"/></radialGradient>
+    <pattern id="grain" width="7" height="11" patternUnits="userSpaceOnUse"><circle cx="2" cy="3" r=".5" fill="#e8d6b5" opacity=".2"/><circle cx="5" cy="8" r=".5" fill="#281f45" opacity=".2"/></pattern>
+    <pattern id="windows" width="24" height="23" patternUnits="userSpaceOnUse"><rect x="7" y="8" width="5" height="9" fill="#d4b390" opacity=".4"/></pattern>
+  </defs>
+  <rect width="400" height="560" fill="url(#night)"/>
+  <ellipse cx="246" cy="260" rx="146" ry="144" fill="url(#glow)"/>
+  <g fill="none" stroke="#d7bfaa">
+    <ellipse cx="213" cy="263" rx="124" ry="89" transform="rotate(-31 213 263)" opacity=".65"/>
+    <ellipse cx="213" cy="263" rx="151" ry="110" transform="rotate(-31 213 263)" opacity=".4" stroke-width=".8"/>
+    <ellipse cx="213" cy="263" rx="175" ry="132" transform="rotate(-31 213 263)" opacity=".2" stroke-width=".7"/>
+    <path d="M62 316q119 29 229-104" stroke-width=".7" opacity=".4"/>
+  </g>
+  <circle cx="245" cy="249" r="35" fill="#b7a0a9"/>
+  <path d="M257 216a35 35 0 0 1-20 66 35 35 0 0 0 20-66Z" fill="#efd3ad"/>
+  <path d="M214 246q25-14 64-8m-61 27q25-11 58-4" fill="none" stroke="#8a7a9b" stroke-width="1" opacity=".65"/>
+  <path d="M178 288q56-3 132-69" fill="none" stroke="#f0d2aa" stroke-width="2.5"/>
+  <circle cx="118" cy="275" r="5" fill="#dcb798"/>
+  <circle cx="321" cy="174" r="3.5" fill="#d4c3b8"/>
+  <circle cx="334" cy="176" r="14" fill="none" stroke="#d4c3b8" stroke-width=".6" opacity=".4"/>
+  <g fill="#e7d4b8"><circle cx="57" cy="170" r="1.4"/><circle cx="95" cy="213" r="1"/><circle cx="182" cy="159" r="1.2"/><circle cx="280" cy="126" r="1"/><circle cx="354" cy="299" r="1.3"/><circle cx="301" cy="336" r="1"/><circle cx="60" cy="367" r="1.1"/><circle cx="156" cy="357" r="1.4"/><circle cx="364" cy="215" r="1.1"/></g>
+  <g fill="none" stroke="#d9c7bb" stroke-width=".8"><path d="M146 216h12m-6-6v12M340 356h12m-6-6v12M77 309h8m-4-4v8"/><path d="m62 188 29-11 23 18 25-28" opacity=".5"/></g>
+  <g fill="#e0cbbb"><circle cx="62" cy="188" r="1.2"/><circle cx="91" cy="177" r="1.2"/><circle cx="114" cy="195" r="1.2"/><circle cx="139" cy="167" r="1.2"/></g>
+  <path d="M0 407h45v-34h39v26h46v-44h46v68h48v-27h44v-42h43v53h43v-33h46v186H0Z" fill="#554363"/>
+  <path d="M0 448h43v-28h67v33h40v-28h56v21h47v-25h65v33h36v-36h46v142H0Z" fill="#3a344f"/>
+  <path d="M0 448h43v-28h67v33h40v-28h56v21h47v-25h65v33h36v-36h46v142H0Z" fill="url(#windows)"/>
+  <path d="M119 396h109v83H119z" fill="#5a4c62"/><path d="M111 393h125v7H111z" fill="#bd9c94"/>
+  <path d="M132 412h35v28h-35zM179 412h35v28h-35z" fill="#b99b8a"/>
+  <path d="M149 412v28m47-28v28" stroke="#6c5868" stroke-width="3"/>
+  <path d="M139 369h70v24h-70z" fill="#392e4a" stroke="#997c86"/>
+  <text x="174" y="385" text-anchor="middle" fill="#e3bba0" font-family="sans-serif" font-size="9" letter-spacing="3">ON AIR</text>
+  <path d="M176 368v-60m-25 14 25 34 28-38m-41 24h27" fill="none" stroke="#ddbaa1" stroke-width="2"/>
+  <path d="M136 302q40 34 80-7" fill="none" stroke="#e0c0a6" stroke-width="2.5"/>
+  <path d="M143 299q32 26 67-7" fill="none" stroke="#b79aaa" stroke-width=".8"/>
+  <path d="M171 305v6m-14-24q16-8 31-1m-42-9q28-20 53-2" fill="none" stroke="#ddbaa1" opacity=".7"/>
+  <path d="M0 491h400v69H0Z" fill="#322d4a"/>
+  <path d="M32 475h22l5-7 6 15 7-24 5 31 5-19 7 4h18l5-5 7 7 6-16 5 24 5-10h20m22 0h30l6-13 6 23 5-16 5 6h34l6-6 6 15 5-25 5 31 5-15h37" fill="none" stroke="#b698a7" stroke-width=".8" opacity=".6"/>
+  <rect width="400" height="560" fill="url(#grain)"/>
+  <g fill="#eee0c8" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,serif">
+    <text x="35" y="77" font-size="45" letter-spacing="6">星光回声</text>
+    <text x="37" y="108" font-size="9" letter-spacing="2.3">宇宙很安静，直到你开始歌唱</text>
+    <text x="38" y="138" font-family="Georgia,serif" font-size="10" letter-spacing="3">ECHOES OF DISTANT LIGHT</text>
+    <text x="35" y="524" font-size="14" letter-spacing="5">南河零</text>
+  </g>
+  <text x="365" y="525" text-anchor="end" fill="#bca5b3" font-family="Georgia,serif" font-size="28">01</text>
+  <text x="37" y="545" fill="#a58f9f" font-family="sans-serif" font-size="7" letter-spacing="2.6">FICTIONAL COVER / ORIGINAL ART</text>
+</svg>

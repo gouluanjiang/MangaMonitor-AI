@@ -1,5 +1,5 @@
 import type { DiscoverySnapshot } from "./completion-types.ts";
-import type { Source } from "./source-types.ts";
+import type { Source, SourceWork } from "./source-types.ts";
 
 type DiscoveryRecord = DiscoverySnapshot["records"][number];
 
@@ -68,6 +68,24 @@ export function authorNameMatches(query: string, sourceName: string): boolean {
   );
 }
 
+export function workHasAuthor(
+  work: Pick<SourceWork, "authors">,
+  query: string,
+): boolean {
+  return work.authors.some((name) => authorNameMatches(query, name));
+}
+
+export function partitionAuthorWorks(
+  works: SourceWork[],
+  query: string,
+): { confirmed: SourceWork[]; other: SourceWork[] } {
+  const confirmed: SourceWork[] = [],
+    other: SourceWork[] = [];
+  for (const work of works)
+    (workHasAuthor(work, query) ? confirmed : other).push(work);
+  return { confirmed, other };
+}
+
 export function partitionAuthorRecords(
   records: DiscoveryRecord[],
   author = "",
@@ -83,9 +101,7 @@ export function partitionAuthorRecords(
     if (!queries.length) continue;
     // Query membership and the legacy authorVerified flag are not authorship.
     // Derive from current metadata even for results saved by older versions.
-    const matches = queries.some((query) =>
-      record.work.authors.some((name) => authorNameMatches(query, name)),
-    );
+    const matches = queries.some((query) => workHasAuthor(record.work, query));
     (matches ? confirmed : other).push(record);
   }
   return { confirmed, other };

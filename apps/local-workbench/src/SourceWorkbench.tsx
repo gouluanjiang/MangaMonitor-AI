@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { jmSearchScopeNote, readCompleteSearch } from "./source-search.ts";
+import { partitionAuthorWorks } from "./author-evidence.ts";
 import { downloadSelectionLimit } from "./download-types.ts";
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -296,7 +297,10 @@ export function SourceWorkbench({
   }, [adapter, accounts]);
   const [source, setSource] = useState<Source>(requestedSource ?? "JM");
   const [query, setQuery] = useState("");
-  const [queryMode, setQueryMode] = useState<"search" | "detail">("search");
+  const [queryMode, setQueryMode] = useState<"author" | "search" | "detail">(
+    "author",
+  );
+  const [showOtherAuthorResults, setShowOtherAuthorResults] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   const [sort, setSort] = useState("source");
   const [inventoryFilter, setInventoryFilter] =
@@ -385,6 +389,8 @@ export function SourceWorkbench({
   accountUpdate.current = onAccountsChange;
   const scopeId = scopeKey(scope);
   const searching = view === "search" || authorSearch;
+  const authorQuery = searching && (authorSearch || queryMode === "author");
+  const showingOtherAuthors = authorQuery && showOtherAuthorResults;
   const stillCurrent = (expected: SourceScope) =>
     scopeKey(currentScope.current) === scopeKey(expected);
   function main() {
@@ -419,6 +425,7 @@ export function SourceWorkbench({
     setQuery("");
     setFolder(null);
     setAuthorSearch(false);
+    setShowOtherAuthorResults(false);
     setSelection([]);
     setSelectionMode(false);
     setNotice(selection.length ? "来源已改变，临时选择已清空。" : "");
@@ -446,6 +453,7 @@ export function SourceWorkbench({
     selectedMetadata.current.clear();
     setItems([]);
     setSearchComplete(false);
+    setShowOtherAuthorResults(false);
     setPageInfo(null);
     setDetailRef(null);
     setDetail(null);
@@ -700,6 +708,7 @@ export function SourceWorkbench({
     setError("");
     setSearchComplete(false);
     if (!append) {
+      setShowOtherAuthorResults(false);
       searchRecords.current = 0;
       setItems([]);
       setPageInfo(null);
@@ -783,10 +792,12 @@ export function SourceWorkbench({
   }
   function changeQuery(value: string) {
     setQuery(value);
+    setShowOtherAuthorResults(false);
     clearSelection();
     if (searching) {
       listRequest.current += 1;
       setLoading(false);
+      setSearchComplete(false);
       setItems([]);
       setPageInfo(null);
       setError("");
@@ -930,8 +941,22 @@ export function SourceWorkbench({
     pageCount: null,
     coverAvailable: false,
   }));
+  const authorResults = useMemo(
+    () =>
+      authorQuery
+        ? partitionAuthorWorks(items, lastListQuery.current.query)
+        : { confirmed: [], other: [] },
+    [items, authorQuery],
+  );
+  const authorKeys = new Set(authorResults.confirmed.map(sourceWorkKey));
   const browsingWorks =
-    view === "following" && !authorSearch ? followedWorks : items;
+    view === "following" && !authorSearch
+      ? followedWorks
+      : authorQuery
+        ? showingOtherAuthors
+          ? authorResults.other
+          : authorResults.confirmed
+        : items;
   const searchedWorks = browsingWorks.filter(
     (work) =>
       searching ||
@@ -983,7 +1008,12 @@ export function SourceWorkbench({
       selectedMetadata.current.set(sourceWorkKey(work), work);
   const selectedWorks = selection
     .map((key) => selectedMetadata.current.get(key))
-    .filter((work): work is SourceWork => Boolean(work));
+    .filter(
+      (work): work is SourceWork =>
+        work !== undefined &&
+        (!authorQuery ||
+          (!showingOtherAuthors && authorKeys.has(sourceWorkKey(work)))),
+    );
   const connected = Boolean(scope) && adapter.available;
   const totalKnown = pageInfo?.total !== null && pageInfo?.total !== undefined;
   const complete =
@@ -999,6 +1029,8 @@ export function SourceWorkbench({
     folder,
     query,
     inventoryFilter,
+    queryMode,
+    showingOtherAuthors,
   ]);
   const selectionComplete =
     view === "following" && !authorSearch
@@ -1053,14 +1085,20 @@ export function SourceWorkbench({
         data-testid="source-search-input"
         aria-label={
           searching
-            ? "搜索当前来源作品或输入单个编号链接"
+            ? authorQuery
+              ? "搜索当前来源作者"
+              : "搜索当前来源作品或输入单个编号链接"
             : view === "favorites" && completeIndex
               ? "搜索全部收藏的作品或作者"
               : "筛选当前已读取范围"
         }
         placeholder={
           searching
-            ? "搜索作品、作者或输入编号…"
+            ? authorQuery
+              ? "输入作者名…"
+              : queryMode === "detail"
+                ? "输入单个作品编号或链接…"
+                : "输入作品关键词…"
             : view === "favorites" && completeIndex
               ? "搜索全部收藏的作品或作者…"
               : "筛选已读取的作品或作者…"
@@ -1180,7 +1218,7 @@ export function SourceWorkbench({
                     />
                   )}
                 </button>
-                {selectionMode && (
+                {selectionMode && !showingOtherAuthors && (
                   <input
                     type="checkbox"
                     aria-label={"选择 " + work.title}
@@ -1573,22 +1611,28 @@ export function SourceWorkbench({
                   </select>
                 </label>
               )}
-              {searching && (
+              {searching && !authorSearch && (
                 <label>
                   查询方式{" "}
                   <select
                     value={queryMode}
                     onChange={(event) => {
-                      setQueryMode(event.target.value as "search" | "detail");
+                      setQueryMode(
+                        event.target.value as "author" | "search" | "detail",
+                      );
+                      setShowOtherAuthorResults(false);
                       clearSelection();
                       listRequest.current += 1;
                       setLoading(false);
                       setItems([]);
                       setPageInfo(null);
+                      setSearchComplete(false);
+                      setError("");
                     }}
                     data-testid="source-query-mode"
                   >
-                    <option value="search">关键词搜索</option>
+                    <option value="author">按作者搜索</option>
+                    <option value="search">作品关键词搜索</option>
                     <option value="detail">单个编号或链接</option>
                   </select>
                 </label>
@@ -1710,7 +1754,8 @@ export function SourceWorkbench({
                           onClick={() => {
                             setAuthorSearch(true);
                             setQuery(author);
-                            setQueryMode("search");
+                            setQueryMode("author");
+                            setShowOtherAuthorResults(false);
                             clearSelection();
                             void readList("search", author, null);
                           }}
@@ -1780,20 +1825,22 @@ export function SourceWorkbench({
                       </option>
                     </select>
                   </label>
-                  <button
-                    type="button"
-                    className="text-button"
-                    data-testid="source-toggle-selection"
-                    aria-pressed={selectionMode}
-                    onClick={() => {
-                      setSelectionMode(!selectionMode);
-                      setSelection([]);
-                      setFullSelectionScope(null);
-                    }}
-                  >
-                    {selectionMode ? "退出多选" : "多选"}
-                  </button>
-                  {selectionMode && (
+                  {!showingOtherAuthors && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      data-testid="source-toggle-selection"
+                      aria-pressed={selectionMode}
+                      onClick={() => {
+                        setSelectionMode(!selectionMode);
+                        setSelection([]);
+                        setFullSelectionScope(null);
+                      }}
+                    >
+                      {selectionMode ? "退出多选" : "多选"}
+                    </button>
+                  )}
+                  {selectionMode && !showingOtherAuthors && (
                     <button
                       type="button"
                       className="text-button"
@@ -1825,6 +1872,40 @@ export function SourceWorkbench({
                   )}
                 </div>
               </div>
+              {authorQuery && pageInfo && (
+                <div
+                  className="source-notice"
+                  data-testid="source-author-evidence"
+                >
+                  <p>
+                    作者作品 {authorResults.confirmed.length} 部 ·
+                    其他关键词结果 {authorResults.other.length}{" "}
+                    部。只按来源作者字段确认作者作品；其他命中不计入作者作品统计或批量选择。
+                  </p>
+                  <button
+                    type="button"
+                    className="text-button"
+                    data-testid="source-author-results-toggle"
+                    aria-pressed={showingOtherAuthors}
+                    onClick={() => {
+                      clearSelection();
+                      setSelectionMode(false);
+                      setInventoryFilter("all");
+                      setShowOtherAuthorResults(!showingOtherAuthors);
+                      main()?.scrollTo(0, 0);
+                    }}
+                  >
+                    {showingOtherAuthors
+                      ? "返回作者作品"
+                      : "查看其他关键词结果"}
+                  </button>
+                </div>
+              )}
+              {searching && !authorQuery && queryMode === "search" && (
+                <p className="source-muted" data-testid="source-keyword-scope">
+                  作品关键词搜索保留来源返回的所有命中，不代表这些作品属于同一作者。查找作者作品请切换“按作者搜索”。
+                </p>
+              )}
               <div
                 className="result-filters"
                 role="group"
@@ -1868,7 +1949,12 @@ export function SourceWorkbench({
                   ).length
                 }{" "}
                 部 · 当前显示 {visible.length} 部 · 筛选覆盖已读取的{" "}
-                {browsingWorks.length} 部作品
+                {browsingWorks.length} 部
+                {authorQuery
+                  ? showingOtherAuthors
+                    ? "其他关键词结果"
+                    : "作者作品"
+                  : "作品"}
                 {(view !== "following" || authorSearch) && pageInfo && (
                   <span data-testid="source-completeness">
                     {" · "}
@@ -1891,16 +1977,18 @@ export function SourceWorkbench({
               {visible.length === 0 && browsingWorks.length > 0 && (
                 <p className="source-empty">
                   当前筛选没有结果
-                  {!complete ? "；还有未读取的收藏，可以继续读取全部收藏" : ""}
+                  {!complete && view === "favorites"
+                    ? "；还有未读取的收藏，可以继续读取全部收藏"
+                    : ""}
                   。
                   <button
                     className="text-button"
                     onClick={() => {
                       setInventoryFilter("all");
-                      setQuery("");
+                      if (!searching) setQuery("");
                     }}
                   >
-                    清空筛选与搜索
+                    {searching ? "清空状态筛选" : "清空筛选与搜索"}
                   </button>
                 </p>
               )}
@@ -2017,7 +2105,11 @@ export function SourceWorkbench({
                   <p>
                     {searching && !pageInfo
                       ? "提交关键词，或切换到单个编号 / 链接直接查看。"
-                      : "可修改搜索条件、重新读取或切换来源。"}
+                      : authorQuery &&
+                          !showingOtherAuthors &&
+                          authorResults.other.length
+                        ? "没有作者字段可确认的作品，可查看其他关键词结果。"
+                        : "可修改搜索条件、重新读取或切换来源。"}
                   </p>
                 </div>
               )}
@@ -2041,11 +2133,18 @@ export function SourceWorkbench({
               )}
               {searching &&
                 complete &&
-                items.length > 0 &&
-                items.every((work) => inventoryFor(work).kind === "owned") && (
+                !showingOtherAuthors &&
+                (!authorQuery || authorResults.other.length === 0) &&
+                browsingWorks.length > 0 &&
+                browsingWorks.every(
+                  (work) => inventoryFor(work).kind === "owned",
+                ) && (
                   <p role="status" data-testid="source-all-owned">
-                    本次查询结果已全部入库。范围：{sourceLabel(source)} ·{" "}
-                    {lastListQuery.current.query} ·{" "}
+                    {authorQuery
+                      ? "本次作者作品已全部入库。"
+                      : "本次查询结果已全部入库。"}
+                    范围：{sourceLabel(source)} · {lastListQuery.current.query}{" "}
+                    ·{" "}
                     {searchReadAt
                       ? new Date(searchReadAt).toLocaleString()
                       : ""}

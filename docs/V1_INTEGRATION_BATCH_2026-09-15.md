@@ -1,10 +1,8 @@
-# V1 连续流程收尾 · 2026-09-15
+# V1 连续流程收尾 · 2026-09-15（历史批次）
 
-Latest steering (2026-09-15): repair author attribution before further V1 work. [The shared author-evidence repair](AUTHOR_ATTRIBUTION_FIX_2026-09-15.md) separates explicit author metadata from other keyword results while preserving complete pagination and inspection access. This supersedes treating every keyword hit as an author work. Engineering and repaired native acceptance are pending; the earlier wrong-author sample only established download/receipt behavior.
+本报告记录 `ff05992` 集成批次的实现和当时交付，不是当前待办列表。后续 `672cf4a` 修正诊断数量，`44da160` 完成作者归属修复；作者搜索、入库筛选与队列往返已获限定实机验证。当前状态统一见 [2026-09-17 收尾报告](V1_READINESS_2026-09-17.md)，作者归属细节见 [修复报告](AUTHOR_ATTRIBUTION_FIX_2026-09-15.md)。
 
-从 `4538fa6` 接续，执行已确定的阶段 5：把手动检查作者、选择下载、自动登记入库和搜索新作者连成可持续使用的流程。前一批界面与设置的最终报告修改一并保留；不重做作者抽查或旧漫画库整理。
-
-**最新验收结论：尚未通过 V1。** 修正候选版 `672cf4a` 的三套 CI 全部通过，诊断计数实机修复成功；一次 Pica 样本的重试下载、ZIP 校验、自动入库同步及正常重启已验证。但用户指出该下载样本并非所查作者的作品，检查确认目前作者页把通用关键词命中归入查询作者；该样本不能证明作者更新准确。暂停新增下载和原计划的新作者输入验收，先明确作者归属的解决方式；不盲目恢复会漏掉合著／社团格式的严格相等过滤。详见 [代理验收报告](V1_LIVE_ACCEPTANCE_2026-09-15.md)。以下 `ff05992` 和“未访问真实数据”等表述仅描述此前集成开发批次。
+从 `4538fa6` 接续，本批把手动检查作者、选择下载、自动登记入库和搜索新作者连成可持续使用的流程。以下“尚待验收”“未访问真实数据”等表述及路线图仅描述本批交付时点，后续实机证据不倒写为本批已执行。
 
 ## 本批修复
 
@@ -47,7 +45,7 @@ Dev 0.3.4 已独立保存到 `C:\Users\choumodujiang\Documents\Codex\MangaMonito
 
 使用 [V1 连续验收说明](V1_ACCEPTANCE_2026-09-15.md)，在一个候选版本上完成正常使用流程。无需重新验收所有历史批次，也不需要先整理旧漫画库。真实下载和账号操作由用户自主选择并执行；合成 CI 不等于真实下载验收。
 
-## 路线图
+## 本批交付时的路线图（后续状态见收尾报告）
 
 | 阶段 | 当前状态 |
 | --- | --- |

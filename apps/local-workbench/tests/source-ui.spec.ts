@@ -45,6 +45,7 @@ type MockOptions = {
   crossSourcePC?: boolean;
   libraryCandidate?: boolean;
   holdMatchDetail?: boolean;
+  authorSearchResults?: boolean;
 };
 type Call = {
   command: string;
@@ -826,7 +827,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
           sessionId: "synthetic-Pica-1",
           revision: 0,
           works: [],
-          authors: [],
+          authors: options.authorSearchResults ? ["Mint"] : [],
         },
       },
     });
@@ -1142,6 +1143,34 @@ async function installMock(page: Page, options: MockOptions = {}) {
             }
             const epoch = Number(scope.sessionId.split("-").at(-1));
             const pageNumber = raw.page as number;
+            if (options.authorSearchResults && raw.kind === "search") {
+              const candidates: SourceWork[] = [
+                { ...makeWork(source, "202"), authors: ["Mintleaf"] },
+                {
+                  ...makeWork(source, "203"),
+                  title: "Mint 合成标题命中",
+                  authors: [],
+                },
+                { ...makeWork(source, "205"), authors: ["Other Writer"] },
+                {
+                  ...makeWork(source, "201"),
+                  authors: ["Harbor Studio (Mint)"],
+                },
+                { ...makeWork(source, "204"), authors: ["Guest、Mint"] },
+              ];
+              return {
+                ...scope,
+                items:
+                  pageNumber === 1
+                    ? candidates.slice(0, 3)
+                    : candidates.slice(3),
+                page: pageNumber,
+                total: candidates.length,
+                pages: 2,
+                hasMore: pageNumber < 2,
+                folders: [],
+              };
+            }
             if (
               options.holdJM &&
               source === "JM" &&
@@ -1809,6 +1838,155 @@ test("source search stays right-aligned at baseline width and fits a narrow wind
   expect(narrow.left).toBeGreaterThanOrEqual(0);
   expect(narrow.right).toBeLessThanOrEqual(390);
   expect(narrow.width).toBeGreaterThan(250);
+});
+
+for (const source of ["JM", "Pica"] as const) {
+  test(`${source} source author search separates keyword hits before counting and selecting across all pages`, async ({
+    page,
+  }) => {
+    await installMock(page, { authorSearchResults: true });
+    await page.goto("/");
+    await page.getByTestId("nav-discovery").click();
+    await page.getByTestId("source-tab-" + source).click();
+    await expect(page.getByTestId("source-query-mode")).toHaveValue("author");
+    await page.getByTestId("source-search-input").fill("Mint");
+    await page.getByTestId("source-search-submit").click();
+    await expect(page.getByTestId("source-completeness")).toContainText(
+      "已读完",
+    );
+    await expect(page.getByTestId("source-author-evidence")).toContainText(
+      "作者作品 2 部 · 其他关键词结果 3 部",
+    );
+    await expect(page.getByTestId("source-filter-count")).toContainText(
+      "未入库 2 部 · 当前显示 2 部",
+    );
+    await expect(
+      page.getByTestId("source-card-" + source + ":201"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("source-card-" + source + ":204"),
+    ).toBeVisible();
+    for (const id of ["202", "203", "205"])
+      await expect(
+        page.getByTestId("source-card-" + source + ":" + id),
+      ).toHaveCount(0);
+    if (source === "Pica") {
+      await mkdir("visual-evidence", { recursive: true });
+      await page.screenshot({
+        path: "visual-evidence/source-author-results.png",
+        fullPage: true,
+      });
+    }
+    await page.getByTestId("source-toggle-selection").click();
+    await page.getByTestId("source-select-all").click();
+    await expect(page.getByTestId("source-selection-bar")).toContainText(
+      "已选 2 部",
+    );
+    await page.getByTestId("source-author-results-toggle").click();
+    await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+    await expect(page.getByTestId("source-toggle-selection")).toHaveCount(0);
+    await expect(
+      page.getByTestId("source-grid").getByRole("checkbox"),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId("source-card-" + source + ":202"),
+    ).toContainText("Mintleaf");
+    await expect(
+      page.getByTestId("source-card-" + source + ":203"),
+    ).toContainText("作者资料未取得");
+    await expect(
+      page.getByTestId("source-card-" + source + ":205"),
+    ).toContainText("Other Writer");
+    await expect(page.getByTestId("source-filter-count")).toContainText(
+      "当前显示 3 部",
+    );
+    await expect(page.getByTestId("source-all-owned")).toHaveCount(0);
+    if (source === "Pica")
+      await page.screenshot({
+        path: "visual-evidence/source-other-keywords.png",
+        fullPage: true,
+      });
+    await page.getByTestId("source-author-results-toggle").click();
+    await expect(page.getByTestId("source-filter-count")).toContainText(
+      "当前显示 2 部",
+    );
+    expect(
+      await page.evaluate(() =>
+        window.sourceTest.calls
+          .filter(
+            (call) => call.command === "source_query" && call.kind === "search",
+          )
+          .map((call) => call.page),
+      ),
+    ).toEqual([1, 2]);
+  });
+}
+
+test("explicit work-keyword mode retains all hits and mode changes clear author selections", async ({
+  page,
+}) => {
+  await installMock(page, { authorSearchResults: true });
+  await page.goto("/");
+  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("source-search-input").fill("Mint");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-all").click();
+  await expect(page.getByTestId("source-selection-bar")).toContainText(
+    "已选 2 部",
+  );
+  await page.getByTestId("source-query-mode").selectOption("search");
+  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(page.getByTestId("source-author-evidence")).toHaveCount(0);
+  await expect(page.getByTestId("source-card-JM:201")).toHaveCount(0);
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
+  await expect(page.getByTestId("source-keyword-scope")).toContainText(
+    "不代表这些作品属于同一作者",
+  );
+  await expect(page.getByTestId("source-filter-count")).toContainText(
+    "当前显示 5 部",
+  );
+  await expect(page.getByTestId("source-card-JM:203")).toContainText(
+    "Mint 合成标题命中",
+  );
+  await page.getByTestId("source-select-all").click();
+  await expect(page.getByTestId("source-selection-bar")).toContainText(
+    "已选 5 部",
+  );
+  await page.getByTestId("source-query-mode").selectOption("detail");
+  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await page.getByTestId("source-search-input").fill("203");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-detail")).toContainText(
+    "合成验收 JM 作品 203",
+  );
+});
+
+test("searching a followed source author uses the same explicit author evidence", async ({
+  page,
+}) => {
+  await installMock(page, { authorSearchResults: true });
+  await page.goto("/");
+  await page.getByTestId("nav-authors").click();
+  await page.getByTestId("source-tab-Pica").click();
+  await expect(page.getByTestId("source-authors")).toContainText("Mint");
+  await page.getByRole("button", { name: "搜索该作者", exact: true }).click();
+  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
+  await expect(page.getByTestId("source-author-evidence")).toContainText(
+    "作者作品 2 部 · 其他关键词结果 3 部",
+  );
+  await expect(page.getByTestId("source-card-Pica:202")).toHaveCount(0);
+  await expect(page.getByTestId("source-query-mode")).toHaveCount(0);
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-all").click();
+  await expect(page.getByTestId("source-selection-bar")).toContainText(
+    "已选 2 部",
+  );
+  await page.getByTestId("source-author-results-toggle").click();
+  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(page.getByTestId("source-card-Pica:205")).toBeVisible();
 });
 
 async function favoritePages(page: Page) {

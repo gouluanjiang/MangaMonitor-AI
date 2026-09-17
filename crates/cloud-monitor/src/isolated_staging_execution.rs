@@ -65,7 +65,7 @@ fn verify_checkpoint_tree(
     }
     let mut expected = BTreeMap::new();
     for (artifact, descriptor) in checkpoint.artifacts.iter().zip(&ordered) {
-        if artifact.relative_path != descriptor.relative_path
+        if !descriptor.accepts_output_path(&descriptors.source, &artifact.relative_path)
             || artifact.sha256.len() != 64
             || !artifact
                 .sha256
@@ -81,7 +81,7 @@ fn verify_checkpoint_tree(
         let descriptor = ordered
             .get(checkpoint.artifacts.len())
             .ok_or("STAGING_CHECKPOINT_INVALID")?;
-        if pending.relative_path != descriptor.relative_path
+        if !descriptor.accepts_output_path(&descriptors.source, &pending.relative_path)
             || pending.size_bytes == 0
             || pending.sha256.len() != 64
             || !pending
@@ -146,6 +146,7 @@ fn verify_checkpoint_tree(
                 let mut file =
                     fs::File::open(entry.path()).map_err(|_| "STAGING_CHECKPOINT_READ_FAILED")?;
                 let mut digest = Sha256::new();
+                let mut prefix = Vec::with_capacity(16);
                 let mut buffer = [0_u8; 65536];
                 loop {
                     let count = file
@@ -154,10 +155,24 @@ fn verify_checkpoint_tree(
                     if count == 0 {
                         break;
                     }
+                    let prefix_bytes = count.min(16 - prefix.len());
+                    prefix.extend_from_slice(&buffer[..prefix_bytes]);
                     digest.update(&buffer[..count]);
                 }
                 if format!("{:x}", digest.finalize()) != artifact.sha256 {
                     return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+                }
+                if descriptors.source == "pica" {
+                    let extension = artifact
+                        .relative_path
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or_default();
+                    if !crate::media_validation::detected_format(&prefix).is_ok_and(|actual| {
+                        actual == extension || (actual == "jpg" && extension == "jpeg")
+                    }) {
+                        return Err("STAGING_CHECKPOINT_FILE_CHANGED".into());
+                    }
                 }
                 seen.insert(child);
             }
@@ -370,10 +385,10 @@ where
             if completed >= checkpoint.artifacts.len() {
                 if let Some(pending) = checkpoint.pending.clone() {
                     if pending_file_complete(&command_root, &pending)? {
+                        paths.push(pending.relative_path.clone());
                         checkpoint.artifacts.push(pending);
                         checkpoint.pending = None;
                         progress(&checkpoint)?;
-                        paths.push(descriptor.relative_path.clone());
                         completed += 1;
                         continue;
                     }
@@ -417,10 +432,10 @@ where
                 })
                 .await?;
                 pending_fetches.pop_front();
-                let processed = processed.verify(descriptor)?;
+                let processed = processed.verify(&descriptors.source, descriptor)?;
                 exact_authorization_generation(authorization, reauthorize()?)?;
                 let pending = StagedArtifact {
-                    relative_path: descriptor.relative_path.clone(),
+                    relative_path: processed.relative_path,
                     size_bytes: processed.media.bytes.len() as u64,
                     sha256: processed.sha256,
                 };
@@ -439,7 +454,7 @@ where
                 checkpoint.pending = None;
                 progress(&checkpoint)?;
             }
-            paths.push(descriptor.relative_path.clone());
+            paths.push(checkpoint.artifacts[completed].relative_path.clone());
             completed += 1;
         }
         chapters.push(ChapterCompletion {
@@ -517,7 +532,9 @@ pub struct IsolatedStagingExecutionContext<'a> {
 /// Final, already-processed bytes for one exact A6.11 descriptor.
 ///
 /// The fetch/process implementation must echo the exact descriptor binding and
-/// declare the transform it actually applied. A6.12 never accepts opaque bytes
+/// declare the transform it actually applied. `source_format` echoes the
+/// metadata declaration; Pica's actual encoding is independently detected.
+/// A6.12 never accepts opaque bytes
 /// without this binding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessedMedia {
@@ -532,22 +549,27 @@ pub struct ProcessedMedia {
 /// Only validate() can create this value. Its byte buffer, descriptor and hash
 /// cannot be changed by live-fetch callers, or forged through JSON/IPC.
 pub(crate) struct VerifiedMedia {
+    source: String,
     descriptor: MediaDescriptor,
     media: ProcessedMedia,
     sha256: String,
+    relative_path: String,
 }
 
 impl VerifiedMedia {
     pub(crate) fn validate(
+        source: &str,
         descriptor: MediaDescriptor,
         media: ProcessedMedia,
     ) -> Result<Self, String> {
-        exact_processed_binding(&descriptor, &media)?;
+        let relative_path = exact_processed_binding(source, &descriptor, &media)?;
         let sha256 = sha256_bytes(&media.bytes);
         Ok(Self {
+            source: source.to_owned(),
             descriptor,
             media,
             sha256,
+            relative_path,
         })
     }
 }
@@ -590,7 +612,7 @@ mod verified_media_tests {
     fn worker_verified_result_cannot_be_rebound_to_a_different_page_or_path() {
         for change_path in [false, true] {
             let (descriptor, media) = fixture();
-            let verified = VerifiedMedia::validate(descriptor.clone(), media).unwrap();
+            let verified = VerifiedMedia::validate("jm", descriptor.clone(), media).unwrap();
             let mut other = descriptor;
             if change_path {
                 other.relative_path.push_str(".other");
@@ -599,7 +621,7 @@ mod verified_media_tests {
             }
             assert_eq!(
                 PipelineMedia::Verified(verified)
-                    .verify(&other)
+                    .verify("jm", &other)
                     .err()
                     .as_deref(),
                 Some("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH")
@@ -607,13 +629,22 @@ mod verified_media_tests {
         }
         let (descriptor, media) = fixture();
         let expected_hash = sha256_bytes(&media.bytes);
-        let verified = VerifiedMedia::validate(descriptor.clone(), media).unwrap();
+        let verified = VerifiedMedia::validate("jm", descriptor.clone(), media).unwrap();
         assert_eq!(
             PipelineMedia::Verified(verified)
-                .verify(&descriptor)
+                .verify("jm", &descriptor)
                 .unwrap()
                 .sha256,
             expected_hash
+        );
+        let (descriptor, media) = fixture();
+        let verified = VerifiedMedia::validate("jm", descriptor.clone(), media).unwrap();
+        assert_eq!(
+            PipelineMedia::Verified(verified)
+                .verify("pica", &descriptor)
+                .err()
+                .as_deref(),
+            Some("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH")
         );
     }
 
@@ -622,7 +653,9 @@ mod verified_media_tests {
         let (descriptor, mut media) = fixture();
         media.bytes = b"not a jpeg".to_vec();
         assert_eq!(
-            VerifiedMedia::validate(descriptor, media).err().as_deref(),
+            VerifiedMedia::validate("jm", descriptor, media)
+                .err()
+                .as_deref(),
             Some("PROCESSED_MEDIA_INVALID_IMAGE_BYTES")
         );
     }
@@ -715,10 +748,12 @@ mod verified_media_tests {
 }
 
 impl PipelineMedia {
-    fn verify(self, descriptor: &MediaDescriptor) -> Result<VerifiedMedia, String> {
+    fn verify(self, source: &str, descriptor: &MediaDescriptor) -> Result<VerifiedMedia, String> {
         match self {
-            Self::Unchecked(media) => VerifiedMedia::validate(descriptor.clone(), media),
-            Self::Verified(media) if &media.descriptor == descriptor => Ok(media),
+            Self::Unchecked(media) => VerifiedMedia::validate(source, descriptor.clone(), media),
+            Self::Verified(media) if media.source == source && &media.descriptor == descriptor => {
+                Ok(media)
+            }
             Self::Verified(_) => Err("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH".into()),
         }
     }
@@ -784,9 +819,10 @@ fn sha256_bytes(bytes: &[u8]) -> String {
 }
 
 fn exact_processed_binding(
+    source: &str,
     descriptor: &MediaDescriptor,
     processed: &ProcessedMedia,
-) -> Result<(), String> {
+) -> Result<String, String> {
     if processed.source_media_id != descriptor.source_media_id
         || processed.request_url != descriptor.request_url
         || processed.source_format != descriptor.source_format
@@ -798,9 +834,15 @@ fn exact_processed_binding(
     if processed.bytes.is_empty() {
         return Err("PROCESSED_MEDIA_INVALID_IMAGE_BYTES".into());
     }
-    crate::media_validation::validate(descriptor.stored_format(), &processed.bytes)
-        .map_err(|_| "PROCESSED_MEDIA_INVALID_IMAGE_BYTES")?;
-    Ok(())
+    let format = if source == "pica" {
+        crate::media_validation::validate_detected(&processed.bytes)
+            .map_err(|_| "PROCESSED_MEDIA_INVALID_IMAGE_BYTES")?
+    } else {
+        crate::media_validation::validate(descriptor.stored_format(), &processed.bytes)
+            .map_err(|_| "PROCESSED_MEDIA_INVALID_IMAGE_BYTES")?;
+        descriptor.stored_format()
+    };
+    descriptor.output_path(source, format)
 }
 
 fn exact_authorization_generation(
@@ -1044,11 +1086,10 @@ where
         for descriptor in &chapter.media {
             exact_authorization_generation(authorization, reauthorize()?)?;
             let processed = fetch(descriptor.clone()).await?;
-            exact_processed_binding(descriptor, &processed)?;
+            let path = exact_processed_binding(&descriptors.source, descriptor, &processed)?;
             exact_authorization_generation(authorization, reauthorize()?)?;
 
-            let artifact =
-                write_new_file(&command_root, &descriptor.relative_path, &processed.bytes)?;
+            let artifact = write_new_file(&command_root, &path, &processed.bytes)?;
             artifact_paths.push(artifact.relative_path.clone());
             artifacts.push(artifact);
         }

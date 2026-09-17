@@ -28,7 +28,8 @@ pub struct MediaDescriptor {
     /// `NONE` for Pica/GIF; JM WEBP has explicit legacy WEBP or JPEG output.
     pub transform: String,
     pub transform_parameter: u64,
-    /// Portable path relative to the command-owned staging root.
+    /// Metadata-declared path relative to command staging. Pica may resolve
+    /// only its suffix from verified image content, without changing this binding.
     pub relative_path: String,
 }
 
@@ -41,6 +42,42 @@ impl MediaDescriptor {
         } else {
             &self.source_format
         }
+    }
+
+    /// Preserve descriptor/checkpoint identity while resolving Pica's actual
+    /// output suffix. The chapter, ordinal and filename stem cannot change.
+    /// JM output remains bound to its explicit transform, including JPEG.
+    pub(crate) fn output_path(&self, source: &str, format: &str) -> Result<String, String> {
+        if source == "pica" && self.transform == "NONE" && self.transform_parameter == 0 {
+            if !format_allowed(format) {
+                return Err("PROCESSED_MEDIA_INVALID_IMAGE_BYTES".into());
+            }
+            let format = if matches!(format, "jpg" | "jpeg") {
+                if self.source_format == "jpeg" {
+                    "jpeg"
+                } else {
+                    "jpg"
+                }
+            } else {
+                format
+            };
+            let (stem, _) = self
+                .relative_path
+                .rsplit_once('.')
+                .ok_or("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH")?;
+            Ok(format!("{stem}.{format}"))
+        } else if source == "jm" && format == self.stored_format() {
+            Ok(self.relative_path.clone())
+        } else {
+            Err("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH".into())
+        }
+    }
+
+    pub(crate) fn accepts_output_path(&self, source: &str, path: &str) -> bool {
+        path.rsplit_once('.').is_some_and(|(_, format)| {
+            self.output_path(source, format)
+                .is_ok_and(|expected| expected == path)
+        })
     }
 }
 

@@ -96,6 +96,9 @@ fn pica_bytes(format: &str) -> Vec<u8> {
     }
 }
 async fn seed_pica(f: &Fixture) -> Core {
+    seed_pica_with_mislabelled_image(f, false).await
+}
+async fn seed_pica_with_mislabelled_image(f: &Fixture, mislabelled: bool) -> Core {
     let mut value = pica_record(f);
     let c = pica_core(&value);
     let workspace = f.store.open_download_workspace().unwrap();
@@ -103,7 +106,11 @@ async fn seed_pica(f: &Fixture) -> Core {
         context(workspace.path(), &c),
         None,
         |d| async move {
-            let bytes = pica_bytes(&d.source_format);
+            let bytes = pica_bytes(if mislabelled && d.source_format == "jpg" {
+                "webp"
+            } else {
+                &d.source_format
+            });
             Ok(ProcessedMedia {
                 source_media_id: d.source_media_id,
                 request_url: d.request_url,
@@ -479,6 +486,77 @@ fn source_failures_keep_actionable_codes_without_returning_raw_errors() {
         ("PICA_MEDIA_HTTP_403: private response", "DOWNLOAD_FAILED"),
     ] {
         assert_eq!(classify(incoming).code, expected);
+    }
+}
+
+#[tokio::test]
+async fn pica_mislabelled_image_keeps_actual_suffix_through_directory_zip_and_registration() {
+    use std::io::Read;
+    for zip_output in [false, true] {
+        let f = pica_fixture();
+        if zip_output {
+            let mut saved = pica_record(&f);
+            saved.zip_output = true;
+            saved.destination = crate::naming::zip_name(&saved.metadata);
+            saved.target_hash = binding(&saved).unwrap();
+            save_task(&f, saved);
+        }
+        let core = seed_pica_with_mislabelled_image(&f, true).await;
+        assert_eq!(core.descriptors.chapters[0].media[0].source_format, "jpg");
+        let receipt = f
+            .service
+            .run_with_token(&f.store, &f.id, Some(TOKEN), || Ok(()))
+            .await
+            .unwrap()
+            .unwrap();
+        let destination = f.library.join(&receipt.relative_path);
+        let page = "001-000000000000000000000001/001.webp";
+        let bytes = if zip_output {
+            let mut archive = zip::ZipArchive::new(fs::File::open(&destination).unwrap()).unwrap();
+            assert!(archive
+                .by_name("001-000000000000000000000001/001.jpg")
+                .is_err());
+            let mut bytes = Vec::new();
+            archive
+                .by_name(page)
+                .unwrap()
+                .read_to_end(&mut bytes)
+                .unwrap();
+            bytes
+        } else {
+            assert!(!destination
+                .join("001-000000000000000000000001/001.jpg")
+                .exists());
+            fs::read(destination.join(page)).unwrap()
+        };
+        assert_eq!(bytes, pica_bytes("webp"));
+        let indexed = workbench_library::LibraryService::new()
+            .register_completed(
+                &f.store,
+                &receipt.root_id,
+                receipt.generation,
+                &receipt.relative_path,
+                &workbench_storage::LibraryReference {
+                    source: Source::Pica,
+                    work_id: PICA_ID.into(),
+                },
+                5,
+            )
+            .unwrap();
+        let entry = indexed
+            .items
+            .iter()
+            .find(|v| v.relative_path == receipt.relative_path)
+            .unwrap();
+        assert_eq!(entry.page_count, Some(5));
+        assert_eq!(entry.error_code, None);
+        f.service
+            .mark_indexed(&f.store, &receipt, &entry.id)
+            .unwrap();
+        assert_eq!(
+            f.service.read(&f.store).unwrap().tasks[1].local_files,
+            Some(LocalFiles::Present)
+        );
     }
 }
 

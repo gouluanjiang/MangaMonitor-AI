@@ -53,6 +53,8 @@ Do **not** dynamically trust domains discovered from remote pages without a sepa
 
 ### Safety differences deliberately preserved
 
+- The 2026-09-18 Pica format repair rechecked `get_img_data_and_format` and image saving at the same pinned revision. Upstream detects encoding with `image::guess_format` and chooses a matching suffix. The workbench now also detects Pica content instead of trusting its URL/MIME, while retaining bounded full decode, immutable descriptor identity, actual-suffix checkpoint/manifest paths and original bytes. JM's explicit transforms remain strict. No request, host, retry or authority changes are included; see `PICA_MEDIA_FORMAT_FIX_2026-09-18.md`.
+
 - The 2026-09-12 desktop Pica acceptance repair adds a bounded same-origin redirect loop after a task-specific header check showed 301 then 200 JPEG. Automatic redirects remain disabled; every initial/redirect GET must receive a fresh authorization from the staging coordinator, at most two redirects are allowed, and original descriptor/checkpoint identity remains unchanged. See `PICA_DOWNLOAD_REDIRECT_FIX_2026-09-12.md`. This is not arbitrary-domain trust or retry/failover authority; JM and the legacy exact-transfer entry remain unchanged.
 
 - Upstream GUI code is optimized for interactive downloading; MangaMonitor-AI requires complete pagination evidence and rejects missing/intermediate pages instead of silently aggregating partial results.

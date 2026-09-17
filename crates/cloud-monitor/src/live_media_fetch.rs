@@ -66,7 +66,7 @@ impl LiveFetcher {
         processor
             .process(move || {
                 let media = process_downloaded_bytes(source, &descriptor, bytes)?;
-                VerifiedMedia::validate(descriptor, media)
+                VerifiedMedia::validate(source, descriptor, media)
             })
             .await
     }
@@ -126,6 +126,24 @@ fn process_downloaded_bytes(
     if bytes.is_empty() {
         return Err("LIVE_MEDIA_SOURCE_FORMAT_MISMATCH".into());
     }
+    if source == "pica" {
+        if descriptor.transform != "NONE" || descriptor.transform_parameter != 0 {
+            return Err("LIVE_MEDIA_FETCH_TRANSFORM_NOT_SUPPORTED".into());
+        }
+        // Pica can label a WebP body as .jpg and image/jpeg. Keep the source
+        // descriptor immutable, validate the actual encoding, and preserve
+        // its bytes (including animation). Staging derives the matching suffix.
+        media_validation::validate_detected(&bytes)
+            .map_err(|_| "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED")?;
+        return Ok(ProcessedMedia {
+            source_media_id: descriptor.source_media_id.clone(),
+            request_url: descriptor.request_url.clone(),
+            source_format: descriptor.source_format.clone(),
+            applied_transform: descriptor.transform.clone(),
+            applied_transform_parameter: descriptor.transform_parameter,
+            bytes,
+        });
+    }
     let direct_jpeg = source == "jm"
         && descriptor.source_format == "webp"
         && descriptor.transform == "JM_SCRAMBLE_BLOCKS_JPEG";
@@ -142,13 +160,6 @@ fn process_downloaded_bytes(
             descriptor.transform_parameter,
             bytes,
         )?,
-        "pica" => match (
-            descriptor.transform.as_str(),
-            descriptor.transform_parameter,
-        ) {
-            ("NONE", 0) => bytes,
-            _ => return Err("LIVE_MEDIA_FETCH_TRANSFORM_NOT_SUPPORTED".into()),
-        },
         _ => return Err("UNSUPPORTED_LIVE_MEDIA_FETCH_SOURCE".into()),
     };
 
@@ -346,6 +357,58 @@ mod tests {
         .unwrap();
         assert_eq!(processed.applied_transform, "NONE");
         assert_eq!(processed.applied_transform_parameter, 0);
+    }
+
+    #[test]
+    fn pica_detects_encoded_content_without_mutating_descriptor_or_image_bytes() {
+        for declared in ["jpg", "jpeg", "png", "webp", "gif"] {
+            let media = descriptor(declared, "NONE", 0);
+            for actual in [
+                ImageFormat::Jpeg,
+                ImageFormat::Png,
+                ImageFormat::WebP,
+                ImageFormat::Gif,
+            ] {
+                let bytes = valid_image(actual);
+                let processed = process_downloaded_bytes("pica", &media, bytes.clone()).unwrap();
+                assert_eq!(processed.bytes, bytes);
+                assert_eq!(processed.source_format, declared);
+                assert_eq!(processed.request_url, media.request_url);
+                VerifiedMedia::validate("pica", media.clone(), processed).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn pica_mislabelled_animation_is_preserved_and_malformed_webp_is_rejected() {
+        let media = descriptor("jpg", "NONE", 0);
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            for red in [40, 180] {
+                encoder
+                    .encode_frame(image::Frame::new(image::RgbaImage::from_pixel(
+                        2,
+                        2,
+                        image::Rgba([red, 12, 34, 255]),
+                    )))
+                    .unwrap();
+            }
+        }
+        let processed = process_downloaded_bytes("pica", &media, bytes.clone()).unwrap();
+        assert_eq!(processed.bytes, bytes);
+        use image::AnimationDecoder;
+        let frames = image::codecs::gif::GifDecoder::new(Cursor::new(processed.bytes))
+            .unwrap()
+            .into_frames()
+            .collect_frames()
+            .unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_ne!(frames[0].buffer(), frames[1].buffer());
+        assert_eq!(
+            process_downloaded_bytes("pica", &media, b"RIFF1234WEBPbroken".to_vec()).unwrap_err(),
+            "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED"
+        );
     }
 
     #[test]

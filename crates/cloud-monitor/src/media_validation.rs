@@ -19,6 +19,24 @@ fn format(format: &str) -> Option<ImageFormat> {
     }
 }
 
+/// Detect supported encoded content, independently of URL suffix or HTTP MIME.
+/// Detection alone is not a validity check; live/staging callers still decode.
+pub(crate) fn detected_format(bytes: &[u8]) -> Result<&'static str, String> {
+    match image::guess_format(bytes) {
+        Ok(ImageFormat::Gif) => Ok("gif"),
+        Ok(ImageFormat::WebP) => Ok("webp"),
+        Ok(ImageFormat::Jpeg) => Ok("jpg"),
+        Ok(ImageFormat::Png) => Ok("png"),
+        _ => Err("UNSUPPORTED_IMAGE_FORMAT".into()),
+    }
+}
+
+pub(crate) fn validate_detected(bytes: &[u8]) -> Result<&'static str, String> {
+    let format = detected_format(bytes)?;
+    validate(format, bytes)?;
+    Ok(format)
+}
+
 /// Decode the complete image stream using the descriptor's declared format.
 /// The original bytes remain unchanged for no-op/animated formats, but they
 /// must still be decodable before downstream staging treats them as success.

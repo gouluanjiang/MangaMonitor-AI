@@ -291,6 +291,158 @@ impl Drop for ActiveFetch {
 }
 
 #[tokio::test]
+async fn pica_mislabelled_webp_resumes_legacy_jpeg_and_partial_actual_format() {
+    use std::cell::{Cell, RefCell};
+    let mut f = fixture("pica");
+    let first = &mut f.descriptors.chapters[0].media[0];
+    first.source_format = "jpg".into();
+    first.request_url = first.request_url.replace(".png", ".jpg");
+    first.relative_path = first.relative_path.replace(".png", ".jpg");
+    let descriptor_hash = hash(&f.descriptors);
+    let root = temp_staging("pica-format-resume");
+    let saved = RefCell::new(None);
+
+    // An old checkpoint contains a valid JPEG prefix and no second page.
+    let error = isolated_staging_execution::execute_resumable_with_fetcher(
+        execution_context(&root, &f),
+        None,
+        |d| async move {
+            if d.image_index == 2 {
+                Err("OLD_FORMAT_FAILURE".into())
+            } else {
+                Ok(processed(&d))
+            }
+        },
+        || Ok(f.authorization.clone()),
+        |c| {
+            *saved.borrow_mut() = Some(c.clone());
+            Ok(())
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "OLD_FORMAT_FAILURE");
+    let legacy = saved.into_inner().unwrap();
+    assert_eq!(legacy.artifacts.len(), 1);
+    assert_eq!(legacy.descriptor_hash, descriptor_hash);
+    let first_path = root
+        .join(&f.plan.staging_subdir)
+        .join(&legacy.artifacts[0].relative_path);
+    let first_bytes = fs::read(&first_path).unwrap();
+    assert_eq!(first_bytes, fake_bytes("jpg"));
+
+    let webp = fake_bytes("webp");
+    let fetches = Cell::new(0);
+    let fetch = |d: MediaDescriptor| {
+        assert_eq!(
+            d.image_index, 2,
+            "the legacy JPEG must not be fetched again"
+        );
+        fetches.set(fetches.get() + 1);
+        let mut output = processed(&d);
+        output.bytes.clone_from(&webp);
+        async move { Ok(output) }
+    };
+    let saved = RefCell::new(None);
+    let error = isolated_staging_execution::execute_resumable_with_fetcher(
+        execution_context(&root, &f),
+        Some(&legacy),
+        fetch,
+        || Ok(f.authorization.clone()),
+        |c| {
+            *saved.borrow_mut() = Some(c.clone());
+            Err("BEFORE_IMAGE_WRITE".into())
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "BEFORE_IMAGE_WRITE");
+    let interrupted = saved.into_inner().unwrap();
+    let pending = interrupted.pending.as_ref().unwrap();
+    assert_eq!(
+        pending.relative_path,
+        "chapters/000001-111111111111111111111111/000002.webp"
+    );
+    let second_path = root
+        .join(&f.plan.staging_subdir)
+        .join(&pending.relative_path);
+    fs::write(&second_path, &webp[..webp.len() / 2]).unwrap();
+    let saved = RefCell::new(None);
+    let result = isolated_staging_execution::execute_resumable_with_fetcher(
+        execution_context(&root, &f),
+        Some(&interrupted),
+        fetch,
+        || Ok(f.authorization.clone()),
+        |c| {
+            *saved.borrow_mut() = Some(c.clone());
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.filesystem_verification.filesystem_verified);
+    assert_eq!(fs::read(&first_path).unwrap(), first_bytes);
+    assert_eq!(fs::read(&second_path).unwrap(), webp);
+    assert!(!second_path.with_extension("jpg").exists());
+    assert_eq!(fetches.get(), 2);
+    let finished = saved.into_inner().unwrap();
+    assert_eq!(finished.descriptor_hash, legacy.descriptor_hash);
+    assert_eq!(finished.artifacts[0], legacy.artifacts[0]);
+    assert_eq!(
+        result.source_completion.manifest.artifacts,
+        finished.artifacts
+    );
+    let reloaded = serde_json::from_str(&serde_json::to_string(&finished).unwrap()).unwrap();
+    let result = isolated_staging_execution::execute_resumable_with_fetcher(
+        execution_context(&root, &f),
+        Some(&reloaded),
+        |_| async { panic!("completed prefix must not download again") },
+        || Ok(f.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert!(result.filesystem_verification.filesystem_verified);
+
+    // Suffix resolution must never permit another ordinal, directory or format.
+    for path in [
+        "chapters/000001-111111111111111111111111/000003.webp",
+        "../000002.webp",
+        "chapters/000001-111111111111111111111111/000002.exe",
+    ] {
+        let mut bad = finished.clone();
+        bad.artifacts[1].relative_path = path.into();
+        let error = isolated_staging_execution::execute_resumable_with_fetcher(
+            execution_context(&root, &f),
+            Some(&bad),
+            |_| async { panic!("invalid checkpoint must fail before a request") },
+            || Ok(f.authorization.clone()),
+            |_| Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "STAGING_CHECKPOINT_INVALID");
+    }
+    // Even a matching hash cannot justify a suffix that disagrees with content.
+    let mut wrong_suffix = finished;
+    wrong_suffix.artifacts[1].relative_path = wrong_suffix.artifacts[1]
+        .relative_path
+        .replace(".webp", ".png");
+    fs::rename(&second_path, second_path.with_extension("png")).unwrap();
+    let error = isolated_staging_execution::execute_resumable_with_fetcher(
+        execution_context(&root, &f),
+        Some(&wrong_suffix),
+        |_| async { panic!("wrong encoded format must fail before a request") },
+        || Ok(f.authorization.clone()),
+        |_| Ok(()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, "STAGING_CHECKPOINT_FILE_CHANGED");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn jpeg_staging_rejects_disguised_webp_and_resumes_exact_jpeg_prefix() {
     use std::cell::RefCell;
     let mut f = fixture("jm");

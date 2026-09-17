@@ -30,6 +30,8 @@ mod inventory_tests;
 mod pica_tests;
 #[path = "queue_tests.rs"]
 mod queue_tests;
+#[path = "rescan_tests.rs"]
+mod rescan_tests;
 #[path = "zip_tests.rs"]
 mod zip_tests;
 
@@ -676,6 +678,7 @@ fn set_active(f: &Fixture) {
     f.service.lock().unwrap().active = Some(Active {
         task_id: value.id,
         revision: value.revision,
+        library_generation: value.generation,
         _workspace: workspace,
     });
 }
@@ -735,6 +738,7 @@ fn stale_control_and_changed_root_are_refused_without_writes() {
     assert_eq!(before, f.store.read_downloads().unwrap());
     let mut library = f.store.read_library().unwrap();
     library.value.generation += 1;
+    library.value.root.as_mut().unwrap().file_key = "f".repeat(64);
     f.store
         .write_library(library.revision, library.value)
         .unwrap();

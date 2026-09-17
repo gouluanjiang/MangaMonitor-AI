@@ -96,7 +96,13 @@ struct Prepared {
 struct Active {
     task_id: String,
     revision: u64,
+    library_generation: u64,
     _workspace: DownloadWorkspace,
+}
+#[derive(Clone, Copy)]
+struct Admission {
+    revision: u64,
+    library_generation: u64,
 }
 #[derive(Default)]
 struct Runtime {
@@ -104,7 +110,7 @@ struct Runtime {
     active: Option<Active>,
     /// Only this process's explicit confirmations/continues enter this map.
     /// Durable queued records alone never authorize restart-time networking.
-    queued: BTreeMap<String, u64>,
+    queued: BTreeMap<String, Admission>,
     local_files: BTreeMap<String, (u64, LocalFiles)>,
     library_revision: Option<u64>,
 }
@@ -361,7 +367,13 @@ impl DownloadService {
         let saved = store.write_downloads(document.revision, document.value)?;
         for record in records {
             runtime.plans.remove(&record.id);
-            runtime.queued.insert(record.id, record.revision);
+            runtime.queued.insert(
+                record.id,
+                Admission {
+                    revision: record.revision,
+                    library_generation: record.generation,
+                },
+            );
         }
         Ok(snapshot(
             &saved,
@@ -433,6 +445,7 @@ impl DownloadService {
             .active
             .as_ref()
             .is_some_and(|a| a.task_id == task_id);
+        let mut library_generation = None;
         match action {
             Control::Pause => {
                 if !matches!(
@@ -450,7 +463,7 @@ impl DownloadService {
                     return Err(error("DOWNLOAD_WORKER_BUSY"));
                 }
                 let orphan = !active
-                    && runtime.queued.get(&task.id) != Some(&task.revision)
+                    && runtime.queued.get(&task.id).map(|a| a.revision) != Some(task.revision)
                     && matches!(
                         task.phase,
                         DownloadPhase::Queued
@@ -463,7 +476,7 @@ impl DownloadService {
                 {
                     return Err(error("DOWNLOAD_CONTROL_INVALID"));
                 }
-                require_library(store, task)?;
+                library_generation = Some(current_retry_generation(store, task)?);
                 task.phase = DownloadPhase::Queued;
                 task.error_code = None;
             }
@@ -474,8 +487,14 @@ impl DownloadService {
         let saved = store.write_downloads(document.revision, document.value)?;
         if action == Control::Pause {
             runtime.queued.remove(task_id);
-        } else {
-            runtime.queued.insert(task_id.into(), revision);
+        } else if let Some(library_generation) = library_generation {
+            runtime.queued.insert(
+                task_id.into(),
+                Admission {
+                    revision,
+                    library_generation,
+                },
+            );
         }
         Ok(snapshot(
             &saved,
@@ -523,6 +542,7 @@ impl DownloadService {
         validate_selections(selections)?;
         let mut runtime = self.lock()?;
         let mut document = self.load(store)?;
+        let mut admissions = BTreeMap::new();
         for selection in selections {
             let task = selected_task(&mut document.value, selection)?;
             if task.source != source {
@@ -535,7 +555,7 @@ impl DownloadService {
             {
                 return Err(error("DOWNLOAD_WORKER_BUSY"));
             }
-            let orphan = runtime.queued.get(&task.id) != Some(&task.revision)
+            let orphan = runtime.queued.get(&task.id).map(|a| a.revision) != Some(task.revision)
                 && matches!(
                     task.phase,
                     DownloadPhase::Queued
@@ -546,22 +566,21 @@ impl DownloadService {
             if task.phase != DownloadPhase::Paused && !orphan {
                 return Err(error("DOWNLOAD_CONTROL_INVALID"));
             }
-            require_library(store, task)?;
+            let library_generation = current_retry_generation(store, task)?;
             task.phase = DownloadPhase::Queued;
             task.error_code = None;
             task.revision = next(task.revision)?;
             task.updated_at = now()?;
+            admissions.insert(
+                task.id.clone(),
+                Admission {
+                    revision: task.revision,
+                    library_generation,
+                },
+            );
         }
         let saved = store.write_downloads(document.revision, document.value)?;
-        for selection in selections {
-            let task = saved
-                .value
-                .tasks
-                .iter()
-                .find(|t| t.id == selection.task_id)
-                .ok_or(error("DOWNLOAD_TASK_NOT_FOUND"))?;
-            runtime.queued.insert(task.id.clone(), task.revision);
-        }
+        runtime.queued.extend(admissions);
         Ok(snapshot(
             &saved,
             &mut runtime,
@@ -642,7 +661,7 @@ impl DownloadService {
             task.updated_at = now()?;
             store.write_downloads(document.revision, document.value)?;
         }
-        if runtime.queued.get(task_id) == Some(&expected_revision) {
+        if runtime.queued.get(task_id).map(|a| a.revision) == Some(expected_revision) {
             runtime.queued.remove(task_id);
         }
         Ok(())
@@ -652,15 +671,13 @@ impl DownloadService {
         store: &WorkbenchStore,
         id: &str,
         revision: u64,
-    ) -> Result<DownloadRecord> {
+    ) -> Result<(DownloadRecord, u64)> {
         let runtime = self.lock()?;
-        if !runtime
+        let active = runtime
             .active
             .as_ref()
-            .is_some_and(|a| a.task_id == id && a.revision == revision)
-        {
-            return Err(error("DOWNLOAD_PAUSED"));
-        }
+            .filter(|a| a.task_id == id && a.revision == revision)
+            .ok_or(error("DOWNLOAD_PAUSED"))?;
         let document = self.load_shared(store)?;
         let task = document
             .value
@@ -676,8 +693,8 @@ impl DownloadService {
         {
             return Err(error("DOWNLOAD_PAUSED"));
         }
-        require_library(store, task)?;
-        Ok(task.clone())
+        require_library_at(store, task, active.library_generation)?;
+        Ok((task.clone(), active.library_generation))
     }
     fn update_run(
         &self,
@@ -816,7 +833,7 @@ impl DownloadService {
         current_scope: impl Fn() -> Result<()> + Send + Sync,
     ) -> Result<Option<AwaitingIndexReceipt>> {
         current_scope()?;
-        let (initial, path) = {
+        let (initial, path, library_generation) = {
             let mut runtime = self.lock()?;
             if runtime.active.is_some() {
                 return Err(error("DOWNLOAD_WORKER_BUSY"));
@@ -835,9 +852,12 @@ impl DownloadService {
             if record.phase != DownloadPhase::Queued {
                 return Err(error("DOWNLOAD_CONTROL_INVALID"));
             }
-            if runtime.queued.get(task_id) != Some(&record.revision) {
-                return Err(error("DOWNLOAD_RESUME_REQUIRED"));
-            }
+            let admission = runtime
+                .queued
+                .get(task_id)
+                .copied()
+                .filter(|a| a.revision == record.revision)
+                .ok_or(error("DOWNLOAD_RESUME_REQUIRED"))?;
             match (record.source, pica_token) {
                 (Source::Jm, Some(_)) => return Err(error("DOWNLOAD_SOURCE_MISMATCH")),
                 (Source::Pica, None) => return Err(error("DOWNLOAD_SOURCE_TOKEN_REQUIRED")),
@@ -851,16 +871,17 @@ impl DownloadService {
                 }
                 _ => {}
             }
-            require_library(store, &record)?;
+            require_library_at(store, &record, admission.library_generation)?;
             let workspace = store.open_download_workspace()?;
             let path = workspace.path().to_path_buf();
             runtime.queued.remove(task_id);
             runtime.active = Some(Active {
                 task_id: task_id.into(),
                 revision: record.revision,
+                library_generation: admission.library_generation,
                 _workspace: workspace,
             });
-            (record, path)
+            (record, path, admission.library_generation)
         };
         let mut guard = RunGuard {
             service: self,
@@ -871,7 +892,7 @@ impl DownloadService {
         let revision = initial.revision;
         let require_record = || {
             current_scope()?;
-            let current = self.require_run(store, task_id, revision)?;
+            let (current, _) = self.require_run(store, task_id, revision)?;
             if current.target_hash != initial.target_hash
                 || current.source != initial.source
                 || current.approval_revision != initial.approval_revision
@@ -950,7 +971,7 @@ impl DownloadService {
                 .map(|_| ())
             })?;
             require()?;
-            receipt(&record)
+            receipt(&record, library_generation)
         }
         .await;
         match result {
@@ -975,8 +996,9 @@ impl DownloadService {
         store: &WorkbenchStore,
         expected: &AwaitingIndexReceipt,
     ) -> Result<()> {
-        let task = self.require_run(store, &expected.task_id, expected.task_revision)?;
-        if task.phase != DownloadPhase::Saving || receipt(&task)? != *expected {
+        let (task, generation) =
+            self.require_run(store, &expected.task_id, expected.task_revision)?;
+        if task.phase != DownloadPhase::Saving || receipt(&task, generation)? != *expected {
             return Err(error("DOWNLOAD_TASK_STALE"));
         }
         materialize::verify_output(&task)
@@ -1040,8 +1062,15 @@ impl DownloadService {
         };
         // A changed library generation can itself be the registration failure;
         // record it without requiring that now-invalid root to become valid.
+        let generation = self
+            .lock()?
+            .active
+            .as_ref()
+            .filter(|a| a.task_id == expected.task_id && a.revision == expected.task_revision)
+            .map(|a| a.library_generation)
+            .ok_or(error("DOWNLOAD_TASK_STALE"))?;
         self.update_run(store, &expected.task_id, expected.task_revision, |t| {
-            if receipt(t)? != *expected {
+            if receipt(t, generation)? != *expected {
                 return Err(error("DOWNLOAD_TASK_STALE"));
             }
             t.phase = DownloadPhase::Error;
@@ -1146,6 +1175,22 @@ fn validate_downloads(document: &Document<DownloadsDocument>) -> Result<()> {
     Ok(())
 }
 fn require_library(store: &WorkbenchStore, record: &DownloadRecord) -> Result<()> {
+    require_library_at(store, record, record.generation)
+}
+fn require_library_at(
+    store: &WorkbenchStore,
+    record: &DownloadRecord,
+    generation: u64,
+) -> Result<()> {
+    if current_retry_generation(store, record)? != generation {
+        return Err(error("DOWNLOAD_ROOT_CHANGED"));
+    }
+    Ok(())
+}
+/// Only an explicit retry/continue admits a completed rescan of the identical
+/// native directory. Keep original approval, staging and output proofs intact;
+/// the new index generation lives only in this process's admitted control epoch.
+fn current_retry_generation(store: &WorkbenchStore, record: &DownloadRecord) -> Result<u64> {
     let library = store.read_library_shared()?;
     if matches!(
         library.value.phase,
@@ -1154,20 +1199,22 @@ fn require_library(store: &WorkbenchStore, record: &DownloadRecord) -> Result<()
         return Err(error("LIBRARY_BUSY"));
     }
     if library.value.root.as_ref() != Some(&record.root)
-        || library.value.generation != record.generation
+        || library.value.generation < record.generation
+        || (library.value.generation != record.generation
+            && library.value.phase != LibraryPhase::Complete)
     {
         return Err(error("DOWNLOAD_ROOT_CHANGED"));
     }
     materialize::require_root(record)?;
-    Ok(())
+    Ok(library.value.generation)
 }
-fn receipt(record: &DownloadRecord) -> Result<AwaitingIndexReceipt> {
+fn receipt(record: &DownloadRecord, generation: u64) -> Result<AwaitingIndexReceipt> {
     Ok(AwaitingIndexReceipt {
         task_id: record.id.clone(),
         task_revision: record.revision,
         source: record.source,
         root_id: record.root.id.clone(),
-        generation: record.generation,
+        generation,
         relative_path: record.destination.clone(),
         work_id: record.metadata.work_id.clone(),
         expected_pages: record.files_total.ok_or(error("DOWNLOAD_PROOF_INVALID"))?,
@@ -1280,9 +1327,11 @@ fn snapshot(
         runtime.local_files.clear();
         runtime.library_revision = Some(library.revision);
     }
-    runtime.queued.retain(|id, revision| {
+    runtime.queued.retain(|id, admission| {
         document.value.tasks.iter().any(|task| {
-            task.id == *id && task.revision == *revision && task.phase == DownloadPhase::Queued
+            task.id == *id
+                && task.revision == admission.revision
+                && task.phase == DownloadPhase::Queued
         })
     });
     runtime.local_files.retain(|id, (revision, _)| {
@@ -1312,7 +1361,7 @@ fn snapshot(
             .map(|t| {
                 let active = runtime.active.as_ref().is_some_and(|a| a.task_id == t.id);
                 let phase = if !active
-                    && runtime.queued.get(&t.id) != Some(&t.revision)
+                    && runtime.queued.get(&t.id).map(|a| a.revision) != Some(t.revision)
                     && matches!(
                         t.phase,
                         DownloadPhase::Queued

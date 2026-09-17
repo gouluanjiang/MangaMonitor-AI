@@ -867,6 +867,16 @@ export function NativeDownloads({
                       )}
                   </div>
                 </div>
+                {task.phase !== "downloaded" &&
+                  task.filesTotal !== null &&
+                  task.filesDone === task.filesTotal && (
+                    <p
+                      className="source-notice"
+                      data-testid="download-finalization-pending"
+                    >
+                      图片已下载齐，保存或入库尚未完成。继续或重试时会先校验并复用已有进度。
+                    </p>
+                  )}
                 {task.errorCode && (
                   <p className="source-notice">
                     {downloadErrorMessage(task.errorCode)}

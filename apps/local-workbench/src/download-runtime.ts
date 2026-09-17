@@ -441,7 +441,7 @@ export function downloadErrorMessage(cause: unknown): string {
   if (code === "DOWNLOAD_LOCAL_FILES_UNAVAILABLE")
     return "保存目录或文件暂时无法读取，请检查目录后重新准备。";
   if (code === "LIBRARY_BUSY")
-    return "电脑目录正在读取或已暂停读取，请先完成目录读取再准备下载。";
+    return "电脑目录正在读取或已暂停读取，请完成目录读取后重试当前操作；已有下载进度会保留。";
   if (/BUSY/.test(code)) return "当前任务还在处理，请等待它暂停或完成后再试。";
   if (code === "DOWNLOAD_LIMIT_REACHED")
     return "下载记录已达到 500 条，请先整理已完成的历史记录，再添加任务。";

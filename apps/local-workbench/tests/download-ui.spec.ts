@@ -769,6 +769,46 @@ test("error retry retains the task and final native registration refreshes PC me
   expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
 });
 
+test("full image progress during a library rescan stays pending until final registration", async ({
+  page,
+}) => {
+  await install(page, { fixtureSource: "Pica" });
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-source").selectOption("Pica");
+  await page.getByTestId("download-input").fill("0123456789abcdef01234567");
+  await page.getByTestId("download-prepare").click();
+  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await page.getByTestId("download-confirm").click();
+  await page.evaluate(() => {
+    window.downloadTest.advance("error");
+    const task = window.downloadTest.queue.tasks[0];
+    task.filesDone = task.filesTotal!;
+    task.errorCode = "LIBRARY_BUSY";
+    window.downloadTest.queue.revision++;
+  });
+  const taskId = "c".repeat(64);
+  await expect(page.getByTestId("download-finalization-pending")).toContainText(
+    "保存或入库尚未完成",
+  );
+  await expect(page.getByTestId("download-task-" + taskId)).toContainText(
+    "完成目录读取后重试当前操作",
+  );
+  await expect(page.getByTestId("download-phase-" + taskId)).toHaveText(
+    "需要处理",
+  );
+  await expect(page.getByTestId("download-open-" + taskId)).toHaveCount(0);
+  await page.getByTestId("download-retry-" + taskId).click();
+  await page.evaluate(() => window.downloadTest.advance("downloaded"));
+  await expect(page.getByTestId("download-phase-" + taskId)).toHaveText(
+    "已下载",
+  );
+  await expect(page.getByTestId("download-finalization-pending")).toHaveCount(
+    0,
+  );
+  await expect(page.getByTestId("download-open-" + taskId)).toBeVisible();
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
+});
+
 test("a missing PC root routes to directory selection without preparation or media work", async ({
   page,
 }) => {

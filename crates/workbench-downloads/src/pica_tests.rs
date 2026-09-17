@@ -620,3 +620,38 @@ async fn pica_zip_retains_every_original_format_and_two_chapter_metadata() {
         Some(LocalFiles::Present)
     );
 }
+
+#[tokio::test]
+async fn pica_complete_media_after_rescan_finishes_zip_without_changing_original_proof() {
+    let f = pica_fixture();
+    let mut saved = pica_record(&f);
+    saved.zip_output = true;
+    saved.destination = crate::naming::zip_name(&saved.metadata);
+    saved.target_hash = binding(&saved).unwrap();
+    save_task(&f, saved);
+    seed_pica_with_mislabelled_image(&f, true).await;
+    let original = rescan_tests::mark_retryable(&f);
+    let generation = rescan_tests::finish_rescan(&f);
+    f.service
+        .control(&f.store, &f.id, original.revision, Control::Retry)
+        .unwrap();
+    let receipt = f
+        .service
+        .run_with_token(&f.store, &f.id, Some(TOKEN), || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.generation, generation);
+    assert_eq!(receipt.expected_pages, 5);
+    rescan_tests::register(&f, &receipt);
+    let completed = pica_record(&f);
+    assert_eq!(completed.phase, DownloadPhase::Downloaded);
+    assert_eq!(completed.generation, original.generation);
+    assert_eq!(completed.target_hash, original.target_hash);
+    assert_eq!(completed.staging_report_json, original.staging_report_json);
+    materialize::verify_output(&completed).unwrap();
+    assert_eq!(
+        f.service.read(&f.store).unwrap().tasks[1].local_files,
+        Some(LocalFiles::Present)
+    );
+}

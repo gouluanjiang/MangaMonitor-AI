@@ -798,6 +798,9 @@ test("full image progress during a library rescan stays pending until final regi
   );
   await expect(page.getByTestId("download-open-" + taskId)).toHaveCount(0);
   await page.getByTestId("download-retry-" + taskId).click();
+  await expect(page.getByTestId("download-phase-" + taskId)).toHaveText(
+    "正在下载",
+  );
   await page.evaluate(() => window.downloadTest.advance("downloaded"));
   await expect(page.getByTestId("download-phase-" + taskId)).toHaveText(
     "已下载",

@@ -228,14 +228,23 @@ fn retry_rejects_reading_paused_incomplete_and_different_directory_without_write
         let mut library = f.store.read_library().unwrap();
         library.value.generation += 1;
         library.value.phase = phase;
+        library.value.error_code =
+            (phase == LibraryPhase::Error).then(|| "LIBRARY_READ_FAILED".into());
         f.store
             .write_library(library.revision, library.value)
             .unwrap();
         let before = f.store.read_downloads().unwrap();
-        assert!(f
-            .service
-            .control(&f.store, &f.id, original.revision, Control::Retry)
-            .is_err());
+        assert_eq!(
+            f.service
+                .control(&f.store, &f.id, original.revision, Control::Retry)
+                .unwrap_err()
+                .code,
+            if phase == LibraryPhase::Error {
+                "DOWNLOAD_ROOT_CHANGED"
+            } else {
+                "LIBRARY_BUSY"
+            }
+        );
         assert_eq!(before, f.store.read_downloads().unwrap());
     }
     let f = fixture();

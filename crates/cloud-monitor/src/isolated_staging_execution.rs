@@ -287,7 +287,11 @@ where
         MAX_CONCURRENT_MEDIA,
         move |descriptor| {
             let future = fetch(descriptor);
-            async move { future.await.map(PipelineMedia::Verified) }
+            async move {
+                future
+                    .await
+                    .map(|media| PipelineMedia::Verified(Box::new(media)))
+            }
         },
         reauthorize,
         progress,
@@ -576,7 +580,7 @@ impl VerifiedMedia {
 
 enum PipelineMedia {
     Unchecked(ProcessedMedia),
-    Verified(VerifiedMedia),
+    Verified(Box<VerifiedMedia>),
 }
 
 #[cfg(test)]
@@ -620,7 +624,7 @@ mod verified_media_tests {
                 other.image_index += 1;
             }
             assert_eq!(
-                PipelineMedia::Verified(verified)
+                PipelineMedia::Verified(Box::new(verified))
                     .verify("jm", &other)
                     .err()
                     .as_deref(),
@@ -631,7 +635,7 @@ mod verified_media_tests {
         let expected_hash = sha256_bytes(&media.bytes);
         let verified = VerifiedMedia::validate("jm", descriptor.clone(), media).unwrap();
         assert_eq!(
-            PipelineMedia::Verified(verified)
+            PipelineMedia::Verified(Box::new(verified))
                 .verify("jm", &descriptor)
                 .unwrap()
                 .sha256,
@@ -640,7 +644,7 @@ mod verified_media_tests {
         let (descriptor, media) = fixture();
         let verified = VerifiedMedia::validate("jm", descriptor.clone(), media).unwrap();
         assert_eq!(
-            PipelineMedia::Verified(verified)
+            PipelineMedia::Verified(Box::new(verified))
                 .verify("pica", &descriptor)
                 .err()
                 .as_deref(),
@@ -752,7 +756,7 @@ impl PipelineMedia {
         match self {
             Self::Unchecked(media) => VerifiedMedia::validate(source, descriptor.clone(), media),
             Self::Verified(media) if media.source == source && &media.descriptor == descriptor => {
-                Ok(media)
+                Ok(*media)
             }
             Self::Verified(_) => Err("PROCESSED_MEDIA_DESCRIPTOR_BINDING_MISMATCH".into()),
         }

@@ -866,6 +866,16 @@ async function installMock(page: Page, options: MockOptions = {}) {
           });
           if (command === "read_preferences") return clone(hooks.preferences);
           if (command === "jm_download_read") return { revision: 0, tasks: [] };
+          if (
+            command === "download_inventory_read" &&
+            options.authorSearchResults
+          )
+            return {
+              revision: 0,
+              libraryRevision: 0,
+              rootId: "a".repeat(64),
+              items: [],
+            };
           if (command === "source_matches_read") return clone(hooks.matches);
           if (command === "source_matches_confirm") {
             if (raw.revision !== hooks.matches.revision)
@@ -921,15 +931,15 @@ async function installMock(page: Page, options: MockOptions = {}) {
             command === "library_associate"
           ) {
             if (command === "library_associate") libraryConfirmed = true;
+            const configured =
+              options.crossSourcePC || options.authorSearchResults;
             const snapshot = {
               revision: options.crossSourcePC ? 1 : 0,
-              rootId: options.crossSourcePC ? "a".repeat(64) : null,
-              rootPath: options.crossSourcePC
-                ? "C:\\Synthetic PC Library"
-                : null,
-              generation: options.crossSourcePC ? 1 : 0,
-              phase: options.crossSourcePC ? "complete" : "idle",
-              freshness: options.crossSourcePC ? "live" : "none",
+              rootId: configured ? "a".repeat(64) : null,
+              rootPath: configured ? "C:\\Synthetic PC Library" : null,
+              generation: configured ? 1 : 0,
+              phase: configured ? "complete" : "idle",
+              freshness: configured ? "live" : "none",
               items: options.crossSourcePC
                 ? [
                     {

@@ -149,6 +149,20 @@ pub struct LibraryRelocation {
     pub sha256: String,
 }
 
+/// Explicitly reviewed old-library evidence. This is neither a download receipt
+/// nor a title/author inference; only the bounded local review importer writes it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReviewedLibraryWork {
+    pub reference: LibraryReference,
+    pub relative_path: String,
+    pub library_entry_id: String,
+    pub identity: LibraryFileIdentity,
+    pub sha256: String,
+    pub review_sha256: String,
+    pub registered_at: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LibraryCoverFile {
@@ -175,6 +189,8 @@ pub struct LibraryDocument {
     pub records: Vec<LibraryRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relocations: Vec<LibraryRelocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewed_works: Vec<ReviewedLibraryWork>,
     pub visited: u64,
     pub skipped: u64,
     pub updated_at: Option<u64>,
@@ -190,6 +206,7 @@ impl Default for LibraryDocument {
             phase: LibraryPhase::Idle,
             records: Vec::new(),
             relocations: Vec::new(),
+            reviewed_works: Vec::new(),
             visited: 0,
             skipped: 0,
             updated_at: None,
@@ -253,6 +270,7 @@ impl ValidatedDocument for LibraryDocument {
             || self.skipped > self.visited
             || self.records.len() > MAX_LIBRARY_ITEMS
             || self.relocations.len() > MAX_LIBRARY_ITEMS
+            || self.reviewed_works.len() > MAX_LIBRARY_ITEMS * 2
             || self.records.len() as u64 > self.visited
             || self.updated_at.is_some_and(|v| v > MAX_SAFE_INTEGER)
             || !error_code(&self.error_code)
@@ -278,6 +296,7 @@ impl ValidatedDocument for LibraryDocument {
             || self.phase != LibraryPhase::Idle
             || !self.records.is_empty()
             || !self.relocations.is_empty()
+            || !self.reviewed_works.is_empty()
             || self.visited != 0
             || self.skipped != 0
             || self.updated_at.is_some()
@@ -291,6 +310,34 @@ impl ValidatedDocument for LibraryDocument {
         let mut ids = HashSet::new();
         let mut paths = HashSet::new();
         let mut old_paths = HashSet::new();
+        let mut reviewed_references = HashSet::new();
+        for reviewed in &self.reviewed_works {
+            if !reviewed.reference.is_valid()
+                || !reviewed_references
+                    .insert((reviewed.reference.source, &reviewed.reference.work_id))
+                || !library_relative_path_is_valid(&reviewed.relative_path)
+                || !reviewed
+                    .relative_path
+                    .to_ascii_lowercase()
+                    .ends_with(".zip")
+                || !library_hash_is_valid(&reviewed.library_entry_id)
+                || !library_hash_is_valid(&reviewed.sha256)
+                || !library_hash_is_valid(&reviewed.review_sha256)
+                || !library_hash_is_valid(&reviewed.identity.file_key)
+                || reviewed.identity.bytes == 0
+                || reviewed.identity.bytes > MAX_SAFE_INTEGER
+                || reviewed.identity.modified.is_empty()
+                || reviewed.identity.modified.len() > 64
+                || !reviewed
+                    .identity
+                    .modified
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
+                || reviewed.registered_at > MAX_SAFE_INTEGER
+            {
+                return Err(invalid());
+            }
+        }
         for relocation in &self.relocations {
             if !library_relative_path_is_valid(&relocation.old_path)
                 || !library_relative_path_is_valid(&relocation.new_path)

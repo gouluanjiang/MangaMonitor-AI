@@ -158,6 +158,11 @@ impl LibraryService {
             .ok_or(error("REVISION_EXHAUSTED"))?;
         let mut job = ScanJob::new(root, generation, previous.revision, &previous.value.records)?;
         let value = LibraryDocument {
+            reviewed_works: if previous.value.root.as_ref() == Some(&job.root.saved) {
+                previous.value.reviewed_works.clone()
+            } else {
+                Vec::new()
+            },
             relocations: if previous.value.root.as_ref() == Some(&job.root.saved) {
                 previous.value.relocations.clone()
             } else {

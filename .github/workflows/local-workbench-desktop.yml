@@ -100,6 +100,8 @@ jobs:
         run: cargo +1.98.1 test --locked -p workbench-storage -p workbench-credentials -p workbench-sources -p workbench-accounts -p workbench-library -p workbench-downloads -- --test-threads=2
       - name: Verify Windows credential persistence in random CI slots
         run: cargo +1.98.1 test --locked -p workbench-credentials windows_credential_manager_roundtrip_uses_only_random_ci_slots -- --ignored --test-threads=1
+      - name: Build the local reviewed-library import helper
+        run: cargo +1.98.1 build --locked -p workbench-library --bin mangamonitor-library-review
       - name: Build frontend assets for native context tests
         working-directory: apps/local-workbench
         run: pnpm build
@@ -217,6 +219,13 @@ jobs:
         with:
           name: mangamonitor-dev-executable-${{ github.sha }}
           path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/mangamonitor-workbench-preview.exe
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload local reviewed-library helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-library-review-${{ github.sha }}
+          path: target/debug/mangamonitor-library-review.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload native smoke failure evidence

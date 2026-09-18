@@ -49,7 +49,7 @@ const receipt = (state = "present") => ({
     { source: "JM", workId: "123", libraryEntryId: entryId, localFiles: state },
   ],
 });
-test("only same-source download receipts grant ownership; metadata, title and manual links do not", () => {
+test("only explicit same-source inventory evidence grants ownership; metadata, title and legacy links do not", () => {
   assert.equal(
     createInventoryMatcher(snapshot(), { ...receipt(), items: [] })(work).kind,
     "missing",

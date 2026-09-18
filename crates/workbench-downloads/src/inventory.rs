@@ -1,4 +1,5 @@
-//! Source-specific ownership from completed downloads, never manga matching.
+//! Source-specific ownership from completed downloads or explicitly reviewed
+//! old-library entries, always with current files; never manga matching.
 use crate::{presence, DownloadPhase, LocalFiles};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -84,6 +85,20 @@ pub(crate) fn project(
                 relocated,
                 records.get(entry_id.as_str()).copied(),
             ),
+        });
+    }
+    for reviewed in workbench_library::reviewed_library_presence(&library.value) {
+        use workbench_library::ReviewedFilePresence;
+        add(DownloadInventoryItem {
+            source: reviewed.reference.source,
+            work_id: reviewed.reference.work_id,
+            library_entry_id: reviewed.library_entry_id,
+            local_files: match reviewed.presence {
+                ReviewedFilePresence::Present => LocalFiles::Present,
+                ReviewedFilePresence::Missing => LocalFiles::Missing,
+                ReviewedFilePresence::Changed => LocalFiles::Incomplete,
+                ReviewedFilePresence::Unavailable => LocalFiles::Unavailable,
+            },
         });
     }
     DownloadInventorySnapshot {

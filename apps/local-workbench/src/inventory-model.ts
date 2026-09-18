@@ -2,7 +2,7 @@ import type { LibraryItem, LibrarySnapshot } from "./library-types.ts";
 import type { SourceWork } from "./source-types.ts";
 import type { DownloadInventorySnapshot } from "./download-types.ts";
 
-/** Source-specific download receipts and files are the only ownership evidence. */
+/** Explicit same-source download/review records plus current file presence. */
 export interface InventoryMatch {
   kind: "owned" | "missing" | "unconfigured" | "unknown";
   items: LibraryItem[];
@@ -14,7 +14,7 @@ export const readableLibraryItem = (item: LibraryItem) =>
 export const libraryItemStatus = (item: LibraryItem) =>
   readableLibraryItem(item) ? "已入库 · 电脑漫画库" : "文件待核对";
 export const inventoryScopeNote =
-  "按本软件对应来源的下载记录和实际文件统计；未登记的旧漫画可能显示“未入库”。";
+  "按对应来源的下载记录、已核对旧库登记和实际文件统计；未登记的旧漫画可能显示“未入库”。";
 export function createInventoryMatcher(
   library: LibrarySnapshot | undefined,
   downloads: DownloadInventorySnapshot | undefined,

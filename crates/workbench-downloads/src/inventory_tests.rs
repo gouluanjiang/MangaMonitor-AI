@@ -107,3 +107,43 @@ fn a_new_library_root_does_not_inherit_old_receipts() {
         .unwrap();
     assert!(f.service.inventory(&f.store).unwrap().items.is_empty());
 }
+
+#[test]
+fn reviewed_old_library_is_visible_without_creating_a_download_receipt() {
+    use sha2::{Digest, Sha256};
+    let f = zip_fixture();
+    let completed = complete_for_presence(&f, record(&f));
+    let mut downloads = f.store.read_downloads().unwrap();
+    downloads.value.tasks.clear();
+    let downloads = f
+        .store
+        .write_downloads(downloads.revision, downloads.value)
+        .unwrap();
+    assert!(f.service.inventory(&f.store).unwrap().items.is_empty());
+    let library = f.store.read_library().unwrap();
+    let bytes = fs::read(f.library.join(&completed.destination)).unwrap();
+    let manifest = serde_json::to_vec(&serde_json::json!({
+        "schemaVersion":1,"root":library.value.root,
+        "items":[{"relativePath":completed.destination,"bytes":bytes.len(),
+            "sha256":format!("{:x}",Sha256::digest(&bytes)),
+            "references":[{"source":"Pica","workId":"0123456789abcdef01234567"}]}]
+    }))
+    .unwrap();
+    workbench_library::import_reviewed_library(
+        &f.store,
+        &manifest,
+        library.revision,
+        &format!("{:x}", Sha256::digest(&manifest)),
+    )
+    .unwrap();
+    let inventory = f.service.inventory(&f.store).unwrap();
+    assert_eq!(inventory.items.len(), 1);
+    assert_eq!(inventory.items[0].source, Source::Pica);
+    assert_eq!(inventory.items[0].local_files, LocalFiles::Present);
+    assert_eq!(f.store.read_downloads().unwrap(), downloads);
+    fs::remove_file(f.library.join(&completed.destination)).unwrap();
+    assert_eq!(
+        f.service.inventory(&f.store).unwrap().items[0].local_files,
+        LocalFiles::Missing
+    );
+}

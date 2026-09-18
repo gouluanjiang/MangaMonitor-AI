@@ -5,10 +5,15 @@ mod cover;
 mod metadata;
 mod migration;
 mod paths;
+mod reviewed;
 mod scan;
 mod service;
 
 pub use migration::LibraryMigrationResult;
+pub use reviewed::{
+    import_reviewed_library, preview_reviewed_library, reviewed_library_presence,
+    ReviewedFilePresence, ReviewedLibraryImport, ReviewedLibraryPresence,
+};
 use serde::{Deserialize, Serialize};
 pub use service::LibraryService;
 use sha2::{Digest, Sha256};

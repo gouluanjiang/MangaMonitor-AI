@@ -108,7 +108,7 @@ fn checkpoint_document() -> DiscoveryDocument {
         query_version: 1,
         head_ids: vec!["123".into()],
         total: 1,
-        established_at: 20,
+        established_at: 10,
     });
     value
 }

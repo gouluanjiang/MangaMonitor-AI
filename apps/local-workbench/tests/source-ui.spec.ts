@@ -1661,9 +1661,21 @@ test("source covers release offscreen images but reuse successful session thumbn
     0,
   );
   await page.getByTestId("account-favorites-JM").click();
-  await page.getByTestId("source-workbench").evaluate((element) => {
-    element.closest("main")!.scrollTop = 0;
-  });
+  // Returning from settings restores the saved bottom-of-list anchor on a
+  // rendering frame. Wait for that observable position before scrolling as a
+  // user; an immediate scrollTop assignment can be overwritten by restoration.
+  await expect(
+    page.getByTestId("source-cover-JM:219").locator("img"),
+  ).toBeInViewport();
+  const scrollArea = page.getByRole("main");
+  await scrollArea.hover();
+  await page.mouse.wheel(
+    0,
+    -(await scrollArea.evaluate((element) => element.scrollHeight)),
+  );
+  await expect
+    .poll(() => scrollArea.evaluate((element) => element.scrollTop))
+    .toBe(0);
   await expect(
     page.getByTestId("source-cover-JM:100").locator("img"),
   ).toBeVisible();

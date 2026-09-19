@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560" role="img" aria-labelledby="title desc">
+  <title id="title">雾中书店</title>
+  <desc id="desc">原创虚构漫画封面。深绿色植物和薄雾围着一间亮灯的书店，拱形橱窗里排列着旧书。</desc>
+  <defs>
+    <linearGradient id="night" x2="1" y2="1"><stop stop-color="#153e36"/><stop offset="1" stop-color="#456853"/></linearGradient>
+    <linearGradient id="window" x2="0" y2="1"><stop stop-color="#d8c78a"/><stop offset="1" stop-color="#ab925d"/></linearGradient>
+    <pattern id="brick" width="46" height="28" patternUnits="userSpaceOnUse"><path d="M0 0h46M0 14h46M23 0v14M0 14v14m46-14v14" stroke="#69836a" stroke-width=".65" opacity=".4"/></pattern>
+    <pattern id="grain" width="8" height="7" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r=".55" fill="#eadcab" opacity=".17"/><path d="M6 5h1" stroke="#0d352e" opacity=".3"/></pattern>
+  </defs>
+  <rect width="400" height="560" fill="url(#night)"/>
+  <circle cx="284" cy="190" r="71" fill="#718666" opacity=".2"/>
+  <path d="M0 441q151-38 400-18v137H0Z" fill="#24483e"/>
+  <path d="M88 197h224v259H88z" fill="#52745c"/>
+  <path d="M88 197h224v259H88z" fill="url(#brick)"/>
+  <path d="m77 202 18-22h210l21 22z" fill="#214c3e" stroke="#789371" stroke-width="1"/>
+  <path d="M80 205h242v11H80z" fill="#879467"/>
+  <path d="M108 235h185v42H108z" fill="#1f493a" stroke="#aeb17c" stroke-width="1"/>
+  <text x="201" y="262" text-anchor="middle" fill="#d8cd99" font-family="Georgia,serif" font-size="17" letter-spacing="5">EPILOGUE</text>
+  <path d="M109 439V323a40 40 0 0 1 80 0v116z" fill="#183e31" stroke="#a1a77a" stroke-width="3"/>
+  <path d="M118 420v-97a31 31 0 0 1 62 0v97z" fill="url(#window)"/>
+  <path d="M204 439V323a40 40 0 0 1 80 0v116z" fill="#183e31" stroke="#a1a77a" stroke-width="3"/>
+  <path d="M213 415v-92a31 31 0 0 1 62 0v92z" fill="url(#window)"/>
+  <path d="M118 332h62m-62 41h62m-62 42h62M213 332h62m-62 40h62m-62 42h62" stroke="#55705a" stroke-width="4"/>
+  <path d="M149 287v130M244 289v42" stroke="#617557" stroke-width="3"/>
+  <g fill="#627b58" stroke="#e0cf93" stroke-width=".55">
+    <path d="M123 343h8v27h-8zM134 339h7v31h-7zM143 345h10v25h-10zM158 341l7-2 8 30-7 2zM123 388h9v24h-9zM135 382h7v30h-7zM149 386h7v26h-7zM160 380h11v32h-11z"/>
+    <path d="M218 343h7v26h-7zM229 338h10v31h-10zM244 344h6v25h-6zM254 339h13v30h-13z"/>
+  </g>
+  <path d="M216 403h51v7h-51zm9-8h37v7h-37zm-5-7h43v6h-43z" fill="#6b7d5d"/>
+  <circle cx="269" cy="397" r="2.5" fill="#e9d494"/>
+  <path d="M103 441h188v8H103zM94 450h205v8H94z" fill="#89916d"/>
+  <path d="M109 445h179m-192 11h200" stroke="#b6b48d" stroke-width=".7"/>
+  <path d="M298 296h34v29m-10-1h20l-3 27h-14z" stroke="#162f26" stroke-width="3" fill="#dbc387"/>
+  <path d="M322 324h20l-4-5h-12z" fill="#183e31"/><circle cx="332" cy="338" r="28" fill="#d3b87c" opacity=".09"/>
+  <path d="M0 383q51-26 91-6v107H0Z" fill="#254e3d"/>
+  <path d="M37 470q39-86 19-218m18 184q-9-72 10-114M339 464q-32-102 13-233m-14 190q-3-68 41-114" fill="none" stroke="#8b9b69" stroke-width="2"/>
+  <g fill="#66845d">
+    <path d="M59 333q-44-18-39-51 38 11 39 51zm0-38q2-41 29-51 2 31-29 51zM62 381q-44-2-49-33 36-4 49 33zm9-7q5-38 31-36-1 29-31 36zM51 422q-35-7-44-37 40 3 44 37z"/>
+    <path d="M345 310q-24-31-3-54 17 21 3 54zm3 23q17-34 43-28-8 29-43 28zm-14 41q-27-23-13-52 22 17 13 52zm5 30q14-35 44-32-6 30-44 32zm10 37q17-25 43-16-10 23-43 16z"/>
+  </g>
+  <path d="M0 477q100-50 201-6t199-4v36q-87 23-190-3T0 513Z" fill="#9cae91" opacity=".2"/>
+  <path d="M0 447q123-32 194-6t206-5" fill="none" stroke="#b6bca0" stroke-width="15" opacity=".1"/>
+  <rect width="400" height="560" fill="url(#grain)"/>
+  <g fill="#e3ddbc" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,serif">
+    <text x="35" y="77" font-size="45" letter-spacing="5">雾中书店</text>
+    <text x="37" y="108" font-size="9.5" letter-spacing="2.4">为没有结尾的故事留一盏灯</text>
+    <text x="38" y="139" font-family="Georgia,serif" font-size="10" letter-spacing="2.5">THE BOOKSHOP IN THE MIST</text>
+    <text x="35" y="523" font-size="14" letter-spacing="4">薄荷山羊</text>
+  </g>
+  <text x="365" y="525" text-anchor="end" fill="#a8b18a" font-family="Georgia,serif" font-size="28">01</text>
+  <text x="37" y="545" fill="#93a483" font-family="sans-serif" font-size="7" letter-spacing="2.6">FICTIONAL COVER / ORIGINAL ART</text>
+  <path d="M20 32V20h13m334 0h13v12M20 528v12h13m334 0h13v-12" fill="none" stroke="#92a47d" stroke-width="1"/>
+</svg>

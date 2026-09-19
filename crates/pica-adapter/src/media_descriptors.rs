@@ -4,7 +4,7 @@
 //! the exact media identity/file-server/path ordering used by the pinned
 //! downloader. It never downloads image bytes or touches the filesystem.
 
-use super::{number, string, valid_id, PicaClient};
+use super::{pagination, string, valid_id, PicaClient};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -31,9 +31,7 @@ fn source_format_from_path(path: &str) -> Result<String, String> {
         .next()
         .filter(|value| !value.is_empty())
         .ok_or("INVALID_PICA_MEDIA_PATH")?;
-    let (_, extension) = tail
-        .rsplit_once('.')
-        .ok_or("INVALID_PICA_MEDIA_PATH")?;
+    let (_, extension) = tail.rsplit_once('.').ok_or("INVALID_PICA_MEDIA_PATH")?;
     let extension = extension.to_ascii_lowercase();
     if !matches!(extension.as_str(), "gif" | "webp" | "jpg" | "jpeg" | "png") {
         return Err("UNSUPPORTED_PICA_MEDIA_FORMAT".into());
@@ -124,7 +122,7 @@ impl PicaClient {
         if !valid_id(comic_id) || chapter_order == 0 || max_pages == 0 {
             return Err("INVALID_PICA_MEDIA_ENUMERATION_INPUT".into());
         }
-        let mut total_pages = None;
+        let mut page_scope = None;
         let mut successful_pages = Vec::new();
         let mut media_ids = BTreeSet::new();
         let mut media = Vec::new();
@@ -141,20 +139,7 @@ impl PicaClient {
                 )
                 .await?;
             let pages = &data["pages"];
-            let reported_pages = number(&pages["pages"]).ok_or("MISSING_IMAGE_PAGES")?;
-            if reported_pages == 0 {
-                return Err("PICA_MEDIA_PAGES_EMPTY".into());
-            }
-            if total_pages
-                .replace(reported_pages)
-                .is_some_and(|previous| previous != reported_pages)
-            {
-                return Err("PICA_MEDIA_PAGE_COUNT_CHANGED".into());
-            }
-            let docs = pages["docs"].as_array().ok_or("MISSING_IMAGE_DOCS")?;
-            if docs.is_empty() {
-                return Err("PICA_MEDIA_PAGE_EMPTY".into());
-            }
+            let (scope, docs) = pagination::read_page(pages, page, max_pages, &mut page_scope)?;
             successful_pages.push(page);
             for doc in docs {
                 let item = parse_media_doc(doc)?;
@@ -163,19 +148,16 @@ impl PicaClient {
                 }
                 media.push(item);
             }
-            if page == reported_pages {
-                if media.is_empty() {
-                    return Err("PICA_MEDIA_ENUMERATION_EMPTY".into());
+            if page == scope.pages {
+                if media.len() as u64 != scope.total {
+                    return Err("PICA_PAGINATION_INCOMPLETE".into());
                 }
                 return Ok(PicaChapterMediaEnumeration {
                     chapter_order,
-                    total_pages: reported_pages,
+                    total_pages: scope.pages,
                     successful_pages,
                     media,
                 });
-            }
-            if page > reported_pages {
-                return Err("PICA_MEDIA_PAGINATION_OVERRUN".into());
             }
         }
         Err("PICA_MEDIA_PAGINATION_BUDGET_EXHAUSTED".into())

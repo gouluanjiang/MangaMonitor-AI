@@ -19,10 +19,32 @@ fn format(format: &str) -> Option<ImageFormat> {
     }
 }
 
+/// Detect supported encoded content, independently of URL suffix or HTTP MIME.
+/// Detection alone is not a validity check; live/staging callers still decode.
+pub(crate) fn detected_format(bytes: &[u8]) -> Result<&'static str, String> {
+    match image::guess_format(bytes) {
+        Ok(ImageFormat::Gif) => Ok("gif"),
+        Ok(ImageFormat::WebP) => Ok("webp"),
+        Ok(ImageFormat::Jpeg) => Ok("jpg"),
+        Ok(ImageFormat::Png) => Ok("png"),
+        _ => Err("UNSUPPORTED_IMAGE_FORMAT".into()),
+    }
+}
+
+pub(crate) fn validate_detected(bytes: &[u8]) -> Result<&'static str, String> {
+    let format = detected_format(bytes)?;
+    validate(format, bytes)?;
+    Ok(format)
+}
+
 /// Decode the complete image stream using the descriptor's declared format.
 /// The original bytes remain unchanged for no-op/animated formats, but they
 /// must still be decodable before downstream staging treats them as success.
 pub(crate) fn validate(format_name: &str, bytes: &[u8]) -> Result<(), String> {
+    decode(format_name, bytes).map(|_| ())
+}
+
+pub(crate) fn decode(format_name: &str, bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let format = format(format_name).ok_or("UNSUPPORTED_IMAGE_FORMAT")?;
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     let mut limits = Limits::default();
@@ -30,12 +52,14 @@ pub(crate) fn validate(format_name: &str, bytes: &[u8]) -> Result<(), String> {
     limits.max_image_height = Some(MAX_IMAGE_HEIGHT);
     limits.max_alloc = Some(MAX_IMAGE_ALLOC_BYTES);
     reader.limits(limits);
-    reader.decode().map(|_| ()).map_err(|_| match format_name {
-        "gif" => "IMAGE_GIF_DECODE_FAILED",
-        "webp" => "IMAGE_WEBP_DECODE_FAILED",
-        "jpg" | "jpeg" => "IMAGE_JPEG_DECODE_FAILED",
-        "png" => "IMAGE_PNG_DECODE_FAILED",
-        _ => "UNSUPPORTED_IMAGE_FORMAT",
-    }
-    .to_owned())
+    reader.decode().map_err(|_| {
+        match format_name {
+            "gif" => "IMAGE_GIF_DECODE_FAILED",
+            "webp" => "IMAGE_WEBP_DECODE_FAILED",
+            "jpg" | "jpeg" => "IMAGE_JPEG_DECODE_FAILED",
+            "png" => "IMAGE_PNG_DECODE_FAILED",
+            _ => "UNSUPPORTED_IMAGE_FORMAT",
+        }
+        .to_owned()
+    })
 }

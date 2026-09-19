@@ -1,8 +1,11 @@
 //! Pinned extraction of lanyeeee/picacomic-downloader @ 77c8b62e.
 //! Metadata APIs remain read-only; A6.14 media transport may fetch bytes only in memory and never touches the filesystem.
+#[cfg(test)]
+mod download_tests;
 pub mod media_descriptors;
 #[cfg(test)]
 mod media_fetch;
+mod pagination;
 
 use hmac::{Hmac, Mac};
 use rand::Rng;
@@ -81,9 +84,47 @@ pub struct PicaClient {
     client: reqwest::Client,
     token: String,
     pub traces: Vec<RequestTrace>,
+    pacing: MetadataPacing,
+    #[cfg(test)]
+    script: Option<std::collections::VecDeque<Result<Value, String>>>,
+    #[cfg(test)]
+    requested_paths: Vec<String>,
 }
+
+#[derive(Clone, Copy)]
+enum MetadataPacing {
+    Monitor,
+    AuthorizedDownload,
+}
+
+impl MetadataPacing {
+    fn delay_ms(self, method: &reqwest::Method, operation: &str) -> u64 {
+        if matches!(self, Self::AuthorizedDownload)
+            && method == reqwest::Method::GET
+            && matches!(
+                operation,
+                "preflight_chapters" | "preflight_images" | "live_media_descriptors"
+            )
+        {
+            0
+        } else {
+            rand::thread_rng().gen_range(1000..=3000)
+        }
+    }
+}
+
 impl PicaClient {
     pub fn new(token: String) -> Result<Self, String> {
+        Self::with_pacing(token, MetadataPacing::Monitor)
+    }
+
+    /// Only the explicitly authorized download enumerators select immediate
+    /// metadata pacing. Monitoring, login and unrelated APIs retain the delay.
+    pub fn new_for_download(token: String) -> Result<Self, String> {
+        Self::with_pacing(token, MetadataPacing::AuthorizedDownload)
+    }
+
+    fn with_pacing(token: String, pacing: MetadataPacing) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
@@ -93,6 +134,11 @@ impl PicaClient {
             client,
             token,
             traces: vec![],
+            pacing,
+            #[cfg(test)]
+            script: None,
+            #[cfg(test)]
+            requested_paths: Vec::new(),
         })
     }
     async fn request(
@@ -103,7 +149,35 @@ impl PicaClient {
         operation: &str,
         page: Option<u64>,
     ) -> Result<Value, String> {
-        let delay_ms = rand::thread_rng().gen_range(1000..=3000);
+        #[cfg(test)]
+        if let Some(result) = self.scripted_response(path) {
+            return result;
+        }
+        self.request_live(method, path, body, operation, page).await
+    }
+
+    #[cfg(test)]
+    fn scripted_response(&mut self, path: &str) -> Option<Result<Value, String>> {
+        self.requested_paths.push(path.to_owned());
+        // Always intercept unit-test requests, including an absent or exhausted
+        // script. No forgotten fixture can fall through to a real source.
+        Some(
+            self.script
+                .as_mut()
+                .and_then(std::collections::VecDeque::pop_front)
+                .unwrap_or_else(|| Err("TEST_SOURCE_REQUEST_FORBIDDEN".into())),
+        )
+    }
+
+    async fn request_live(
+        &mut self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+        operation: &str,
+        page: Option<u64>,
+    ) -> Result<Value, String> {
+        let delay_ms = self.pacing.delay_ms(&method, operation);
         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         let started = Instant::now();
         let time = SystemTime::now()
@@ -285,16 +359,30 @@ impl PicaClient {
         id: &str,
         max_pages: u64,
     ) -> Result<PicaChapterEnumeration, String> {
+        self.preflight_chapters_with_guard(id, max_pages, || Ok(()))
+            .await
+    }
+
+    pub async fn preflight_chapters_with_guard<Guard>(
+        &mut self,
+        id: &str,
+        max_pages: u64,
+        mut before_request: Guard,
+    ) -> Result<PicaChapterEnumeration, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
         if !valid_id(id) {
             return Err("INVALID_PICA_ID".into());
         }
         if max_pages == 0 {
             return Err("INVALID_PICA_PREFLIGHT_PAGE_BUDGET".into());
         }
-        let mut total_pages = None;
+        let mut page_scope = None;
         let mut successful_pages = Vec::new();
         let mut chapters = Vec::new();
         for page in 1..=max_pages {
+            before_request()?;
             let data = self
                 .request(
                     reqwest::Method::GET,
@@ -305,34 +393,24 @@ impl PicaClient {
                 )
                 .await?;
             let eps = &data["eps"];
-            let reported_pages = number(&eps["pages"]).ok_or("MISSING_CHAPTER_PAGES")?;
-            if reported_pages == 0 {
-                return Err("PICA_PREFLIGHT_CHAPTER_PAGES_EMPTY".into());
-            }
-            if total_pages
-                .replace(reported_pages)
-                .is_some_and(|previous| previous != reported_pages)
-            {
-                return Err("PICA_PREFLIGHT_CHAPTER_PAGE_COUNT_CHANGED".into());
-            }
-            let docs = eps["docs"].as_array().ok_or("MISSING_CHAPTER_DOCS")?;
-            if docs.is_empty() {
-                return Err("PICA_PREFLIGHT_CHAPTER_PAGE_EMPTY".into());
-            }
+            let (scope, docs) = pagination::read_page(eps, page, max_pages, &mut page_scope)?;
             successful_pages.push(page);
             for doc in docs {
                 chapters.push(parse_preflight_chapter(doc)?);
             }
-            if page == reported_pages {
+            if page == scope.pages {
+                // Pinned utils.rs sorts the complete chapter set by order.
+                // Sorting does not excuse duplicate IDs/orders or missing pages.
+                chapters.sort_by_key(|chapter| chapter.chapter_order);
                 validate_preflight_chapters(&chapters)?;
+                if chapters.len() as u64 != scope.total {
+                    return Err("PICA_PAGINATION_INCOMPLETE".into());
+                }
                 return Ok(PicaChapterEnumeration {
-                    total_pages: reported_pages,
+                    total_pages: scope.pages,
                     successful_pages,
                     chapters,
                 });
-            }
-            if page > reported_pages {
-                return Err("PICA_PREFLIGHT_CHAPTER_PAGINATION_OVERRUN".into());
             }
         }
         Err("PICA_PREFLIGHT_CHAPTER_PAGINATION_BUDGET_EXHAUSTED".into())
@@ -347,14 +425,29 @@ impl PicaClient {
         chapter_order: u64,
         max_pages: u64,
     ) -> Result<PicaImageEnumeration, String> {
+        self.preflight_chapter_images_with_guard(comic_id, chapter_order, max_pages, || Ok(()))
+            .await
+    }
+
+    pub async fn preflight_chapter_images_with_guard<Guard>(
+        &mut self,
+        comic_id: &str,
+        chapter_order: u64,
+        max_pages: u64,
+        mut before_request: Guard,
+    ) -> Result<PicaImageEnumeration, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
         if !valid_id(comic_id) || chapter_order == 0 || max_pages == 0 {
             return Err("INVALID_PICA_IMAGE_PREFLIGHT_INPUT".into());
         }
-        let mut total_pages = None;
+        let mut page_scope = None;
         let mut successful_pages = Vec::new();
         let mut image_ids = BTreeSet::new();
         let mut expected_images = 0u64;
         for page in 1..=max_pages {
+            before_request()?;
             let data = self
                 .request(
                     reqwest::Method::GET,
@@ -365,20 +458,7 @@ impl PicaClient {
                 )
                 .await?;
             let pages = &data["pages"];
-            let reported_pages = number(&pages["pages"]).ok_or("MISSING_IMAGE_PAGES")?;
-            if reported_pages == 0 {
-                return Err("PICA_PREFLIGHT_IMAGE_PAGES_EMPTY".into());
-            }
-            if total_pages
-                .replace(reported_pages)
-                .is_some_and(|previous| previous != reported_pages)
-            {
-                return Err("PICA_PREFLIGHT_IMAGE_PAGE_COUNT_CHANGED".into());
-            }
-            let docs = pages["docs"].as_array().ok_or("MISSING_IMAGE_DOCS")?;
-            if docs.is_empty() {
-                return Err("PICA_PREFLIGHT_IMAGE_PAGE_EMPTY".into());
-            }
+            let (scope, docs) = pagination::read_page(pages, page, max_pages, &mut page_scope)?;
             successful_pages.push(page);
             for doc in docs {
                 let image_id = validate_preflight_image_doc(doc)?;
@@ -389,18 +469,15 @@ impl PicaClient {
                     .checked_add(1)
                     .ok_or("PICA_PREFLIGHT_IMAGE_COUNT_OVERFLOW")?;
             }
-            if page == reported_pages {
-                if expected_images == 0 {
-                    return Err("PICA_PREFLIGHT_IMAGES_EMPTY".into());
+            if page == scope.pages {
+                if expected_images != scope.total {
+                    return Err("PICA_PAGINATION_INCOMPLETE".into());
                 }
                 return Ok(PicaImageEnumeration {
-                    total_pages: reported_pages,
+                    total_pages: scope.pages,
                     successful_pages,
                     expected_images,
                 });
-            }
-            if page > reported_pages {
-                return Err("PICA_PREFLIGHT_IMAGE_PAGINATION_OVERRUN".into());
             }
         }
         Err("PICA_PREFLIGHT_IMAGE_PAGINATION_BUDGET_EXHAUSTED".into())
@@ -446,9 +523,7 @@ fn validate_preflight_image_doc(v: &Value) -> Result<String, String> {
     if !valid_id(&image_id) {
         return Err("INVALID_PICA_IMAGE_ID".into());
     }
-    let media = v["media"]
-        .as_object()
-        .ok_or("MISSING_PICA_IMAGE_MEDIA")?;
+    let media = v["media"].as_object().ok_or("MISSING_PICA_IMAGE_MEDIA")?;
     for key in ["originalName", "path", "fileServer"] {
         if media
             .get(key)
@@ -562,10 +637,9 @@ mod tests {
         ];
         assert!(validate_preflight_chapters(&duplicate).is_err());
         assert!(parse_preflight_chapter(&json!({"_id":"bad","order":1})).is_err());
-        assert!(parse_preflight_chapter(
-            &json!({"_id":"111111111111111111111111","order":0})
-        )
-        .is_err());
+        assert!(
+            parse_preflight_chapter(&json!({"_id":"111111111111111111111111","order":0})).is_err()
+        );
     }
     #[test]
     fn preflight_image_parser_requires_pinned_media_shape() {

@@ -779,6 +779,12 @@ test("full image progress during a library rescan stays pending until final regi
   await page.getByTestId("download-prepare").click();
   await expect(page.getByTestId("download-confirmation")).toBeVisible();
   await page.getByTestId("download-confirm").click();
+  const taskId = "c".repeat(64);
+  // Confirmation includes an asynchronous inventory refresh. Only advance the
+  // synthetic task after the UI observes the committed queue entry.
+  await expect(page.getByTestId("download-phase-" + taskId)).toHaveText(
+    "正在下载",
+  );
   await page.evaluate(() => {
     window.downloadTest.advance("error");
     const task = window.downloadTest.queue.tasks[0];
@@ -786,7 +792,6 @@ test("full image progress during a library rescan stays pending until final regi
     task.errorCode = "LIBRARY_BUSY";
     window.downloadTest.queue.revision++;
   });
-  const taskId = "c".repeat(64);
   await expect(page.getByTestId("download-finalization-pending")).toContainText(
     "保存或入库尚未完成",
   );

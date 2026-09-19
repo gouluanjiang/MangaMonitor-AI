@@ -486,7 +486,8 @@ async fn adding_placeholders_is_rejected_but_legacy_unfollow_and_generic_search_
                     0
                 )
                 .await
-                .unwrap_err()
+                .err()
+                .unwrap()
                 .code,
             "AUTHOR_QUERY_PLACEHOLDER"
         );

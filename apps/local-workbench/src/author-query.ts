@@ -5,7 +5,7 @@ export function authorQueryError(name: string): string | null {
       String.fromCharCode(char.charCodeAt(0) - 0xfee0),
     )
     .trim()
-    .toLowerCase();
+    .replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
   if (
     [
       "n/a",

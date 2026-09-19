@@ -41,6 +41,7 @@ test("author query eligibility rejects placeholder and broad initials without re
     assert.equal(authorQueryError(name), "AUTHOR_QUERY_TOO_BROAD");
   for (const name of [
     "森",
+    "K",
     "あ",
     "AB",
     "NA",

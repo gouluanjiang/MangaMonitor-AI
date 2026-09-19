@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 const DISCOVERY_FILE: &str = "discovery.json";
-pub const MAX_DISCOVERY_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_DISCOVERY_RECORDS: usize = 20_000;
+pub const MAX_DISCOVERY_BYTES: usize = 128 * 1024 * 1024;
+pub const MAX_DISCOVERY_RECORDS: usize = 100_000;
+pub const MAX_DISCOVERY_HEAD_IDS: usize = 20;
 pub const MAX_DISCOVERY_PAGES: u64 = 1000;
 pub const MAX_DISCOVERY_AUTHORS: usize = 2000;
 const MAX_DISCOVERY_ACCOUNTS: usize = 20;
@@ -49,6 +50,24 @@ pub enum DiscoveryRangeState {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiscoveryMode {
+    #[default]
+    Incremental,
+    Full,
+}
+
+/// A source-query checkpoint, never inferred from local ownership or author attribution.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiscoveryBaseline {
+    pub query_version: u32,
+    pub head_ids: Vec<String>,
+    pub total: u64,
+    pub established_at: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiscoveryAuthorRange {
@@ -57,6 +76,12 @@ pub struct DiscoveryAuthorRange {
     pub state: DiscoveryRangeState,
     pub last_attempt_at: Option<u64>,
     pub last_complete_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check_mode: Option<DiscoveryMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<DiscoveryBaseline>,
     pub observed_count: usize,
     pub pages_read: u64,
     pub error_code: Option<String>,
@@ -159,6 +184,26 @@ impl ValidatedDocument for DiscoveryDocument {
                     || range
                         .last_complete_at
                         .is_some_and(|value| value > MAX_SAFE_INTEGER)
+                    || range
+                        .last_checked_at
+                        .is_some_and(|value| value > MAX_SAFE_INTEGER)
+                    || range.baseline.as_ref().is_some_and(|baseline| {
+                        let mut ids = HashSet::new();
+                        baseline.query_version == 0
+                            || baseline.head_ids.len() > MAX_DISCOVERY_HEAD_IDS
+                            || baseline.total > MAX_SAFE_INTEGER
+                            || baseline.head_ids.len()
+                                != baseline.total.min(MAX_DISCOVERY_HEAD_IDS as u64) as usize
+                            || baseline.established_at > MAX_SAFE_INTEGER
+                            || baseline.head_ids.iter().any(|id| {
+                                !ids.insert(id)
+                                    || !LibraryReference {
+                                        source: range.source,
+                                        work_id: id.clone(),
+                                    }
+                                    .is_valid()
+                            })
+                    })
                     || range.error_code.as_ref().is_some_and(|code| {
                         code.is_empty()
                             || code.len() > 80

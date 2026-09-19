@@ -13,6 +13,7 @@ import { downloadSelectionLimit } from "./download-types.ts";
 import type { WorkReference } from "./booklists.ts";
 import type {
   CompletionAdapter,
+  DiscoveryMode,
   DiscoverySnapshot,
 } from "./completion-types.ts";
 import {
@@ -188,15 +189,20 @@ export function CompletionPanel({
       if (mounted.current) setBusy(false);
     }
   }
-  function startCheck() {
+  function startCheck(checkMode: DiscoveryMode = "incremental") {
     setShowOther(false);
+    if (mode === "updates") setFilter("missing");
     const captured = current.current;
     const selected =
       mode === "search" ? [searchAuthor.trim()] : author ? [author] : [];
     void perform(async () => {
       await onRefreshInventory?.();
       if (!mounted.current || current.current.key !== captured.key) return;
-      return adapter.start(captured.scopes, selected);
+      return adapter.start(
+        captured.scopes,
+        selected,
+        mode === "search" ? "full" : checkMode,
+      );
     });
   }
   // Retain the run's state without rendering covers, counting hidden grids or
@@ -215,6 +221,13 @@ export function CompletionPanel({
     !error &&
     ranges.length > 0 &&
     ranges.every((range) => range.state === "complete");
+  const includesIncremental =
+    mode === "updates" &&
+    ranges.some((range) => range.lastCheckMode === "incremental");
+  const fullRangeChecked = complete && !includesIncremental;
+  const catalogScopes = ranges.filter(
+    (range) => range.lastCompleteAt !== null,
+  ).length;
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
   const scopedRecords = showOther
     ? authorResults.other
@@ -228,27 +241,39 @@ export function CompletionPanel({
         .toLocaleLowerCase()
         .includes(terms),
   );
-  const counts = Object.fromEntries(
-    (Object.keys(inventoryFilterLabels) as InventoryFilter[]).map((kind) => [
-      kind,
-      records.filter((record) =>
-        inventoryFilterMatches(inventory(record.work), kind),
-      ).length,
-    ]),
-  ) as Record<InventoryFilter, number>;
-  const visible = records.filter((record) =>
-    inventoryFilterMatches(inventory(record.work), filter),
-  );
+  const counts: Record<InventoryFilter, number> = {
+    all: records.length,
+    owned: 0,
+    missing: 0,
+    unknown: 0,
+  };
+  const visible: typeof records = [],
+    selectable: typeof records = [];
+  // A large saved catalog still renders only the visible grid window. Count and
+  // filter ownership in one pass without allocating a full array per status.
+  for (const record of records) {
+    const stock = inventory(record.work);
+    counts[stock.kind === "unconfigured" ? "unknown" : stock.kind]++;
+    if (!inventoryFilterMatches(stock, filter)) continue;
+    visible.push(record);
+    if (!showOther && stock.kind !== "owned") selectable.push(record);
+  }
   const selectionKeys = new Set(selection);
-  const selectable = visible.filter(
-    (record) => !showOther && inventory(record.work).kind !== "owned",
-  );
-  const selected = selectable
-    .filter((record) => selectionKeys.has(sourceWorkKey(record.work)))
-    .map((record) => record.work);
+  const selected = selection.length
+    ? selectable
+        .filter((record) => selectionKeys.has(sourceWorkKey(record.work)))
+        .map((record) => record.work)
+    : [];
   const lastCheck = Math.max(
     0,
-    ...ranges.map((range) => range.lastCompleteAt ?? range.lastAttemptAt ?? 0),
+    ...ranges.map(
+      (range) =>
+        range.lastCheckedAt ?? range.lastCompleteAt ?? range.lastAttemptAt ?? 0,
+    ),
+  );
+  const lastFullCheck = Math.max(
+    0,
+    ...ranges.map((range) => range.lastCompleteAt ?? 0),
   );
   return (
     <section
@@ -260,7 +285,7 @@ export function CompletionPanel({
         <p>
           {mode === "search"
             ? "输入作者名，读取 JM 与哔咔的完整查询结果，无需先关注。"
-            : "检查关注作者在 JM 和哔咔的作品，挑选需要下载的漫画。"}
+            : "检查关注作者的新作品，保留之前未下载的漫画，默认只显示未入库内容。"}
         </p>
       </header>
       {!connected ? (
@@ -305,10 +330,23 @@ export function CompletionPanel({
                 (mode === "search" ? !searchAuthor.trim() : !authors.length)
               }
               data-testid="completion-start"
-              onClick={startCheck}
+              onClick={() => startCheck()}
             >
-              {mode === "search" ? "搜索两站作品" : "检查作者更新"}
+              {mode === "search"
+                ? "搜索两站作品"
+                : author
+                  ? "检查该作者新增作品"
+                  : "一键检查全部关注作者"}
             </button>
+            {mode === "updates" && (
+              <button
+                disabled={busy || running || !authors.length}
+                data-testid="completion-full-check"
+                onClick={() => startCheck("full")}
+              >
+                完整复核
+              </button>
+            )}
             {running && (
               <button
                 disabled={busy}
@@ -332,6 +370,12 @@ export function CompletionPanel({
               刷新结果与入库状态
             </button>
           </div>
+          {mode === "updates" && (
+            <p className="source-muted" data-testid="completion-check-mode">
+              首次检查会读取完整目录；之后优先检查新增作品并复用历史目录。
+              “完整复核”会重新读取所选作者在两站的所有分页，用于核对旧作补录等变化。
+            </p>
+          )}
           {mode === "updates" && !authors.length && (
             <p className="source-empty">
               尚未关注作者。可以先搜索作者，再添加关注。
@@ -352,6 +396,11 @@ export function CompletionPanel({
               · 第 {view?.run?.currentPage ?? 0} 页 · 已检查{" "}
               {view?.run?.completedScopes ?? 0} / {view?.run?.totalScopes ?? 0}{" "}
               个来源范围
+              {mode === "updates" && view?.run?.currentStrategy
+                ? view.run.currentStrategy === "incremental"
+                  ? " · 本范围增量检查"
+                  : " · 本范围读取完整目录"
+                : ""}
             </p>
           )}
           {error && (
@@ -419,8 +468,12 @@ export function CompletionPanel({
           </div>
           <p data-testid="completion-counts">
             {showOther ? "其他关键词结果（未确认作者归属） · " : ""}
-            {complete ? "当前检查范围已读完" : "检查范围尚未读完"} · 已记录{" "}
-            {records.length} 条 · 已入库 {counts.owned} 条 · 未入库{" "}
+            {complete
+              ? includesIncremental
+                ? "本轮检查已完成（含增量），历史目录已保留"
+                : "当前检查范围已读完"
+              : "检查范围尚未读完"}{" "}
+            · 已记录 {records.length} 条 · 已入库 {counts.owned} 条 · 未入库{" "}
             {counts.missing} 条 · 当前显示 {visible.length} 条
             {counts.unknown > 0 ? ` · 状态待核实 ${counts.unknown} 条` : ""}
           </p>
@@ -430,13 +483,27 @@ export function CompletionPanel({
               ? ` 上次检查：${new Date(lastCheck).toLocaleString()}`
               : " 尚未完成检查。"}
           </p>
+          {mode === "updates" && (
+            <p className="source-muted" data-testid="completion-catalog-scope">
+              已建立完整目录 {catalogScopes} / {ranges.length} 个来源范围。
+              {lastFullCheck > 0
+                ? ` 最近完整读取：${new Date(lastFullCheck).toLocaleString()}。`
+                : " 尚未完成首次目录读取。"}
+              {includesIncremental
+                ? " 增量检查没有重新读取所有历史分页，统计包含已保存的旧作品。"
+                : ""}
+            </p>
+          )}
           <p className="source-muted" data-testid="completion-query-scope">
-            读完来源的作者关键词查询，再按作者字段区分结果。作者作品包含明确列出的合著者和“社团（作者）”；名称不同或信息缺失的记录保留在其他关键词结果中。
+            {mode === "search"
+              ? "读完来源的作者关键词查询，再按作者字段区分结果。"
+              : "来源的作者关键词查询结果按作者字段区分，历史记录会保留。"}
+            作者作品包含明确列出的合著者和“社团（作者）”；名称不同或信息缺失的记录保留在其他关键词结果中。
           </p>
           {source !== "Pica" && (
             <p className="source-muted">{jmSearchScopeNote}</p>
           )}
-          {complete &&
+          {fullRangeChecked &&
             !showOther &&
             authorResults.other.length === 0 &&
             scopedRecords.length > 0 &&
@@ -446,8 +513,11 @@ export function CompletionPanel({
               <p role="status" data-testid="completion-all-owned">
                 本次作者作品已全部入库。范围：
                 {source === "all" ? "JM 与哔咔" : sourceLabel(source)}，
-                {author || authors.join("、")}，
-                {new Date(lastCheck).toLocaleString()}。
+                {author ||
+                  (mode === "updates"
+                    ? `${authors.length} 个关注名称`
+                    : authors.join("、"))}
+                ，{new Date(lastCheck).toLocaleString()}。
               </p>
             )}
           {!complete &&
@@ -462,7 +532,11 @@ export function CompletionPanel({
                     <p key={range.source + range.author}>
                       {range.author} · {sourceLabel(range.source)} · 已读取{" "}
                       {range.pagesRead} 页 ·{" "}
-                      {range.errorCode ? "来源读取未完成" : "检查未完成"}
+                      {range.errorCode === "DISCOVERY_LIMIT"
+                        ? "达到目录保存上限，已读取结果保留"
+                        : range.errorCode
+                          ? "来源读取未完成"
+                          : "检查未完成"}
                     </p>
                   ))}
               </details>
@@ -475,11 +549,13 @@ export function CompletionPanel({
                   ? "当前范围没有其他关键词结果。"
                   : !showOther && authorResults.other.length > 0
                     ? "尚未确认该作者的作品，可查看其他关键词结果。"
-                    : complete
+                    : fullRangeChecked
                       ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
-                      : mode === "search"
-                        ? "输入作者名，点击“搜索两站作品”读取结果。"
-                        : "点击“检查作者更新”读取关注作者的作品。"}
+                      : complete
+                        ? "当前保存目录没有作者作品，可通过完整复核再次检查。"
+                        : mode === "search"
+                          ? "输入作者名，点击“搜索两站作品”读取结果。"
+                          : "点击“一键检查全部关注作者”读取关注作者的作品。"}
             </p>
           )}
           {visible.length > 0 && !showOther && (

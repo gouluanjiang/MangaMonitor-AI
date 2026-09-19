@@ -7,17 +7,21 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use workbench_credentials::Vault;
+pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
-    discovery_author_is_valid, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryDocument,
-    DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, Document, WorkbenchStore,
-    MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
+    discovery_author_is_valid, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline,
+    DiscoveryDocument, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, Document,
+    WorkbenchStore, MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_PAGES,
+    MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
 };
+
+const DISCOVERY_QUERY_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -40,6 +44,8 @@ pub enum DiscoveryPhase {
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveryRun {
     pub id: String,
+    pub mode: DiscoveryMode,
+    pub current_strategy: Option<DiscoveryMode>,
     pub phase: DiscoveryPhase,
     pub current_author: Option<String>,
     pub current_source: Option<Source>,
@@ -209,6 +215,9 @@ fn idle(author: &str, source: Source) -> DiscoveryAuthorRange {
         state: DiscoveryRangeState::Idle,
         last_attempt_at: None,
         last_complete_at: None,
+        last_checked_at: None,
+        last_check_mode: None,
+        baseline: None,
         observed_count: 0,
         pages_read: 0,
         error_code: None,
@@ -224,17 +233,18 @@ fn project(
         .accounts
         .iter()
         .find(|account| account.account_key == context.account_key);
+    let followed: HashSet<&str> = context.authors.iter().map(String::as_str).collect();
+    let saved_ranges: HashMap<_, _> = account
+        .into_iter()
+        .flat_map(|account| &account.authors)
+        .map(|range| ((range.author.as_str(), range.source), range))
+        .collect();
     let mut authors = vec![];
     for author in &context.authors {
         for source in [Source::Jm, Source::Pica] {
-            let mut range = account
-                .and_then(|account| {
-                    account
-                        .authors
-                        .iter()
-                        .find(|row| row.author == *author && row.source == storage_source(source))
-                })
-                .cloned()
+            let mut range = saved_ranges
+                .get(&(author.as_str(), storage_source(source)))
+                .map(|range| (**range).clone())
                 .unwrap_or_else(|| idle(author, source));
             // No persisted job is resumed just because a document was opened.
             if range.state == DiscoveryRangeState::Checking {
@@ -255,10 +265,17 @@ fn project(
                     .records
                     .iter()
                     .filter_map(|record| {
+                        if !record
+                            .matched_authors
+                            .iter()
+                            .any(|author| followed.contains(author.as_str()))
+                        {
+                            return None;
+                        }
                         let mut record = record.clone();
                         record
                             .matched_authors
-                            .retain(|author| context.authors.contains(author));
+                            .retain(|author| followed.contains(author.as_str()));
                         (!record.matched_authors.is_empty()).then_some(record)
                     })
                     .collect()
@@ -404,13 +421,14 @@ impl DiscoveryControl {
             .iter()
             .find(|account| account.account_key == context.account_key)
         {
+            let saved_ranges: HashMap<_, _> = account
+                .authors
+                .iter()
+                .map(|range| ((range.author.as_str(), range.source), range))
+                .collect();
             for range in &mut snapshot.authors {
-                if let Some(saved) = account
-                    .authors
-                    .iter()
-                    .find(|saved| saved.author == range.author && saved.source == range.source)
-                {
-                    *range = saved.clone();
+                if let Some(saved) = saved_ranges.get(&(range.author.as_str(), range.source)) {
+                    *range = (**saved).clone();
                 }
             }
         }
@@ -427,6 +445,19 @@ impl DiscoveryControl {
                 .filter(|run| run.id == run_id)
             {
                 run.completed_scopes += 1;
+            }
+        }
+    }
+
+    fn strategy(&self, run_id: &str, strategy: DiscoveryMode) {
+        if let Ok(mut memory) = self.memory.lock() {
+            if let Some(run) = memory
+                .snapshot
+                .as_mut()
+                .and_then(|snapshot| snapshot.run.as_mut())
+                .filter(|run| run.id == run_id)
+            {
+                run.current_strategy = Some(strategy);
             }
         }
     }
@@ -567,20 +598,18 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .map_err(store_error)?;
             self.discovery_validate_context(&context)?;
             let authors = context.followed_authors(&following.value);
+            let followed: HashSet<&str> = authors.iter().map(String::as_str).collect();
             snapshot
                 .authors
-                .retain(|range| authors.contains(&range.author));
+                .retain(|range| followed.contains(range.author.as_str()));
             for record in &mut snapshot.records {
                 record
                     .matched_authors
-                    .retain(|author| authors.contains(author));
+                    .retain(|author| followed.contains(author.as_str()));
             }
-            snapshot.records.retain(|record| {
-                record
-                    .matched_authors
-                    .iter()
-                    .any(|author| authors.contains(author))
-            });
+            snapshot
+                .records
+                .retain(|record| !record.matched_authors.is_empty());
             for author in authors {
                 for source in [Source::Jm, Source::Pica] {
                     if !snapshot.authors.iter().any(|range| {
@@ -614,6 +643,16 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self: &Arc<Self>,
         scopes: Vec<DiscoveryScope>,
         authors: Vec<String>,
+    ) -> Result<DiscoveryStart> {
+        self.discovery_start_with_mode(scopes, authors, DiscoveryMode::Incremental)
+            .await
+    }
+
+    pub async fn discovery_start_with_mode(
+        self: &Arc<Self>,
+        scopes: Vec<DiscoveryScope>,
+        authors: Vec<String>,
+        mode: DiscoveryMode,
     ) -> Result<DiscoveryStart> {
         let scopes = canonical_scopes(scopes)?;
         let context = self.discovery_context(scopes).await?;
@@ -654,6 +693,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let mut snapshot = project(&context, &document);
         snapshot.run = Some(DiscoveryRun {
             id: run_id.clone(),
+            mode,
+            current_strategy: None,
             phase: DiscoveryPhase::Checking,
             current_author: None,
             current_source: None,
@@ -678,7 +719,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let id = run_id.clone();
         tokio::spawn(async move {
             let outcome = service
-                .discovery_scan(&context, &id, &authors, document)
+                .discovery_scan(&context, &id, &authors, mode, document)
                 .await;
             service.discovery.finish(&id, outcome);
         });
@@ -767,6 +808,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         context: &DiscoveryContext,
         run_id: &str,
         authors: &[String],
+        mode: DiscoveryMode,
         mut document: Document<DiscoveryDocument>,
     ) -> Result<bool> {
         let index = match document
@@ -789,6 +831,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         document.value.accounts[index]
             .authors
             .retain(|range| context.authors.contains(&range.author));
+        let mut record_index: HashMap<_, _> = document.value.accounts[index]
+            .records
+            .iter()
+            .enumerate()
+            .map(|(index, record)| ((record.work.source, record.work.work_id.clone()), index))
+            .collect();
         let mut partial = false;
         for author in authors {
             for source in [Source::Jm, Source::Pica] {
@@ -805,11 +853,31 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                         account.authors.push(idle(author, source));
                         account.authors.len() - 1
                     });
+                let mut known_ids: HashSet<String> = account
+                    .records
+                    .iter()
+                    .filter(|record| {
+                        record.work.source == storage_source(source)
+                            && record.matched_authors.contains(author)
+                    })
+                    .map(|record| record.work.work_id.clone())
+                    .collect();
                 let range = &mut account.authors[range_index];
+                // Old complete flags alone are not a checkpoint. Interrupted or
+                // failed checks deliberately rebuild a complete source range.
+                let mut boundary = IncrementalBoundary::new(mode, range, &known_ids);
+                self.discovery.strategy(
+                    run_id,
+                    if boundary.is_some() {
+                        DiscoveryMode::Incremental
+                    } else {
+                        DiscoveryMode::Full
+                    },
+                );
                 range.state = DiscoveryRangeState::Checking;
                 range.last_attempt_at = Some(now()?);
                 range.pages_read = 0;
-                range.observed_count = 0;
+                range.observed_count = known_ids.len();
                 range.error_code = None;
                 document = self.discovery_commit(context, run_id, document).await?;
                 let mut traversal = Traversal::default();
@@ -853,13 +921,44 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                             break;
                         }
                     };
+                    let incremental_complete = boundary
+                        .as_mut()
+                        .is_some_and(|boundary| boundary.append(&response));
+                    if complete || boundary.as_ref().is_some_and(|boundary| !boundary.viable) {
+                        self.discovery.strategy(run_id, DiscoveryMode::Full);
+                    }
+                    // Reject the whole incoming page before mutation, retaining
+                    // every already committed page and a truthful partial range.
+                    let current_records: usize = document
+                        .value
+                        .accounts
+                        .iter()
+                        .map(|account| account.records.len())
+                        .sum();
+                    let added_records = response
+                        .items
+                        .iter()
+                        .filter(|work| {
+                            !record_index
+                                .contains_key(&(storage_source(source), work.work_id.clone()))
+                        })
+                        .count();
+                    if current_records.saturating_add(added_records) > MAX_DISCOVERY_RECORDS {
+                        let range = &mut document.value.accounts[index].authors[range_index];
+                        range.state = DiscoveryRangeState::Partial;
+                        range.error_code = Some("DISCOVERY_LIMIT".into());
+                        self.discovery_commit(context, run_id, document).await?;
+                        return Err(AccountError::new("DISCOVERY_LIMIT"));
+                    }
                     for work in response.items {
                         // Updates retain the same keyword-query scope as ad-hoc
                         // search. Author labels are metadata, not an exclusion
                         // gate: lists can join, truncate or omit author names.
                         let verified = work.authors.iter().any(|name| name.trim() == author.trim());
+                        known_ids.insert(work.work_id.clone());
                         merge_record(
                             &mut document.value.accounts[index],
+                            &mut record_index,
                             DiscoveryRecord {
                                 work: discovery_work_from_source(work),
                                 matched_authors: vec![author.clone()],
@@ -870,23 +969,44 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                         )?;
                     }
                     let account = &mut document.value.accounts[index];
-                    let observed_count = account
-                        .records
-                        .iter()
-                        .filter(|record| {
-                            record.work.source == storage_source(source)
-                                && record.matched_authors.contains(author)
-                        })
-                        .count();
                     let range = &mut account.authors[range_index];
                     range.pages_read = page;
-                    range.observed_count = observed_count;
-                    if complete {
+                    range.observed_count = known_ids.len();
+                    if complete || incremental_complete {
+                        let checked_at = now()?;
                         range.state = DiscoveryRangeState::Complete;
-                        range.last_complete_at = Some(now()?);
+                        range.last_checked_at = Some(checked_at);
+                        range.last_check_mode = Some(if complete {
+                            DiscoveryMode::Full
+                        } else {
+                            DiscoveryMode::Incremental
+                        });
+                        if complete {
+                            range.last_complete_at = Some(checked_at);
+                        }
+                        range.baseline = Some(DiscoveryBaseline {
+                            query_version: DISCOVERY_QUERY_VERSION,
+                            head_ids: traversal.head_ids.clone(),
+                            total: if complete {
+                                traversal.ids.len() as u64
+                            } else {
+                                traversal
+                                    .total
+                                    .expect("an incremental boundary requires a total")
+                            },
+                            established_at: if complete {
+                                checked_at
+                            } else {
+                                boundary
+                                    .as_ref()
+                                    .expect("incremental boundary")
+                                    .baseline
+                                    .established_at
+                            },
+                        });
                     }
                     document = self.discovery_commit(context, run_id, document).await?;
-                    if complete {
+                    if complete || incremental_complete {
                         break;
                     }
                     page += 1;
@@ -954,10 +1074,14 @@ pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
     }
 }
 
-fn merge_record(account: &mut DiscoveryAccount, mut incoming: DiscoveryRecord) -> Result<()> {
-    if let Some(existing) = account.records.iter_mut().find(|record| {
-        record.work.source == incoming.work.source && record.work.work_id == incoming.work.work_id
-    }) {
+fn merge_record(
+    account: &mut DiscoveryAccount,
+    index: &mut HashMap<(workbench_storage::Source, String), usize>,
+    mut incoming: DiscoveryRecord,
+) -> Result<()> {
+    let key = (incoming.work.source, incoming.work.work_id.clone());
+    if let Some(existing_index) = index.get(&key) {
+        let existing = &mut account.records[*existing_index];
         // Preserve useful prior metadata when a later list omits authors, but
         // keep every query that returned this source ID. A query association
         // does not assert an author identity and never grants ownership.
@@ -982,9 +1106,79 @@ fn merge_record(account: &mut DiscoveryAccount, mut incoming: DiscoveryRecord) -
         if account.records.len() >= MAX_DISCOVERY_RECORDS {
             return Err(AccountError::new("DISCOVERY_LIMIT"));
         }
+        index.insert(key, account.records.len());
         account.records.push(incoming);
     }
     Ok(())
+}
+
+/// An ordered checkpoint for the pinned newest-first source query. This only
+/// establishes a checked front boundary, never a fresh audit of the old tail.
+/// Any visible drift falls through to the normal complete pagination path.
+struct IncrementalBoundary {
+    baseline: DiscoveryBaseline,
+    known_ids: HashSet<String>,
+    prefix_count: u64,
+    matched_head: usize,
+    viable: bool,
+}
+
+impl IncrementalBoundary {
+    fn new(
+        mode: DiscoveryMode,
+        range: &DiscoveryAuthorRange,
+        known_ids: &HashSet<String>,
+    ) -> Option<Self> {
+        let baseline = range.baseline.as_ref()?;
+        if mode != DiscoveryMode::Incremental
+            || range.state != DiscoveryRangeState::Complete
+            || range.last_complete_at.is_none()
+            || baseline.query_version != DISCOVERY_QUERY_VERSION
+            || baseline.head_ids.is_empty()
+            || baseline.head_ids.iter().any(|id| !known_ids.contains(id))
+        {
+            return None;
+        }
+        Some(Self {
+            baseline: baseline.clone(),
+            known_ids: known_ids.clone(),
+            prefix_count: 0,
+            matched_head: 0,
+            viable: true,
+        })
+    }
+
+    fn append(&mut self, page: &SourcePage) -> bool {
+        if !self.viable || page.total.is_none_or(|total| total < self.baseline.total) {
+            self.viable = false;
+            return false;
+        }
+        for work in &page.items {
+            let id = &work.work_id;
+            if self.matched_head == self.baseline.head_ids.len() {
+                // Inspect the rest of the boundary page too: a new ID here is
+                // evidence that latest-first prefix assumptions did not hold.
+                if !self.known_ids.contains(id) {
+                    self.viable = false;
+                    return false;
+                }
+            } else if id == &self.baseline.head_ids[self.matched_head] {
+                self.matched_head += 1;
+            } else if self.matched_head == 0 && !self.known_ids.contains(id) {
+                self.prefix_count += 1;
+            } else {
+                self.viable = false;
+                return false;
+            }
+        }
+        if self.matched_head == self.baseline.head_ids.len() {
+            // A matching anchor alone is insufficient: removed/inserted items
+            // and moved records must not silently reduce the checked scope.
+            self.viable = page.total == self.baseline.total.checked_add(self.prefix_count);
+            return self.viable;
+        }
+        false
+    }
 }
 
 #[derive(Default)]
@@ -993,6 +1187,7 @@ struct Traversal {
     total: Option<u64>,
     pages: Option<u64>,
     ids: HashSet<String>,
+    head_ids: Vec<String>,
 }
 
 impl Traversal {
@@ -1040,6 +1235,12 @@ impl Traversal {
         if !complete && (count == MAX_DISCOVERY_RECORDS || page.page == MAX_DISCOVERY_PAGES) {
             return Err(AccountError::new("DISCOVERY_LIMIT"));
         }
+        self.head_ids.extend(
+            page.items
+                .iter()
+                .take(MAX_DISCOVERY_HEAD_IDS.saturating_sub(self.head_ids.len()))
+                .map(|work| work.work_id.clone()),
+        );
         self.ids.extend(current);
         self.page = page.page;
         self.total = page.total;

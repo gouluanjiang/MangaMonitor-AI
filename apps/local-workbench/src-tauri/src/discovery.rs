@@ -3,7 +3,7 @@ use crate::accounts::{service, DesktopAccounts};
 use std::sync::Arc;
 use tauri::{Runtime, State, WebviewWindow};
 use workbench_accounts::{
-    AccountError, DiscoveryRun, DiscoveryScope, DiscoverySnapshot, DiscoveryStart,
+    AccountError, DiscoveryMode, DiscoveryRun, DiscoveryScope, DiscoverySnapshot, DiscoveryStart,
 };
 
 fn require_main(label: &str) -> Result<(), AccountError> {
@@ -29,11 +29,12 @@ pub(crate) async fn discovery_start<R: Runtime>(
     accounts: State<'_, Arc<DesktopAccounts>>,
     scopes: Vec<DiscoveryScope>,
     authors: Vec<String>,
+    mode: Option<DiscoveryMode>,
 ) -> Result<DiscoveryStart, AccountError> {
     require_main(window.label())?;
     service(Arc::clone(accounts.inner()))
         .await?
-        .discovery_start(scopes, authors)
+        .discovery_start_with_mode(scopes, authors, mode.unwrap_or_default())
         .await
 }
 

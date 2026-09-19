@@ -218,6 +218,8 @@ async function install(page: Page) {
                 completedScopes: 0,
                 totalScopes: 2,
                 errorCode: null,
+                mode: args.mode as "incremental" | "full",
+                currentStrategy: args.mode as "incremental" | "full",
               };
               for (const range of hooks.view.authors) range.state = "checking";
               return { runId: "scan-2", snapshot: clone(hooks.view) };
@@ -304,16 +306,116 @@ test("checking and stopping are explicit, preserve old results and do not downlo
 }) => {
   await install(page);
   await open(page);
+  await expect(page.getByTestId("completion-start")).toHaveText(
+    "一键检查全部关注作者",
+  );
+  await page.getByRole("button", { name: "全部 3", exact: true }).click();
   await page.getByTestId("completion-start").click();
   await expect(page.getByTestId("completion-progress")).toContainText(
     "正在检查",
   );
   await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(page.getByTestId("author-update-JM:123")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "discovery_start")
+        .map((call) => [call.args.authors, call.args.mode]),
+    ),
+  ).toEqual([[[], "incremental"]]);
+  await expect(page.getByTestId("completion-full-check")).toBeDisabled();
   await page.getByRole("button", { name: "停止本次检查" }).click();
   await expect(page.getByTestId("completion-progress")).toHaveCount(0);
   await expect(
     page.getByText("检查范围尚未读完", { exact: false }),
   ).toBeVisible();
+  await page.getByLabel("检查作者", { exact: true }).selectOption("合成作者");
+  await page.getByTestId("completion-full-check").click();
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "本范围读取完整目录",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "discovery_start")
+        .map((call) => [call.args.authors, call.args.mode]),
+    ),
+  ).toEqual([
+    [[], "incremental"],
+    [["合成作者"], "full"],
+  ]);
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+});
+
+test("incremental completion retains old omissions and never claims a new full catalog check", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    for (const range of window.authorTest.view.authors) {
+      range.state = "complete";
+      range.lastCompleteAt = 1800000000000;
+      range.lastCheckedAt = 1800000001000;
+      range.lastCheckMode = "incremental";
+      range.errorCode = null;
+    }
+  });
+  await open(page);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "本轮检查已完成（含增量），历史目录已保留",
+  );
+  await expect(page.getByTestId("completion-counts")).not.toContainText(
+    "当前检查范围已读完",
+  );
+  await expect(page.getByTestId("completion-catalog-scope")).toContainText(
+    "已建立完整目录 2 / 2 个来源范围",
+  );
+  await expect(page.getByTestId("completion-catalog-scope")).toContainText(
+    "没有重新读取所有历史分页",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(page.getByTestId("author-update-JM:123")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter(
+        (call) => call.command === "source_cover" && call.args.workId === "123",
+      ),
+    ),
+  ).toEqual([]);
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await page.getByTestId("completion-select-all").click();
+  await expect(page.getByTestId("completion-selection-bar")).toContainText(
+    "已选 2 本",
+  );
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/incremental-author-updates.png",
+  });
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.inventory.items = h.view.records.map((r) => ({
+      source: r.work.source,
+      workId: r.work.workId,
+      libraryEntryId: "b".repeat(64),
+      localFiles: "present",
+    }));
+    h.inventory.revision++;
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已入库 3 条 · 未入库 0 条 · 当前显示 0 条",
+  );
+  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  await page.evaluate(() => {
+    for (const range of window.authorTest.view.authors) {
+      range.lastCheckMode = "full";
+      range.lastCompleteAt = 1800000002000;
+      range.lastCheckedAt = 1800000002000;
+    }
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(page.getByTestId("completion-all-owned")).toBeVisible();
 });
 
 test("explicit circle membership remains selectable without literal equality and empty complete queries are explicit", async ({
@@ -446,6 +548,7 @@ test("ad-hoc author search classifies every source page, retaining unrelated res
     works[2].authors = [];
   });
   await page.getByTestId("nav-author-search").click();
+  await expect(page.getByTestId("completion-full-check")).toHaveCount(0);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
   await page.getByRole("button", { name: "搜索两站作品" }).click();
   await expect(page.getByTestId("completion-counts")).toContainText(

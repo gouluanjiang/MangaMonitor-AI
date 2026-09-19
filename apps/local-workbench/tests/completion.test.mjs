@@ -4,6 +4,7 @@ import {
   createCompletionAdapter,
   validateDiscoverySnapshot,
 } from "../src/completion-runtime.ts";
+import { discoveryRecordLimit } from "../src/completion-types.ts";
 import { createAuthorSearchAdapter } from "../src/author-search.ts";
 import { readCompleteSearch } from "../src/source-search.ts";
 
@@ -96,7 +97,118 @@ test("opening author updates reads saved metadata only; explicit check invokes d
     calls.map((call) => call.command),
     ["discovery_read", "discovery_start", "discovery_cancel"],
   );
-  assert.deepEqual(calls[1].args, { scopes, authors: [] });
+  assert.deepEqual(calls[1].args, {
+    scopes,
+    authors: [],
+    mode: "incremental",
+  });
+  await adapter.start(scopes, ["Writer"], "full");
+  assert.deepEqual(calls.at(-1).args, {
+    scopes,
+    authors: ["Writer"],
+    mode: "full",
+  });
+  const beforeInvalid = calls.length;
+  await assert.rejects(adapter.start(scopes, [], "unknown"));
+  assert.equal(calls.length, beforeInvalid);
+});
+
+test("incremental scope markers retain the last full timestamp and reject malformed modes", () => {
+  const range = {
+    author: "Writer",
+    source: "JM",
+    state: "complete",
+    lastAttemptAt: 200,
+    lastCompleteAt: 100,
+    observedCount: 10,
+    pagesRead: 1,
+    errorCode: null,
+  };
+  const legacy = validateDiscoverySnapshot(
+    { ...empty(), authors: [range] },
+    scopes,
+  );
+  assert.equal(legacy.authors[0].lastCheckedAt, 100);
+  assert.equal(legacy.authors[0].lastCheckMode, null);
+  const current = validateDiscoverySnapshot(
+    {
+      ...empty(),
+      authors: [{ ...range, lastCheckedAt: 200, lastCheckMode: "incremental" }],
+    },
+    scopes,
+  );
+  assert.equal(current.authors[0].lastCompleteAt, 100);
+  assert.equal(current.authors[0].lastCheckedAt, 200);
+  assert.equal(current.authors[0].lastCheckMode, "incremental");
+  for (const change of [{ lastCheckedAt: -1 }, { lastCheckMode: "complete" }])
+    assert.throws(() =>
+      validateDiscoverySnapshot(
+        { ...empty(), authors: [{ ...range, ...change }] },
+        scopes,
+      ),
+    );
+});
+
+test("catalog snapshots accept more than the former 20000 records without truncating and retain a hard upper bound", () => {
+  const records = Array.from({ length: 20001 }, (_, index) => ({
+    work: work("JM", index + 1),
+    matchedAuthors: ["Writer"],
+    authorVerified: true,
+    observedAt: 100,
+    scanId: "catalog",
+  }));
+  const snapshot = validateDiscoverySnapshot({ ...empty(), records }, scopes);
+  assert.equal(snapshot.records.length, 20001);
+  assert.equal(snapshot.records.at(-1).work.workId, "20001");
+  assert.throws(() =>
+    validateDiscoverySnapshot(
+      { ...empty(), records: Array(discoveryRecordLimit + 1).fill(records[0]) },
+      scopes,
+    ),
+  );
+});
+
+test("saved incremental checkpoints validate their bounded head and version", () => {
+  const baseline = {
+    queryVersion: 1,
+    headIds: ["1", "2"],
+    total: 2,
+    establishedAt: 100,
+  };
+  const range = {
+    author: "Writer",
+    source: "JM",
+    state: "complete",
+    lastAttemptAt: 200,
+    lastCompleteAt: 100,
+    lastCheckedAt: 200,
+    lastCheckMode: "incremental",
+    observedCount: 10,
+    pagesRead: 1,
+    errorCode: null,
+    baseline,
+  };
+  assert.deepEqual(
+    validateDiscoverySnapshot({ ...empty(), authors: [range] }, scopes)
+      .authors[0].baseline,
+    baseline,
+  );
+  for (const change of [
+    { queryVersion: 0 },
+    { total: -1 },
+    { total: 10 },
+    { headIds: ["1", "1"] },
+    { headIds: Array.from({ length: 21 }, (_, i) => String(i + 1)) },
+  ])
+    assert.throws(() =>
+      validateDiscoverySnapshot(
+        {
+          ...empty(),
+          authors: [{ ...range, baseline: { ...baseline, ...change } }],
+        },
+        scopes,
+      ),
+    );
 });
 
 test("old session or malformed discovery snapshots cannot replace current results", () => {
@@ -218,6 +330,8 @@ test("ad-hoc author lookup needs no following and visits both sources even when 
   assert.equal(calls.length, 0);
   const start = await adapter.start(scopes, ["New Writer"]);
   assert.equal(start.run.phase, "checking");
+  assert.equal(start.run.mode, "full");
+  assert.equal(start.run.currentStrategy, "full");
   for (
     let attempt = 0;
     attempt < 10 && (await adapter.read(scopes)).run.phase === "checking";

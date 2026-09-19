@@ -70,6 +70,32 @@ fn page(number: u64, total: u64, items: Vec<SourceWork>) -> SourcePage {
     }
 }
 
+fn catalog(backend: &FakeBackend, ids: &[u64]) {
+    for (index, chunk) in ids.chunks(20).enumerate() {
+        backend.put(
+            Source::Jm,
+            "A",
+            index as u64 + 1,
+            page(
+                index as u64 + 1,
+                ids.len() as u64,
+                chunk
+                    .iter()
+                    .map(|id| work(Source::Jm, &id.to_string(), &["A"]))
+                    .collect(),
+            ),
+        );
+    }
+}
+
+fn jm_range(snapshot: &DiscoverySnapshot) -> &DiscoveryAuthorRange {
+    snapshot
+        .authors
+        .iter()
+        .find(|range| range.author == "A" && range.source == workbench_storage::Source::Jm)
+        .unwrap()
+}
+
 impl FakeBackend {
     fn put(&self, source: Source, author: &str, number: u64, page: SourcePage) {
         self.0
@@ -796,4 +822,441 @@ async fn local_follow_changes_revoke_fast_image_guard_and_a_later_run_replaces_o
         "DISCOVERY_RUN_CHANGED"
     );
     assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn default_first_check_builds_a_full_baseline_then_unchanged_catalog_reads_one_page() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    let first = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let complete = finish(&service, &scopes).await;
+    let prior_range = jm_range(&complete).clone();
+    assert_eq!(complete.run.unwrap().mode, DiscoveryMode::Incremental);
+    assert_eq!(prior_range.pages_read, 3);
+    assert_eq!(prior_range.last_check_mode, Some(DiscoveryMode::Full));
+    assert_eq!(prior_range.baseline.as_ref().unwrap().head_ids.len(), 20);
+    assert_eq!(prior_range.baseline.as_ref().unwrap().total, 45);
+    backend.0.calls.lock().unwrap().clear();
+
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let next = finish(&service, &scopes).await;
+    assert_eq!(next.run.as_ref().unwrap().phase, DiscoveryPhase::Complete);
+    assert_eq!(jm_range(&next).pages_read, 1);
+    assert_eq!(
+        jm_range(&next).last_check_mode,
+        Some(DiscoveryMode::Incremental)
+    );
+    assert_eq!(
+        jm_range(&next).last_complete_at,
+        prior_range.last_complete_at
+    );
+    assert_eq!(jm_range(&next).baseline, prior_range.baseline);
+    assert_eq!(next.records.len(), 45);
+    assert!(next
+        .records
+        .iter()
+        .any(|record| { record.work.work_id == "144" && record.scan_id == first.run_id }));
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        [key(Source::Jm, "A", 1), key(Source::Pica, "A", 1)]
+    );
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn incremental_boundary_crosses_pages_keeps_old_omissions_and_advances_only_the_head() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let prior = finish(&service, &scopes).await;
+    let ids = (200..205).chain(100..145).collect::<Vec<_>>();
+    catalog(&backend, &ids);
+    backend.0.calls.lock().unwrap().clear();
+
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let next = finish(&service, &scopes).await;
+    let range = jm_range(&next);
+    assert_eq!(range.pages_read, 2);
+    assert_eq!(range.last_check_mode, Some(DiscoveryMode::Incremental));
+    assert_eq!(range.last_complete_at, jm_range(&prior).last_complete_at);
+    assert_eq!(range.baseline.as_ref().unwrap().total, 50);
+    assert_eq!(
+        range.baseline.as_ref().unwrap().head_ids,
+        ids[..20]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(next.records.len(), 50);
+    assert!(next
+        .records
+        .iter()
+        .any(|record| record.work.work_id == "144"));
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        [
+            key(Source::Jm, "A", 1),
+            key(Source::Jm, "A", 2),
+            key(Source::Pica, "A", 1)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn manual_full_check_refreshes_tail_and_never_uses_a_front_checkpoint() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    finish(&service, &scopes).await;
+    let mut updated = work(Source::Jm, "144", &["A"]);
+    updated.title = "updated synthetic metadata".into();
+    let mut tail = (140..144)
+        .map(|id| work(Source::Jm, &id.to_string(), &["A"]))
+        .collect::<Vec<_>>();
+    tail.push(updated);
+    backend.put(Source::Jm, "A", 3, page(3, 45, tail));
+    backend.0.calls.lock().unwrap().clear();
+    service
+        .discovery_start_with_mode(scopes.clone(), vec![], DiscoveryMode::Full)
+        .await
+        .unwrap();
+    let next = finish(&service, &scopes).await;
+    assert_eq!(next.run.as_ref().unwrap().mode, DiscoveryMode::Full);
+    assert_eq!(jm_range(&next).pages_read, 3);
+    assert_eq!(jm_range(&next).last_check_mode, Some(DiscoveryMode::Full));
+    assert_eq!(
+        jm_range(&next).last_checked_at,
+        jm_range(&next).last_complete_at
+    );
+    assert_eq!(
+        next.records
+            .iter()
+            .find(|record| record.work.work_id == "144")
+            .unwrap()
+            .work
+            .title,
+        "updated synthetic metadata"
+    );
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn count_drift_reordering_or_new_ids_after_the_anchor_fall_through_to_full_pagination() {
+    for scenario in 0..4 {
+        let (_root, backend, service, scopes) = setup().await;
+        follow(&service, &scopes[0], "A", true).await;
+        catalog(&backend, &(100..145).collect::<Vec<_>>());
+        service
+            .discovery_start(scopes.clone(), vec![])
+            .await
+            .unwrap();
+        finish(&service, &scopes).await;
+        let ids = match scenario {
+            0 => (100..144).collect::<Vec<_>>(),
+            1 => std::iter::once(144).chain(100..144).collect(),
+            2 => std::iter::once(200)
+                .chain(100..120)
+                .chain(std::iter::once(201))
+                .chain(120..145)
+                .collect(),
+            _ => std::iter::once(200)
+                .chain(100..110)
+                .chain(111..145)
+                .collect(),
+        };
+        catalog(&backend, &ids);
+        backend.0.calls.lock().unwrap().clear();
+        service
+            .discovery_start(scopes.clone(), vec![])
+            .await
+            .unwrap();
+        let next = finish(&service, &scopes).await;
+        assert_eq!(jm_range(&next).pages_read, 3);
+        assert_eq!(jm_range(&next).last_check_mode, Some(DiscoveryMode::Full));
+        assert!(next
+            .records
+            .iter()
+            .any(|record| record.work.work_id == "144"));
+        assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+    }
+}
+
+#[tokio::test]
+async fn source_terminal_page_takes_precedence_over_short_or_empty_incremental_checkpoints() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..105).collect::<Vec<_>>());
+    for _ in 0..2 {
+        service
+            .discovery_start(scopes.clone(), vec![])
+            .await
+            .unwrap();
+        let snapshot = finish(&service, &scopes).await;
+        assert!(snapshot
+            .authors
+            .iter()
+            .all(|range| range.last_check_mode == Some(DiscoveryMode::Full)));
+        assert_eq!(
+            jm_range(&snapshot)
+                .baseline
+                .as_ref()
+                .unwrap()
+                .head_ids
+                .len(),
+            5
+        );
+        let empty_range = snapshot
+            .authors
+            .iter()
+            .find(|range| range.source == workbench_storage::Source::Pica)
+            .unwrap();
+        assert_eq!(empty_range.baseline.as_ref().unwrap().total, 0);
+        assert!(empty_range.baseline.as_ref().unwrap().head_ids.is_empty());
+        assert!(
+            IncrementalBoundary::new(DiscoveryMode::Incremental, empty_range, &HashSet::new())
+                .is_none()
+        );
+    }
+}
+
+#[tokio::test]
+async fn unknown_source_total_does_not_allow_an_incremental_early_stop() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    finish(&service, &scopes).await;
+    for response in backend.0.pages.lock().unwrap().values_mut() {
+        let response = response.as_mut().unwrap();
+        response.total = None;
+        response.has_more = Some(response.page < 3);
+    }
+    backend.0.calls.lock().unwrap().clear();
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let next = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&next).pages_read, 3);
+    assert_eq!(jm_range(&next).last_check_mode, Some(DiscoveryMode::Full));
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn duplicate_new_prefix_ids_keep_the_old_baseline_and_report_partial() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let prior = finish(&service, &scopes).await;
+    let mut records = vec![
+        work(Source::Jm, "200", &["A"]),
+        work(Source::Jm, "200", &["A"]),
+    ];
+    records.extend((100..118).map(|id| work(Source::Jm, &id.to_string(), &["A"])));
+    backend.put(Source::Jm, "A", 1, page(1, 47, records));
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let next = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&next).state, DiscoveryRangeState::Partial);
+    assert_eq!(
+        jm_range(&next).error_code.as_deref(),
+        Some("DISCOVERY_PAGINATION_CHANGED")
+    );
+    assert_eq!(jm_range(&next).baseline, jm_range(&prior).baseline);
+    assert_eq!(next.records.len(), 45);
+}
+
+#[tokio::test]
+async fn failed_incremental_check_preserves_checkpoint_and_the_next_attempt_rebuilds() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let prior = finish(&service, &scopes).await;
+    let ids = (200..205).chain(100..145).collect::<Vec<_>>();
+    catalog(&backend, &ids);
+    backend.0.pages.lock().unwrap().insert(
+        key(Source::Jm, "A", 2),
+        Err(AccountError::new("SOURCE_UNAVAILABLE")),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let failed = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&failed).state, DiscoveryRangeState::Partial);
+    assert_eq!(jm_range(&failed).baseline, jm_range(&prior).baseline);
+    assert_eq!(
+        jm_range(&failed).last_checked_at,
+        jm_range(&prior).last_checked_at
+    );
+    assert_eq!(failed.records.len(), 50);
+    catalog(&backend, &ids);
+    backend.0.calls.lock().unwrap().clear();
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let recovered = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&recovered).pages_read, 3);
+    assert_eq!(
+        jm_range(&recovered).last_check_mode,
+        Some(DiscoveryMode::Full)
+    );
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn legacy_complete_rows_without_checkpoints_must_build_a_new_full_baseline() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    finish(&service, &scopes).await;
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    let mut saved = store.read_discovery().unwrap();
+    for range in &mut saved.value.accounts[0].authors {
+        range.baseline = None;
+        range.last_checked_at = None;
+        range.last_check_mode = None;
+    }
+    store.write_discovery(saved.revision, saved.value).unwrap();
+    backend.0.calls.lock().unwrap().clear();
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let rebuilt = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&rebuilt).pages_read, 3);
+    assert_eq!(
+        jm_range(&rebuilt).last_check_mode,
+        Some(DiscoveryMode::Full)
+    );
+    assert!(jm_range(&rebuilt).baseline.is_some());
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn cancellation_preserves_the_old_baseline_and_does_not_resume_it_as_complete() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let prior = finish(&service, &scopes).await;
+    let ids = (200..205).chain(100..145).collect::<Vec<_>>();
+    catalog(&backend, &ids);
+    backend.0.calls.lock().unwrap().clear();
+    backend.0.block_call.store(2, Ordering::SeqCst);
+    let started = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    backend.0.started.notified().await;
+    service.discovery_cancel(&started.run_id).unwrap();
+    backend.0.release.notify_one();
+    let cancelled = finish(&service, &scopes).await;
+    assert_eq!(
+        cancelled.run.as_ref().unwrap().phase,
+        DiscoveryPhase::Cancelled
+    );
+    assert_eq!(jm_range(&cancelled).baseline, jm_range(&prior).baseline);
+    let stored = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(
+        stored.value.accounts[0].authors[0].state,
+        DiscoveryRangeState::Checking
+    );
+    assert_eq!(
+        stored.value.accounts[0].authors[0].baseline,
+        jm_range(&prior).baseline
+    );
+    backend.0.block_call.store(0, Ordering::SeqCst);
+    backend.0.calls.lock().unwrap().clear();
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let recovered = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&recovered).pages_read, 3);
+    assert_eq!(
+        jm_range(&recovered).last_check_mode,
+        Some(DiscoveryMode::Full)
+    );
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[test]
+fn incremental_boundary_requires_a_current_successful_baseline_and_known_totals() {
+    let ids = (100..145).map(|id| id.to_string()).collect::<HashSet<_>>();
+    let mut range = idle("A", Source::Jm);
+    range.state = DiscoveryRangeState::Complete;
+    range.last_complete_at = Some(1);
+    range.baseline = Some(DiscoveryBaseline {
+        query_version: DISCOVERY_QUERY_VERSION,
+        head_ids: (100..120).map(|id| id.to_string()).collect(),
+        total: 45,
+        established_at: 1,
+    });
+    let mut boundary = IncrementalBoundary::new(DiscoveryMode::Incremental, &range, &ids).unwrap();
+    let mut response = page(
+        1,
+        45,
+        (100..120)
+            .map(|id| work(Source::Jm, &id.to_string(), &["A"]))
+            .collect(),
+    );
+    response.total = None;
+    assert!(!boundary.append(&response));
+    assert!(!boundary.viable);
+    assert!(IncrementalBoundary::new(DiscoveryMode::Full, &range, &ids).is_none());
+    for state in [
+        DiscoveryRangeState::Partial,
+        DiscoveryRangeState::Checking,
+        DiscoveryRangeState::Cancelled,
+        DiscoveryRangeState::Error,
+    ] {
+        range.state = state;
+        assert!(IncrementalBoundary::new(DiscoveryMode::Incremental, &range, &ids).is_none());
+    }
+    range.state = DiscoveryRangeState::Complete;
+    range.baseline.as_mut().unwrap().query_version += 1;
+    assert!(IncrementalBoundary::new(DiscoveryMode::Incremental, &range, &ids).is_none());
 }

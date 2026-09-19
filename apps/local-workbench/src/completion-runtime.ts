@@ -3,9 +3,11 @@ import { validateSourceWork, SourceError } from "./source-runtime.ts";
 import type { Source, SourceScope } from "./source-types.ts";
 import type {
   CompletionAdapter,
+  DiscoveryBaseline,
   DiscoveryRun,
   DiscoverySnapshot,
 } from "./completion-types.ts";
+import { discoveryRecordLimit } from "./completion-types.ts";
 
 const invalid = (): never => {
   throw new SourceError("DISCOVERY_INVALID");
@@ -29,10 +31,29 @@ const nullable = <T>(v: unknown, f: (x: unknown) => T): T | null =>
 const source = (v: unknown): Source => choice(v, ["JM", "Pica"]);
 const phase = (v: unknown) =>
   choice(v, ["checking", "complete", "partial", "cancelled", "error"]);
+const discoveryMode = (v: unknown) => choice(v, ["incremental", "full"]);
 const code = (v: unknown) =>
   nullable(v, (x) =>
     /^[A-Z_0-9]{1,100}$/.test(str(x, 100)) ? (x as string) : invalid(),
   );
+function baselineValue(v: unknown): DiscoveryBaseline {
+  const b = object(v),
+    headIds = array(b.headIds, (id) => str(id, 128), 20),
+    queryVersion = integer(b.queryVersion),
+    total = integer(b.total);
+  if (
+    !queryVersion ||
+    new Set(headIds).size !== headIds.length ||
+    headIds.length !== Math.min(total, 20)
+  )
+    return invalid();
+  return {
+    queryVersion,
+    headIds,
+    total,
+    establishedAt: integer(b.establishedAt),
+  };
+}
 function scopesValue(v: unknown): SourceScope[] {
   const scopes = array(
     v,
@@ -60,6 +81,11 @@ function runValue(v: unknown): DiscoveryRun {
     completedScopes: integer(r.completedScopes),
     totalScopes: integer(r.totalScopes),
     errorCode: code(r.errorCode),
+    mode: r.mode === undefined ? "full" : discoveryMode(r.mode),
+    currentStrategy:
+      r.currentStrategy === undefined
+        ? null
+        : nullable(r.currentStrategy, discoveryMode),
   };
 }
 export function validateDiscoverySnapshot(
@@ -76,17 +102,21 @@ export function validateDiscoverySnapshot(
     )
   )
     throw new SourceError("STALE_SESSION");
-  const records = array(r.records, (x) => {
-    const q = object(x);
-    if (typeof q.authorVerified !== "boolean") return invalid();
-    return {
-      work: validateSourceWork(q.work),
-      matchedAuthors: array(q.matchedAuthors, str, 1000),
-      authorVerified: q.authorVerified,
-      observedAt: integer(q.observedAt),
-      scanId: str(q.scanId, 128),
-    };
-  });
+  const records = array(
+    r.records,
+    (x) => {
+      const q = object(x);
+      if (typeof q.authorVerified !== "boolean") return invalid();
+      return {
+        work: validateSourceWork(q.work),
+        matchedAuthors: array(q.matchedAuthors, str, 1000),
+        authorVerified: q.authorVerified,
+        observedAt: integer(q.observedAt),
+        scanId: str(q.scanId, 128),
+      };
+    },
+    discoveryRecordLimit,
+  );
   if (
     new Set(records.map((q) => q.work.source + ":" + q.work.workId)).size !==
     records.length
@@ -114,6 +144,18 @@ export function validateDiscoverySnapshot(
           ]),
           lastAttemptAt: nullable(q.lastAttemptAt, integer),
           lastCompleteAt: nullable(q.lastCompleteAt, integer),
+          lastCheckedAt:
+            q.lastCheckedAt === undefined
+              ? nullable(q.lastCompleteAt, integer)
+              : nullable(q.lastCheckedAt, integer),
+          lastCheckMode:
+            q.lastCheckMode === undefined
+              ? null
+              : nullable(q.lastCheckMode, discoveryMode),
+          baseline:
+            q.baseline === undefined
+              ? null
+              : nullable(q.baseline, baselineValue),
           observedCount: integer(q.observedCount),
           pagesRead: integer(q.pagesRead),
           errorCode: code(q.errorCode),
@@ -154,11 +196,12 @@ export function createCompletionAdapter(
         await call("discovery_read", { scopes: scopesValue(scopes) }),
         scopes,
       ),
-    start: async (scopes, authors) => {
+    start: async (scopes, authors, mode = "incremental") => {
       const result = object(
         await call("discovery_start", {
           scopes: scopesValue(scopes),
           authors: array(authors, str, 1000),
+          mode: discoveryMode(mode),
         }),
       );
       const snapshot = validateDiscoverySnapshot(result.snapshot, scopes);
@@ -179,5 +222,7 @@ export function completionError(cause: unknown): string {
   )
     return "账号已变化，请连接 JM 和哔咔后重新检查。";
   if (c === "DISCOVERY_NO_AUTHORS") return "请先关注作者，再检查作者更新。";
+  if (c === "DISCOVERY_LIMIT")
+    return "作者目录达到保存上限，本次检查未完成，已读取的结果会保留。";
   return "本次检查未完成，已读取的结果会保留。请查看检查范围后重试。";
 }

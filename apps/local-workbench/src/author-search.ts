@@ -52,6 +52,8 @@ export function createAuthorSearchAdapter(
           observedCount: 0,
           lastAttemptAt: now,
           lastCompleteAt: null,
+          lastCheckedAt: null,
+          lastCheckMode: "full",
           errorCode: null,
         })),
         run: {
@@ -64,6 +66,8 @@ export function createAuthorSearchAdapter(
           completedScopes: 0,
           totalScopes: 2,
           errorCode: null,
+          mode: "full",
+          currentStrategy: "full",
         },
       };
       const started = structuredClone(snapshot);
@@ -98,7 +102,10 @@ export function createAuthorSearchAdapter(
                 range.pagesRead = progress.page.page;
                 range.observedCount = progress.items.length;
                 range.state = progress.complete ? "complete" : "checking";
-                if (progress.complete) range.lastCompleteAt = Date.now();
+                if (progress.complete) {
+                  range.lastCompleteAt = Date.now();
+                  range.lastCheckedAt = range.lastCompleteAt;
+                }
                 snapshot.run!.currentPage = progress.page.page;
                 snapshot.run!.requestsUsed++;
                 snapshot.revision++;

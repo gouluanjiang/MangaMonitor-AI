@@ -43,6 +43,14 @@ fn manual_discovery_and_download_inventory_keep_main_origin_boundaries() {
     for (command, body) in [
         ("discovery_read", json!({"scopes":scopes})),
         ("discovery_start", json!({"scopes":scopes,"authors":[]})),
+        (
+            "discovery_start",
+            json!({"scopes":scopes,"authors":[],"mode":"incremental"}),
+        ),
+        (
+            "discovery_start",
+            json!({"scopes":scopes,"authors":[],"mode":"full"}),
+        ),
         ("discovery_cancel", json!({"runId":"synthetic"})),
         ("download_inventory_read", json!({})),
     ] {

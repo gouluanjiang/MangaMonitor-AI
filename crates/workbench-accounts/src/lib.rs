@@ -7,8 +7,8 @@ mod service;
 pub use backend::{Authenticated, SourceBackend};
 pub use cache::{CatalogAction, CatalogResult, CatalogSnapshot};
 pub use discovery::{
-    discovery_work_from_source, DiscoveryPhase, DiscoveryRun, DiscoveryScope, DiscoverySnapshot,
-    DiscoveryStart,
+    discovery_work_from_source, DiscoveryMode, DiscoveryPhase, DiscoveryRun, DiscoveryScope,
+    DiscoverySnapshot, DiscoveryStart,
 };
 pub use service::{AccountService, DownloadSession, SessionLease};
 pub use workbench_credentials::Source;

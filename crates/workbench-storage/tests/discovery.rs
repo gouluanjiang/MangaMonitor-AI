@@ -1,9 +1,9 @@
 use std::fs;
 use tempfile::TempDir;
 use workbench_storage::{
-    AccountFollowing, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryDocument,
-    DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, FollowedAccount, Source, WorkbenchStore,
-    PRIVATE_DIRECTORY,
+    AccountFollowing, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline, DiscoveryDocument,
+    DiscoveryMode, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, FollowedAccount, Source,
+    WorkbenchStore, PRIVATE_DIRECTORY,
 };
 
 fn record(source: Source, id: &str) -> DiscoveryRecord {
@@ -38,6 +38,9 @@ fn document() -> DiscoveryDocument {
                 state: DiscoveryRangeState::Complete,
                 last_attempt_at: Some(10),
                 last_complete_at: Some(10),
+                last_checked_at: None,
+                last_check_mode: None,
+                baseline: None,
                 observed_count: 1,
                 pages_read: 1,
                 error_code: None,
@@ -71,6 +74,92 @@ fn discovery_roundtrip_is_independent_of_library_phone_and_following() {
     for secret_field in ["sessionId", "token", "cookie", "accountId", "coverUrl"] {
         assert!(!bytes.contains(secret_field));
     }
+}
+
+#[test]
+fn legacy_ranges_load_without_claiming_an_incremental_checkpoint() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let value = serde_json::to_value(document()).unwrap();
+    assert!(value["accounts"][0]["authors"][0].get("baseline").is_none());
+    fs::write(
+        directory
+            .path()
+            .join(PRIVATE_DIRECTORY)
+            .join("discovery.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion":1,"revision":7,"value":value
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let saved = store.read_discovery().unwrap();
+    assert_eq!(saved.revision, 7);
+    assert_eq!(saved.value, document());
+    assert_eq!(saved.value.accounts[0].authors[0].baseline, None);
+}
+
+fn checkpoint_document() -> DiscoveryDocument {
+    let mut value = document();
+    let range = &mut value.accounts[0].authors[0];
+    range.last_checked_at = Some(20);
+    range.last_check_mode = Some(DiscoveryMode::Incremental);
+    range.baseline = Some(DiscoveryBaseline {
+        query_version: 1,
+        head_ids: vec!["123".into()],
+        total: 1,
+        established_at: 20,
+    });
+    value
+}
+
+#[test]
+fn checkpoint_roundtrip_preserves_the_separate_full_scan_time() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, checkpoint_document()).unwrap();
+    let reopened = WorkbenchStore::open(directory.path()).unwrap();
+    let read = reopened.read_discovery().unwrap();
+    assert_eq!(read.value, checkpoint_document());
+    assert_eq!(read.value.accounts[0].authors[0].last_complete_at, Some(10));
+    assert_eq!(read.value.accounts[0].authors[0].last_checked_at, Some(20));
+}
+
+#[test]
+fn malformed_checkpoints_cannot_replace_the_previous_catalog() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let original = checkpoint_document();
+    store.write_discovery(0, original.clone()).unwrap();
+    let path = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    let before = fs::read(&path).unwrap();
+    let invalid_heads = [
+        vec![],
+        vec!["../bad".to_owned()],
+        vec!["123".to_owned(), "123".to_owned()],
+        (1..=21).map(|number| number.to_string()).collect(),
+    ];
+    for (index, head_ids) in invalid_heads.into_iter().enumerate() {
+        let mut value = original.clone();
+        let baseline = value.accounts[0].authors[0].baseline.as_mut().unwrap();
+        baseline.total = if index == 0 { 1 } else { head_ids.len() as u64 };
+        baseline.head_ids = head_ids;
+        assert_eq!(
+            store.write_discovery(1, value).unwrap_err().code,
+            "VALIDATION_FAILED"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+    let mut future_clock = original;
+    future_clock.accounts[0].authors[0].last_checked_at = Some(u64::MAX);
+    assert_eq!(
+        store.write_discovery(1, future_clock).unwrap_err().code,
+        "VALIDATION_FAILED"
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
 }
 
 #[test]

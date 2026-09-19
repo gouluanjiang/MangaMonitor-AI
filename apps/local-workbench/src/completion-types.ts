@@ -1,6 +1,14 @@
 import type { Source, SourceScope, SourceWork } from "./source-types.ts";
 export type ScanPhase =
   "checking" | "complete" | "partial" | "cancelled" | "error";
+export type DiscoveryMode = "incremental" | "full";
+export const discoveryRecordLimit = 100000;
+export interface DiscoveryBaseline {
+  queryVersion: number;
+  headIds: string[];
+  total: number;
+  establishedAt: number;
+}
 export interface DiscoveryRun {
   id: string;
   phase: ScanPhase;
@@ -11,6 +19,8 @@ export interface DiscoveryRun {
   completedScopes: number;
   totalScopes: number;
   errorCode: string | null;
+  mode?: DiscoveryMode;
+  currentStrategy?: DiscoveryMode | null;
 }
 export interface DiscoverySnapshot {
   scopes: SourceScope[];
@@ -22,6 +32,9 @@ export interface DiscoverySnapshot {
     state: ScanPhase | "idle";
     lastAttemptAt: number | null;
     lastCompleteAt: number | null;
+    lastCheckedAt?: number | null;
+    lastCheckMode?: DiscoveryMode | null;
+    baseline?: DiscoveryBaseline | null;
     observedCount: number;
     pagesRead: number;
     errorCode: string | null;
@@ -36,6 +49,10 @@ export interface DiscoverySnapshot {
 }
 export interface CompletionAdapter {
   read(scopes: SourceScope[]): Promise<DiscoverySnapshot>;
-  start(scopes: SourceScope[], authors: string[]): Promise<DiscoverySnapshot>;
+  start(
+    scopes: SourceScope[],
+    authors: string[],
+    mode?: DiscoveryMode,
+  ): Promise<DiscoverySnapshot>;
   cancel(runId: string): Promise<void>;
 }

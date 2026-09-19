@@ -14,6 +14,7 @@ import type {
 } from "./source-types.ts";
 import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
+import { authorQueryMessage } from "./author-query.ts";
 
 export class SourceError extends Error {
   readonly code: string;
@@ -25,6 +26,8 @@ export class SourceError extends Error {
 }
 export function sourceErrorMessage(error: unknown): string {
   const code = error instanceof SourceError ? error.code : "SOURCE_UNAVAILABLE";
+  const queryMessage = authorQueryMessage(code);
+  if (queryMessage) return queryMessage;
   if (code === "CATALOG_CHANGED")
     return "收藏范围在读取期间发生变化，已读内容保留。请重新读取完整收藏。";
   if (code === "CATALOG_LIMIT")

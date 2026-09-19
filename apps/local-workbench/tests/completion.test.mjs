@@ -7,6 +7,7 @@ import {
 import { discoveryRecordLimit } from "../src/completion-types.ts";
 import { createAuthorSearchAdapter } from "../src/author-search.ts";
 import { readCompleteSearch } from "../src/source-search.ts";
+import { authorQueryError } from "../src/author-query.ts";
 
 const scopes = [
   { source: "JM", sessionId: "synthetic-jm" },
@@ -32,6 +33,50 @@ const empty = () => ({
   run: null,
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("author query eligibility rejects placeholder and broad initials without rejecting real short names", () => {
+  for (const name of ["N/A", " n/a ", "Ｎ／Ａ", "unknown", "作者不詳"])
+    assert.equal(authorQueryError(name), "AUTHOR_QUERY_PLACEHOLDER");
+  for (const name of ["P", "p", "Ｐ", "7", " ７ "])
+    assert.equal(authorQueryError(name), "AUTHOR_QUERY_TOO_BROAD");
+  for (const name of [
+    "森",
+    "あ",
+    "AB",
+    "NA",
+    "Unknown Artist",
+    "Example Circle (P)",
+  ])
+    assert.equal(authorQueryError(name), null);
+});
+
+test("ad-hoc author search blocks broad queries before IO and preserves the previous complete result", async () => {
+  const calls = [];
+  const adapter = createAuthorSearchAdapter({
+    query: async (scope, query) => {
+      calls.push(query.query);
+      return {
+        ...scope,
+        items: [work(scope.source, 1)],
+        page: 1,
+        pages: 1,
+        total: 1,
+        hasMore: false,
+        folders: [],
+      };
+    },
+  });
+  await adapter.start(scopes, ["森"]);
+  await flush();
+  const before = await adapter.read(scopes);
+  assert.equal(before.run.phase, "complete");
+  for (const name of ["N/A", "P", "Ｎ／Ａ", "Ｐ"])
+    await assert.rejects(adapter.start(scopes, [name]), {
+      code: authorQueryError(name),
+    });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(await adapter.read(scopes), before);
+});
 
 test("JM total-only pagination finishes exactly at the reported total without a spurious extra request", async () => {
   const calls = [],

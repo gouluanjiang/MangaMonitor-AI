@@ -75,6 +75,106 @@ fn manual_discovery_and_download_inventory_keep_main_origin_boundaries() {
 }
 
 #[test]
+fn inventory_recovers_after_an_author_commit_releases_the_document_lock() {
+    let root = tempfile::tempdir().unwrap();
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    store
+        .write_library(0, workbench_storage::LibraryDocument::default())
+        .unwrap();
+    let private = root.path().join(workbench_storage::PRIVATE_DIRECTORY);
+    let before = std::fs::read(private.join("library.json")).unwrap();
+    let service = workbench_downloads::DownloadService::new();
+    let expected = serde_json::to_value(service.inventory(&store).unwrap()).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(private.join(".workbench.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let mut attempts = 0;
+    let actual = downloads::inventory_read_with_busy_retry(|| {
+        attempts += 1;
+        let result = service.inventory(&store);
+        if attempts == 1 {
+            assert_eq!(result.as_ref().unwrap_err().code, "BUSY");
+            // Release only after the inventory read observes contention, so
+            // the replay does not depend on worker or timer scheduling.
+            lock.unlock().unwrap();
+        }
+        result
+    })
+    .unwrap();
+    assert_eq!(attempts, 2);
+    assert_eq!(serde_json::to_value(actual).unwrap(), expected);
+    assert_eq!(std::fs::read(private.join("library.json")).unwrap(), before);
+    assert!(!private.join("downloads.json").exists());
+    assert!(!private.join("download-staging-v1").exists());
+}
+
+#[test]
+fn inventory_lock_retry_is_bounded_and_native_errors_remain_retryable() {
+    let (root, app) = fixture();
+    let main = window(&app, "main");
+    let expected = invoke(&main, "download_inventory_read", json!({})).unwrap();
+    let private = root.path().join(workbench_storage::PRIVATE_DIRECTORY);
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    let service = workbench_downloads::DownloadService::new();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(private.join(".workbench.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let mut attempts = 0;
+    let problem = downloads::inventory_read_with_busy_retry(|| {
+        attempts += 1;
+        service.inventory(&store)
+    })
+    .unwrap_err();
+    assert_eq!(attempts, 5);
+    assert_eq!(problem.code, "BUSY");
+    assert_eq!(
+        invoke(&main, "download_inventory_read", json!({})).unwrap_err(),
+        json!({"code":"BUSY"})
+    );
+    lock.unlock().unwrap();
+    assert_eq!(
+        invoke(&main, "download_inventory_read", json!({})).unwrap(),
+        expected
+    );
+    assert!(!private.join("downloads.json").exists());
+    assert!(!private.join("download-staging-v1").exists());
+}
+
+#[test]
+fn inventory_never_retries_or_hides_corrupt_documents() {
+    let (root, app) = fixture();
+    let main = window(&app, "main");
+    invoke(&main, "download_inventory_read", json!({})).unwrap();
+    let private = root.path().join(workbench_storage::PRIVATE_DIRECTORY);
+    let original = b"{corrupt-library";
+    std::fs::write(private.join("library.json"), original).unwrap();
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    let service = workbench_downloads::DownloadService::new();
+    let mut attempts = 0;
+    let problem = downloads::inventory_read_with_busy_retry(|| {
+        attempts += 1;
+        service.inventory(&store)
+    })
+    .unwrap_err();
+    assert_eq!(attempts, 1);
+    assert_eq!(problem.code, "DOCUMENT_CORRUPT");
+    assert_eq!(
+        invoke(&main, "download_inventory_read", json!({})).unwrap_err(),
+        json!({"code":"DOCUMENT_CORRUPT"})
+    );
+    assert_eq!(
+        std::fs::read(private.join("library.json")).unwrap(),
+        original
+    );
+}
+
+#[test]
 fn retired_matching_phone_and_automatic_download_commands_are_unavailable() {
     let (root, app) = fixture();
     let main = window(&app, "main");

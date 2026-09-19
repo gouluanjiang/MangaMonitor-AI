@@ -854,6 +854,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         {
             return Err(AccountError::new("FOLLOWING_INPUT_INVALID"));
         }
+        if desired
+            && matches!(kind, FollowKind::Author)
+            && crate::discovery::author_query_error(value) == Some("AUTHOR_QUERY_PLACEHOLDER")
+        {
+            return Err(AccountError::new("AUTHOR_QUERY_PLACEHOLDER"));
+        }
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
         let key = account_key(

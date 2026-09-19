@@ -2391,6 +2391,7 @@ export default function App() {
                     !library.error
                   }
                   onRefreshInventory={downloadLibrary.refresh}
+                  inventoryError={downloadLibrary.error || library.error}
                   density={appearance.density}
                   onOpenWork={openSourceWork}
                   onDownload={(work) => void beginDownload(work.workId, work)}

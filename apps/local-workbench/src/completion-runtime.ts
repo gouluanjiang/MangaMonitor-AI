@@ -8,6 +8,7 @@ import type {
   DiscoverySnapshot,
 } from "./completion-types.ts";
 import { discoveryRecordLimit } from "./completion-types.ts";
+import { authorQueryMessage } from "./author-query.ts";
 
 const invalid = (): never => {
   throw new SourceError("DISCOVERY_INVALID");
@@ -215,6 +216,8 @@ export function createCompletionAdapter(
 }
 export function completionError(cause: unknown): string {
   const c = (cause as { code?: unknown })?.code;
+  const queryMessage = authorQueryMessage(c);
+  if (queryMessage) return queryMessage;
   if (
     c === "LOGIN_REQUIRED" ||
     c === "STALE_SESSION" ||

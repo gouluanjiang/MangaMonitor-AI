@@ -1944,6 +1944,37 @@ for (const source of ["JM", "Pica"] as const) {
   });
 }
 
+test("source author mode blocks broad initials while explicit keyword mode remains available", async ({
+  page,
+}) => {
+  await installMock(page, { authorSearchResults: true });
+  await page.goto("/");
+  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("source-search-input").fill("P");
+  await page.getByTestId("source-search-submit").click();
+  await expect(
+    page.getByText(/单个字母或数字无法限定作者范围，本次未发送查询/),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter(
+        (c) => c.command === "source_query" && c.kind === "search",
+      ),
+    ),
+  ).toEqual([]);
+  await page.getByTestId("source-query-mode").selectOption("search");
+  await page.getByTestId("source-search-input").fill("P");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls
+        .filter((c) => c.command === "source_query" && c.kind === "search")
+        .map((c) => c.page),
+    ),
+  ).toEqual([1, 2]);
+});
+
 test("explicit work-keyword mode retains all hits and mode changes clear author selections", async ({
   page,
 }) => {

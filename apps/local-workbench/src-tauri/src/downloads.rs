@@ -176,9 +176,28 @@ pub(crate) async fn download_inventory_read<R: Runtime>(
     require_main(window.label())?;
     let downloads = Arc::clone(downloads.inner());
     let store = open_store(Arc::clone(store.inner())).await?;
-    tauri::async_runtime::spawn_blocking(move || downloads.service.inventory(&store))
-        .await
-        .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        inventory_read_with_busy_retry(|| downloads.service.inventory(&store))
+    })
+    .await
+    .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?
+}
+
+/// Author checks briefly hold the same private document lock while saving a
+/// page. Retry only that local contention, off the UI thread; real read errors
+/// and a persistently busy store must still make inventory unavailable.
+pub(crate) fn inventory_read_with_busy_retry(
+    mut read: impl FnMut() -> Result<workbench_downloads::DownloadInventorySnapshot, StoreError>,
+) -> Result<workbench_downloads::DownloadInventorySnapshot, StoreError> {
+    for attempt in 0..5 {
+        let result = read();
+        if attempt < 4 && result.as_ref().is_err_and(|error| error.code == "BUSY") {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        } else {
+            return result;
+        }
+    }
+    unreachable!("the final bounded inventory read always returns")
 }
 
 #[tauri::command]

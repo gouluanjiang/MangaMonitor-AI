@@ -5,6 +5,7 @@ import type {
 import type { SourceAdapter, SourceScope } from "./source-types.ts";
 import { SourceError } from "./source-runtime.ts";
 import { readCompleteSearch } from "./source-search.ts";
+import { authorQueryError } from "./author-query.ts";
 
 /** Ad-hoc author searches never change following, stored update results, or the queue. */
 export function createAuthorSearchAdapter(
@@ -35,6 +36,8 @@ export function createAuthorSearchAdapter(
         !authors[0].trim()
       )
         throw new SourceError("DISCOVERY_INVALID");
+      const queryError = authorQueryError(authors[0]);
+      if (queryError) throw new SourceError(queryError);
       read(scopes);
       const request = ++generation,
         author = authors[0].trim(),

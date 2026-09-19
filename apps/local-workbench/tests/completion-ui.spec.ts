@@ -17,6 +17,7 @@ declare global {
       hold: boolean;
       release?: () => void;
       readFailure: boolean;
+      inventoryFailure: boolean;
     };
   }
 }
@@ -138,6 +139,7 @@ async function install(page: Page) {
         searchRecords: structuredClone(works),
         hold: false,
         readFailure: false,
+        inventoryFailure: false,
       } as Window["authorTest"]);
       const clone = (value: unknown) => structuredClone(value);
       Object.defineProperty(window, "__TAURI_INTERNALS__", {
@@ -154,8 +156,10 @@ async function install(page: Page) {
             if (command === "read_preferences")
               return { revision: 0, value: preferences };
             if (command === "library_read") return clone(library);
-            if (command === "download_inventory_read")
+            if (command === "download_inventory_read") {
+              if (hooks.inventoryFailure) throw { code: "BUSY" };
               return clone(hooks.inventory);
+            }
             if (command === "source_accounts") return clone(accounts);
             if (command === "jm_download_read")
               return { revision: 0, tasks: [] };
@@ -273,6 +277,99 @@ const open = async (page: Page) => {
     "已记录 3 条",
   );
 };
+
+test("blocked author scopes explain local skips and do not count legacy checkpoints as complete", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    for (const range of window.authorTest.view.authors) {
+      range.state = "complete";
+      range.lastCompleteAt = 1800000000000;
+      range.errorCode = null;
+    }
+    for (const [index, code] of [
+      "AUTHOR_QUERY_PLACEHOLDER",
+      "AUTHOR_QUERY_TOO_BROAD",
+    ].entries()) {
+      window.authorTest.view.authors.push({
+        ...window.authorTest.view.authors[0],
+        author: index ? "P" : "N/A",
+        state: "partial",
+        pagesRead: 0,
+        observedCount: 0,
+        lastCompleteAt: 1800000000000,
+        errorCode: code,
+      });
+    }
+  });
+  await open(page);
+  await expect(page.getByTestId("completion-catalog-scope")).toContainText(
+    "已建立完整目录 2 / 4",
+  );
+  await page.getByText("查看未完成范围", { exact: true }).click();
+  await expect(
+    page.getByText(/作者名是缺失信息的占位值，本次未发送查询/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/单个字母或数字无法限定作者范围，本次未发送查询/),
+  ).toBeVisible();
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((c) => c.command === "discovery_start"),
+    ),
+  ).toEqual([]);
+});
+
+test("inventory contention displays an actionable unknown state and refresh restores ownership counts", async ({
+  page,
+}) => {
+  await install(page);
+  await open(page);
+  await page.evaluate(() => {
+    window.authorTest.inventoryFailure = true;
+  });
+  await page
+    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .click();
+  await expect(page.getByTestId("completion-inventory-error")).toContainText(
+    "当前不能判断已入库或未入库",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "状态待核实 3 条",
+  );
+  await page.evaluate(() => {
+    window.authorTest.inventoryFailure = false;
+  });
+  await page
+    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .click();
+  await expect(page.getByTestId("completion-inventory-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已入库 1 条 · 未入库 2 条 · 当前显示 2 条",
+  );
+});
+
+test("author search blocks an initial before source requests and preserves the normal search entry", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByTestId("nav-author-search").click();
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("P");
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByRole("alert")).toContainText("未发送查询");
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((c) => c.command === "source_query"),
+    ),
+  ).toEqual([]);
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成作者");
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+});
 
 test("saved omissions remain visible, same-source receipts filter ownership, and entering the page never starts a check", async ({
   page,

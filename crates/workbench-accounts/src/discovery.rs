@@ -23,6 +23,40 @@ use workbench_storage::{
 
 const DISCOVERY_QUERY_VERSION: u32 = 1;
 
+/// Eligibility for an automatic author-keyword catalog read, not an author identity
+/// verdict. In particular, a one-letter credit may be real but cannot constrain
+/// the sources' general keyword search. Stored names and generic searches remain valid.
+pub(crate) fn author_query_error(author: &str) -> Option<&'static str> {
+    let folded: String = author
+        .chars()
+        .map(|character| match character {
+            '\u{ff01}'..='\u{ff5e}' => {
+                char::from_u32(character as u32 - 0xfee0).expect("ASCII width fold")
+            }
+            _ => character,
+        })
+        .collect();
+    let normalized = folded.trim().to_ascii_lowercase();
+    if matches!(
+        normalized.as_str(),
+        "n/a"
+            | "n.a."
+            | "unknown"
+            | "none"
+            | "null"
+            | "未知作者"
+            | "作者不明"
+            | "作者不详"
+            | "作者不詳"
+    ) {
+        Some("AUTHOR_QUERY_PLACEHOLDER")
+    } else if normalized.len() == 1 && normalized.as_bytes()[0].is_ascii_alphanumeric() {
+        Some("AUTHOR_QUERY_TOO_BROAD")
+    } else {
+        None
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiscoveryScope {
@@ -254,7 +288,7 @@ fn project(
             authors.push(range);
         }
     }
-    DiscoverySnapshot {
+    let mut snapshot = DiscoverySnapshot {
         scopes: context.scopes(),
         revision: document.revision,
         run: None,
@@ -281,7 +315,33 @@ fn project(
                     .collect()
             })
             .unwrap_or_default(),
+    };
+    project_author_query_guards(&mut snapshot);
+    snapshot
+}
+
+/// Hide only associations that cannot be queried as authors. Do not delete saved
+/// results: a record shared with an eligible author remains available.
+fn project_author_query_guards(snapshot: &mut DiscoverySnapshot) {
+    let blocked: HashSet<&str> = snapshot
+        .authors
+        .iter_mut()
+        .filter_map(|range| {
+            let code = author_query_error(&range.author)?;
+            range.state = DiscoveryRangeState::Partial;
+            range.error_code = Some(code.into());
+            range.baseline = None;
+            Some(range.author.as_str())
+        })
+        .collect();
+    for record in &mut snapshot.records {
+        record
+            .matched_authors
+            .retain(|author| !blocked.contains(author.as_str()));
     }
+    snapshot
+        .records
+        .retain(|record| !record.matched_authors.is_empty());
 }
 
 impl DiscoveryControl {
@@ -432,6 +492,7 @@ impl DiscoveryControl {
                 }
             }
         }
+        project_author_query_guards(&mut snapshot);
         memory.snapshot = Some(snapshot);
         Ok(document)
     }
@@ -619,6 +680,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     }
                 }
             }
+            project_author_query_guards(&mut snapshot);
             return Ok(snapshot);
         }
         let context = self.discovery_context(scopes).await?;
@@ -863,6 +925,18 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     .map(|record| record.work.work_id.clone())
                     .collect();
                 let range = &mut account.authors[range_index];
+                if let Some(code) = author_query_error(author) {
+                    range.state = DiscoveryRangeState::Partial;
+                    range.last_attempt_at = Some(now()?);
+                    range.pages_read = 0;
+                    range.observed_count = known_ids.len();
+                    range.error_code = Some(code.into());
+                    range.baseline = None;
+                    document = self.discovery_commit(context, run_id, document).await?;
+                    partial = true;
+                    self.discovery.completed_scope(run_id);
+                    continue;
+                }
                 // Old complete flags alone are not a checkpoint. Interrupted or
                 // failed checks deliberately rebuild a complete source range.
                 let mut boundary = IncrementalBoundary::new(mode, range, &known_ids);

@@ -32,6 +32,7 @@ import { SourceCover } from "./SourceWorkbench.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { createAuthorSearchAdapter } from "./author-search.ts";
 import { partitionAuthorRecords } from "./author-evidence.ts";
+import { authorQueryMessage } from "./author-query.ts";
 import { jmSearchScopeNote } from "./source-search.ts";
 import "./completion.css";
 
@@ -45,6 +46,7 @@ interface Props {
   library: LibrarySnapshot;
   inventorySnapshot?: DownloadInventorySnapshot;
   inventoryReady?: boolean;
+  inventoryError?: string | null;
   onRefreshInventory?(): Promise<void>;
   density: 5 | 7 | 9;
   onOpenWork(reference: WorkReference): void;
@@ -64,6 +66,7 @@ export function CompletionPanel({
   library,
   inventorySnapshot,
   inventoryReady = false,
+  inventoryError = null,
   onRefreshInventory,
   density,
   onOpenWork,
@@ -226,7 +229,8 @@ export function CompletionPanel({
     ranges.some((range) => range.lastCheckMode === "incremental");
   const fullRangeChecked = complete && !includesIncremental;
   const catalogScopes = ranges.filter(
-    (range) => range.lastCompleteAt !== null,
+    (range) =>
+      range.lastCompleteAt !== null && !authorQueryMessage(range.errorCode),
   ).length;
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
   const scopedRecords = showOther
@@ -273,7 +277,9 @@ export function CompletionPanel({
   );
   const lastFullCheck = Math.max(
     0,
-    ...ranges.map((range) => range.lastCompleteAt ?? 0),
+    ...ranges.map((range) =>
+      authorQueryMessage(range.errorCode) ? 0 : (range.lastCompleteAt ?? 0),
+    ),
   );
   return (
     <section
@@ -408,6 +414,15 @@ export function CompletionPanel({
               {error}
             </p>
           )}
+          {inventoryError && (
+            <p
+              role="alert"
+              className="source-notice"
+              data-testid="completion-inventory-error"
+            >
+              入库状态暂未核对完成，当前不能判断已入库或未入库。请点击“刷新结果与入库状态”重试。
+            </p>
+          )}
           <div className="completion-controls">
             <label>
               来源{" "}
@@ -532,11 +547,12 @@ export function CompletionPanel({
                     <p key={range.source + range.author}>
                       {range.author} · {sourceLabel(range.source)} · 已读取{" "}
                       {range.pagesRead} 页 ·{" "}
-                      {range.errorCode === "DISCOVERY_LIMIT"
-                        ? "达到目录保存上限，已读取结果保留"
-                        : range.errorCode
-                          ? "来源读取未完成"
-                          : "检查未完成"}
+                      {authorQueryMessage(range.errorCode) ??
+                        (range.errorCode === "DISCOVERY_LIMIT"
+                          ? "达到目录保存上限，已读取结果保留"
+                          : range.errorCode
+                            ? "来源读取未完成"
+                            : "检查未完成")}
                     </p>
                   ))}
               </details>

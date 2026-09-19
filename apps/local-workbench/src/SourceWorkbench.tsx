@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { jmSearchScopeNote, readCompleteSearch } from "./source-search.ts";
+import { authorQueryError } from "./author-query.ts";
 import { partitionAuthorWorks } from "./author-evidence.ts";
 import { downloadSelectionLimit } from "./download-types.ts";
 import { createPortal } from "react-dom";
@@ -698,6 +699,7 @@ export function SourceWorkbench({
     folderId: string | null,
     page = 1,
     append = false,
+    asAuthor = authorQuery,
   ) {
     const captured = currentScope.current;
     if (!captured) return;
@@ -717,6 +719,8 @@ export function SourceWorkbench({
     const current = () =>
       stillCurrent(captured) && request === listRequest.current;
     try {
+      const queryError = asAuthor ? authorQueryError(value) : null;
+      if (queryError) throw new SourceError(queryError);
       await readCompleteSearch(adapter, captured, value, {
         current,
         fromPage: page,
@@ -1757,7 +1761,14 @@ export function SourceWorkbench({
                             setQueryMode("author");
                             setShowOtherAuthorResults(false);
                             clearSelection();
-                            void readList("search", author, null);
+                            void readList(
+                              "search",
+                              author,
+                              null,
+                              1,
+                              false,
+                              true,
+                            );
                           }}
                         >
                           搜索该作者

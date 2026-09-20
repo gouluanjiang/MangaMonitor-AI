@@ -460,12 +460,27 @@ test("failed cancellation keeps its action error while independent progress read
   await finishSyntheticCheck(page);
   await page.clock.runFor(1500);
   await expect(page.getByTestId("completion-progress")).toHaveCount(0);
-  await expect(page.getByTestId("completion-counts")).toContainText(
-    "当前检查范围已读完",
+  await expect(page.getByRole("button", { name: "停止本次检查" })).toHaveCount(
+    0,
   );
+  await expect(page.getByTestId("completion-start")).toBeEnabled();
   await expect(actionError).toBeVisible();
   await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
   expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  // The terminal snapshot ends polling. A successful background read must
+  // still retain the separate cancellation failure until explicit refresh.
+  await page.clock.runFor(30000);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  await expect(actionError).toBeVisible();
+  await expect(page.getByTestId("completion-counts")).not.toContainText(
+    "当前检查范围已读完",
+  );
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(actionError).toHaveCount(0);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  expect(await discoveryCalls(page)).toBe(readsBefore + 3);
   expect(await discoveryCalls(page, "discovery_cancel")).toBe(1);
   expect(await discoveryCalls(page, "discovery_start")).toBe(1);
 });

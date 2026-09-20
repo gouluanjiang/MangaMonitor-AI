@@ -958,6 +958,118 @@ test("author search blocks an initial before source requests and preserves the n
   );
 });
 
+test("legacy author results explain that missing dates cannot reverse catalog order without starting a source check", async ({
+  page,
+}) => {
+  await install(page);
+  await open(page);
+  const cards = page.getByTestId("completion-panel").locator("article");
+  const order = () =>
+    cards.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute("data-testid")),
+    );
+  await expect(cards).toHaveCount(2);
+  const before = await order();
+  await expect(page.getByTestId("completion-date-coverage")).toHaveText(
+    "当前显示作品：有更新时间 0 条 · 更新时间未知 2 条。",
+  );
+  await expect(page.getByTestId("completion-date-sort-scope")).toContainText(
+    "切换时间正倒序不会改变顺序",
+  );
+  await expect(page.getByTestId("completion-date-sort-scope")).toContainText(
+    "排序仅覆盖已读取结果",
+  );
+  await expect(page.getByTestId("completion-date-refresh-help")).toContainText(
+    "选择一位作者",
+  );
+  await expect(page.getByTestId("completion-date-refresh-help")).toContainText(
+    "仅读取本机记录，不会补查网站日期",
+  );
+  await page.getByTestId("completion-sort").selectOption("updated-asc");
+  expect(await order()).toEqual(before);
+  await page.getByTestId("completion-sort").selectOption("source");
+  await expect(page.getByTestId("completion-date-sort-scope")).toHaveCount(0);
+  await expect(page.getByTestId("completion-date-coverage")).toContainText(
+    "更新时间未知 2 条",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /^(source_query|discovery_start|discovery_start_unfinished)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.getByTestId("completion-sort").selectOption("updated-asc");
+  await page.screenshot({
+    path: "visual-evidence/author-update-missing-dates.png",
+  });
+});
+
+test("date coverage follows visible filters and saved date arrivals immediately re-sort without changing the chosen direction", async ({
+  page,
+}) => {
+  await install(page);
+  await open(page);
+  const cards = page.getByTestId("completion-panel").locator("article");
+  await page.getByTestId("completion-sort").selectOption("updated-asc");
+  await page.evaluate(() => {
+    window.authorTest.view.records[2].work.sourceUpdatedAt = "2026-09-01";
+    window.authorTest.view.revision++;
+  });
+  await page
+    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .click();
+  await expect(page.getByTestId("completion-date-coverage")).toHaveText(
+    "当前显示作品：有更新时间 1 条 · 更新时间未知 1 条。",
+  );
+  await expect(page.getByTestId("completion-date-sort-scope")).toContainText(
+    "仅 1 条按网站更新时间排序，其余 1 条日期未知，排列在最后",
+  );
+  await expect(cards.first()).toHaveAttribute(
+    "data-testid",
+    "author-update-Pica:0123456789abcdef01234567",
+  );
+  await page.getByLabel("更新来源").selectOption("JM");
+  await expect(page.getByTestId("completion-date-coverage")).toHaveText(
+    "当前显示作品：有更新时间 0 条 · 更新时间未知 1 条。",
+  );
+  await page.getByLabel("更新来源").selectOption("all");
+  await page.evaluate(() => {
+    window.authorTest.view.records[1].work.sourceUpdatedAt = "2026-09-20";
+    window.authorTest.view.revision++;
+  });
+  await page
+    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .click();
+  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-asc");
+  await expect(page.getByTestId("completion-date-coverage")).toHaveText(
+    "当前显示作品：有更新时间 2 条 · 更新时间未知 0 条。",
+  );
+  await expect(page.getByTestId("completion-date-refresh-help")).toHaveCount(0);
+  await expect(cards.first()).toHaveAttribute(
+    "data-testid",
+    "author-update-Pica:0123456789abcdef01234567",
+  );
+  await page.getByTestId("completion-sort").selectOption("updated-desc");
+  await expect(cards.first()).toHaveAttribute(
+    "data-testid",
+    "author-update-JM:456",
+  );
+  await expect(cards.first()).toContainText("更新：2026-09-20");
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /^(source_query|discovery_start|discovery_start_unfinished)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+});
+
 test("author update dates sort only loaded records, compose with ownership and persist independently of author search", async ({
   page,
 }) => {

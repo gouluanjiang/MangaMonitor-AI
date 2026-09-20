@@ -1,5 +1,13 @@
 # Work dates and sorting
 
+## Follow-up: legacy author-update date coverage
+
+The user found that the saved author-update page still showed unknown dates and unchanged order in both time directions. The live saved catalog predates this metadata field and contains no usable work-update dates; existing catalog caches likewise have no original timestamp field to recover. The comparator retains source order when all values are unknown, as designed. The prior real-source acceptance was an independent temporary author search, so it did not backfill the persistent update catalog. That validation did not establish date coverage in the user's saved update results.
+
+The page now reports date coverage for the visible, filtered results. It explains when all dates are unknown, or when only a subset can be time-sorted, and still labels incomplete source pagination. It points to a selected-author full recheck to obtain dates returned by the sources and distinguishes that operation from local result/inventory refresh. This changes neither incremental traversal nor the ad-hoc search contract and does not launch a background migration or all-author replay. Historical records not revisited by a source query can remain unknown; sources may also omit dates. A full all-author recheck remains an explicit user operation with its normal request/time cost.
+
+Targeted UI regressions cover all-unknown stable ordering without source requests, filtered coverage counts, and persisted dates becoming available on local refresh with immediate reordering and retained direction. CI and a bounded native saved-directory recheck are pending for this correction; no private work data enters the repository.
+
 ## Accepted scope
 
 The user approved this implementation after choosing the date semantics and accepting unknown historical dates. Search results and author updates display the website's work-update date. A local library work displays its downloaded version's source-update date and its original library-admission date. A later website update must not change the version date of an existing local package.
@@ -28,4 +36,14 @@ Formal suites and builds run only in CI. Regressions cover explicit update field
 
 Existing private profile documents and the two prior final evidence reports were backed up outside Git before implementation. Real titles, identifiers, credentials and library contents stay private. No live media download or library replacement is needed to validate this feature. Engineering checks, native verification and user acceptance are reported separately.
 
-Implementation is in progress. Version remains 0.3.4; no installer, release, merge or production enablement is included.
+## Final engineering and local delivery evidence
+
+Implementation and final CI passed at head `eb1c592bcb6c1be3998709704d6f29f059cbc3fb`, test merge `4e5a6719f766bcf0ab0e3fea9991583369cd89f7`: frontend `35514819949` (163 logic / 141 Chromium), desktop `35514819885` (including 79 account / 38 native IPC, remaining document/source/download tests, credentials, Clippy, build and actual Windows WebView startup/restart), and baseline `35514819889`. The first run's two old UI assertions were updated to address the precise coverage element and added unknown-date detail field; the final fix changed no product code. Formal suites were not duplicated locally. Wide/compact date layouts were visually reviewed.
+
+The final artifact passed digest, CRC, x64 PE and embedded-revision verification. The delivered EXE is `Documents/Codex/MangaMonitor-Dev-20260920-eb1c592/mangamonitor-workbench-preview.exe`, SHA-256 `0f57b76f328318ffb81cbd181c862645ba79e64fb661a7227d7364b1ca88f625`. Both existing Dev shortcuts point to it, with old shortcuts and executable deliveries retained.
+
+Bounded native library verification passed: existing inventory loads, admission ascending/descending puts the known dates in the expected order before unknown history, the version-date sort is available, and local details show separate admission/version fields. Ordinary desktop launch succeeded after restricted-shell launches did not expose a usable desktop window. JM restored its saved session, and the user reconnected Pica. The remaining authenticated verification then passed: saved author-update results retain ownership/partial coverage, independent sorting preferences survive page reentry, and one previously approved author query completed across both sources. Real returned dates sorted correctly in both directions in the visible result window, with ownership filters and counts preserved. The ad-hoc search remains in memory; it did not alter the saved author-update directory. No all-author check, library rescan or media download was started, and no second cold restart followed login. The final authenticated page shows unowned search results newest first; library admission and author-update defaults were restored after testing.
+
+An independent final read-only audit confirmed all seven selected store documents and three catalog/cache documents remain byte-identical to their pre-feature backups and receipts. The active discovery manifest still points to the unchanged checkpoint with no patches, preserving prior work keys and unrelated author scopes. This bounded check does not hash all manga payloads. Private native counts, evidence and the final preservation conclusion remain in the batch evidence directory. Engineering and bounded native validation are complete; user acceptance remains separate.
+
+Older indexed ZIPs need an ordinary library rescan to import a trustworthy package version date; opening a page only reads the existing index. Saved author results display the last obtained source date and do not refresh the website automatically. User acceptance remains pending. Version remains 0.3.4; no installer, release, merge or production enablement is included.

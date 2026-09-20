@@ -39,6 +39,7 @@ import { authorQueryMessage } from "./author-query.ts";
 import { jmSearchScopeNote } from "./source-search.ts";
 import {
   formatWorkDate,
+  normalizedWorkDate,
   readSortPreference,
   sortByWorkDate,
   updatedSorts,
@@ -398,6 +399,14 @@ export function CompletionPanel({
       sortByWorkDate(visible, (record) => record.work.sourceUpdatedAt, sort),
     [visible, sort],
   );
+  const datedCount = useMemo(
+    () =>
+      visible.filter(
+        (record) => normalizedWorkDate(record.work.sourceUpdatedAt) !== null,
+      ).length,
+    [visible],
+  );
+  const undatedCount = visible.length - datedCount;
   const allScopedOwned = useMemo(
     () =>
       scopedRecords.length > 0 &&
@@ -709,15 +718,33 @@ export function CompletionPanel({
             {counts.missing} 条 · 当前显示 {visible.length} 条
             {counts.unknown > 0 ? ` · 状态待核实 ${counts.unknown} 条` : ""}
           </p>
+          {visible.length > 0 && (
+            <p className="source-muted" data-testid="completion-date-coverage">
+              当前显示作品：有更新时间 {datedCount} 条 · 更新时间未知{" "}
+              {undatedCount} 条。
+            </p>
+          )}
           {sort !== "source" && (
             <p
               className="source-muted"
               data-testid="completion-date-sort-scope"
             >
-              {complete
-                ? "按当前保存结果的网站更新时间排序。"
-                : "检查范围尚未读完，更新时间排序仅覆盖已读取结果。"}
-              更新时间未知的作品排在最后。
+              {visible.length === 0
+                ? "当前没有可排序结果。"
+                : datedCount === 0
+                  ? "当前结果尚无可用更新时间，暂按目录顺序显示；切换时间正倒序不会改变顺序。"
+                  : undatedCount > 0
+                    ? `仅 ${datedCount} 条按网站更新时间排序，其余 ${undatedCount} 条日期未知，排列在最后。`
+                    : "按当前保存结果的网站更新时间排序。"}
+              {!complete && "检查范围尚未读完，更新时间排序仅覆盖已读取结果。"}
+            </p>
+          )}
+          {mode === "updates" && undatedCount > 0 && (
+            <p
+              className="source-muted"
+              data-testid="completion-date-refresh-help"
+            >
+              旧目录可能未保存日期。可在上方选择一位作者，再点击“完整复核”重新读取该作者在两站的所有分页；来源未提供的日期仍显示未知。“刷新结果与入库状态”仅读取本机记录，不会补查网站日期。
             </p>
           )}
           <p className="source-muted">

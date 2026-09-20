@@ -659,7 +659,16 @@ test("partial favorites rebind scrolling after detail and do not fetch more for 
   await page.getByTestId("source-open-JM:1").click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
-  await page.getByTestId("collection-sentinel").scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("source-card-JM:1")).toBeInViewport();
+  // Returning restores the saved anchor over rendering frames. Actual wheel
+  // input supersedes that restoration; scrollIntoView does not express user
+  // intent and can be overwritten before the sentinel enters the viewport.
+  const scrollArea = page.getByRole("main");
+  await scrollArea.hover();
+  await page.mouse.wheel(
+    0,
+    await scrollArea.evaluate((element) => element.scrollHeight),
+  );
   await expect(page.getByTestId("collection-progress")).toContainText(
     "40 / 2000",
   );

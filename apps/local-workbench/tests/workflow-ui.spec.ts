@@ -181,9 +181,12 @@ test("a later search-page failure survives navigation without claiming completio
   await expect(counts(page)).toContainText("检查范围尚未读完 · 已记录 3 条");
   await page.getByText("查看未完成范围", { exact: true }).click();
   await expect(
-    page.getByText("合成新作者 · 哔咔 · 已读取 1 页 · 来源读取未完成", {
-      exact: true,
-    }),
+    page.getByText(
+      "合成新作者 · 哔咔 · 已读取 1 页 · 来源读取未完成（SEARCH_INCOMPLETE）",
+      {
+        exact: true,
+      },
+    ),
   ).toBeVisible();
   await page.getByLabel("更新来源").selectOption("Pica");
   await page.getByTestId("nav-queue").click();

@@ -475,7 +475,22 @@ test("failed cancellation keeps its action error while independent progress read
   await expect(page.getByTestId("completion-counts")).not.toContainText(
     "当前检查范围已读完",
   );
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.evaluate(() => {
+    window.authorTest.view.records[1].work.title =
+      "合成作者 · 刷新后的已保存作品";
+    window.authorTest.view.revision++;
+  });
+  const refreshButton = page.getByRole("button", {
+    name: "刷新结果与入库状态",
+  });
+  await refreshButton.click();
+  // Clearing the action error exposes the previous terminal snapshot before
+  // inventory and discovery IPC resolve. Wait for the new read and its data.
+  await expect.poll(() => discoveryCalls(page)).toBe(readsBefore + 3);
+  await expect(page.getByTestId("author-update-JM:456")).toContainText(
+    "刷新后的已保存作品",
+  );
+  await expect(refreshButton).toBeEnabled();
   await expect(actionError).toHaveCount(0);
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完",

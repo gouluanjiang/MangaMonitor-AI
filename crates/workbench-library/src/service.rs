@@ -371,6 +371,12 @@ impl LibraryService {
             if old.identity.is_none() || old.identity != record.identity {
                 return Err(error("LIBRARY_FILE_CHANGED"));
             }
+            if old.item.version_updated_at.is_some() {
+                record
+                    .item
+                    .version_updated_at
+                    .clone_from(&old.item.version_updated_at);
+            }
             if old == &record {
                 let latest = store.read_library()?;
                 require_scope(&latest.value, root_id, generation)?;

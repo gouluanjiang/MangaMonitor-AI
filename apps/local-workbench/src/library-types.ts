@@ -16,6 +16,7 @@ export interface LibraryItem {
   bytes: number;
   modifiedAt: number | null;
   addedAt?: number | null;
+  versionUpdatedAt?: string | null;
   pageCount: number | null;
   coverAvailable: boolean;
   state: "indexed" | "unreadable" | "unsupported";

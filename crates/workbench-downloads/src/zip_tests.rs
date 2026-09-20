@@ -6,6 +6,8 @@ use std::io::{Read, Write};
 fn new_jm_zip_contains_original_jpeg_gif_metadata_and_registers_without_prefix() {
     let f = zip_fixture();
     let mut task = record(&f);
+    task.metadata.version_updated_at = Some("2026-09-15T12:34:56.000Z".into());
+    task.target_hash = binding(&task).unwrap();
     assert!(task.zip_output);
     assert_eq!(task.destination, "[Example author] Offline example.zip");
     let jpg = static_image(image::ImageFormat::Jpeg);
@@ -27,6 +29,11 @@ fn new_jm_zip_contains_original_jpeg_gif_metadata_and_registers_without_prefix()
         serde_json::from_reader(zip.by_name("元数据.json").unwrap()).unwrap();
     assert_eq!(metadata["id"], 123456);
     assert_eq!(metadata["name"], task.metadata.title);
+    assert_eq!(
+        metadata["mangaMonitor"]["versionUpdatedAt"],
+        "2026-09-15T12:34:56.000Z"
+    );
+    assert_eq!(metadata["addtime"], "");
     drop(zip);
     let indexed = workbench_library::LibraryService::new()
         .register_completed(
@@ -42,6 +49,36 @@ fn new_jm_zip_contains_original_jpeg_gif_metadata_and_registers_without_prefix()
         )
         .unwrap();
     assert_eq!(indexed.items[0].page_count, Some(2));
+    assert_eq!(
+        indexed.items[0].version_updated_at,
+        task.metadata.version_updated_at
+    );
+    let added_at = indexed.items[0].added_at;
+    assert!(added_at.is_some());
+    let mut library = workbench_library::LibraryService::new();
+    let mut scanned = library
+        .scan(
+            &f.store,
+            &task.root.id,
+            indexed.generation,
+            workbench_library::ScanAction::Start,
+        )
+        .unwrap();
+    while scanned.phase == workbench_library::LibraryPhase::Reading {
+        scanned = library
+            .scan(
+                &f.store,
+                &task.root.id,
+                scanned.generation,
+                workbench_library::ScanAction::Next,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        scanned.items[0].version_updated_at,
+        task.metadata.version_updated_at
+    );
+    assert_eq!(scanned.items[0].added_at, added_at);
     assert_eq!(
         indexed.items[0].format,
         workbench_storage::LibraryFormat::Zip
@@ -128,6 +165,27 @@ fn changing_container_profile_without_new_approval_is_rejected() {
     assert_ne!(binding(&task).unwrap(), original);
     put(&f, task);
     assert!(DownloadService::new().read(&f.store).is_err());
+}
+
+#[test]
+fn adding_or_changing_a_version_snapshot_requires_its_original_approval_binding() {
+    for original_date in [None, Some("2026-09-15")] {
+        let f = zip_fixture();
+        let mut task = record(&f);
+        task.metadata.version_updated_at = original_date.map(str::to_owned);
+        task.target_hash = binding(&task).unwrap();
+        put(&f, task.clone());
+        assert!(DownloadService::new().read(&f.store).is_ok());
+        task.metadata.version_updated_at = Some("2026-09-20".into());
+        assert_ne!(binding(&task).unwrap(), task.target_hash);
+        put(&f, task);
+        let before = fs::read(downloads_path(&f)).unwrap();
+        assert_eq!(
+            DownloadService::new().read(&f.store).unwrap_err().code,
+            "DOWNLOAD_DOCUMENT_INVALID"
+        );
+        assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
+    }
 }
 
 #[test]

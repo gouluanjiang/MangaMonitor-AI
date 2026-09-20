@@ -75,6 +75,7 @@ fn zip_fixture() -> Fixture {
                 authors: vec!["Example author".into()],
                 tags: vec!["test".into()],
                 description: None,
+                version_updated_at: None,
             },
         )
         .unwrap();
@@ -1369,6 +1370,11 @@ async fn legacy_webp_task_without_profile_field_reopens_and_finishes_its_saved_r
         .unwrap(),
     );
     let original_target = value.target_hash.clone();
+    assert_eq!(value.metadata.version_updated_at, None);
+    assert!(serde_json::to_value(&value.metadata)
+        .unwrap()
+        .get("versionUpdatedAt")
+        .is_none());
     assert_eq!(binding(&value).unwrap(), original_target);
     let webp = static_image(image::ImageFormat::WebP);
     let (stage, report) = report_with_images(&f, &value, &[("webp", webp.clone()), ("gif", gif())]);

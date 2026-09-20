@@ -13,6 +13,12 @@ import type {
 } from "./library-types.ts";
 import { LibraryController, libraryErrorMessage } from "./library-runtime.ts";
 import { filterLibraryItems, normalizeLibraryText } from "./library-model.ts";
+import {
+  formatTimestamp,
+  formatWorkDate,
+  readSortPreference,
+  writeSortPreference,
+} from "./work-dates.ts";
 import { getLibraryCoverCache } from "./library-cover-cache.ts";
 import type {
   LibraryCoverLease,
@@ -26,6 +32,7 @@ import "./library-workbench.css";
 import {
   libraryFilterLabels,
   libraryFilterMatches,
+  librarySorts,
 } from "./library-matching.ts";
 import type { LibraryFilter, LibrarySort } from "./library-matching.ts";
 
@@ -403,6 +410,10 @@ function LibraryDetail({
               ? "历史记录未知"
               : new Date(item.addedAt).toLocaleString()}
           </p>
+          <p className="source-muted" data-testid="library-version-updated-at">
+            版本更新：
+            {formatWorkDate(item.versionUpdatedAt, true) ?? "版本时间未知"}
+          </p>
           {(item.state !== "indexed" || item.errorCode) && (
             <p className="source-notice" role="status">
               {libraryErrorMessage(item.errorCode)} 请核对文件后重新读取漫画库。
@@ -462,7 +473,9 @@ export function LibraryWorkbench({
   externalEntryId?: string | null;
   requestKey?: number;
 }) {
-  const [sort, setSort] = useState<LibrarySort>("added-desc"),
+  const [sort, setSort] = useState<LibrarySort>(() =>
+      readSortPreference("library", librarySorts, "added-desc"),
+    ),
     [filter, setFilter] = useState<LibraryFilter>("all"),
     [detailId, setDetailId] = useState<string | null>(null),
     [densitySaving, setDensitySaving] = useState(false);
@@ -626,12 +639,16 @@ export function LibraryWorkbench({
                 <select
                   data-testid="library-sort"
                   value={sort}
-                  onChange={(event) =>
-                    setSort(event.target.value as LibrarySort)
-                  }
+                  onChange={(event) => {
+                    const value = event.target.value as LibrarySort;
+                    setSort(value);
+                    writeSortPreference("library", value);
+                  }}
                 >
                   <option value="added-desc">入库时间：从新到旧</option>
                   <option value="added-asc">入库时间：从旧到新</option>
+                  <option value="updated-desc">版本更新：从新到旧</option>
+                  <option value="updated-asc">版本更新：从旧到新</option>
                   <option value="title">作品标题</option>
                   <option value="modified">文件修改时间</option>
                 </select>
@@ -640,6 +657,17 @@ export function LibraryWorkbench({
             {sort.startsWith("added-") && (
               <p className="source-muted">
                 按首次成功记录到漫画库的时间排序；历史时间未知的作品排在最后。重新读取不会改变入库时间。
+              </p>
+            )}
+            {sort.startsWith("updated-") && (
+              <p
+                className="source-muted"
+                data-testid="library-version-sort-scope"
+              >
+                按本地下载版本的更新时间排序，版本时间未知的作品排在最后。网站后续更新不会改变本地版本时间。
+                {library.snapshot.phase !== "complete"
+                  ? "目录尚未读完，排序仅覆盖已读取作品。"
+                  : ""}
               </p>
             )}
             {externalWork && (
@@ -716,6 +744,22 @@ export function LibraryWorkbench({
                         : item.errorCode === "LIBRARY_DOWNLOAD_INCOMPLETE"
                           ? " · 含下载中章节"
                           : ""}
+                    </p>
+                    <p
+                      className="source-card-date"
+                      title={
+                        formatWorkDate(item.versionUpdatedAt, true) ?? undefined
+                      }
+                    >
+                      版本更新：
+                      {formatWorkDate(item.versionUpdatedAt) ?? "版本时间未知"}
+                    </p>
+                    <p
+                      className="source-card-date"
+                      title={formatTimestamp(item.addedAt, true) ?? undefined}
+                    >
+                      入库时间：
+                      {formatTimestamp(item.addedAt) ?? "历史记录未知"}
                     </p>
                   </article>
                 )}

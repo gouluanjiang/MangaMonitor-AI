@@ -170,6 +170,7 @@ mod tests {
             authors: authors.iter().map(|v| (*v).into()).collect(),
             tags: vec![],
             description: None,
+            version_updated_at: None,
         }
     }
     #[test]

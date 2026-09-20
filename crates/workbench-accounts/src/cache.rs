@@ -213,6 +213,10 @@ pub(crate) fn validate_work(source: Source, work: &SourceWork) -> Result<usize> 
         || work.title.trim().is_empty()
         || work.chapter_count.is_some_and(|n| n > MAX_SAFE_INTEGER)
         || work.page_count.is_some_and(|n| n > MAX_SAFE_INTEGER)
+        || work
+            .source_updated_at
+            .as_deref()
+            .is_some_and(|date| !workbench_storage::work_date_is_valid(date))
     {
         return Err(err("SOURCE_RESPONSE_INVALID"));
     }
@@ -545,6 +549,7 @@ mod tests {
             favorite: Some(true),
             chapter_count: None,
             page_count: None,
+            source_updated_at: None,
             cover_available: true,
         }
     }
@@ -751,14 +756,28 @@ mod tests {
         value.first_page_ids = value.items.iter().map(|w| w.work_id.clone()).collect();
         value.page_ends = Some(vec![2]);
         let write_result = catalog(
-            temp.path(), &key(1), Source::Pica, "s", None, false,
-            CatalogAction::Write, Some(value.clone()),
-        ).unwrap();
+            temp.path(),
+            &key(1),
+            Source::Pica,
+            "s",
+            None,
+            false,
+            CatalogAction::Write,
+            Some(value.clone()),
+        )
+        .unwrap();
         assert_eq!(write_result.snapshot.as_ref().unwrap().items.len(), 2);
         let read_result = catalog(
-            temp.path(), &key(1), Source::Pica, "s", None, false,
-            CatalogAction::Read, None,
-        ).unwrap();
+            temp.path(),
+            &key(1),
+            Source::Pica,
+            "s",
+            None,
+            false,
+            CatalogAction::Read,
+            None,
+        )
+        .unwrap();
         let restored = read_result.snapshot.unwrap();
         assert_eq!(restored.total, Some(2));
         assert_eq!(restored.items[0], restored.items[1]);

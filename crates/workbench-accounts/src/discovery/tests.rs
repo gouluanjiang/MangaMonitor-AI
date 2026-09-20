@@ -57,6 +57,7 @@ fn work(source: Source, id: &str, authors: &[&str]) -> SourceWork {
         favorite: None,
         chapter_count: Some(1),
         page_count: Some(20),
+        source_updated_at: None,
         cover_available: true,
     }
 }
@@ -69,6 +70,39 @@ fn page(number: u64, total: u64, items: Vec<SourceWork>) -> SourcePage {
         folders: vec![],
         items,
     }
+}
+
+#[test]
+fn discovery_keeps_source_dates_separate_from_observation_and_missing_list_fields() {
+    let mut source_work = work(Source::Jm, "123", &["Author A"]);
+    source_work.source_updated_at = Some("2026-09-15".into());
+    let existing = DiscoveryRecord {
+        work: discovery_work_from_source(source_work),
+        matched_authors: vec!["Author A".into()],
+        author_verified: true,
+        observed_at: 100,
+        scan_id: "a".repeat(64),
+    };
+    let mut incoming = existing.clone();
+    incoming.work.source_updated_at = None;
+    incoming.observed_at = 200;
+    let retained = merged_record(Some(&existing), incoming.clone());
+    assert_eq!(
+        retained.work.source_updated_at.as_deref(),
+        Some("2026-09-15")
+    );
+    assert_eq!(retained.observed_at, 200);
+
+    incoming.work.authors.clear();
+    incoming.work.source_updated_at = Some("2026-09-20T00:00:00.000Z".into());
+    let updated = merged_record(Some(&existing), incoming);
+    assert_eq!(updated.work.authors, ["Author A"]);
+    assert_eq!(
+        updated.work.source_updated_at.as_deref(),
+        Some("2026-09-20T00:00:00.000Z")
+    );
+    assert_eq!(updated.matched_authors, ["Author A"]);
+    assert!(updated.author_verified);
 }
 
 fn catalog(backend: &FakeBackend, ids: &[u64]) {

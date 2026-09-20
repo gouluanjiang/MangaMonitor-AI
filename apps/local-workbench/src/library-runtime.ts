@@ -9,6 +9,7 @@ import type {
   LibrarySnapshot,
 } from "./library-types.ts";
 import { parseLibraryReference } from "./library-model.ts";
+import { normalizedWorkDate } from "./work-dates.ts";
 
 export class LibraryError extends Error {
   readonly code: string;
@@ -86,6 +87,9 @@ function item(value: unknown): LibraryItem {
     ...(raw.addedAt === undefined
       ? {}
       : { addedAt: nullableNumber(raw.addedAt) }),
+    ...(raw.versionUpdatedAt === undefined
+      ? {}
+      : { versionUpdatedAt: normalizedWorkDate(raw.versionUpdatedAt) }),
     pageCount: nullableNumber(raw.pageCount),
     coverAvailable: raw.coverAvailable,
     state: raw.state as LibraryItem["state"],

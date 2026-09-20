@@ -14,6 +14,7 @@ fn pica_fixture() -> Fixture {
         authors: vec!["Pica fixture author".into()],
         tags: vec!["fixture".into()],
         description: Some("Synthetic paginated source".into()),
+        version_updated_at: None,
     };
     let plan = f
         .service
@@ -565,6 +566,7 @@ async fn pica_zip_retains_every_original_format_and_two_chapter_metadata() {
     use std::io::Read;
     let f = pica_fixture();
     let mut saved = pica_record(&f);
+    saved.metadata.version_updated_at = Some("2026-09-16".into());
     saved.zip_output = true;
     saved.destination = crate::naming::zip_name(&saved.metadata);
     saved.target_hash = binding(&saved).unwrap();
@@ -591,6 +593,10 @@ async fn pica_zip_retains_every_original_format_and_two_chapter_metadata() {
             assert_eq!(bytes, pica_bytes(&media.source_format));
         }
     }
+    let metadata: serde_json::Value =
+        serde_json::from_reader(zip.by_name("元数据.json").unwrap()).unwrap();
+    assert_eq!(metadata["mangaMonitor"]["versionUpdatedAt"], "2026-09-16");
+    assert_eq!(metadata["updatedAt"], "1970-01-01T00:00:00Z");
     drop(zip);
     let indexed = workbench_library::LibraryService::new()
         .register_completed(
@@ -611,6 +617,7 @@ async fn pica_zip_retains_every_original_format_and_two_chapter_metadata() {
         .find(|v| v.relative_path == receipt.relative_path)
         .unwrap();
     assert_eq!(entry.page_count, Some(5));
+    assert_eq!(entry.version_updated_at.as_deref(), Some("2026-09-16"));
     assert_eq!(entry.error_code, None);
     f.service
         .mark_indexed(&f.store, &receipt, &entry.id)

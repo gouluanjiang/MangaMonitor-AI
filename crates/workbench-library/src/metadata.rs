@@ -11,6 +11,7 @@ pub(crate) struct Metadata {
     pub authors: Vec<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    pub version_updated_at: Option<String>,
     pub reference: Option<LibraryReference>,
     pub conflict: bool,
 }
@@ -84,6 +85,9 @@ pub(crate) fn apply(item: &mut LibraryItem, metadata: Metadata) {
     }
     if !metadata.tags.is_empty() {
         item.tags = metadata.tags;
+    }
+    if metadata.version_updated_at.is_some() {
+        item.version_updated_at = metadata.version_updated_at;
     }
     if metadata.conflict
         || item
@@ -183,6 +187,7 @@ pub(crate) fn downloader_json(bytes: &[u8]) -> Result<Metadata> {
             .take(maximum)
             .collect()
     };
+    let version_updated_at = local_version_date(object, reference.source);
     Ok(Metadata {
         title: Some(clean(name, 1024)),
         authors: object
@@ -197,8 +202,30 @@ pub(crate) fn downloader_json(bytes: &[u8]) -> Result<Metadata> {
             .map(|v| clean(v, 4096))
             .filter(|v| !v.is_empty()),
         reference: Some(reference),
+        version_updated_at,
         conflict: false,
     })
+}
+
+fn local_version_date(
+    object: &serde_json::Map<String, serde_json::Value>,
+    source: Source,
+) -> Option<String> {
+    // Our downloader's extension records the source date at preparation. Its
+    // upstream-shaped fields may be compatibility placeholders, not evidence.
+    if let Some(extension) = object.get("mangaMonitor") {
+        return extension
+            .get("versionUpdatedAt")
+            .and_then(serde_json::Value::as_str)
+            .and_then(workbench_storage::normalize_work_date);
+    }
+    // Pinned picacomic-downloader Comic::from copies response.updated_at and
+    // save_comic_metadata serializes it as updatedAt. JM addtime is not an
+    // equivalent update field; ComicInfo publication dates are not one either.
+    (source == Source::Pica)
+        .then(|| object.get("updatedAt").and_then(serde_json::Value::as_str))
+        .flatten()
+        .and_then(workbench_storage::normalize_work_date)
 }
 
 pub(crate) fn comic_info(bytes: &[u8]) -> Result<Metadata> {
@@ -317,6 +344,7 @@ pub(crate) fn comic_info(bytes: &[u8]) -> Result<Metadata> {
         }),
         description: (!summary.is_empty()).then_some(summary),
         tags: list(&format!("{},{}", get("Genre"), get("Tags"))),
+        version_updated_at: None,
         reference,
         conflict,
     })

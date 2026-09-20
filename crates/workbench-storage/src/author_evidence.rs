@@ -182,6 +182,7 @@ mod tests {
                 favorite: None,
                 chapter_count: None,
                 page_count: None,
+                source_updated_at: None,
                 cover_available: false,
             },
             matched_authors: vec!["Writer".into()],

@@ -958,6 +958,68 @@ test("author search blocks an initial before source requests and preserves the n
   );
 });
 
+test("author update dates sort only loaded records, compose with ownership and persist independently of author search", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const dates = ["2026-09-01", "2026-09-20", null];
+    window.authorTest.view.records.forEach((record, index) => {
+      record.work.sourceUpdatedAt = dates[index];
+    });
+    window.authorTest.searchRecords.forEach((work, index) => {
+      work.sourceUpdatedAt = dates[index];
+    });
+  });
+  await open(page);
+  const cards = page.getByTestId("completion-panel").locator("article");
+  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-desc");
+  await expect(cards.first()).toHaveAttribute(
+    "data-testid",
+    "author-update-JM:456",
+  );
+  await expect(cards.last()).toContainText("更新时间未知");
+  await expect(page.getByTestId("completion-date-sort-scope")).toContainText(
+    "排序仅覆盖已读取结果",
+  );
+  await page.getByRole("button", { name: "全部 3", exact: true }).click();
+  await page.getByTestId("completion-sort").selectOption("updated-asc");
+  await expect(cards.first()).toHaveAttribute(
+    "data-testid",
+    "author-update-JM:123",
+  );
+  await page.getByLabel("筛选作者更新").fill("上次未选择");
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toContainText("更新：2026-09-20");
+  await page.getByLabel("筛选作者更新").fill("");
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/author-update-work-dates-wide.png",
+  });
+  await page.getByTestId("nav-author-search").click();
+  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-desc");
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成作者");
+  await page.getByRole("button", { name: "搜索两站作品" }).click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  await expect(cards.first()).toHaveAttribute(
+    "data-testid",
+    "author-update-JM:456",
+  );
+  await expect(
+    page.getByTestId("completion-date-sort-scope"),
+  ).not.toContainText("尚未读完");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({
+    path: "visual-evidence/author-search-work-dates-compact.png",
+  });
+  await page.reload();
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-asc");
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+});
+
 test("saved omissions remain visible, same-source receipts filter ownership, and entering the page never starts a check", async ({
   page,
 }) => {

@@ -42,6 +42,9 @@ pub struct SourceWork {
     pub favorite: Option<bool>,
     pub chapter_count: Option<u64>,
     pub page_count: Option<u64>,
+    /// Source-reported work update date, never the query or creation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_updated_at: Option<String>,
     /// A validated descriptor exists; this does not claim the cover was fetched.
     pub cover_available: bool,
 }

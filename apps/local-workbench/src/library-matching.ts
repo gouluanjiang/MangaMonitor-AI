@@ -9,7 +9,15 @@ export const fileNeedsReview = (item: LibraryItem) =>
   item.errorCode !== null ||
   !(item.pageCount && item.pageCount > 0);
 export type LibraryFilter = "all" | "owned" | "review";
-export type LibrarySort = "title" | "modified" | "added-desc" | "added-asc";
+export const librarySorts = [
+  "title",
+  "modified",
+  "added-desc",
+  "added-asc",
+  "updated-desc",
+  "updated-asc",
+] as const;
+export type LibrarySort = (typeof librarySorts)[number];
 export function compareAdded(
   a: LibraryItem,
   b: LibraryItem,

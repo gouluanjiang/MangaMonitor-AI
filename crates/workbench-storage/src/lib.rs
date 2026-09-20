@@ -11,6 +11,7 @@ mod library;
 mod model;
 mod phone;
 mod store;
+mod work_date;
 
 pub use author_evidence::discovery_record_matches_author;
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
@@ -30,6 +31,7 @@ pub use phone::{
     PhoneLibraryDocument, PhoneLibraryEntry, PhoneLibrarySnapshot,
 };
 pub use store::{Document, WorkbenchStore, PRIVATE_DIRECTORY};
+pub use work_date::{normalize_work_date, work_date_is_valid};
 
 use serde::Serialize;
 

@@ -132,6 +132,45 @@ test("admission sorting keeps unknown history last and keeps only actual file fi
   );
 });
 
+test("library version dates survive validation and compose with file filters without borrowing admission or file timestamps", () => {
+  const entries = [
+    item(1, { versionUpdatedAt: null, addedAt: 300 }),
+    item(2, { versionUpdatedAt: "2026-09-20", addedAt: 100 }),
+    item(3, { versionUpdatedAt: "2026-09-01", addedAt: 200 }),
+    item(4, {
+      versionUpdatedAt: "2026-09-20",
+      addedAt: 100,
+      state: "unreadable",
+    }),
+  ];
+  const validated = validateLibrarySnapshot(snapshot(entries)).items;
+  assert.equal(validated[1].versionUpdatedAt, "2026-09-20");
+  assert.deepEqual(
+    filterLibraryItems(validated, "", "updated-desc").map((x) => x.id),
+    [entryId(2), entryId(4), entryId(3), entryId(1)],
+  );
+  assert.deepEqual(
+    filterLibraryItems(validated, "合成作者", "updated-asc", "owned").map(
+      (x) => x.id,
+    ),
+    [entryId(3), entryId(2), entryId(1)],
+  );
+  assert.deepEqual(
+    filterLibraryItems(validated, "", "added-asc").map((x) => x.id),
+    [entryId(2), entryId(4), entryId(3), entryId(1)],
+  );
+  assert.equal(
+    validateLibrarySnapshot(
+      snapshot([item(1, { versionUpdatedAt: "1970-01-01T00:00:00Z" })]),
+    ).items[0].versionUpdatedAt,
+    null,
+  );
+  assert.deepEqual(
+    entries.map((x) => x.id),
+    [1, 2, 3, 4].map(entryId),
+  );
+});
+
 test("2833 synthetic names remain individually addressable after Unicode search and sorting", () => {
   const items = Array.from({ length: 2833 }, (_, i) => item(i + 1));
   items[0] = item(1, {

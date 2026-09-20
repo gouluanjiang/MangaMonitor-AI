@@ -15,6 +15,7 @@ import type {
 import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
 import { authorQueryMessage } from "./author-query.ts";
+import { normalizedWorkDate } from "./work-dates.ts";
 
 export class SourceError extends Error {
   readonly code: string;
@@ -123,6 +124,9 @@ export function validateSourceWork(
     chapterCount: value.chapterCount as number | null,
     pageCount: value.pageCount as number | null,
     coverAvailable: value.coverAvailable,
+    ...(value.sourceUpdatedAt === undefined
+      ? {}
+      : { sourceUpdatedAt: normalizedWorkDate(value.sourceUpdatedAt) }),
   };
 }
 export function validateAccount(value: unknown): AccountSummary {

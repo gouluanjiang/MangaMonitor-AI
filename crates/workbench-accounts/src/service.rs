@@ -635,11 +635,22 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     folders: vec![],
                 }),
         };
-        let result = self.finish(&mut slot, result)?;
+        let mut result = self.finish(&mut slot, result)?;
         if result.items.len() > MAX_QUERY_ITEMS
             || result.items.iter().any(|work| work.source != source)
         {
             return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
+        }
+        for work in &mut result.items {
+            // Detail and lightweight list responses may omit their update
+            // field. Reuse only metadata already read for this exact ID in
+            // the current authenticated source, without another request.
+            if work.source_updated_at.is_none() {
+                work.source_updated_at = slot
+                    .works
+                    .get(&work.work_id)
+                    .and_then(|known| known.source_updated_at.clone());
+            }
         }
         let sizes: Vec<_> = result
             .items

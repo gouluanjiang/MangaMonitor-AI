@@ -14,6 +14,7 @@ fn prepare_id(f: &Fixture, id: &str) -> DownloadPlan {
                 authors: Vec::new(),
                 tags: Vec::new(),
                 description: None,
+                version_updated_at: None,
             },
         )
         .unwrap()
@@ -236,6 +237,7 @@ fn large_mixed_selection_validates_the_last_plan_before_one_atomic_admission() {
                     authors: Vec::new(),
                     tags: Vec::new(),
                     description: None,
+                    version_updated_at: None,
                 },
             )
             .unwrap(),
@@ -316,6 +318,7 @@ fn confirming_a_new_work_never_projects_older_unadmitted_restart_tasks_as_queued
                 authors: vec![],
                 tags: vec![],
                 description: None,
+                version_updated_at: None,
             },
         )
         .unwrap();

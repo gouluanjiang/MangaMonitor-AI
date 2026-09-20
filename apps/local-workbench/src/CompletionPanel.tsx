@@ -37,6 +37,14 @@ import { createAuthorSearchAdapter } from "./author-search.ts";
 import { partitionAuthorRecords } from "./author-evidence.ts";
 import { authorQueryMessage } from "./author-query.ts";
 import { jmSearchScopeNote } from "./source-search.ts";
+import {
+  formatWorkDate,
+  readSortPreference,
+  sortByWorkDate,
+  updatedSorts,
+  writeSortPreference,
+} from "./work-dates.ts";
+import type { UpdatedSort } from "./work-dates.ts";
 import "./completion.css";
 
 const nativeAdapter = createCompletionAdapter();
@@ -122,6 +130,13 @@ export function CompletionPanel({
     [query, setQuery] = useState("");
   const [source, setSource] = useState<Source | "all">("all");
   const [filter, setFilter] = useState<InventoryFilter>("missing");
+  const sortPage = mode === "search" ? "author-search" : "author-updates";
+  const [sort, setSort] = useState<UpdatedSort>(() =>
+    readSortPreference(sortPage, updatedSorts, "updated-desc"),
+  );
+  useEffect(() => {
+    setSort(readSortPreference(sortPage, updatedSorts, "updated-desc"));
+  }, [sortPage]);
   const [showOther, setShowOther] = useState(false);
   otherView.current = showOther;
   const [selectionMode, setSelectionMode] = useState(false);
@@ -378,6 +393,11 @@ export function CompletionPanel({
     }
     return { counts, visible, selectable };
   }, [records, inventory, filter, showOther]);
+  const sortedVisible = useMemo(
+    () =>
+      sortByWorkDate(visible, (record) => record.work.sourceUpdatedAt, sort),
+    [visible, sort],
+  );
   const allScopedOwned = useMemo(
     () =>
       scopedRecords.length > 0 &&
@@ -616,6 +636,23 @@ export function CompletionPanel({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
+            <label>
+              排序{" "}
+              <select
+                aria-label="作者作品排序"
+                data-testid="completion-sort"
+                value={sort}
+                onChange={(event) => {
+                  const value = event.target.value as UpdatedSort;
+                  setSort(value);
+                  writeSortPreference(sortPage, value);
+                }}
+              >
+                <option value="updated-desc">更新时间：从新到旧</option>
+                <option value="updated-asc">更新时间：从旧到新</option>
+                <option value="source">目录顺序</option>
+              </select>
+            </label>
           </div>
           {(showOther || otherCount === null || otherCount > 0) && (
             <div
@@ -672,6 +709,17 @@ export function CompletionPanel({
             {counts.missing} 条 · 当前显示 {visible.length} 条
             {counts.unknown > 0 ? ` · 状态待核实 ${counts.unknown} 条` : ""}
           </p>
+          {sort !== "source" && (
+            <p
+              className="source-muted"
+              data-testid="completion-date-sort-scope"
+            >
+              {complete
+                ? "按当前保存结果的网站更新时间排序。"
+                : "检查范围尚未读完，更新时间排序仅覆盖已读取结果。"}
+              更新时间未知的作品排在最后。
+            </p>
+          )}
           <p className="source-muted">
             {inventoryScopeNote} JM 与哔咔分别计数，未选择下载的记录会继续保留。
             {lastCheck > 0
@@ -781,10 +829,10 @@ export function CompletionPanel({
             </div>
           )}
           <VirtualSourceGrid
-            items={visible}
+            items={sortedVisible}
             density={density}
             itemKey={(record) => sourceWorkKey(record.work)}
-            key={scopeKey + author + source + filter + query + showOther}
+            key={scopeKey + author + source + filter + query + showOther + sort}
             renderItem={(record) => {
               const work = record.work,
                 scope = scopes.find((value) => value.source === work.source)!;
@@ -832,6 +880,16 @@ export function CompletionPanel({
                   </button>
                   <p>
                     {sourceLabel(work.source)} · {inventoryLabel(stock)}
+                  </p>
+                  <p
+                    className="source-card-date"
+                    title={
+                      formatWorkDate(work.sourceUpdatedAt, true) ?? undefined
+                    }
+                  >
+                    {formatWorkDate(work.sourceUpdatedAt)
+                      ? `更新：${formatWorkDate(work.sourceUpdatedAt)}`
+                      : "更新时间未知"}
                   </p>
                   {showOther ? (
                     <p className="source-muted">

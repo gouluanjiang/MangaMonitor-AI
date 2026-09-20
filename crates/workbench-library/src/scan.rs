@@ -169,6 +169,7 @@ pub(crate) fn base_record(root_id: &str, relative: &str, format: LibraryFormat) 
             bytes: 0,
             modified_at: None,
             added_at: None,
+            version_updated_at: None,
             page_count: None,
             cover_available: false,
             state: LibraryItemState::Indexed,
@@ -348,6 +349,14 @@ impl ScanJob {
             .get(&record.item.id)
             .filter(|old| old.identity.is_some() && old.identity == record.identity)
         {
+            // The same unchanged file retains its recorded version. A newly
+            // available local metadata date may fill an old unknown value.
+            if old.item.version_updated_at.is_some() {
+                record
+                    .item
+                    .version_updated_at
+                    .clone_from(&old.item.version_updated_at);
+            }
             record.item.links = old.item.links.clone();
             if old.manual_override {
                 record.manual_override = true;

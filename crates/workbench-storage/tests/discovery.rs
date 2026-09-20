@@ -18,6 +18,7 @@ fn record(source: Source, id: &str) -> DiscoveryRecord {
             favorite: None,
             chapter_count: Some(1),
             page_count: Some(20),
+            source_updated_at: None,
             cover_available: true,
         },
         matched_authors: vec!["作者".into()],
@@ -82,6 +83,9 @@ fn legacy_ranges_load_without_claiming_an_incremental_checkpoint() {
     let store = WorkbenchStore::open(directory.path()).unwrap();
     let value = serde_json::to_value(document()).unwrap();
     assert!(value["accounts"][0]["authors"][0].get("baseline").is_none());
+    assert!(value["accounts"][0]["records"][0]["work"]
+        .get("sourceUpdatedAt")
+        .is_none());
     fs::write(
         directory
             .path()
@@ -97,6 +101,67 @@ fn legacy_ranges_load_without_claiming_an_incremental_checkpoint() {
     assert_eq!(saved.revision, 7);
     assert_eq!(saved.value, document());
     assert_eq!(saved.value.accounts[0].authors[0].baseline, None);
+    assert_eq!(
+        saved.value.accounts[0].records[0].work.source_updated_at,
+        None
+    );
+}
+
+#[test]
+fn source_dates_survive_page_journal_and_checkpoint_without_observation_substitution() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut original = document();
+    original.accounts[0].records[0].work.source_updated_at = Some("2026-09-15".into());
+    store.write_discovery(0, original.clone()).unwrap();
+    let legacy = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    let before = fs::read(&legacy).unwrap();
+    let mut incoming = original.accounts[0].records[0].clone();
+    incoming.work.source_updated_at = Some("2026-09-20T01:30:00.123Z".into());
+    incoming.observed_at = 900;
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![incoming.clone()]))
+        .unwrap();
+    assert_eq!(fs::read(&legacy).unwrap(), before);
+    let reopened = WorkbenchStore::open(directory.path()).unwrap();
+    assert_eq!(
+        reopened.read_discovery().unwrap().value.accounts[0].records[0],
+        incoming
+    );
+    reopened.checkpoint_discovery_for_following(2, 0).unwrap();
+    let saved = WorkbenchStore::open(directory.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(saved.value.accounts[0].records[0], incoming);
+    assert_eq!(
+        saved.value.accounts[0].authors[0],
+        original.accounts[0].authors[0]
+    );
+}
+
+#[test]
+fn invalid_source_dates_do_not_replace_saved_discovery_metadata() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, document()).unwrap();
+    for date in [
+        "yesterday",
+        "1970-01-01",
+        "2026-02-30",
+        "2026-09-15T09:30:00+08:00",
+    ] {
+        let mut invalid = document();
+        invalid.accounts[0].records[0].work.source_updated_at = Some(date.into());
+        assert_eq!(
+            store.write_discovery(1, invalid).unwrap_err().code,
+            "VALIDATION_FAILED"
+        );
+        assert_eq!(store.read_discovery().unwrap().value, document());
+    }
 }
 
 fn checkpoint_document() -> DiscoveryDocument {

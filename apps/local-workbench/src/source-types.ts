@@ -16,6 +16,7 @@ export interface SourceWork {
   chapterCount: number | null;
   pageCount: number | null;
   coverAvailable: boolean;
+  sourceUpdatedAt?: string | null;
 }
 export interface SourcePage {
   items: SourceWork[];
@@ -133,7 +134,16 @@ export function mergeSourceWorks(
   incoming: SourceWork[],
 ) {
   const merged = new Map(previous.map((work) => [sourceWorkKey(work), work]));
-  for (const work of incoming) merged.set(sourceWorkKey(work), work);
+  for (const work of incoming) {
+    const key = sourceWorkKey(work),
+      previous = merged.get(key);
+    merged.set(
+      key,
+      work.sourceUpdatedAt == null && previous?.sourceUpdatedAt
+        ? { ...work, sourceUpdatedAt: previous.sourceUpdatedAt }
+        : work,
+    );
+  }
   return [...merged.values()];
 }
 export function accountScope(

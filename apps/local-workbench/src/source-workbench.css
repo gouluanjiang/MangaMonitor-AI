@@ -22,6 +22,13 @@
 .source-muted {
   color: var(--muted);
 }
+.source-card .source-card-date {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+}
 .result-filters {
   display: flex;
   gap: 8px;

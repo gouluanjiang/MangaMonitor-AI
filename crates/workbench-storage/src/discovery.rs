@@ -29,6 +29,8 @@ pub struct DiscoveryWork {
     pub favorite: Option<bool>,
     pub chapter_count: Option<u64>,
     pub page_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_updated_at: Option<String>,
     pub cover_available: bool,
 }
 
@@ -154,6 +156,10 @@ impl DiscoveryWork {
             && self
                 .page_count
                 .is_none_or(|count| count <= MAX_SAFE_INTEGER)
+            && self
+                .source_updated_at
+                .as_deref()
+                .is_none_or(crate::work_date_is_valid)
             && serde_json::to_vec(self).is_ok_and(|bytes| bytes.len() <= 64 * 1024)
     }
 }

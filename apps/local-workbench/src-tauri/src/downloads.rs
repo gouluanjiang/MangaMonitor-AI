@@ -136,6 +136,17 @@ async fn open_store(state: Arc<DesktopStore>) -> Result<Arc<WorkbenchStore>, Sto
         .map_err(|_| error("STORE_UNAVAILABLE"))?
 }
 
+fn download_metadata(work: workbench_accounts::SourceWork) -> JmDownloadMetadata {
+    JmDownloadMetadata {
+        work_id: work.work_id,
+        title: work.title,
+        authors: work.authors,
+        tags: work.tags,
+        description: work.description,
+        version_updated_at: work.source_updated_at,
+    }
+}
+
 async fn lease(
     accounts: Arc<accounts::DesktopAccounts>,
     scope: &DownloadScope,
@@ -238,13 +249,7 @@ pub(crate) async fn jm_download_prepare<R: Runtime>(
         .next()
         .filter(|w| w.source == scope.source && w.work_id == work_id)
         .ok_or(error("DOWNLOAD_METADATA_INVALID"))?;
-    let metadata = JmDownloadMetadata {
-        work_id: work.work_id,
-        title: work.title,
-        authors: work.authors,
-        tags: work.tags,
-        description: work.description,
-    };
+    let metadata = download_metadata(work);
     let downloads = Arc::clone(downloads.inner());
     let store = open_store(Arc::clone(store.inner())).await?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -372,13 +377,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
                 .next()
                 .filter(|work| work.source == scope.source && work.work_id == work_id)
                 .ok_or(error("DOWNLOAD_METADATA_INVALID"))?;
-            let metadata = JmDownloadMetadata {
-                work_id: work.work_id,
-                title: work.title,
-                authors: work.authors,
-                tags: work.tags,
-                description: work.description,
-            };
+            let metadata = download_metadata(work);
             let downloads = Arc::clone(&downloads);
             let store = Arc::clone(&store);
             let root_id = root_id.clone();
@@ -997,6 +996,26 @@ mod tests {
     }
 
     #[test]
+    fn download_metadata_snapshots_the_source_version_without_inventing_a_date() {
+        let mut work: workbench_accounts::SourceWork = serde_json::from_value(serde_json::json!({
+            "source": "Pica", "workId": "0123456789abcdef01234567", "title": "Synthetic",
+            "authors": ["Author"], "description": null, "tags": [], "favorite": null,
+            "chapterCount": 1, "pageCount": 2, "coverAvailable": false,
+            "sourceUpdatedAt": "2026-09-15T12:34:56.000Z"
+        }))
+        .unwrap();
+        let metadata = download_metadata(work.clone());
+        assert_eq!(metadata.version_updated_at, work.source_updated_at);
+        work.source_updated_at = Some("2026-09-20T00:00:00.000Z".into());
+        assert_eq!(
+            metadata.version_updated_at.as_deref(),
+            Some("2026-09-15T12:34:56.000Z")
+        );
+        work.source_updated_at = None;
+        assert_eq!(download_metadata(work).version_updated_at, None);
+    }
+
+    #[test]
     fn queue_control_checks_the_tasks_source_and_revision_even_for_pause() {
         let temp = tempfile::tempdir().unwrap();
         let media = temp.path().join("media");
@@ -1027,6 +1046,7 @@ mod tests {
                     authors: vec![],
                     tags: vec![],
                     description: None,
+                    version_updated_at: None,
                 },
             )
             .unwrap();

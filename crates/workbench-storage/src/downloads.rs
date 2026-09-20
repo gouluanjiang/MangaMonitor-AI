@@ -30,6 +30,9 @@ pub struct JmDownloadMetadata {
     pub authors: Vec<String>,
     pub tags: Vec<String>,
     pub description: Option<String>,
+    /// Immutable source date snapshot. Omission preserves legacy task bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_updated_at: Option<String>,
 }
 impl JmDownloadMetadata {
     pub fn is_valid(&self) -> bool {
@@ -49,6 +52,10 @@ impl JmDownloadMetadata {
             && self.authors.iter().all(|v| text(v, 200))
             && self.tags.len() <= 200
             && self.tags.iter().all(|v| text(v, 200))
+            && self
+                .version_updated_at
+                .as_deref()
+                .is_none_or(crate::work_date_is_valid)
             && self.description.as_ref().is_none_or(|v| {
                 v.len() <= 32768
                     && !v

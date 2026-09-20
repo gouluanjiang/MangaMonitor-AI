@@ -276,6 +276,7 @@ fn unknown_metadata_is_not_invented_as_false_or_zero() {
     assert_eq!(item.favorite, None);
     assert_eq!(item.chapter_count, None);
     assert_eq!(item.page_count, None);
+    assert_eq!(item.source_updated_at, None);
     assert!(item.authors.is_empty());
     assert!(!item.cover_available);
     assert!(protocol::work(Source::Pica, &json!({"_id":PICA_ID}), false).is_err());
@@ -289,6 +290,98 @@ fn unknown_metadata_is_not_invented_as_false_or_zero() {
         .0
         .page_count,
         None
+    );
+}
+
+#[test]
+fn source_update_dates_use_explicit_update_fields_and_preserve_date_precision() {
+    for (source, data, expected) in [
+        (
+            Source::Jm,
+            json!({"id":"123","name":"Fixture","update_at":1609459200}),
+            "2021-01-01T00:00:00.000Z",
+        ),
+        (
+            Source::Pica,
+            json!({"_id":PICA_ID,"title":"Fixture","updated_at":"2026-09-15T09:30:00+08:00"}),
+            "2026-09-15T01:30:00.000Z",
+        ),
+        (
+            Source::Pica,
+            json!({"_id":PICA_ID,"title":"Fixture","updated_at":"2026-09-15T01:30:00.123Z"}),
+            "2026-09-15T01:30:00.123Z",
+        ),
+        (
+            Source::Jm,
+            json!({"id":"123","name":"Fixture","update_at":"2026-09-15"}),
+            "2026-09-15",
+        ),
+    ] {
+        let (work, _) = protocol::work(source, &data, false).unwrap();
+        assert_eq!(work.source_updated_at.as_deref(), Some(expected));
+        assert_eq!(
+            serde_json::to_value(work).unwrap()["sourceUpdatedAt"],
+            expected
+        );
+    }
+}
+
+#[test]
+fn missing_or_invalid_source_update_dates_never_borrow_creation_time() {
+    for source in [Source::Jm, Source::Pica] {
+        for update in [
+            json!(null),
+            json!(0),
+            json!(-1),
+            json!(false),
+            json!({}),
+            json!(""),
+            json!("1970-01-01T00:00:00Z"),
+            json!("2026-02-30"),
+            json!("2026-09-15 12:00:00"),
+            json!("2016-12-31T23:59:60Z"),
+            json!("yesterday"),
+        ] {
+            let mut data = json!({"id":"123","_id":PICA_ID,"name":"Fixture","title":"Fixture",
+                "created_at":"2026-09-10T00:00:00Z","addtime":"2026-09-10","adddate":"2026-09-10"});
+            data[if source == Source::Jm {
+                "update_at"
+            } else {
+                "updated_at"
+            }] = update;
+            let (work, _) = protocol::work(source, &data, false).unwrap();
+            assert_eq!(work.source_updated_at, None);
+            assert!(serde_json::to_value(work)
+                .unwrap()
+                .get("sourceUpdatedAt")
+                .is_none());
+        }
+    }
+}
+
+#[test]
+fn source_update_dates_do_not_reorder_source_pagination() {
+    let (page, _) = protocol::page(
+        Source::Jm,
+        &json!({"total":2,"content":[
+            {"id":"123","name":"First","update_at":1609459200},
+            {"id":"124","name":"Second","update_at":1640995200}
+        ]}),
+        1,
+        false,
+    )
+    .unwrap();
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|work| work.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["123", "124"]
+    );
+    assert_eq!(page.total, Some(2));
+    assert_eq!(
+        page.items[1].source_updated_at.as_deref(),
+        Some("2022-01-01T00:00:00.000Z")
     );
 }
 

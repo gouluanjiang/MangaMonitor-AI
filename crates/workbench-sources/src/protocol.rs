@@ -3,6 +3,7 @@ use aes::{
     Aes256,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat, Utc};
 use hmac::{Hmac, Mac};
 use reqwest::Url;
 use serde_json::Value;
@@ -240,6 +241,48 @@ pub(crate) fn account(source: Source, data: &Value) -> SourceResult<SourceAccoun
     })
 }
 
+// The pinned JM search/weekly schemas expose update_at as Unix seconds;
+// Pica search/detail schemas expose updated_at as an ISO date-time. Never
+// substitute addtime/adddate/created_at or the moment this response was read.
+// Invalid optional dates leave the otherwise readable work available.
+fn source_update_date(source: Source, data: &Value) -> Option<String> {
+    let value = &data[match source {
+        Source::Jm => "update_at",
+        Source::Pica => "updated_at",
+    }];
+    if source == Source::Jm {
+        if let Some(seconds) = value.as_i64() {
+            if seconds <= 0 {
+                return None;
+            }
+            let timestamp = DateTime::<Utc>::from_timestamp(seconds, 0)?;
+            return valid_update_timestamp(timestamp)
+                .then(|| timestamp.to_rfc3339_opts(SecondsFormat::Millis, true));
+        }
+    }
+    let text = value.as_str()?;
+    if text.len() > 64 || text.chars().any(char::is_control) {
+        return None;
+    }
+    if text.len() == 10 {
+        let date = NaiveDate::parse_from_str(text, "%Y-%m-%d").ok()?;
+        return (date.format("%Y-%m-%d").to_string() == text
+            && (1900..=9999).contains(&date.year())
+            && date != NaiveDate::from_ymd_opt(1970, 1, 1)?)
+        .then(|| text.to_owned());
+    }
+    let timestamp = DateTime::parse_from_rfc3339(text).ok()?.with_timezone(&Utc);
+    valid_update_timestamp(timestamp)
+        .then(|| timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+fn valid_update_timestamp(timestamp: DateTime<Utc>) -> bool {
+    (1900..=9999).contains(&timestamp.year())
+        && timestamp.date_naive() != NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
+        // JavaScript Date cannot represent chrono's leap-second extension.
+        && timestamp.timestamp_subsec_nanos() < 1_000_000_000
+}
+
 pub(crate) fn work(
     source: Source,
     data: &Value,
@@ -305,6 +348,7 @@ pub(crate) fn work(
         favorite,
         chapter_count,
         page_count,
+        source_updated_at: source_update_date(source, data),
         cover_available: cover.is_some(),
     };
     // Bound the actual IPC representation, including JSON string escaping.

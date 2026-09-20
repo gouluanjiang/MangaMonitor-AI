@@ -44,6 +44,7 @@ struct FakeState {
     query_failure: Mutex<Option<&'static str>>,
     restore_failure: Mutex<Option<&'static str>>,
     work_title: Mutex<Option<String>>,
+    source_updated_at: Mutex<Option<String>>,
     block_cover: AtomicBool,
     cover_started: Notify,
     cover_release: Notify,
@@ -87,6 +88,7 @@ fn work(source: Source, favorite: bool) -> SourceWork {
         favorite: Some(favorite),
         chapter_count: None,
         page_count: None,
+        source_updated_at: None,
         cover_available: true,
     }
 }
@@ -154,6 +156,7 @@ impl SourceBackend for FakeBackend {
             return Err(AccountError::new(code));
         }
         let mut result = page(session.source, self.0.favorite.load(Ordering::SeqCst));
+        result.items[0].source_updated_at = self.0.source_updated_at.lock().unwrap().clone();
         if let Some(title) = self.0.work_title.lock().unwrap().clone() {
             result.items[0].title = title;
         }
@@ -191,6 +194,7 @@ impl SourceBackend for FakeBackend {
             self.0.detail_release.notified().await;
         }
         let mut item = work(session.source, self.0.favorite.load(Ordering::SeqCst));
+        item.source_updated_at = self.0.source_updated_at.lock().unwrap().clone();
         item.work_id = id.into();
         Ok(item)
     }
@@ -267,6 +271,88 @@ async fn query(
     service
         .query(source, session, QueryKind::Favorites, "", None, 1)
         .await
+}
+
+#[tokio::test]
+async fn query_preserves_exact_source_dates_without_extra_requests_or_crossing_accounts() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture-jm", false).await;
+    let original = "2026-09-15T01:30:00.000Z";
+    *backend.0.source_updated_at.lock().unwrap() = Some(original.into());
+    assert_eq!(
+        query(&service, Source::Jm, &session)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .source_updated_at
+            .as_deref(),
+        Some(original)
+    );
+
+    *backend.0.source_updated_at.lock().unwrap() = None;
+    let detail = service
+        .query(Source::Jm, &session, QueryKind::Detail, "123", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        detail.page.items[0].source_updated_at.as_deref(),
+        Some(original)
+    );
+    let other = service
+        .query(Source::Jm, &session, QueryKind::Detail, "124", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(other.page.items[0].source_updated_at, None);
+
+    let newer = "2026-09-20";
+    *backend.0.source_updated_at.lock().unwrap() = Some(newer.into());
+    assert_eq!(
+        query(&service, Source::Jm, &session)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .source_updated_at
+            .as_deref(),
+        Some(newer)
+    );
+    *backend.0.source_updated_at.lock().unwrap() = None;
+    assert_eq!(
+        query(&service, Source::Jm, &session)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .source_updated_at
+            .as_deref(),
+        Some(newer)
+    );
+    assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 3);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
+
+    let pica = login(&service, Source::Pica, "fixture-pica", false).await;
+    assert_eq!(
+        query(&service, Source::Pica, &pica)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .source_updated_at,
+        None
+    );
+    let changed = login(&service, Source::Jm, "different-account", false).await;
+    assert_eq!(
+        query(&service, Source::Jm, &changed)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .source_updated_at,
+        None
+    );
 }
 
 #[tokio::test]

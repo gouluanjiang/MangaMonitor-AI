@@ -31,6 +31,7 @@ type Options = {
   namespaceMarks?: boolean;
   importedNames?: string[];
   usability?: boolean;
+  workDates?: boolean;
 };
 type Hooks = {
   copiedSummary?: string;
@@ -114,6 +115,9 @@ async function installMock(page: Page, options: Options = {}) {
           options.usability && number < 3
             ? 1800000000000 + number * 1000
             : null,
+        versionUpdatedAt: options.workDates
+          ? [null, "2026-09-02", "2026-09-01", "2026-09-02"][number - 1]
+          : undefined,
         pageCount: 20,
         coverAvailable: Boolean(options.covers),
         state: options.usability && number === 3 ? "unreadable" : "indexed",
@@ -661,6 +665,53 @@ const commands = (page: Page, command: string) =>
       window.libraryTest.calls.filter((call) => call.command === command),
     command,
   );
+
+test("library version and admission dates display independently, compose with filters and persist sorting", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 1020 });
+  await installMock(page, { pcCount: 4, usability: true, workDates: true });
+  const cards = page.getByTestId("library-grid").locator("article");
+  await page.getByTestId("library-sort").selectOption("updated-desc");
+  await expect(cards).toHaveCount(4);
+  await expect
+    .poll(() =>
+      cards.evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-library-id")),
+      ),
+    )
+    .toEqual([id(2), id(4), id(3), id(1)]);
+  await expect(cards.first()).toContainText("版本更新：2026-09-02");
+  await expect(cards.first()).toContainText("入库时间：");
+  await page.getByTestId("library-sort").selectOption("updated-asc");
+  await expect(cards.first()).toHaveAttribute("data-library-id", id(3));
+  await page.getByTestId("library-filter-owned").click();
+  await expect(cards).toHaveCount(3);
+  await expect(cards.last()).toContainText("版本时间未知");
+  await page.getByTestId("search-input").fill("0004");
+  await expect(cards).toHaveCount(1);
+  await page.getByTestId("library-open-" + id(4)).click();
+  await expect(page.getByTestId("library-version-updated-at")).toHaveText(
+    "版本更新：2026-09-02",
+  );
+  await expect(page.getByTestId("library-added-at")).toContainText(
+    "历史记录未知",
+  );
+  await page.getByTestId("library-detail-back").click();
+  await page.getByTestId("search-input").fill("");
+  await page.getByTestId("library-filter-all").click();
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/library-work-dates-wide.png",
+  });
+  await page.reload();
+  await expect(page.getByTestId("library-sort")).toHaveValue("updated-asc");
+  await expect(cards.first()).toHaveAttribute("data-library-id", id(3));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({
+    path: "visual-evidence/library-work-dates-compact.png",
+  });
+});
 
 test("PC directories use bounded rows, preserve full names during Unicode search and cancel folder selection", async ({
   page,

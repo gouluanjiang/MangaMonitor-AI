@@ -39,6 +39,12 @@ import type { CollectionState } from "./source-collection.ts";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
 import { getCoverCache, coverErrorMessage } from "./source-cover-cache.ts";
+import {
+  formatWorkDate,
+  readSortPreference,
+  sortByWorkDate,
+  writeSortPreference,
+} from "./work-dates.ts";
 import type { CoverLease, CoverResult } from "./source-cover-cache.ts";
 import "./source-workbench.css";
 
@@ -303,7 +309,22 @@ export function SourceWorkbench({
   );
   const [showOtherAuthorResults, setShowOtherAuthorResults] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
-  const [sort, setSort] = useState("source");
+  const searchSorts = [
+    "updated-desc",
+    "updated-asc",
+    "source",
+    "source-reverse",
+    "title",
+    "title-desc",
+  ] as const;
+  const searchSort = () =>
+    readSortPreference("source-search", searchSorts, "updated-desc");
+  const [sort, setSort] = useState<string>(() =>
+    view === "search" ? searchSort() : "source",
+  );
+  useEffect(() => {
+    setSort(view === "search" ? searchSort() : "source");
+  }, [view]);
   const [inventoryFilter, setInventoryFilter] =
     useState<InventoryFilter>("all");
   const currentSort = useRef(sort);
@@ -421,7 +442,7 @@ export function SourceWorkbench({
     listRequest.current += 1;
     detailRequest.current += 1;
     followingRequest.current += 1;
-    setSort("source");
+    setSort(view === "search" ? searchSort() : "source");
     setSource(next);
     setQuery("");
     setFolder(null);
@@ -637,6 +658,7 @@ export function SourceWorkbench({
       picaTimeSwitch || (view === "favorites" && value === "source-reverse");
     if (!collectionReadAll.current) collector.current?.stopReadAll();
     setSort(value);
+    if (searching) writeSortPreference("source-search", value);
     if (collectionReadAll.current) {
       setAutoPaused(false);
       resumeCollection();
@@ -833,10 +855,27 @@ export function SourceWorkbench({
         page: 1,
       });
       if (!stillCurrent(captured) || request !== detailRequest.current) return;
-      const found = result.items[0];
+      let found = result.items[0];
       if (!found) {
         setDetailError("没有取得这部作品的详情，请检查来源编号或链接。");
         return;
+      }
+      const previous = itemsRef.current.find(
+        (item) => sourceWorkKey(item) === sourceWorkKey(found!),
+      );
+      if (found.sourceUpdatedAt == null && previous?.sourceUpdatedAt)
+        found = { ...found, sourceUpdatedAt: previous.sourceUpdatedAt };
+      if (
+        found.sourceUpdatedAt &&
+        previous?.sourceUpdatedAt !== found.sourceUpdatedAt
+      ) {
+        const dated = found;
+        itemsRef.current = itemsRef.current.map((item) =>
+          sourceWorkKey(item) === sourceWorkKey(dated)
+            ? { ...item, sourceUpdatedAt: dated.sourceUpdatedAt }
+            : item,
+        );
+        setItems(itemsRef.current);
       }
       setDetail(found);
       setDetailRef(toWorkReference(found));
@@ -989,16 +1028,18 @@ export function SourceWorkbench({
   const reversePreparing =
     view === "favorites" && sort === "source-reverse" && !completeIndex;
   const visible =
-    sort === "title" || sort === "title-desc"
-      ? [...filtered].sort(
-          (a, b) =>
-            (a.title.localeCompare(b.title, "zh-CN") ||
-              sourceWorkKey(a).localeCompare(sourceWorkKey(b))) *
-            (sort === "title-desc" ? -1 : 1),
-        )
-      : sort === "source-reverse" && !reversePreparing
-        ? [...filtered].reverse()
-        : filtered;
+    sort === "updated-desc" || sort === "updated-asc"
+      ? sortByWorkDate(filtered, (work) => work.sourceUpdatedAt, sort)
+      : sort === "title" || sort === "title-desc"
+        ? [...filtered].sort(
+            (a, b) =>
+              (a.title.localeCompare(b.title, "zh-CN") ||
+                sourceWorkKey(a).localeCompare(sourceWorkKey(b))) *
+              (sort === "title-desc" ? -1 : 1),
+          )
+        : sort === "source-reverse" && !reversePreparing
+          ? [...filtered].reverse()
+          : filtered;
   const selectionKeys = new Set(selection);
   useEffect(() => {
     if (inventoryFilter === "all" || !selection.length) return;
@@ -1254,6 +1295,14 @@ export function SourceWorkbench({
               <p className="source-card-state">
                 {sourceLabel(work.source)} · {inventoryLabel(inventory(work))}
               </p>
+              <p
+                className="source-card-date"
+                title={formatWorkDate(work.sourceUpdatedAt, true) ?? undefined}
+              >
+                {formatWorkDate(work.sourceUpdatedAt)
+                  ? `更新：${formatWorkDate(work.sourceUpdatedAt)}`
+                  : "更新时间未知"}
+              </p>
             </article>
           );
         }}
@@ -1333,6 +1382,13 @@ export function SourceWorkbench({
                 ))}
               </div>
               <dl className="source-facts">
+                <div>
+                  <dt>网站更新</dt>
+                  <dd data-testid="source-updated-at">
+                    {formatWorkDate(detail.sourceUpdatedAt, true) ??
+                      "更新时间未知"}
+                  </dd>
+                </div>
                 <div>
                   <dt>章节</dt>
                   <dd>
@@ -1677,6 +1733,7 @@ export function SourceWorkbench({
                   className="text-button"
                   onClick={() => {
                     setAuthorSearch(false);
+                    setSort("source");
                     setQuery("");
                     clearSelection();
                   }}
@@ -1757,6 +1814,7 @@ export function SourceWorkbench({
                           className="button secondary"
                           onClick={() => {
                             setAuthorSearch(true);
+                            setSort(searchSort());
                             setQuery(author);
                             setQueryMode("author");
                             setShowOtherAuthorResults(false);
@@ -1815,9 +1873,20 @@ export function SourceWorkbench({
                   <label className="source-sort">
                     排序{" "}
                     <select
+                      data-testid="source-sort"
                       value={sort}
                       onChange={(event) => changeSort(event.target.value)}
                     >
+                      {searching && (
+                        <>
+                          <option value="updated-desc">
+                            更新时间：从新到旧
+                          </option>
+                          <option value="updated-asc">
+                            更新时间：从旧到新
+                          </option>
+                        </>
+                      )}
                       <option value="source">
                         {source === "Pica" && view === "favorites"
                           ? "收藏时间：从新到旧"
@@ -1883,6 +1952,17 @@ export function SourceWorkbench({
                   )}
                 </div>
               </div>
+              {searching && sort.startsWith("updated-") && (
+                <p
+                  className="source-muted"
+                  data-testid="source-date-sort-scope"
+                >
+                  {complete
+                    ? "按当前已读取完整范围的网站更新时间排序。"
+                    : "范围尚未读完，更新时间排序仅覆盖已读取结果。"}
+                  更新时间未知的作品排在最后。
+                </p>
+              )}
               {authorQuery && pageInfo && (
                 <div
                   className="source-notice"

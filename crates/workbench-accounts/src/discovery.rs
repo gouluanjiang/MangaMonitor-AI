@@ -1487,6 +1487,7 @@ pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
         favorite: work.favorite,
         chapter_count: work.chapter_count,
         page_count: work.page_count,
+        source_updated_at: work.source_updated_at,
         cover_available: work.cover_available,
     }
 }
@@ -1496,12 +1497,18 @@ fn merged_record(
     mut incoming: DiscoveryRecord,
 ) -> DiscoveryRecord {
     if let Some(existing) = existing {
+        let source_updated_at = incoming
+            .work
+            .source_updated_at
+            .clone()
+            .or_else(|| existing.work.source_updated_at.clone());
         // Preserve useful prior metadata when a later list omits authors, but
         // keep every query that returned this source ID. A query association
         // does not assert an author identity and never grants ownership.
         if incoming.work.authors.is_empty() && !existing.work.authors.is_empty() {
             incoming.work = existing.work.clone();
         }
+        incoming.work.source_updated_at = source_updated_at;
         for author in &existing.matched_authors {
             if !incoming.matched_authors.contains(author) {
                 incoming.matched_authors.push(author.clone());

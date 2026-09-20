@@ -197,6 +197,152 @@ fn named<'a>(snapshot: &'a LibrarySnapshot, name: &str) -> &'a workbench_library
         .unwrap()
 }
 
+#[test]
+fn local_version_dates_use_explicit_snapshots_or_original_pica_updates_only() {
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let jm = serde_json::json!({"id":123,"name":"Synthetic","author":["Author"],
+        "tags":[],"chapterInfos":[],"addtime":"2026-09-20"});
+    let pica = serde_json::json!({"id":"0123456789abcdef01234567","title":"Synthetic",
+        "author":"Author","pagesCount":1,"tags":[],"chapterInfos":[],
+        "updatedAt":"2026-09-15T08:30:00+08:00"});
+    let cases = [
+        ("jm-addtime.zip", jm.clone(), None),
+        (
+            "pica-original.zip",
+            pica.clone(),
+            Some("2026-09-15T00:30:00.000Z"),
+        ),
+        (
+            "jm-snapshot.zip",
+            {
+                let mut value = jm.clone();
+                value["mangaMonitor"] = serde_json::json!({"versionUpdatedAt":"2026-09-12"});
+                value
+            },
+            Some("2026-09-12"),
+        ),
+        (
+            "pica-placeholder.zip",
+            {
+                let mut value = pica.clone();
+                value["updatedAt"] = "1970-01-01T00:00:00Z".into();
+                value["mangaMonitor"] =
+                    serde_json::json!({"compatibilityPlaceholders":["updatedAt"]});
+                value
+            },
+            None,
+        ),
+        (
+            "pica-explicit.zip",
+            {
+                let mut value = pica.clone();
+                value["mangaMonitor"] = serde_json::json!({"versionUpdatedAt":"2026-09-11"});
+                value
+            },
+            Some("2026-09-11"),
+        ),
+        (
+            "pica-invalid-explicit.zip",
+            {
+                let mut value = pica.clone();
+                value["mangaMonitor"] = serde_json::json!({"versionUpdatedAt":"1970-01-01"});
+                value
+            },
+            None,
+        ),
+        (
+            "pica-invalid-original.zip",
+            {
+                let mut value = pica.clone();
+                value["updatedAt"] = "invalid".into();
+                value
+            },
+            None,
+        ),
+    ];
+    for (name, value, _) in &cases {
+        archive(
+            &root.path().join(name),
+            &[
+                ("1.png", &image_bytes()),
+                ("元数据.json", &serde_json::to_vec(value).unwrap()),
+            ],
+        );
+    }
+    let mut service = LibraryService::new();
+    let start = service.choose(&store, root.path()).unwrap();
+    let ready = finish(&mut service, &store, start);
+    for (name, _, expected) in &cases {
+        let item = named(&ready, name);
+        assert_eq!(item.state, LibraryItemState::Indexed);
+        assert_eq!(item.error_code, None);
+        assert_eq!(item.version_updated_at.as_deref(), *expected, "{name}");
+    }
+    let reopened = LibraryService::new().read(&store).unwrap();
+    assert_eq!(ready.items, reopened.items);
+}
+
+#[test]
+fn rescans_fill_unknown_dates_from_local_metadata_without_changing_admission_or_files() {
+    let root = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let name = "snapshot.zip";
+    let path = root.path().join(name);
+    archive(&path, &[("1.png", &image_bytes()), ("元数据.json", br#"{"id":123,"name":"Synthetic","author":[],"tags":[],"chapterInfos":[],"mangaMonitor":{"versionUpdatedAt":"2026-09-15"}}"#)]);
+    let original = fs::read(&path).unwrap();
+    let mut service = LibraryService::new();
+    let start = service.choose(&store, root.path()).unwrap();
+    let ready = finish(&mut service, &store, start);
+    let admission = ready.items[0].added_at;
+    let mut historical = store.read_library().unwrap();
+    historical.value.records[0].item.version_updated_at = None;
+    store
+        .write_library(historical.revision, historical.value)
+        .unwrap();
+    let start = service
+        .scan(
+            &store,
+            ready.root_id.as_deref().unwrap(),
+            ready.generation,
+            ScanAction::Start,
+        )
+        .unwrap();
+    let refreshed = finish(&mut service, &store, start);
+    assert_eq!(
+        refreshed.items[0].version_updated_at.as_deref(),
+        Some("2026-09-15")
+    );
+    assert_eq!(refreshed.items[0].added_at, admission);
+    let start = service
+        .scan(
+            &store,
+            refreshed.root_id.as_deref().unwrap(),
+            refreshed.generation,
+            ScanAction::Start,
+        )
+        .unwrap();
+    let again = finish(&mut service, &store, start);
+    assert_eq!(again.items, refreshed.items);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    // Replacing the same pathname with another local version must not inherit
+    // the old file's version date from its cached record.
+    archive(&path, &[("1.png", &image_bytes())]);
+    let start = service
+        .scan(
+            &store,
+            again.root_id.as_deref().unwrap(),
+            again.generation,
+            ScanAction::Start,
+        )
+        .unwrap();
+    let replaced = finish(&mut service, &store, start);
+    assert_eq!(replaced.items[0].version_updated_at, None);
+    assert_eq!(replaced.items[0].added_at, admission);
+}
+
 fn jm_work(root: &Path, name: &str) {
     let work = root.join(name);
     fs::create_dir_all(work.join("chapter-01")).unwrap();

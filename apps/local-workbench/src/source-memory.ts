@@ -49,6 +49,7 @@ export function sameSourceWork(a: SourceWork, b: SourceWork): boolean {
     a.chapterCount === b.chapterCount &&
     a.pageCount === b.pageCount &&
     a.coverAvailable === b.coverAvailable &&
+    (a.sourceUpdatedAt ?? null) === (b.sourceUpdatedAt ?? null) &&
     a.authors.length === b.authors.length &&
     a.authors.every((author, i) => author === b.authors[i]) &&
     a.tags.length === b.tags.length &&

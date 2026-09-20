@@ -128,6 +128,30 @@ nor real account behavior has been live-validated for this batch.
 
 ## Account-only protocol references
 
+### Source work update dates
+
+`SourceWork.sourceUpdatedAt` is optional, source-reported metadata. JM reads
+`update_at` (Unix seconds in the pinned search/weekly response); Pica reads
+`updated_at` (ISO date-time in search/detail). Valid date-only values retain that
+precision; offset date-times normalize to UTC with milliseconds. Missing,
+malformed and epoch-placeholder dates stay unknown without failing the work.
+Neither creation fields (`addtime`, `adddate`, `created_at`) nor query/cache
+timestamps are substitutes. Parsing never adds detail requests or reorders the
+source response. A JM detail response that exposes only `addtime` therefore has
+no independent update date; the account layer can retain a previously read
+date for the same authenticated source and exact work ID.
+That fallback is bounded to the current session cache. A saved author-catalog
+date is still displayed as the last source observation after restart, but is
+not promoted into a new download's version snapshot when fresh detail lacks a
+date: the source may have updated since the saved observation. The new local
+version then remains unknown instead of triggering extra source queries.
+
+Field references: [JM search response](https://github.com/lanyeeee/jmcomic-downloader/blob/f0cdd724af6892002f2fb7be883b88832cebe7e9/src-tauri/src/responses/search_resp.rs#L47),
+[Pica search response](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src-tauri/src/responses/search_resp_data.rs#L36),
+and [Pica detail response](https://github.com/lanyeeee/picacomic-downloader/blob/77c8b62ede42b3afc074506d092313816af8092d/src-tauri/src/responses/get_comic_resp_data.rs#L35).
+These schemas establish field provenance, not universal field availability for
+every current response.
+
 Existing download pins remain unchanged. These references were read only for
 account/catalog protocol facts and thumbnail metadata, not download execution:
 

@@ -46,6 +46,7 @@ type MockOptions = {
   libraryCandidate?: boolean;
   holdMatchDetail?: boolean;
   authorSearchResults?: boolean;
+  workDates?: boolean;
 };
 type Call = {
   command: string;
@@ -1163,6 +1164,15 @@ async function installMock(page: Page, options: MockOptions = {}) {
             const epoch = Number(scope.sessionId.split("-").at(-1));
             const pageNumber = raw.page as number;
             if (options.authorSearchResults && raw.kind === "search") {
+              if (
+                options.workDates &&
+                options.partial &&
+                pageNumber === 2 &&
+                !pageFailureUsed
+              ) {
+                pageFailureUsed = true;
+                throw { code: "SOURCE_TIMEOUT" };
+              }
               const candidates: SourceWork[] = [
                 { ...makeWork(source, "202"), authors: ["Mintleaf"] },
                 {
@@ -1177,6 +1187,16 @@ async function installMock(page: Page, options: MockOptions = {}) {
                 },
                 { ...makeWork(source, "204"), authors: ["Guest、Mint"] },
               ];
+              if (options.workDates)
+                candidates.forEach((work, index) => {
+                  work.sourceUpdatedAt = [
+                    "2026-09-21",
+                    null,
+                    "2026-09-18",
+                    "2026-09-15",
+                    "2026-09-20",
+                  ][index];
+                });
               return {
                 ...scope,
                 items:
@@ -1234,6 +1254,12 @@ async function installMock(page: Page, options: MockOptions = {}) {
               epoch,
             );
             if (raw.kind === "detail") work.favorite = remoteFavorite[source];
+            if (
+              options.workDates &&
+              raw.kind === "detail" &&
+              raw.query === "203"
+            )
+              work.sourceUpdatedAt = "2026-09-22";
             const resultItems =
               options.coverCount && raw.kind !== "detail"
                 ? Array.from({ length: options.coverCount }, (_, index) => ({
@@ -1953,6 +1979,85 @@ for (const source of ["JM", "Pica"] as const) {
   });
 }
 
+test("source search date order is stable, unknown-last, persistent and independent of favorite ordering", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 1020 });
+  await installMock(page, { authorSearchResults: true, workDates: true });
+  await page.goto("/");
+  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("source-query-mode").selectOption("search");
+  await page.getByTestId("source-search-input").fill("Mint");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
+  const cards = page.getByTestId("source-grid").locator("article");
+  await expect(cards).toHaveCount(5);
+  await expect(cards.first()).toHaveAttribute("data-source-work-key", "JM:202");
+  await expect(cards.last()).toContainText("更新时间未知");
+  await page.getByTestId("source-sort").selectOption("updated-asc");
+  await expect(cards.first()).toHaveAttribute("data-source-work-key", "JM:201");
+  await expect(cards.last()).toHaveAttribute("data-source-work-key", "JM:203");
+  await page.getByTestId("source-filter-missing").click();
+  await expect(cards).toHaveCount(5);
+  await expect(page.getByTestId("source-date-sort-scope")).toContainText(
+    "已读取完整范围",
+  );
+  await page.getByTestId("source-open-JM:201").click();
+  await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-15");
+  await page.getByTestId("source-detail-back").click();
+  await page.getByTestId("source-open-JM:203").click();
+  await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-22");
+  await page.getByTestId("source-detail-back").click();
+  await expect(page.getByTestId("source-card-JM:203")).toContainText(
+    "更新：2026-09-22",
+  );
+  await page.getByTestId("source-sort").selectOption("updated-desc");
+  await expect(cards.first()).toHaveAttribute("data-source-work-key", "JM:203");
+  await page.getByTestId("source-sort").selectOption("updated-asc");
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/source-search-work-dates-wide.png",
+  });
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls
+        .filter(
+          (call) => call.command === "source_query" && call.kind === "search",
+        )
+        .map((call) => call.page),
+    ),
+  ).toEqual([1, 2]);
+  await page.getByTestId("nav-favorites").click();
+  await expect(page.getByTestId("source-sort")).toHaveValue("source");
+  await page.reload();
+  await page.getByTestId("nav-discovery").click();
+  await expect(page.getByTestId("source-sort")).toHaveValue("updated-asc");
+});
+
+test("failed source pagination never labels a partial date order as a full catalog", async ({
+  page,
+}) => {
+  await installMock(page, {
+    authorSearchResults: true,
+    workDates: true,
+    partial: true,
+  });
+  await page.goto("/");
+  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("source-query-mode").selectOption("search");
+  await page.getByTestId("source-search-input").fill("Mint");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-grid").locator("article")).toHaveCount(
+    3,
+  );
+  await expect(page.getByTestId("source-date-sort-scope")).toContainText(
+    "排序仅覆盖已读取结果",
+  );
+  await expect(page.getByTestId("source-date-sort-scope")).not.toContainText(
+    "已读取完整范围",
+  );
+});
+
 test("source author mode blocks broad initials while explicit keyword mode remains available", async ({
   page,
 }) => {
@@ -2035,6 +2140,8 @@ test("searching a followed source author uses the same explicit author evidence"
   await page.getByTestId("source-tab-Pica").click();
   await expect(page.getByTestId("source-authors")).toContainText("Mint");
   await page.getByRole("button", { name: "搜索该作者", exact: true }).click();
+  await expect(page.getByTestId("source-sort")).toHaveValue("updated-desc");
+  await page.getByTestId("source-sort").selectOption("updated-asc");
   await expect(page.getByTestId("source-completeness")).toContainText("已读完");
   await expect(page.getByTestId("source-author-evidence")).toContainText(
     "作者作品 2 部 · 其他关键词结果 3 部",

@@ -1,5 +1,6 @@
 import type { LibraryItem, LibraryReference } from "./library-types.ts";
 import type { Source } from "./source-types.ts";
+import { sortByWorkDate } from "./work-dates.ts";
 import {
   libraryReferences,
   libraryFilterMatches,
@@ -31,31 +32,32 @@ export function filterLibraryItems(
   filter: LibraryFilter = "all",
 ): LibraryItem[] {
   const terms = normalizeLibraryText(query).split(/\s+/).filter(Boolean);
-  return items
-    .filter((item) => {
-      if (!libraryFilterMatches(item, filter)) return false;
-      const text = normalizeLibraryText(
-        [
-          item.title,
-          item.fileName,
-          ...item.authors,
-          ...item.tags,
-          item.sourceRef?.source ?? "",
-          item.sourceRef?.workId ?? "",
-          ...libraryReferences(item).map(
-            (reference) => reference.source + " " + reference.workId,
-          ),
-        ].join(" "),
-      );
-      return terms.every((term) => text.includes(term));
-    })
-    .sort(
-      (a, b) =>
-        compareAdded(a, b, sort) ||
-        (sort === "modified" ? (b.modifiedAt ?? 0) - (a.modifiedAt ?? 0) : 0) ||
-        normalizeLibraryText(a.title).localeCompare(
-          normalizeLibraryText(b.title),
-        ) ||
-        a.id.localeCompare(b.id),
+  const filtered = items.filter((item) => {
+    if (!libraryFilterMatches(item, filter)) return false;
+    const text = normalizeLibraryText(
+      [
+        item.title,
+        item.fileName,
+        ...item.authors,
+        ...item.tags,
+        item.sourceRef?.source ?? "",
+        item.sourceRef?.workId ?? "",
+        ...libraryReferences(item).map(
+          (reference) => reference.source + " " + reference.workId,
+        ),
+      ].join(" "),
     );
+    return terms.every((term) => text.includes(term));
+  });
+  if (sort === "updated-asc" || sort === "updated-desc")
+    return sortByWorkDate(filtered, (item) => item.versionUpdatedAt, sort);
+  return filtered.sort(
+    (a, b) =>
+      compareAdded(a, b, sort) ||
+      (sort === "modified" ? (b.modifiedAt ?? 0) - (a.modifiedAt ?? 0) : 0) ||
+      normalizeLibraryText(a.title).localeCompare(
+        normalizeLibraryText(b.title),
+      ) ||
+      a.id.localeCompare(b.id),
+  );
 }

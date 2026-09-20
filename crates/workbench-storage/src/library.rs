@@ -84,6 +84,9 @@ pub struct LibraryItem {
     /// First successful registration. Legacy entries retain unknown dates.
     #[serde(default)]
     pub added_at: Option<u64>,
+    /// Source update time captured for this local version, never the scan time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_updated_at: Option<String>,
     pub page_count: Option<u64>,
     pub cover_available: bool,
     pub state: LibraryItemState,
@@ -377,6 +380,10 @@ impl ValidatedDocument for LibraryDocument {
                 || item.bytes > MAX_SAFE_INTEGER
                 || item.modified_at.is_some_and(|v| v > MAX_SAFE_INTEGER)
                 || item.added_at.is_some_and(|v| v > MAX_SAFE_INTEGER)
+                || item
+                    .version_updated_at
+                    .as_deref()
+                    .is_some_and(|v| !crate::work_date_is_valid(v))
                 || item.page_count.is_some_and(|v| v > 60_000)
                 || !error_code(&item.error_code)
                 || item.source_ref.as_ref().is_some_and(|v| !v.is_valid())

@@ -1592,7 +1592,7 @@ test("unknown metadata and uncertain favorite writes never imply zero counts or 
   await detail(page);
   await expect(
     page.getByTestId("source-detail").locator(".source-facts dd"),
-  ).toHaveText(["未知", "未知", "尚未设置漫画库"]);
+  ).toHaveText(["更新时间未知", "未知", "未知", "尚未设置漫画库"]);
   // This entry can guide the user to PC-folder selection. Unknown source counts
   // still cannot create or start a task without a separate native plan/confirm.
   await expect(page.getByTestId("source-download")).toBeEnabled();

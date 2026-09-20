@@ -1072,9 +1072,9 @@ test("checking and stopping are explicit, preserve old results and do not downlo
   await expect(page.getByTestId("completion-full-check")).toBeDisabled();
   await page.getByRole("button", { name: "停止本次检查" }).click();
   await expect(page.getByTestId("completion-progress")).toHaveCount(0);
-  await expect(
-    page.getByText("检查范围尚未读完", { exact: false }),
-  ).toBeVisible();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "检查范围尚未读完",
+  );
   await page.getByLabel("检查作者", { exact: true }).selectOption("合成作者");
   await page.getByTestId("completion-full-check").click();
   await expect(page.getByTestId("completion-progress")).toContainText(

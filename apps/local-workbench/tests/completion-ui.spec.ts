@@ -4,19 +4,21 @@ import { initialPreferences } from "../src/preferences.ts";
 import { emptyLibrary } from "../src/library-types.ts";
 import type { DiscoverySnapshot } from "../src/completion-types.ts";
 import type { DownloadInventorySnapshot } from "../src/download-types.ts";
-import type { SourceWork } from "../src/source-types.ts";
+import type { AccountSummary, SourceWork } from "../src/source-types.ts";
 
 // Synthetic desktop IPC only. No real source, credentials, files or downloads.
 declare global {
   interface Window {
     authorTest: {
       calls: { command: string; args: Record<string, unknown> }[];
+      accounts: AccountSummary[];
       view: DiscoverySnapshot;
       inventory: DownloadInventorySnapshot;
       searchRecords: SourceWork[];
       hold: boolean;
       release?: () => void;
-      readFailure: boolean;
+      readFailure: string | null;
+      cancelFailure: string | null;
       inventoryFailure: boolean;
     };
   }
@@ -42,15 +44,17 @@ test.afterEach(async ({ page }) => {
   ).toEqual([]);
 });
 async function install(page: Page) {
-  const accounts = (["JM", "Pica"] as const).map((source) => ({
-    source,
-    sessionId: "synthetic-" + source,
-    accountId: "synthetic-account-" + source,
-    displayName: "合成账号",
-    state: "connected",
-    remembered: false,
-    errorCode: null,
-  }));
+  const accounts: AccountSummary[] = (["JM", "Pica"] as const).map(
+    (source) => ({
+      source,
+      sessionId: "synthetic-" + source,
+      accountId: "synthetic-account-" + source,
+      displayName: "合成账号",
+      state: "connected",
+      remembered: false,
+      errorCode: null,
+    }),
+  );
   const works: SourceWork[] = [
     {
       source: "JM",
@@ -134,11 +138,13 @@ async function install(page: Page) {
     ({ accounts, works, library, view, inventory, preferences }) => {
       const hooks = (window.authorTest = {
         calls: [],
+        accounts,
         view,
         inventory,
         searchRecords: structuredClone(works),
         hold: false,
-        readFailure: false,
+        readFailure: null,
+        cancelFailure: null,
         inventoryFailure: false,
       } as Window["authorTest"]);
       const clone = (value: unknown) => structuredClone(value);
@@ -160,7 +166,7 @@ async function install(page: Page) {
               if (hooks.inventoryFailure) throw { code: "BUSY" };
               return clone(hooks.inventory);
             }
-            if (command === "source_accounts") return clone(accounts);
+            if (command === "source_accounts") return clone(hooks.accounts);
             if (command === "jm_download_read")
               return { revision: 0, tasks: [] };
             if (command === "jm_download_batch_cancel") return null;
@@ -201,7 +207,7 @@ async function install(page: Page) {
                   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
               };
             if (command === "discovery_read") {
-              if (hooks.readFailure) throw { code: "SOURCE_UNAVAILABLE" };
+              if (hooks.readFailure) throw { code: hooks.readFailure };
               const result = clone(hooks.view);
               if (hooks.hold) {
                 hooks.hold = false;
@@ -229,6 +235,7 @@ async function install(page: Page) {
               return { runId: "scan-2", snapshot: clone(hooks.view) };
             }
             if (command === "discovery_cancel") {
+              if (hooks.cancelFailure) throw { code: hooks.cancelFailure };
               hooks.view.run!.phase = "cancelled";
               for (const range of hooks.view.authors) range.state = "cancelled";
               return clone(hooks.view.run);
@@ -277,6 +284,313 @@ const open = async (page: Page) => {
     "已记录 3 条",
   );
 };
+
+const discoveryCalls = (page: Page, command = "discovery_read") =>
+  page.evaluate(
+    (command) =>
+      window.authorTest.calls.filter((call) => call.command === command).length,
+    command,
+  );
+const installWithPausedClock = async (page: Page) => {
+  await page.clock.install({ time: new Date("2026-09-20T00:00:00Z") });
+  await install(page);
+  await page.clock.pauseAt(new Date("2026-09-20T01:00:00Z"));
+};
+const finishSyntheticCheck = (page: Page) =>
+  page.evaluate(() => {
+    const view = window.authorTest.view;
+    if (view.run) {
+      view.run.phase = "complete";
+      view.run.completedScopes = view.run.totalScopes;
+    }
+    for (const range of view.authors) {
+      range.state = "complete";
+      range.errorCode = null;
+      range.lastCompleteAt = Date.now();
+    }
+    view.revision++;
+  });
+
+test("a busy progress read keeps results and stop control, then catches completion without restarting the check", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "正在检查",
+  );
+  const readsBefore = await discoveryCalls(page);
+  await page.evaluate(() => {
+    window.authorTest.readFailure = "BUSY";
+  });
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-read-error")).toContainText("BUSY");
+  await expect(page.getByTestId("completion-read-error")).toContainText(
+    "1.5 秒后重试读取（1 / 3）",
+  );
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "当前进度待刷新",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "停止本次检查" }),
+  ).toBeEnabled();
+  await expect(page.getByTestId("completion-start")).toBeDisabled();
+  await expect(
+    page.getByText(
+      "本次检查未完成，已读取的结果会保留。请查看检查范围后重试。",
+      {
+        exact: true,
+      },
+    ),
+  ).toHaveCount(0);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/author-progress-temporary-read-error.png",
+  });
+  await page.evaluate(() => {
+    window.authorTest.readFailure = null;
+  });
+  await finishSyntheticCheck(page);
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-progress")).toHaveCount(0);
+  await expect(page.getByTestId("completion-start")).toBeEnabled();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  await page.clock.runFor(30000);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(1);
+});
+
+test("repeated busy reads stop at a bounded retry budget and manual refresh resumes progress polling", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  const readsBefore = await discoveryCalls(page);
+  await page.evaluate(() => {
+    window.authorTest.readFailure = "BUSY";
+  });
+  for (const [delay, next] of [
+    [1500, "1 / 3"],
+    [1500, "2 / 3"],
+    [3000, "3 / 3"],
+    [6000, "进度刷新已暂停"],
+  ] as const) {
+    await page.clock.runFor(delay);
+    await expect(page.getByTestId("completion-read-error")).toContainText(next);
+  }
+  expect(await discoveryCalls(page)).toBe(readsBefore + 4);
+  await page.clock.runFor(60000);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 4);
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "停止本次检查" }),
+  ).toBeEnabled();
+  await page.evaluate(() => {
+    window.authorTest.readFailure = null;
+    window.authorTest.view.run!.currentPage = 42;
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "第 42 页",
+  );
+  await finishSyntheticCheck(page);
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-progress")).toHaveCount(0);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 6);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(1);
+});
+
+test("an initial busy snapshot read retries without starting any source check", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await page.evaluate(() => {
+    window.authorTest.readFailure = "BUSY";
+  });
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-read-error")).toContainText(
+    "1 / 3",
+  );
+  const readsBefore = await discoveryCalls(page);
+  await page.evaluate(() => {
+    window.authorTest.readFailure = null;
+  });
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已记录 3 条",
+  );
+  expect(await discoveryCalls(page)).toBe(readsBefore + 1);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+});
+
+test("failed cancellation keeps its action error while independent progress reads continue to completion", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  const readsBefore = await discoveryCalls(page);
+  await page.evaluate(() => {
+    window.authorTest.cancelFailure = "BUSY";
+    window.authorTest.view.run!.currentPage = 9;
+  });
+  await page.getByRole("button", { name: "停止本次检查" }).click();
+  const actionError = page.getByText(
+    "本次检查未完成，已读取的结果会保留。请查看检查范围后重试。",
+    { exact: true },
+  );
+  await expect(actionError).toBeVisible();
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "第 9 页",
+  );
+  expect(await discoveryCalls(page)).toBe(readsBefore + 1);
+  await finishSyntheticCheck(page);
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-progress")).toHaveCount(0);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  await expect(actionError).toBeVisible();
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  expect(await discoveryCalls(page, "discovery_cancel")).toBe(1);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(1);
+});
+
+for (const code of [
+  "DISCOVERY_INVALID",
+  "STALE_SESSION",
+  "DISCOVERY_UNAVAILABLE",
+  "STORE_UNAVAILABLE",
+  "STORE_READ_FAILED",
+]) {
+  test(`progress read ${code} waits for manual refresh instead of looping or restarting`, async ({
+    page,
+  }) => {
+    await installWithPausedClock(page);
+    await open(page);
+    await page.getByTestId("completion-start").click();
+    await expect(page.getByTestId("completion-progress")).toBeVisible();
+    const readsBefore = await discoveryCalls(page);
+    await page.evaluate((code) => {
+      window.authorTest.readFailure = code;
+    }, code);
+    await page.clock.runFor(1500);
+    await expect(page.getByTestId("completion-read-error")).toContainText(code);
+    await expect(page.getByTestId("completion-read-error")).toContainText(
+      "进度刷新已暂停",
+    );
+    await expect(page.getByTestId("completion-progress")).toContainText(
+      "当前进度待刷新",
+    );
+    await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+    await page.clock.runFor(60000);
+    expect(await discoveryCalls(page)).toBe(readsBefore + 1);
+    expect(await discoveryCalls(page, "discovery_start")).toBe(1);
+  });
+}
+
+test("leaving the author page cancels a pending retry and returning reads the current saved state", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  await page.evaluate(() => {
+    window.authorTest.readFailure = "BUSY";
+  });
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-read-error")).toContainText(
+    "1 / 3",
+  );
+  const readsBefore = await discoveryCalls(page);
+  await page.getByTestId("nav-settings").click();
+  await page.clock.runFor(60000);
+  expect(await discoveryCalls(page)).toBe(readsBefore);
+  await page.evaluate(() => {
+    window.authorTest.readFailure = null;
+  });
+  await finishSyntheticCheck(page);
+  await open(page);
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-progress")).toHaveCount(0);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  expect(await discoveryCalls(page)).toBe(readsBefore + 1);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(1);
+});
+
+test("a late read from a replaced account cannot restore its old progress or results", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  const readsBefore = await discoveryCalls(page);
+  await page.evaluate(() => {
+    window.authorTest.hold = true;
+  });
+  await page.clock.runFor(1500);
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.authorTest.release)))
+    .toBe(true);
+  await page.getByTestId("nav-settings").click();
+  await page.evaluate(() => {
+    const hooks = window.authorTest;
+    hooks.accounts[0].sessionId = "synthetic-JM-replacement";
+    hooks.view.scopes[0].sessionId = "synthetic-JM-replacement";
+    hooks.view.run = null;
+    hooks.view.authors = [];
+    hooks.view.records = [];
+  });
+  await page
+    .getByRole("button", { name: "重新读取账号状态", exact: true })
+    .click();
+  await page.getByTestId("nav-completion").click();
+  // The obsolete IPC is still held: the replacement session must wait rather
+  // than issue a concurrent snapshot read.
+  expect(await discoveryCalls(page)).toBe(readsBefore + 1);
+  await page.evaluate(() => window.authorTest.release!());
+  await expect.poll(() => discoveryCalls(page)).toBe(readsBefore + 2);
+  expect(
+    await page.evaluate(
+      () =>
+        window.authorTest.calls
+          .filter((call) => call.command === "discovery_read")
+          .at(-1)?.args.scopes,
+    ),
+  ).toEqual([
+    { source: "JM", sessionId: "synthetic-JM-replacement" },
+    { source: "Pica", sessionId: "synthetic-Pica" },
+  ]);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已记录 0 条",
+  );
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-progress")).toHaveCount(0);
+  await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
+  await page.clock.runFor(30000);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已记录 0 条",
+  );
+  expect(await discoveryCalls(page, "discovery_start")).toBe(1);
+});
 
 test("blocked author scopes explain local skips and do not count legacy checkpoints as complete", async ({
   page,

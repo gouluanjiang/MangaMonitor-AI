@@ -229,3 +229,28 @@ export function completionError(cause: unknown): string {
     return "作者目录达到保存上限，本次检查未完成，已读取的结果会保留。";
   return "本次检查未完成，已读取的结果会保留。请查看检查范围后重试。";
 }
+
+export interface CompletionReadFailure {
+  code: string;
+  failures: number;
+  retryAfterMs: number | null;
+}
+
+// These retries only read the local progress snapshot. They never restart a
+// source check, and session, schema and other terminal errors require a user.
+export function completionReadFailure(
+  cause: unknown,
+  failures: number,
+): CompletionReadFailure {
+  const rawCode = (cause as { code?: unknown })?.code;
+  const code =
+    typeof rawCode === "string" && /^[A-Z_0-9]{1,100}$/.test(rawCode)
+      ? rawCode
+      : "DISCOVERY_READ_FAILED";
+  return {
+    code,
+    failures,
+    retryAfterMs:
+      code === "BUSY" ? ([1500, 3000, 6000][failures - 1] ?? null) : null,
+  };
+}

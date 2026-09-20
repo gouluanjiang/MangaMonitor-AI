@@ -18,8 +18,10 @@ import type {
 } from "./completion-types.ts";
 import {
   completionError,
+  completionReadFailure,
   createCompletionAdapter,
 } from "./completion-runtime.ts";
+import type { CompletionReadFailure } from "./completion-runtime.ts";
 import {
   createInventoryMatcher,
   inventoryFilterLabels,
@@ -87,11 +89,13 @@ export function CompletionPanel({
     .map(accountScope)
     .filter((s): s is SourceScope => s !== null);
   const scopeKey = JSON.stringify(scopes);
-  const current = useRef({ key: scopeKey, scopes });
-  current.current = { key: scopeKey, scopes };
+  const current = useRef({ key: scopeKey, scopes, active, adapter, mode });
+  current.current = { key: scopeKey, scopes, active, adapter, mode };
   const epoch = useRef(0),
     operation = useRef(false),
-    mounted = useRef(true);
+    mounted = useRef(true),
+    readTask = useRef<Promise<void> | null>(null),
+    readFailures = useRef(0);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -104,7 +108,11 @@ export function CompletionPanel({
   } | null>(null);
   const view = result?.key === scopeKey ? result.value : null;
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [actionError, setActionError] = useState("");
+  const [reading, setReading] = useState(false);
+  const [readFailure, setReadFailure] = useState<CompletionReadFailure | null>(
+    null,
+  );
   const [author, setAuthor] = useState(""),
     [query, setQuery] = useState("");
   const [source, setSource] = useState<Source | "all">("all");
@@ -125,24 +133,54 @@ export function CompletionPanel({
     () => partitionAuthorRecords(view?.records ?? [], author, source),
     [view, author, source],
   );
-  const load = useCallback(async () => {
-    const captured = current.current,
-      request = ++epoch.current;
-    if (captured.scopes.length !== 2) return;
-    try {
-      const next = await adapter.read(captured.scopes);
-      if (current.current.key === captured.key && request === epoch.current) {
-        setResult({ key: captured.key, value: next });
-        setError("");
+  const load = useCallback(
+    async (resetRetries = false) => {
+      if (operation.current && !resetRetries) return;
+      const captured = current.current,
+        request = ++epoch.current;
+      const valid = () =>
+        mounted.current &&
+        current.current.active &&
+        current.current.key === captured.key &&
+        current.current.mode === captured.mode &&
+        current.current.adapter === adapter &&
+        request === epoch.current;
+      if (!captured.active || captured.scopes.length !== 2) return;
+      if (resetRetries) readFailures.current = 0;
+      // An invalidated IPC cannot be cancelled. Wait for it before the newest
+      // read so manual refresh, navigation and StrictMode never overlap polls.
+      await readTask.current;
+      if (!valid()) return;
+      setReading(true);
+      const task = (async () => {
+        try {
+          const next = await adapter.read(captured.scopes);
+          if (valid()) {
+            readFailures.current = 0;
+            setResult({ key: captured.key, value: next });
+            setReadFailure(null);
+          }
+        } catch (cause) {
+          if (valid())
+            setReadFailure(
+              completionReadFailure(cause, ++readFailures.current),
+            );
+        }
+      })();
+      readTask.current = task;
+      await task;
+      if (readTask.current === task) {
+        readTask.current = null;
+        if (mounted.current) setReading(false);
       }
-    } catch (cause) {
-      if (current.current.key === captured.key && request === epoch.current)
-        setError(completionError(cause));
-    }
-  }, [adapter]);
+    },
+    [adapter],
+  );
   useEffect(() => {
     setResult(null);
-    setError("");
+    setActionError("");
+    setReadFailure(null);
+    readFailures.current = 0;
     setAuthor("");
     setQuery("");
     setSearchAuthor("");
@@ -160,33 +198,55 @@ export function CompletionPanel({
     [mode, searchAdapter],
   );
   useEffect(() => {
-    if (active) void load();
+    if (active) void load(true);
     return () => {
       epoch.current++;
     };
-  }, [load, scopeKey, active]);
+  }, [load, scopeKey, active, mode]);
   useEffect(() => {
-    if (!active || !running || busy || error) return;
-    const timer = setTimeout(() => void load(), 1500);
+    if (!active || !connected || busy || reading) return;
+    const delay = readFailure
+      ? readFailure.retryAfterMs
+      : running
+        ? 1500
+        : null;
+    if (delay === null) return;
+    const timer = setTimeout(() => void load(), delay);
     return () => clearTimeout(timer);
-  }, [load, running, busy, error, view, active]);
-  async function perform(action: () => Promise<DiscoverySnapshot | void>) {
+  }, [load, running, busy, reading, readFailure, view, active, connected]);
+  async function perform(
+    action: (current: () => boolean) => Promise<DiscoverySnapshot | void>,
+  ) {
     if (operation.current) return;
     operation.current = true;
     setSelection([]);
-    epoch.current++;
-    const key = current.current.key;
+    const request = ++epoch.current,
+      captured = current.current;
+    const valid = () =>
+      mounted.current &&
+      current.current.active &&
+      current.current.key === captured.key &&
+      current.current.mode === captured.mode &&
+      current.current.adapter === captured.adapter &&
+      request === epoch.current;
     setBusy(true);
-    setError("");
+    setActionError("");
     try {
-      const next = await action();
-      if (mounted.current && current.current.key === key) {
-        if (next) setResult({ key, value: next });
-        else await load();
+      const next = await action(valid);
+      if (valid()) {
+        if (next) {
+          readFailures.current = 0;
+          setResult({ key: captured.key, value: next });
+          setReadFailure(null);
+        } else await load(true);
       }
     } catch (cause) {
-      if (mounted.current && current.current.key === key)
-        setError(completionError(cause));
+      if (valid()) {
+        setActionError(completionError(cause));
+        // A failed start, cancellation or inventory refresh does not establish
+        // that the backend run stopped. Read its state independently.
+        await load(true);
+      }
     } finally {
       operation.current = false;
       if (mounted.current) setBusy(false);
@@ -198,9 +258,9 @@ export function CompletionPanel({
     const captured = current.current;
     const selected =
       mode === "search" ? [searchAuthor.trim()] : author ? [author] : [];
-    void perform(async () => {
+    void perform(async (isCurrent) => {
       await onRefreshInventory?.();
-      if (!mounted.current || current.current.key !== captured.key) return;
+      if (!isCurrent()) return;
       return adapter.start(
         captured.scopes,
         selected,
@@ -221,7 +281,8 @@ export function CompletionPanel({
   );
   const complete =
     !running &&
-    !error &&
+    !actionError &&
+    !readFailure &&
     ranges.length > 0 &&
     ranges.every((range) => range.state === "complete");
   const includesIncremental =
@@ -382,7 +443,7 @@ export function CompletionPanel({
               “完整复核”会重新读取所选作者在两站的所有分页，用于核对旧作补录等变化。
             </p>
           )}
-          {mode === "updates" && !authors.length && (
+          {mode === "updates" && view && !authors.length && (
             <p className="source-empty">
               尚未关注作者。可以先搜索作者，再添加关注。
             </p>
@@ -395,7 +456,10 @@ export function CompletionPanel({
           )}
           {running && (
             <p role="status" data-testid="completion-progress">
-              正在检查 {view?.run?.currentAuthor ?? "关注作者"} ·{" "}
+              {readFailure
+                ? "上次读取的检查进度（当前进度待刷新）："
+                : "正在检查 "}
+              {view?.run?.currentAuthor ?? "关注作者"} ·{" "}
               {view?.run?.currentSource
                 ? sourceLabel(view.run.currentSource)
                 : "准备中"}{" "}
@@ -409,9 +473,22 @@ export function CompletionPanel({
                 : ""}
             </p>
           )}
-          {error && (
+          {actionError && (
             <p role="alert" className="source-notice">
-              {error}
+              {actionError}
+            </p>
+          )}
+          {readFailure && (
+            <p
+              role="alert"
+              className="source-notice"
+              data-testid="completion-read-error"
+            >
+              检查进度暂未刷新，已显示结果保留；这不表示后台检查已停止。
+              错误代码：{readFailure.code}。
+              {readFailure.retryAfterMs !== null
+                ? ` ${readFailure.retryAfterMs / 1000} 秒后重试读取（${readFailure.failures} / 3）。`
+                : " 进度刷新已暂停，请点击“刷新结果与入库状态”重试。"}
             </p>
           )}
           {inventoryError && (
@@ -483,11 +560,13 @@ export function CompletionPanel({
           </div>
           <p data-testid="completion-counts">
             {showOther ? "其他关键词结果（未确认作者归属） · " : ""}
-            {complete
-              ? includesIncremental
-                ? "本轮检查已完成（含增量），历史目录已保留"
-                : "当前检查范围已读完"
-              : "检查范围尚未读完"}{" "}
+            {readFailure
+              ? "显示上次读取结果，当前进度待刷新"
+              : complete
+                ? includesIncremental
+                  ? "本轮检查已完成（含增量），历史目录已保留"
+                  : "当前检查范围已读完"
+                : "检查范围尚未读完"}{" "}
             · 已记录 {records.length} 条 · 已入库 {counts.owned} 条 · 未入库{" "}
             {counts.missing} 条 · 当前显示 {visible.length} 条
             {counts.unknown > 0 ? ` · 状态待核实 ${counts.unknown} 条` : ""}
@@ -559,19 +638,21 @@ export function CompletionPanel({
             )}
           {visible.length === 0 && (
             <p className="source-empty">
-              {scopedRecords.length > 0
-                ? "当前筛选没有结果。"
-                : showOther
-                  ? "当前范围没有其他关键词结果。"
-                  : !showOther && authorResults.other.length > 0
-                    ? "尚未确认该作者的作品，可查看其他关键词结果。"
-                    : fullRangeChecked
-                      ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
-                      : complete
-                        ? "当前保存目录没有作者作品，可通过完整复核再次检查。"
-                        : mode === "search"
-                          ? "输入作者名，点击“搜索两站作品”读取结果。"
-                          : "点击“一键检查全部关注作者”读取关注作者的作品。"}
+              {readFailure && !view
+                ? "尚未读取到检查结果，请刷新重试。"
+                : scopedRecords.length > 0
+                  ? "当前筛选没有结果。"
+                  : showOther
+                    ? "当前范围没有其他关键词结果。"
+                    : !showOther && authorResults.other.length > 0
+                      ? "尚未确认该作者的作品，可查看其他关键词结果。"
+                      : fullRangeChecked
+                        ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
+                        : complete
+                          ? "当前保存目录没有作者作品，可通过完整复核再次检查。"
+                          : mode === "search"
+                            ? "输入作者名，点击“搜索两站作品”读取结果。"
+                            : "点击“一键检查全部关注作者”读取关注作者的作品。"}
             </p>
           )}
           {visible.length > 0 && !showOther && (

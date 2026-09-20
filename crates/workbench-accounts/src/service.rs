@@ -434,12 +434,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     }
 
     /// Keep account generations ordered through one fixed, cancellable metadata write.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn discovery_commit(
         &self,
         context: &crate::discovery::DiscoveryContext,
         run_id: &str,
-        document: workbench_storage::Document<workbench_storage::DiscoveryDocument>,
-    ) -> Result<workbench_storage::Document<workbench_storage::DiscoveryDocument>> {
+        store: Arc<workbench_storage::WorkbenchStore>,
+        revision: u64,
+        patch: workbench_storage::DiscoveryPagePatch,
+        record_count: usize,
+        other_record_count: usize,
+    ) -> Result<u64> {
         let mut jm = self.slot(Source::Jm).lock().await;
         let mut pica = self.slot(Source::Pica).lock().await;
         self.require_scope(&mut jm, &context.identities[0].scope.session_id)?;
@@ -449,13 +454,48 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let captured = context.clone();
         let run_id = run_id.to_owned();
         let saved = tokio::task::spawn_blocking(move || {
-            control.commit(&run_id, &captured, document.revision, document.value)
+            control.commit(
+                &run_id,
+                &captured,
+                &store,
+                revision,
+                patch,
+                record_count,
+                other_record_count,
+            )
         })
         .await
         .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))??;
         self.check_saved(&mut jm)?;
         self.check_saved(&mut pica)?;
         Ok(saved)
+    }
+
+    pub(crate) async fn discovery_checkpoint(
+        &self,
+        context: &crate::discovery::DiscoveryContext,
+        run_id: &str,
+        store: Arc<workbench_storage::WorkbenchStore>,
+        revision: u64,
+    ) -> Result<()> {
+        let mut jm = self.slot(Source::Jm).lock().await;
+        let mut pica = self.slot(Source::Pica).lock().await;
+        self.require_scope(&mut jm, &context.identities[0].scope.session_id)?;
+        self.require_scope(&mut pica, &context.identities[1].scope.session_id)?;
+        self.discovery_validate_context(context)?;
+        self.discovery.check(run_id)?;
+        let following_revision = context.following_revision;
+        let result = tokio::task::spawn_blocking(move || {
+            crate::discovery::discovery_store_io(|| {
+                store.checkpoint_discovery_for_following(revision, following_revision)
+            })
+        })
+        .await
+        .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
+        .map_err(|error| AccountError::new(error.code));
+        self.check_saved(&mut jm)?;
+        self.check_saved(&mut pica)?;
+        result
     }
 
     /// Acquires the token and lease under the same account generation. This is

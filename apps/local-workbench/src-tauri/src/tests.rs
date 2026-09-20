@@ -42,6 +42,15 @@ fn manual_discovery_and_download_inventory_keep_main_origin_boundaries() {
     let scopes = json!([{"source":"JM","sessionId":"synthetic-jm"},{"source":"Pica","sessionId":"synthetic-pica"}]);
     for (command, body) in [
         ("discovery_read", json!({"scopes":scopes})),
+        (
+            "discovery_read",
+            json!({"scopes":scopes,"includeOther":true}),
+        ),
+        ("discovery_progress", json!({"scopes":scopes})),
+        (
+            "discovery_start_unfinished",
+            json!({"scopes":scopes,"authors":[]}),
+        ),
         ("discovery_start", json!({"scopes":scopes,"authors":[]})),
         (
             "discovery_start",

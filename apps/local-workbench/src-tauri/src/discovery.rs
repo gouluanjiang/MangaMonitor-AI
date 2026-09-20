@@ -3,7 +3,8 @@ use crate::accounts::{service, DesktopAccounts};
 use std::sync::Arc;
 use tauri::{Runtime, State, WebviewWindow};
 use workbench_accounts::{
-    AccountError, DiscoveryMode, DiscoveryRun, DiscoveryScope, DiscoverySnapshot, DiscoveryStart,
+    AccountError, DiscoveryMode, DiscoveryProgress, DiscoveryRun, DiscoveryScope,
+    DiscoverySnapshot, DiscoveryStart,
 };
 
 fn require_main(label: &str) -> Result<(), AccountError> {
@@ -15,11 +16,39 @@ pub(crate) async fn discovery_read<R: Runtime>(
     window: WebviewWindow<R>,
     accounts: State<'_, Arc<DesktopAccounts>>,
     scopes: Vec<DiscoveryScope>,
+    include_other: Option<bool>,
 ) -> Result<DiscoverySnapshot, AccountError> {
     require_main(window.label())?;
     service(Arc::clone(accounts.inner()))
         .await?
-        .discovery_read(scopes)
+        .discovery_read_view(scopes, include_other.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn discovery_progress<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    scopes: Vec<DiscoveryScope>,
+) -> Result<DiscoveryProgress, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .discovery_progress(scopes)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn discovery_start_unfinished<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    scopes: Vec<DiscoveryScope>,
+    authors: Vec<String>,
+) -> Result<DiscoveryStart, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .discovery_start_unfinished(scopes, authors)
         .await
 }
 

@@ -13,6 +13,7 @@ declare global {
       calls: { command: string; args: Record<string, unknown> }[];
       accounts: AccountSummary[];
       view: DiscoverySnapshot;
+      otherRecords: DiscoverySnapshot["records"];
       inventory: DownloadInventorySnapshot;
       searchRecords: SourceWork[];
       hold: boolean;
@@ -140,6 +141,7 @@ async function install(page: Page) {
         calls: [],
         accounts,
         view,
+        otherRecords: [],
         inventory,
         searchRecords: structuredClone(works),
         hold: false,
@@ -206,9 +208,26 @@ async function install(page: Page) {
                 dataUrl:
                   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
               };
-            if (command === "discovery_read") {
+            if (
+              command === "discovery_read" ||
+              command === "discovery_progress"
+            ) {
               if (hooks.readFailure) throw { code: hooks.readFailure };
-              const result = clone(hooks.view);
+              const { records, ...metadata } = hooks.view;
+              const result = clone(
+                command === "discovery_progress"
+                  ? {
+                      ...metadata,
+                      recordCount: records.length + hooks.otherRecords.length,
+                    }
+                  : args.includeOther && hooks.view.includesOther === false
+                    ? {
+                        ...hooks.view,
+                        records: [...records, ...hooks.otherRecords],
+                        includesOther: true,
+                      }
+                    : hooks.view,
+              );
               if (hooks.hold) {
                 hooks.hold = false;
                 await new Promise<void>((resolve) => {
@@ -217,7 +236,17 @@ async function install(page: Page) {
               }
               return result;
             }
-            if (command === "discovery_start") {
+            if (
+              command === "discovery_start" ||
+              command === "discovery_start_unfinished"
+            ) {
+              const selected = hooks.view.authors.filter(
+                (range) =>
+                  (!(args.authors as string[]).length ||
+                    (args.authors as string[]).includes(range.author)) &&
+                  (command !== "discovery_start_unfinished" ||
+                    range.state !== "complete"),
+              );
               hooks.view.run = {
                 id: "scan-2",
                 phase: "checking",
@@ -226,12 +255,13 @@ async function install(page: Page) {
                 currentPage: 1,
                 requestsUsed: 1,
                 completedScopes: 0,
-                totalScopes: 2,
+                totalScopes: selected.length,
                 errorCode: null,
-                mode: args.mode as "incremental" | "full",
-                currentStrategy: args.mode as "incremental" | "full",
+                mode: (args.mode ?? "incremental") as "incremental" | "full",
+                currentStrategy: (args.mode ?? "incremental") as
+                  "incremental" | "full",
               };
-              for (const range of hooks.view.authors) range.state = "checking";
+              for (const range of selected) range.state = "checking";
               return { runId: "scan-2", snapshot: clone(hooks.view) };
             }
             if (command === "discovery_cancel") {
@@ -285,10 +315,14 @@ const open = async (page: Page) => {
   );
 };
 
-const discoveryCalls = (page: Page, command = "discovery_read") =>
+const discoveryCalls = (page: Page, command = "reads") =>
   page.evaluate(
     (command) =>
-      window.authorTest.calls.filter((call) => call.command === command).length,
+      window.authorTest.calls.filter((call) =>
+        command === "reads"
+          ? ["discovery_read", "discovery_progress"].includes(call.command)
+          : call.command === command,
+      ).length,
     command,
   );
 const installWithPausedClock = async (page: Page) => {
@@ -310,6 +344,215 @@ const finishSyntheticCheck = (page: Page) =>
     }
     view.revision++;
   });
+
+test("active polling transports progress only and refreshes saved catalog once after completion", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  const fullBefore = await discoveryCalls(page, "discovery_read");
+  const progressBefore = await discoveryCalls(page, "discovery_progress");
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.view.records[1].work.title = "合成作者 · 检查期间新读取标题";
+    h.view.run!.currentPage = 10;
+    h.view.revision++;
+  });
+  for (let i = 0; i < 3; i++) {
+    await page.clock.runFor(1500);
+    await expect
+      .poll(() => discoveryCalls(page, "discovery_progress"))
+      .toBe(progressBefore + i + 1);
+  }
+  expect(await discoveryCalls(page, "discovery_read")).toBe(fullBefore);
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "第 10 页",
+  );
+  await expect(page.getByTestId("completion-saved-results-note")).toContainText(
+    "列表为最近读取结果",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toContainText(
+    "上次未选择的作品",
+  );
+  await finishSyntheticCheck(page);
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("author-update-JM:456")).toContainText(
+    "检查期间新读取标题",
+  );
+  await expect(page.getByTestId("completion-progress")).toHaveCount(0);
+  expect(await discoveryCalls(page, "discovery_read")).toBe(fullBefore + 1);
+  const after = await discoveryCalls(page);
+  await page.clock.runFor(30000);
+  expect(await discoveryCalls(page)).toBe(after);
+});
+
+test("cold keyword results load only on request, keep the previous list while reading, and reuse the loaded catalog", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    const other = structuredClone(h.view.records[1]);
+    other.work.workId = "789";
+    other.work.authors = ["其他署名"];
+    h.otherRecords = [other];
+    h.view.includesOther = false;
+    h.view.otherRecordCount = 1;
+  });
+  await open(page);
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "其他关键词结果 1 条",
+  );
+  await page.getByLabel("检查作者", { exact: true }).selectOption("合成作者");
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "其他关键词结果按需读取",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        window.authorTest.calls.filter(
+          (c) => c.command === "discovery_read" && c.args.includeOther === true,
+        ).length,
+    ),
+  ).toBe(0);
+  await page.evaluate(() => {
+    window.authorTest.hold = true;
+  });
+  await page.getByRole("button", { name: "查看其他关键词结果" }).click();
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.authorTest.release)))
+    .toBe(true);
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
+  await page.evaluate(() => window.authorTest.release!());
+  await expect(page.getByTestId("author-update-JM:789")).toContainText(
+    "其他署名",
+  );
+  await expect(
+    page.getByRole("button", { name: "多选", exact: true }),
+  ).toHaveCount(0);
+  const reads = await discoveryCalls(page);
+  await page.getByRole("button", { name: "返回作者作品" }).click();
+  await page.getByRole("button", { name: "查看其他关键词结果" }).click();
+  expect(await discoveryCalls(page)).toBe(reads);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+});
+
+test("only unfinished source scopes are explicitly retried and idle scopes are not called failures", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await page.evaluate(() => {
+    const [jm, pica] = window.authorTest.view.authors;
+    jm.state = "complete";
+    jm.lastCompleteAt = 1800000000000;
+    jm.errorCode = null;
+    pica.state = "idle";
+    pica.pagesRead = 0;
+    pica.observedCount = 0;
+    pica.lastAttemptAt = null;
+    pica.errorCode = null;
+  });
+  await open(page);
+  await page.getByText("查看未完成范围", { exact: true }).click();
+  await expect(page.getByTestId("completion-unfinished-ranges")).toContainText(
+    "尚未开始检查",
+  );
+  await expect(page.getByTestId("completion-unfinished-check")).toHaveText(
+    "仅补查未完成（1）",
+  );
+  expect(await discoveryCalls(page, "discovery_start_unfinished")).toBe(0);
+  await page.getByTestId("completion-unfinished-check").click();
+  await expect(page.getByTestId("completion-progress")).toContainText(
+    "/ 1 个来源范围",
+  );
+  expect(
+    await page.evaluate(() => window.authorTest.view.authors[0].state),
+  ).toBe("complete");
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((c) => c.command === "discovery_start_unfinished")
+        .map((c) => c.args.authors),
+    ),
+  ).toEqual([[]]);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+  await finishSyntheticCheck(page);
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-unfinished-check")).toBeDisabled();
+});
+
+test("a late cold catalog response cannot restore records after an account replacement", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.view.includesOther = false;
+    h.view.otherRecordCount = 1;
+    const other = structuredClone(h.view.records[1]);
+    other.work.workId = "789";
+    other.work.authors = ["旧账号其他作者"];
+    h.otherRecords = [other];
+  });
+  await open(page);
+  await page.evaluate(() => {
+    window.authorTest.hold = true;
+  });
+  await page.getByRole("button", { name: "查看其他关键词结果" }).click();
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.authorTest.release)))
+    .toBe(true);
+  await page.getByTestId("nav-settings").click();
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.accounts[0].sessionId = "synthetic-new-account";
+    h.view.scopes[0].sessionId = "synthetic-new-account";
+    h.view.records = [];
+    h.view.authors = [];
+    h.view.otherRecordCount = 0;
+    h.otherRecords = [];
+  });
+  await page
+    .getByRole("button", { name: "重新读取账号状态", exact: true })
+    .click();
+  await page.getByTestId("nav-completion").click();
+  await page.evaluate(() => window.authorTest.release!());
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已记录 0 条",
+  );
+  await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "返回作者作品" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+});
+
+test("a deferred catalog checkpoint warning preserves successful source completion", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await open(page);
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  await finishSyntheticCheck(page);
+  await page.evaluate(() => {
+    window.authorTest.view.run!.storageWarningCode =
+      "DISCOVERY_CHECKPOINT_FAILED";
+  });
+  await page.clock.runFor(1500);
+  await expect(page.getByTestId("completion-storage-warning")).toContainText(
+    "已读取结果已保存",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("completion-unfinished-check")).toBeDisabled();
+});
 
 test("a busy progress read keeps results and stop control, then catches completion without restarting the check", async ({
   page,
@@ -361,9 +604,9 @@ test("a busy progress read keeps results and stop control, then catches completi
     "当前检查范围已读完",
   );
   await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
-  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 3);
   await page.clock.runFor(30000);
-  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 3);
   expect(await discoveryCalls(page, "discovery_start")).toBe(1);
 });
 
@@ -406,7 +649,7 @@ test("repeated busy reads stop at a bounded retry budget and manual refresh resu
   await finishSyntheticCheck(page);
   await page.clock.runFor(1500);
   await expect(page.getByTestId("completion-progress")).toHaveCount(0);
-  expect(await discoveryCalls(page)).toBe(readsBefore + 6);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 7);
   expect(await discoveryCalls(page, "discovery_start")).toBe(1);
 });
 
@@ -466,11 +709,11 @@ test("failed cancellation keeps its action error while independent progress read
   await expect(page.getByTestId("completion-start")).toBeEnabled();
   await expect(actionError).toBeVisible();
   await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
-  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 3);
   // The terminal snapshot ends polling. A successful background read must
   // still retain the separate cancellation failure until explicit refresh.
   await page.clock.runFor(30000);
-  expect(await discoveryCalls(page)).toBe(readsBefore + 2);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 3);
   await expect(actionError).toBeVisible();
   await expect(page.getByTestId("completion-counts")).not.toContainText(
     "当前检查范围已读完",
@@ -486,7 +729,7 @@ test("failed cancellation keeps its action error while independent progress read
   await refreshButton.click();
   // Clearing the action error exposes the previous terminal snapshot before
   // inventory and discovery IPC resolve. Wait for the new read and its data.
-  await expect.poll(() => discoveryCalls(page)).toBe(readsBefore + 3);
+  await expect.poll(() => discoveryCalls(page)).toBe(readsBefore + 4);
   await expect(page.getByTestId("author-update-JM:456")).toContainText(
     "刷新后的已保存作品",
   );
@@ -495,7 +738,7 @@ test("failed cancellation keeps its action error while independent progress read
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完",
   );
-  expect(await discoveryCalls(page)).toBe(readsBefore + 3);
+  expect(await discoveryCalls(page)).toBe(readsBefore + 4);
   expect(await discoveryCalls(page, "discovery_cancel")).toBe(1);
   expect(await discoveryCalls(page, "discovery_start")).toBe(1);
 });

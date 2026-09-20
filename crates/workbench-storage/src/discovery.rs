@@ -6,13 +6,16 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-const DISCOVERY_FILE: &str = "discovery.json";
+pub(crate) const DISCOVERY_FILE: &str = "discovery.json";
 pub const MAX_DISCOVERY_BYTES: usize = 128 * 1024 * 1024;
+/// Active author results have a separate limit from retained raw query history.
 pub const MAX_DISCOVERY_RECORDS: usize = 100_000;
+pub const MAX_DISCOVERY_RAW_RECORDS: usize = 500_000;
+pub const MAX_DISCOVERY_RAW_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_DISCOVERY_HEAD_IDS: usize = 20;
 pub const MAX_DISCOVERY_PAGES: u64 = 1000;
 pub const MAX_DISCOVERY_AUTHORS: usize = 2000;
-const MAX_DISCOVERY_ACCOUNTS: usize = 20;
+pub(crate) const MAX_DISCOVERY_ACCOUNTS: usize = 20;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -168,7 +171,7 @@ impl ValidatedDocument for DiscoveryDocument {
             if !library_hash_is_valid(&account.account_key)
                 || !account_keys.insert(&account.account_key)
                 || account.authors.len() > MAX_DISCOVERY_AUTHORS * 2
-                || record_count > MAX_DISCOVERY_RECORDS
+                || record_count > MAX_DISCOVERY_RAW_RECORDS
             {
                 return Err(invalid());
             }
@@ -177,7 +180,7 @@ impl ValidatedDocument for DiscoveryDocument {
                 if !discovery_author_is_valid(&range.author)
                     || !ranges.insert((range.source, &range.author))
                     || range.pages_read > MAX_DISCOVERY_PAGES
-                    || range.observed_count > MAX_DISCOVERY_RECORDS
+                    || range.observed_count > MAX_DISCOVERY_RAW_RECORDS
                     || range
                         .last_attempt_at
                         .is_some_and(|value| value > MAX_SAFE_INTEGER)
@@ -245,7 +248,7 @@ impl ValidatedDocument for DiscoveryDocument {
 
 impl WorkbenchStore {
     pub fn read_discovery(&self) -> Result<Document<DiscoveryDocument>> {
-        self.read(DISCOVERY_FILE, MAX_DISCOVERY_BYTES)
+        self.read_discovery_journal()
     }
 
     /// Native metadata controller only; there is deliberately no whole-document IPC.
@@ -254,7 +257,13 @@ impl WorkbenchStore {
         expected_revision: u64,
         value: DiscoveryDocument,
     ) -> Result<Document<DiscoveryDocument>> {
-        self.write(
+        let _local = self
+            .local_lock
+            .lock()
+            .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+        let _file = self.acquire_lock()?;
+        self.require_legacy_discovery_unlocked()?;
+        self.write_unlocked(
             DISCOVERY_FILE,
             MAX_DISCOVERY_BYTES,
             expected_revision,
@@ -274,6 +283,7 @@ impl WorkbenchStore {
             .lock()
             .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
         let _file = self.acquire_lock()?;
+        self.require_legacy_discovery_unlocked()?;
         let following: Document<crate::AccountFollowing> =
             self.read_unlocked("following.json", crate::store::MAX_FOLLOWING_BYTES)?;
         if following.revision != following_revision {

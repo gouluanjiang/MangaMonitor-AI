@@ -4,6 +4,7 @@ import type { Source, SourceScope } from "./source-types.ts";
 import type {
   CompletionAdapter,
   DiscoveryBaseline,
+  DiscoveryProgress,
   DiscoveryRun,
   DiscoverySnapshot,
 } from "./completion-types.ts";
@@ -82,6 +83,8 @@ function runValue(v: unknown): DiscoveryRun {
     completedScopes: integer(r.completedScopes),
     totalScopes: integer(r.totalScopes),
     errorCode: code(r.errorCode),
+    storageWarningCode:
+      r.storageWarningCode === undefined ? null : code(r.storageWarningCode),
     mode: r.mode === undefined ? "full" : discoveryMode(r.mode),
     currentStrategy:
       r.currentStrategy === undefined
@@ -93,16 +96,7 @@ export function validateDiscoverySnapshot(
   v: unknown,
   expected: SourceScope[],
 ): DiscoverySnapshot {
-  const r = object(v),
-    scopes = scopesValue(r.scopes);
-  if (
-    !scopes.every((s) =>
-      expected.some(
-        (e) => e.source === s.source && e.sessionId === s.sessionId,
-      ),
-    )
-  )
-    throw new SourceError("STALE_SESSION");
+  const r = object(v);
   const records = array(
     r.records,
     (x) => {
@@ -123,11 +117,35 @@ export function validateDiscoverySnapshot(
     records.length
   )
     return invalid();
+  const { recordCount: _count, ...progress } = validateDiscoveryProgress(
+    { ...r, recordCount: records.length },
+    expected,
+  );
+  if (r.includesOther !== undefined && typeof r.includesOther !== "boolean")
+    return invalid();
+  return { ...progress, records, includesOther: r.includesOther ?? true };
+}
+export function validateDiscoveryProgress(
+  v: unknown,
+  expected: SourceScope[],
+): DiscoveryProgress {
+  const r = object(v),
+    scopes = scopesValue(r.scopes);
+  if (
+    !scopes.every((s) =>
+      expected.some(
+        (e) => e.source === s.source && e.sessionId === s.sessionId,
+      ),
+    )
+  )
+    throw new SourceError("STALE_SESSION");
   return {
     scopes,
     revision: integer(r.revision),
     run: nullable(r.run, runValue),
-    records,
+    recordCount: integer(r.recordCount),
+    otherRecordCount:
+      r.otherRecordCount === undefined ? 0 : integer(r.otherRecordCount),
     authors: array(
       r.authors,
       (x) => {
@@ -192,9 +210,17 @@ export function createCompletionAdapter(
     }
   };
   return {
-    read: async (scopes) =>
+    read: async (scopes, includeOther = false) =>
       validateDiscoverySnapshot(
-        await call("discovery_read", { scopes: scopesValue(scopes) }),
+        await call("discovery_read", {
+          scopes: scopesValue(scopes),
+          includeOther,
+        }),
+        scopes,
+      ),
+    progress: async (scopes) =>
+      validateDiscoveryProgress(
+        await call("discovery_progress", { scopes: scopesValue(scopes) }),
         scopes,
       ),
     start: async (scopes, authors, mode = "incremental") => {
@@ -203,6 +229,17 @@ export function createCompletionAdapter(
           scopes: scopesValue(scopes),
           authors: array(authors, str, 1000),
           mode: discoveryMode(mode),
+        }),
+      );
+      const snapshot = validateDiscoverySnapshot(result.snapshot, scopes);
+      if (str(result.runId, 128) !== snapshot.run?.id) return invalid();
+      return snapshot;
+    },
+    startUnfinished: async (scopes, authors) => {
+      const result = object(
+        await call("discovery_start_unfinished", {
+          scopes: scopesValue(scopes),
+          authors: array(authors, str, 1000),
         }),
       );
       const snapshot = validateDiscoverySnapshot(result.snapshot, scopes);
@@ -225,6 +262,7 @@ export function completionError(cause: unknown): string {
   )
     return "账号已变化，请连接 JM 和哔咔后重新检查。";
   if (c === "DISCOVERY_NO_AUTHORS") return "请先关注作者，再检查作者更新。";
+  if (c === "DISCOVERY_NO_UNFINISHED") return "所选作者没有未完成范围。";
   if (c === "DISCOVERY_LIMIT")
     return "作者目录达到保存上限，本次检查未完成，已读取的结果会保留。";
   return "本次检查未完成，已读取的结果会保留。请查看检查范围后重试。";
@@ -234,6 +272,40 @@ export interface CompletionReadFailure {
   code: string;
   failures: number;
   retryAfterMs: number | null;
+}
+
+export function unfinishedRangeMessage(
+  range: DiscoverySnapshot["authors"][number],
+): string {
+  const queryMessage = authorQueryMessage(range.errorCode);
+  if (queryMessage) return queryMessage;
+  switch (range.errorCode) {
+    case "SOURCE_CONNECTION_FAILED":
+      return "连接失败，已读取结果保留";
+    case "SOURCE_TIMEOUT":
+      return "来源响应超时，已读取结果保留";
+    case "DISCOVERY_PAGINATION_CHANGED":
+      return "分页结果发生变化，尚未确认完整范围";
+    case "SOURCE_RESPONSE_INVALID":
+      return "来源响应格式异常，已读取结果保留";
+    case "SOURCE_REQUEST_FAILED":
+      return "来源请求失败，已读取结果保留";
+    case "DISCOVERY_LIMIT":
+      return "达到目录保存上限，已读取结果保留";
+    case "DISCOVERY_INTERRUPTED":
+      return "上次检查中断，已读取结果保留";
+    case "SOURCE_RATE_LIMITED":
+      return "来源限制请求，请稍后补查";
+    case "LOGIN_REQUIRED":
+    case "STALE_SESSION":
+      return "账号连接已变化，请连接后补查";
+  }
+  if (range.state === "idle") return "尚未开始检查";
+  if (range.state === "checking") return "正在读取";
+  if (range.state === "cancelled") return "已停止检查，已读取结果保留";
+  return range.errorCode
+    ? `来源读取未完成（${range.errorCode}）`
+    : "检查未完成，已读取结果保留";
 }
 
 // These retries only read the local progress snapshot. They never restart a

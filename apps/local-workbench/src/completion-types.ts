@@ -2,7 +2,7 @@ import type { Source, SourceScope, SourceWork } from "./source-types.ts";
 export type ScanPhase =
   "checking" | "complete" | "partial" | "cancelled" | "error";
 export type DiscoveryMode = "incremental" | "full";
-export const discoveryRecordLimit = 100000;
+export const discoveryRecordLimit = 500000;
 export interface DiscoveryBaseline {
   queryVersion: number;
   headIds: string[];
@@ -19,6 +19,7 @@ export interface DiscoveryRun {
   completedScopes: number;
   totalScopes: number;
   errorCode: string | null;
+  storageWarningCode?: string | null;
   mode?: DiscoveryMode;
   currentStrategy?: DiscoveryMode | null;
 }
@@ -26,6 +27,8 @@ export interface DiscoverySnapshot {
   scopes: SourceScope[];
   revision: number;
   run: DiscoveryRun | null;
+  otherRecordCount?: number;
+  includesOther?: boolean;
   authors: {
     author: string;
     source: Source;
@@ -48,11 +51,24 @@ export interface DiscoverySnapshot {
   }[];
 }
 export interface CompletionAdapter {
-  read(scopes: SourceScope[]): Promise<DiscoverySnapshot>;
+  read(
+    scopes: SourceScope[],
+    includeOther?: boolean,
+  ): Promise<DiscoverySnapshot>;
+  progress(scopes: SourceScope[]): Promise<DiscoveryProgress>;
   start(
     scopes: SourceScope[],
     authors: string[],
     mode?: DiscoveryMode,
   ): Promise<DiscoverySnapshot>;
+  startUnfinished(
+    scopes: SourceScope[],
+    authors: string[],
+  ): Promise<DiscoverySnapshot>;
   cancel(runId: string): Promise<void>;
+}
+
+/** Small polling response; never transports the saved work catalog. */
+export interface DiscoveryProgress extends Omit<DiscoverySnapshot, "records"> {
+  recordCount: number;
 }

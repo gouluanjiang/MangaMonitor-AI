@@ -19,15 +19,26 @@ export function createAuthorSearchAdapter(
       [...scopes].sort((a, b) => a.source.localeCompare(b.source)),
     );
   function read(scopes: SourceScope[]) {
+    ensureScope(scopes);
+    return structuredClone(snapshot);
+  }
+  function ensureScope(scopes: SourceScope[]) {
     if (scopeKey !== key(scopes)) {
       generation++;
       scopeKey = key(scopes);
       snapshot = { scopes, revision: 0, run: null, authors: [], records: [] };
     }
-    return structuredClone(snapshot);
   }
   return {
     read: async (scopes) => read(scopes),
+    progress: async (scopes) => {
+      ensureScope(scopes);
+      const { records, ...progress } = snapshot;
+      return { ...structuredClone(progress), recordCount: records.length };
+    },
+    startUnfinished: async () => {
+      throw new SourceError("DISCOVERY_NO_UNFINISHED");
+    },
     start: async (scopes, authors) => {
       if (
         scopes.length !== 2 ||

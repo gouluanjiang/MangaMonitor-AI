@@ -387,6 +387,10 @@ export async function installWorkflow(page: Page) {
                 return clone(hooks.queue);
               case "discovery_read":
                 return clone(hooks.discovery);
+              case "discovery_progress": {
+                const { records, ...progress } = hooks.discovery;
+                return clone({ ...progress, recordCount: records.length });
+              }
               case "discovery_start": {
                 hooks.discovery.run = {
                   id: "synthetic-check",

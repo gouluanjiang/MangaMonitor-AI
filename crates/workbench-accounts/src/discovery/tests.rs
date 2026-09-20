@@ -1,7 +1,7 @@
 use super::*;
 use crate::{Authenticated, FollowKind, SourceAccount};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::atomic::{AtomicUsize, Ordering},
 };
 use tempfile::TempDir;
@@ -15,6 +15,7 @@ type QueryKey = (String, String, u64);
 #[derive(Default)]
 struct FakeState {
     pages: Mutex<BTreeMap<QueryKey, Result<SourcePage>>>,
+    scripted_pages: Mutex<BTreeMap<QueryKey, VecDeque<Result<SourcePage>>>>,
     details: Mutex<BTreeMap<String, Result<SourceWork>>>,
     calls: Mutex<Vec<QueryKey>>,
     detail_calls: AtomicUsize,
@@ -159,6 +160,16 @@ impl SourceBackend for FakeBackend {
         if self.0.block_call.load(Ordering::SeqCst) == count {
             self.0.started.notify_one();
             self.0.release.notified().await;
+        }
+        if let Some(response) = self
+            .0
+            .scripted_pages
+            .lock()
+            .unwrap()
+            .get_mut(&query)
+            .and_then(VecDeque::pop_front)
+        {
+            return response;
         }
         self.0
             .pages
@@ -1478,7 +1489,20 @@ async fn legacy_complete_rows_without_checkpoints_must_build_a_new_full_baseline
         range.last_checked_at = None;
         range.last_check_mode = None;
     }
-    store.write_discovery(saved.revision, saved.value).unwrap();
+    let following_revision = store.read_following().unwrap().revision;
+    let account = saved.value.accounts.remove(0);
+    store
+        .apply_discovery_patch_for_following(
+            saved.revision,
+            following_revision,
+            DiscoveryPagePatch {
+                account_key: account.account_key,
+                authors: account.authors,
+                records: vec![],
+                retain_authors: None,
+            },
+        )
+        .unwrap();
     backend.0.calls.lock().unwrap().clear();
     service
         .discovery_start(scopes.clone(), vec![])
@@ -1584,4 +1608,264 @@ fn incremental_boundary_requires_a_current_successful_baseline_and_known_totals(
     range.state = DiscoveryRangeState::Complete;
     range.baseline.as_mut().unwrap().query_version += 1;
     assert!(IncrementalBoundary::new(DiscoveryMode::Incremental, &range, &ids).is_none());
+}
+
+#[tokio::test]
+async fn unfinished_retry_selects_source_pairs_and_leaves_complete_scope_timestamps_intact() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    follow(&service, &scopes[0], "Author B", true).await;
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
+    backend.0.pages.lock().unwrap().insert(
+        key(Source::Pica, "Author A", 1),
+        Err(AccountError::new("SOURCE_RESPONSE_INVALID")),
+    );
+    service
+        .discovery_start(scopes.clone(), vec!["Author A".into()])
+        .await
+        .unwrap();
+    let prior = finish(&service, &scopes).await;
+    let completed_before = jm_range(&prior).clone();
+    backend.put(Source::Pica, "Author A", 1, empty());
+    backend.0.calls.lock().unwrap().clear();
+    let started = service
+        .discovery_start_unfinished(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    assert_eq!(started.snapshot.run.unwrap().total_scopes, 3);
+    let completed = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&completed), &completed_before);
+    assert_eq!(completed.run.as_ref().unwrap().completed_scopes, 3);
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        vec![
+            key(Source::Pica, "Author A", 1),
+            key(Source::Jm, "Author B", 1),
+            key(Source::Pica, "Author B", 1),
+        ]
+    );
+    backend.0.calls.lock().unwrap().clear();
+    assert_eq!(
+        service
+            .discovery_start_unfinished(scopes, vec![])
+            .await
+            .unwrap_err()
+            .code,
+        "DISCOVERY_NO_UNFINISHED"
+    );
+    assert!(backend.0.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn source_transient_failures_retry_the_same_page_twice_and_never_skip_it() {
+    for code in [
+        "SOURCE_CONNECTION_FAILED",
+        "SOURCE_TIMEOUT",
+        "SOURCE_REQUEST_FAILED",
+    ] {
+        let (_root, backend, service, scopes) = setup().await;
+        follow(&service, &scopes[0], "Author A", true).await;
+        backend.put(
+            Source::Jm,
+            "Author A",
+            1,
+            page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+        );
+        backend.0.scripted_pages.lock().unwrap().insert(
+            key(Source::Jm, "Author A", 1),
+            VecDeque::from([Err(AccountError::new(code)), Err(AccountError::new(code))]),
+        );
+        service
+            .discovery_start(scopes.clone(), vec![])
+            .await
+            .unwrap();
+        let snapshot = finish(&service, &scopes).await;
+        assert_eq!(
+            snapshot.run.as_ref().unwrap().phase,
+            DiscoveryPhase::Complete
+        );
+        assert_eq!(snapshot.run.as_ref().unwrap().requests_used, 4);
+        assert_eq!(snapshot.records.len(), 1);
+        assert_eq!(jm_range(&snapshot).pages_read, 1);
+        assert_eq!(
+            *backend.0.calls.lock().unwrap(),
+            vec![
+                key(Source::Jm, "Author A", 1),
+                key(Source::Jm, "Author A", 1),
+                key(Source::Jm, "Author A", 1),
+                key(Source::Pica, "Author A", 1),
+            ]
+        );
+    }
+}
+
+#[tokio::test]
+async fn exhausted_source_retries_preserve_the_failed_scope_and_continue_other_sources() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.0.pages.lock().unwrap().insert(
+        key(Source::Jm, "Author A", 1),
+        Err(AccountError::new("SOURCE_TIMEOUT")),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let snapshot = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&snapshot).state, DiscoveryRangeState::Partial);
+    assert_eq!(jm_range(&snapshot).pages_read, 0);
+    assert_eq!(
+        jm_range(&snapshot).error_code.as_deref(),
+        Some("SOURCE_TIMEOUT")
+    );
+    assert_eq!(snapshot.run.as_ref().unwrap().requests_used, 4);
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn permanent_source_errors_are_not_retried_and_cancelled_transient_reads_cannot_retry() {
+    for code in [
+        "SOURCE_RESPONSE_INVALID",
+        "SOURCE_PAGINATION_INVALID",
+        "SOURCE_RATE_LIMITED",
+        "SOURCE_ACCESS_DENIED",
+        "SESSION_EXPIRED",
+    ] {
+        let (_root, backend, service, scopes) = setup().await;
+        follow(&service, &scopes[0], "Author A", true).await;
+        backend
+            .0
+            .pages
+            .lock()
+            .unwrap()
+            .insert(key(Source::Jm, "Author A", 1), Err(AccountError::new(code)));
+        service
+            .discovery_start(scopes.clone(), vec![])
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while service.discovery.memory.lock().unwrap().active {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            backend
+                .0
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|query| **query == key(Source::Jm, "Author A", 1))
+                .count(),
+            1
+        );
+    }
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.0.pages.lock().unwrap().insert(
+        key(Source::Jm, "Author A", 1),
+        Err(AccountError::new("SOURCE_TIMEOUT")),
+    );
+    backend.0.block_call.store(1, Ordering::SeqCst);
+    let started = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    backend.0.started.notified().await;
+    service.discovery_cancel(&started.run_id).unwrap();
+    backend.0.release.notify_one();
+    let snapshot = finish(&service, &scopes).await;
+    assert_eq!(snapshot.run.unwrap().phase, DiscoveryPhase::Cancelled);
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn progress_omits_records_and_default_view_keeps_other_keyword_history_on_disk() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(
+            1,
+            3,
+            vec![
+                work(Source::Jm, "100", &["Author A"]),
+                work(Source::Jm, "101", &["Different Author"]),
+            ],
+        ),
+    );
+    backend.put(
+        Source::Jm,
+        "Author A",
+        2,
+        page(2, 3, vec![work(Source::Jm, "102", &["Circle (Author A)"])]),
+    );
+    backend.0.block_call.store(2, Ordering::SeqCst);
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    backend.0.started.notified().await;
+    let progress = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.discovery_progress(scopes.clone()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(progress.record_count, 2);
+    assert_eq!(progress.other_record_count, 1);
+    let serialized = serde_json::to_value(&progress).unwrap();
+    assert!(serialized.get("records").is_none());
+    assert_eq!(progress.run.unwrap().current_page, 2);
+    backend.0.release.notify_one();
+    finish(&service, &scopes).await;
+    let default_view = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
+    assert!(!default_view.includes_other);
+    assert_eq!(default_view.other_record_count, 1);
+    assert_eq!(
+        default_view
+            .records
+            .iter()
+            .map(|record| record.work.work_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["100", "102"]
+    );
+    let other_view = service
+        .discovery_read_view(scopes.clone(), true)
+        .await
+        .unwrap();
+    assert!(other_view.includes_other);
+    assert_eq!(other_view.records.len(), 3);
+    assert_eq!(
+        service
+            .discovery_progress(scopes)
+            .await
+            .unwrap()
+            .record_count,
+        3
+    );
+    assert_eq!(
+        WorkbenchStore::open(root.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap()
+            .value
+            .accounts[0]
+            .records
+            .len(),
+        3
+    );
 }

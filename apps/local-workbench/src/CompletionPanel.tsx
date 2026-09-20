@@ -20,6 +20,7 @@ import {
   completionError,
   completionReadFailure,
   createCompletionAdapter,
+  unfinishedRangeMessage,
 } from "./completion-runtime.ts";
 import type { CompletionReadFailure } from "./completion-runtime.ts";
 import {
@@ -39,6 +40,8 @@ import { jmSearchScopeNote } from "./source-search.ts";
 import "./completion.css";
 
 const nativeAdapter = createCompletionAdapter();
+type ReadRequest = { kind: "full" | "progress"; includeOther: boolean };
+const emptyRecords: DiscoverySnapshot["records"] = [];
 interface Props {
   active?: boolean;
   mode?: "updates" | "search";
@@ -95,7 +98,9 @@ export function CompletionPanel({
     operation = useRef(false),
     mounted = useRef(true),
     readTask = useRef<Promise<void> | null>(null),
-    readFailures = useRef(0);
+    readFailures = useRef(0),
+    failedRead = useRef<ReadRequest>({ kind: "full", includeOther: false }),
+    otherView = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -118,6 +123,7 @@ export function CompletionPanel({
   const [source, setSource] = useState<Source | "all">("all");
   const [filter, setFilter] = useState<InventoryFilter>("missing");
   const [showOther, setShowOther] = useState(false);
+  otherView.current = showOther;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   useEffect(() => {
@@ -130,11 +136,14 @@ export function CompletionPanel({
     [library, inventorySnapshot, inventoryReady],
   );
   const authorResults = useMemo(
-    () => partitionAuthorRecords(view?.records ?? [], author, source),
-    [view, author, source],
+    () => partitionAuthorRecords(view?.records ?? emptyRecords, author, source),
+    [view?.records, author, source],
   );
   const load = useCallback(
-    async (resetRetries = false) => {
+    async (
+      resetRetries = false,
+      read: ReadRequest = { kind: "full", includeOther: otherView.current },
+    ) => {
       if (operation.current && !resetRetries) return;
       const captured = current.current,
         request = ++epoch.current;
@@ -154,17 +163,46 @@ export function CompletionPanel({
       setReading(true);
       const task = (async () => {
         try {
-          const next = await adapter.read(captured.scopes);
+          if (read.kind === "progress") {
+            const progress = await adapter.progress(captured.scopes);
+            if (!valid()) return;
+            if (progress.run?.phase === "checking") {
+              setResult((previous) => ({
+                key: captured.key,
+                value: {
+                  ...progress,
+                  records:
+                    previous?.key === captured.key
+                      ? previous.value.records
+                      : emptyRecords,
+                  includesOther:
+                    previous?.key === captured.key
+                      ? previous.value.includesOther
+                      : false,
+                },
+              }));
+              readFailures.current = 0;
+              setReadFailure(null);
+              return;
+            }
+            // A terminal run gets its catalog once. If that read fails, retry
+            // the catalog itself, not an already-completed progress request.
+            read = { kind: "full", includeOther: otherView.current };
+          }
+          const next = await adapter.read(captured.scopes, read.includeOther);
           if (valid()) {
             readFailures.current = 0;
             setResult({ key: captured.key, value: next });
             setReadFailure(null);
+            if (read.includeOther) setShowOther(true);
           }
         } catch (cause) {
-          if (valid())
+          if (valid()) {
+            failedRead.current = read;
             setReadFailure(
               completionReadFailure(cause, ++readFailures.current),
             );
+          }
         }
       })();
       readTask.current = task;
@@ -211,7 +249,10 @@ export function CompletionPanel({
         ? 1500
         : null;
     if (delay === null) return;
-    const timer = setTimeout(() => void load(), delay);
+    const request: ReadRequest = readFailure
+      ? failedRead.current
+      : { kind: "progress", includeOther: false };
+    const timer = setTimeout(() => void load(false, request), delay);
     return () => clearTimeout(timer);
   }, [load, running, busy, reading, readFailure, view, active, connected]);
   async function perform(
@@ -252,7 +293,10 @@ export function CompletionPanel({
       if (mounted.current) setBusy(false);
     }
   }
-  function startCheck(checkMode: DiscoveryMode = "incremental") {
+  function startCheck(
+    checkMode: DiscoveryMode = "incremental",
+    unfinishedOnly = false,
+  ) {
     setShowOther(false);
     if (mode === "updates") setFilter("missing");
     const captured = current.current;
@@ -261,6 +305,8 @@ export function CompletionPanel({
     void perform(async (isCurrent) => {
       await onRefreshInventory?.();
       if (!isCurrent()) return;
+      if (unfinishedOnly)
+        return adapter.startUnfinished(captured.scopes, selected);
       return adapter.start(
         captured.scopes,
         selected,
@@ -268,9 +314,6 @@ export function CompletionPanel({
       );
     });
   }
-  // Retain the run's state without rendering covers, counting hidden grids or
-  // polling result snapshots while another page is visible.
-  if (!active) return null;
   const authors = [
     ...new Set(view?.authors.map((range) => range.author) ?? []),
   ];
@@ -279,6 +322,11 @@ export function CompletionPanel({
       (!author || range.author === author) &&
       (source === "all" || range.source === source),
   );
+  // The source display filter does not change which sources a check covers.
+  const pendingScopes = (view?.authors ?? []).filter(
+    (range) =>
+      (!author || range.author === author) && range.state !== "complete",
+  ).length;
   const complete =
     !running &&
     !actionError &&
@@ -297,32 +345,51 @@ export function CompletionPanel({
   const scopedRecords = showOther
     ? authorResults.other
     : authorResults.confirmed;
-  const records = scopedRecords.filter(
-    (record) =>
-      !terms ||
-      [record.work.title, ...record.work.authors]
-        .join(" ")
-        .normalize("NFKC")
-        .toLocaleLowerCase()
-        .includes(terms),
+  const records = useMemo(
+    () =>
+      scopedRecords.filter(
+        (record) =>
+          !terms ||
+          [record.work.title, ...record.work.authors]
+            .join(" ")
+            .normalize("NFKC")
+            .toLocaleLowerCase()
+            .includes(terms),
+      ),
+    [scopedRecords, terms],
   );
-  const counts: Record<InventoryFilter, number> = {
-    all: records.length,
-    owned: 0,
-    missing: 0,
-    unknown: 0,
-  };
-  const visible: typeof records = [],
-    selectable: typeof records = [];
-  // A large saved catalog still renders only the visible grid window. Count and
-  // filter ownership in one pass without allocating a full array per status.
-  for (const record of records) {
-    const stock = inventory(record.work);
-    counts[stock.kind === "unconfigured" ? "unknown" : stock.kind]++;
-    if (!inventoryFilterMatches(stock, filter)) continue;
-    visible.push(record);
-    if (!showOther && stock.kind !== "owned") selectable.push(record);
-  }
+  const { counts, visible, selectable } = useMemo(() => {
+    const counts: Record<InventoryFilter, number> = {
+      all: records.length,
+      owned: 0,
+      missing: 0,
+      unknown: 0,
+    };
+    const visible: typeof records = [],
+      selectable: typeof records = [];
+    // Progress-only replies keep this catalog reference: large membership,
+    // ownership and title-filter passes run only when their inputs change.
+    for (const record of records) {
+      const stock = inventory(record.work);
+      counts[stock.kind === "unconfigured" ? "unknown" : stock.kind]++;
+      if (!inventoryFilterMatches(stock, filter)) continue;
+      visible.push(record);
+      if (!showOther && stock.kind !== "owned") selectable.push(record);
+    }
+    return { counts, visible, selectable };
+  }, [records, inventory, filter, showOther]);
+  const allScopedOwned = useMemo(
+    () =>
+      scopedRecords.length > 0 &&
+      scopedRecords.every((record) => inventory(record.work).kind === "owned"),
+    [scopedRecords, inventory],
+  );
+  const othersLoaded = view?.includesOther !== false;
+  const otherCount = othersLoaded
+    ? authorResults.other.length
+    : !author && source === "all"
+      ? (view?.otherRecordCount ?? 0)
+      : null;
   const selectionKeys = new Set(selection);
   const selected = selection.length
     ? selectable
@@ -342,6 +409,8 @@ export function CompletionPanel({
       authorQueryMessage(range.errorCode) ? 0 : (range.lastCompleteAt ?? 0),
     ),
   );
+  // Preserve state and memoized catalog while another page is visible.
+  if (!active) return null;
   return (
     <section
       className={`completion-panel${selected.length ? " has-completion-selection" : ""}`}
@@ -407,6 +476,15 @@ export function CompletionPanel({
             </button>
             {mode === "updates" && (
               <button
+                disabled={busy || running || pendingScopes === 0}
+                data-testid="completion-unfinished-check"
+                onClick={() => startCheck("incremental", true)}
+              >
+                仅补查未完成{pendingScopes > 0 ? `（${pendingScopes}）` : ""}
+              </button>
+            )}
+            {mode === "updates" && (
+              <button
                 disabled={busy || running || !authors.length}
                 data-testid="completion-full-check"
                 onClick={() => startCheck("full")}
@@ -441,6 +519,7 @@ export function CompletionPanel({
             <p className="source-muted" data-testid="completion-check-mode">
               首次检查会读取完整目录；之后优先检查新增作品并复用历史目录。
               “完整复核”会重新读取所选作者在两站的所有分页，用于核对旧作补录等变化。
+              “仅补查未完成”只读取未完成的作者与来源，已完成来源保持原样。
             </p>
           )}
           {mode === "updates" && view && !authors.length && (
@@ -473,9 +552,25 @@ export function CompletionPanel({
                 : ""}
             </p>
           )}
+          {running && (
+            <p
+              className="source-muted"
+              data-testid="completion-saved-results-note"
+            >
+              检查进行中，列表为最近读取结果；结束后自动刷新，也可点击“刷新结果与入库状态”。
+            </p>
+          )}
           {actionError && (
             <p role="alert" className="source-notice">
               {actionError}
+            </p>
+          )}
+          {view?.run?.storageWarningCode && (
+            <p
+              className="source-notice"
+              data-testid="completion-storage-warning"
+            >
+              目录整理暂未完成，已读取结果已保存，下次检查时会再尝试。
             </p>
           )}
           {readFailure && (
@@ -522,23 +617,29 @@ export function CompletionPanel({
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          {(showOther || authorResults.other.length > 0) && (
+          {(showOther || otherCount === null || otherCount > 0) && (
             <div
               className="source-notice"
               data-testid="completion-other-results"
             >
               <span>
-                作者作品 {authorResults.confirmed.length} 条 · 其他关键词结果{" "}
-                {authorResults.other.length}{" "}
-                条。其他结果的作者字段未对应上，保留供查看，不计入作者统计或批量下载。
+                作者作品 {authorResults.confirmed.length} 条 ·{" "}
+                {otherCount === null
+                  ? "其他关键词结果按需读取"
+                  : `其他关键词结果 ${otherCount} 条`}
+                。
+                其他结果的作者字段未对应上，保留供查看，不计入作者统计或批量下载。
               </span>{" "}
               <button
                 aria-pressed={showOther}
+                disabled={reading}
                 onClick={() => {
-                  setShowOther(!showOther);
                   setSelectionMode(false);
                   setSelection([]);
                   setFilter("all");
+                  if (!showOther && !othersLoaded)
+                    void load(true, { kind: "full", includeOther: true });
+                  else setShowOther(!showOther);
                 }}
               >
                 {showOther ? "返回作者作品" : "查看其他关键词结果"}
@@ -599,11 +700,8 @@ export function CompletionPanel({
           )}
           {fullRangeChecked &&
             !showOther &&
-            authorResults.other.length === 0 &&
-            scopedRecords.length > 0 &&
-            scopedRecords.every(
-              (record) => inventory(record.work).kind === "owned",
-            ) && (
+            otherCount === 0 &&
+            allScopedOwned && (
               <p role="status" data-testid="completion-all-owned">
                 本次作者作品已全部入库。范围：
                 {source === "all" ? "JM 与哔咔" : sourceLabel(source)}，
@@ -614,28 +712,22 @@ export function CompletionPanel({
                 ，{new Date(lastCheck).toLocaleString()}。
               </p>
             )}
-          {!complete &&
-            ranges.some((range) =>
-              ["partial", "error", "cancelled"].includes(range.state),
-            ) && (
-              <details className="source-notice">
-                <summary>查看未完成范围</summary>
-                {ranges
-                  .filter((range) => range.state !== "complete")
-                  .map((range) => (
-                    <p key={range.source + range.author}>
-                      {range.author} · {sourceLabel(range.source)} · 已读取{" "}
-                      {range.pagesRead} 页 ·{" "}
-                      {authorQueryMessage(range.errorCode) ??
-                        (range.errorCode === "DISCOVERY_LIMIT"
-                          ? "达到目录保存上限，已读取结果保留"
-                          : range.errorCode
-                            ? "来源读取未完成"
-                            : "检查未完成")}
-                    </p>
-                  ))}
-              </details>
-            )}
+          {ranges.some((range) => range.state !== "complete") && (
+            <details
+              className="source-notice"
+              data-testid="completion-unfinished-ranges"
+            >
+              <summary>查看未完成范围</summary>
+              {ranges
+                .filter((range) => range.state !== "complete")
+                .map((range) => (
+                  <p key={range.source + range.author}>
+                    {range.author} · {sourceLabel(range.source)} · 已读取{" "}
+                    {range.pagesRead} 页 · {unfinishedRangeMessage(range)}
+                  </p>
+                ))}
+            </details>
+          )}
           {visible.length === 0 && (
             <p className="source-empty">
               {readFailure && !view
@@ -644,7 +736,7 @@ export function CompletionPanel({
                   ? "当前筛选没有结果。"
                   : showOther
                     ? "当前范围没有其他关键词结果。"
-                    : !showOther && authorResults.other.length > 0
+                    : !showOther && (otherCount === null || otherCount > 0)
                       ? "尚未确认该作者的作品，可查看其他关键词结果。"
                       : fullRangeChecked
                         ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"

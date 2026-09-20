@@ -25,7 +25,9 @@ commands.allow = [
   "source_following",
   "source_follow",
   "discovery_read",
+  "discovery_progress",
   "discovery_start",
+  "discovery_start_unfinished",
   "discovery_cancel",
 ]
 

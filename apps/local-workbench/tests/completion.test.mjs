@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   createCompletionAdapter,
   validateDiscoverySnapshot,
+  validateDiscoveryProgress,
+  unfinishedRangeMessage,
 } from "../src/completion-runtime.ts";
 import { discoveryRecordLimit } from "../src/completion-types.ts";
 import { createAuthorSearchAdapter } from "../src/author-search.ts";
@@ -33,6 +35,164 @@ const empty = () => ({
   run: null,
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("progress validates metadata without traversing catalog records and rejects replaced sessions", async () => {
+  const raw = { ...empty(), recordCount: 400000, otherRecordCount: 350000 };
+  Object.defineProperty(raw, "records", {
+    get() {
+      throw new Error("catalog must not be read");
+    },
+  });
+  const progress = validateDiscoveryProgress(raw, scopes);
+  assert.equal(progress.recordCount, 400000);
+  assert.equal(progress.otherRecordCount, 350000);
+  assert.equal("records" in progress, false);
+  assert.throws(
+    () =>
+      validateDiscoveryProgress(
+        {
+          ...progress,
+          scopes: [{ ...scopes[0], sessionId: "replaced" }, scopes[1]],
+        },
+        scopes,
+      ),
+    { code: "STALE_SESSION" },
+  );
+  for (const bad of [-1, 1.5, "100"])
+    assert.throws(() =>
+      validateDiscoveryProgress({ ...progress, recordCount: bad }, scopes),
+    );
+  const calls = [];
+  const adapter = createCompletionAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return { ...empty(), recordCount: 0 };
+    },
+  });
+  await adapter.progress(scopes);
+  assert.deepEqual(calls, [
+    { command: "discovery_progress", args: { scopes } },
+  ]);
+});
+
+test("cold keyword results require an explicit local read and legacy snapshots retain their complete records", async () => {
+  assert.equal(validateDiscoverySnapshot(empty(), scopes).includesOther, true);
+  const saved = {
+    ...empty(),
+    records: [],
+    includesOther: false,
+    otherRecordCount: 65000,
+  };
+  assert.equal(
+    validateDiscoverySnapshot(saved, scopes).otherRecordCount,
+    65000,
+  );
+  assert.throws(() =>
+    validateDiscoverySnapshot({ ...saved, includesOther: "false" }, scopes),
+  );
+  const calls = [];
+  const adapter = createCompletionAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return { ...saved, includesOther: args.includeOther };
+    },
+  });
+  await adapter.read(scopes);
+  await adapter.read(scopes, true);
+  assert.deepEqual(calls, [
+    { command: "discovery_read", args: { scopes, includeOther: false } },
+    { command: "discovery_read", args: { scopes, includeOther: true } },
+  ]);
+});
+
+test("unfinished checks have their own explicit command and keep author scope selection", async () => {
+  const calls = [];
+  const adapter = createCompletionAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return {
+        runId: "unfinished",
+        snapshot: {
+          ...empty(),
+          run: {
+            id: "unfinished",
+            phase: "checking",
+            currentAuthor: null,
+            currentSource: null,
+            currentPage: 0,
+            requestsUsed: 0,
+            completedScopes: 0,
+            totalScopes: 1,
+            errorCode: null,
+          },
+        },
+      };
+    },
+  });
+  await adapter.startUnfinished(scopes, ["Writer"]);
+  assert.deepEqual(calls, [
+    {
+      command: "discovery_start_unfinished",
+      args: { scopes, authors: ["Writer"] },
+    },
+  ]);
+  const snapshot = await adapter.startUnfinished(scopes, ["Writer"]);
+  assert.equal(snapshot.run.storageWarningCode, null);
+  assert.equal(
+    validateDiscoverySnapshot(
+      {
+        ...snapshot,
+        run: {
+          ...snapshot.run,
+          storageWarningCode: "DISCOVERY_CHECKPOINT_FAILED",
+        },
+      },
+      scopes,
+    ).run.storageWarningCode,
+    "DISCOVERY_CHECKPOINT_FAILED",
+  );
+  for (const bad of ["x".repeat(200), "bad code", 1])
+    assert.throws(() =>
+      validateDiscoverySnapshot(
+        { ...snapshot, run: { ...snapshot.run, storageWarningCode: bad } },
+        scopes,
+      ),
+    );
+});
+
+test("unfinished ranges distinguish pending work, interruption and actual source failures", () => {
+  const range = {
+    author: "Writer",
+    source: "JM",
+    state: "partial",
+    lastAttemptAt: 1,
+    lastCompleteAt: null,
+    observedCount: 0,
+    pagesRead: 0,
+    errorCode: null,
+  };
+  for (const [errorCode, text] of [
+    ["SOURCE_CONNECTION_FAILED", "连接失败"],
+    ["SOURCE_TIMEOUT", "超时"],
+    ["SOURCE_REQUEST_FAILED", "请求失败"],
+    ["SOURCE_RESPONSE_INVALID", "响应格式异常"],
+    ["DISCOVERY_PAGINATION_CHANGED", "分页结果发生变化"],
+    ["DISCOVERY_LIMIT", "保存上限"],
+    ["DISCOVERY_INTERRUPTED", "上次检查中断"],
+  ])
+    assert.ok(unfinishedRangeMessage({ ...range, errorCode }).includes(text));
+  assert.equal(
+    unfinishedRangeMessage({ ...range, state: "idle" }),
+    "尚未开始检查",
+  );
+  assert.equal(
+    unfinishedRangeMessage({ ...range, state: "checking" }),
+    "正在读取",
+  );
+});
 
 test("author query eligibility rejects placeholder and broad initials without rejecting real short names", () => {
   for (const name of ["N/A", " n/a ", "Ｎ／Ａ", "unknown", "作者不詳"])

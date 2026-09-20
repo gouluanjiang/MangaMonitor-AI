@@ -97,6 +97,7 @@ pub struct WorkbenchStore {
     pub(crate) local_lock: Mutex<()>,
     // Acquired only while local_lock is held. No filesystem handles are cached.
     document_cache: Mutex<DocumentCache>,
+    pub(crate) discovery_index: Mutex<Option<crate::discovery_journal::DiscoveryIndexCache>>,
     // Windows handles keep ancestors from being renamed/replaced while the store is open.
     _directory_handles: Vec<File>,
 }
@@ -109,6 +110,7 @@ impl WorkbenchStore {
             root,
             local_lock: Mutex::new(()),
             document_cache: Mutex::new(DocumentCache::default()),
+            discovery_index: Mutex::new(None),
             _directory_handles: directory_handles,
         })
     }
@@ -430,7 +432,7 @@ impl WorkbenchStore {
         }
     }
 
-    fn atomic_replace(&self, name: &str, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn atomic_replace(&self, name: &str, bytes: &[u8]) -> Result<()> {
         check_directory_tree(&self.root)?;
         let destination = self.root.join(name);
         check_optional_regular(&destination)?;

@@ -102,6 +102,8 @@ jobs:
         run: cargo +1.98.1 test --locked -p workbench-credentials windows_credential_manager_roundtrip_uses_only_random_ci_slots -- --ignored --test-threads=1
       - name: Build the local reviewed-library import helper
         run: cargo +1.98.1 build --locked -p workbench-library --bin mangamonitor-library-review
+      - name: Build the isolated catalog diagnostic
+        run: cargo +1.98.1 build --locked -p workbench-storage --example discovery_catalog_probe
       - name: Build frontend assets for native context tests
         working-directory: apps/local-workbench
         run: pnpm build
@@ -226,6 +228,13 @@ jobs:
         with:
           name: mangamonitor-library-review-${{ github.sha }}
           path: target/debug/mangamonitor-library-review.exe
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload isolated catalog diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-catalog-probe-${{ github.sha }}
+          path: target/debug/examples/discovery_catalog_probe.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload native smoke failure evidence

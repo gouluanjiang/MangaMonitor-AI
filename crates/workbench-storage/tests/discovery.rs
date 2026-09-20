@@ -2,8 +2,8 @@ use std::fs;
 use tempfile::TempDir;
 use workbench_storage::{
     AccountFollowing, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline, DiscoveryDocument,
-    DiscoveryMode, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, FollowedAccount, Source,
-    WorkbenchStore, PRIVATE_DIRECTORY,
+    DiscoveryMode, DiscoveryPagePatch, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork,
+    FollowedAccount, Source, WorkbenchStore, MAX_DISCOVERY_RECORDS, PRIVATE_DIRECTORY,
 };
 
 fn record(source: Source, id: &str) -> DiscoveryRecord {
@@ -278,4 +278,407 @@ fn discovery_rejects_symlink_without_touching_external_target() {
         "UNSAFE_PATH"
     );
     assert_eq!(fs::read(outside).unwrap(), b"unchanged");
+}
+
+fn patch(records: Vec<DiscoveryRecord>) -> DiscoveryPagePatch {
+    DiscoveryPagePatch {
+        account_key: "b".repeat(64),
+        authors: vec![],
+        records,
+        retain_authors: None,
+    }
+}
+
+fn manifest(directory: &TempDir) -> serde_json::Value {
+    serde_json::from_slice(
+        &fs::read(
+            directory
+                .path()
+                .join(PRIVATE_DIRECTORY)
+                .join("discovery-journal.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+fn page_path(directory: &TempDir) -> std::path::PathBuf {
+    directory.path().join(PRIVATE_DIRECTORY).join(format!(
+        "discovery-page-{}.json",
+        manifest(directory)["headSha256"].as_str().unwrap()
+    ))
+}
+
+#[test]
+fn first_page_adopts_legacy_without_rewriting_or_losing_cold_history() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut original = checkpoint_document();
+    let mut cold = record(Source::Jm, "124");
+    cold.work.authors = vec!["别的作者".into()];
+    cold.author_verified = false;
+    original.accounts[0].records.push(cold.clone());
+    store.write_discovery(0, original.clone()).unwrap();
+    let legacy = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    let before = fs::read(&legacy).unwrap();
+    let mut update = patch(vec![record(Source::Jm, "125")]);
+    let mut range = original.accounts[0].authors[0].clone();
+    range.pages_read = 2;
+    range.observed_count = 3;
+    range.state = DiscoveryRangeState::Partial;
+    update.authors.push(range.clone());
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(1, 0, update)
+            .unwrap(),
+        2
+    );
+    assert_eq!(fs::read(&legacy).unwrap(), before);
+    let reopened = WorkbenchStore::open(directory.path()).unwrap();
+    let saved = reopened.read_discovery().unwrap();
+    assert_eq!(saved.revision, 2);
+    assert_eq!(
+        saved.value.accounts[0].records,
+        vec![
+            original.accounts[0].records[0].clone(),
+            cold,
+            record(Source::Jm, "125")
+        ]
+    );
+    assert_eq!(saved.value.accounts[0].authors, vec![range]);
+    assert_eq!(reopened.read_library().unwrap().revision, 0);
+    assert_eq!(reopened.read_following().unwrap().revision, 0);
+    assert_eq!(
+        store
+            .write_discovery(2, DiscoveryDocument::default())
+            .unwrap_err()
+            .code,
+        "DISCOVERY_JOURNAL_ACTIVE"
+    );
+}
+
+#[test]
+fn page_write_is_small_after_one_hundred_thousand_raw_keyword_records() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut original = document();
+    original.accounts[0].records = (1..=MAX_DISCOVERY_RECORDS)
+        .map(|id| {
+            let mut value = record(Source::Jm, &id.to_string());
+            value.work.authors = vec!["别的作者".into()];
+            value.author_verified = false;
+            value
+        })
+        .collect();
+    store.write_discovery(0, original).unwrap();
+    let legacy = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    let legacy_bytes = fs::read(&legacy).unwrap();
+    // Warm the native writer's compact key/size index once, as the scanner does.
+    assert_eq!(
+        store.read_discovery().unwrap().value.accounts[0]
+            .records
+            .len(),
+        MAX_DISCOVERY_RECORDS
+    );
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "100001")]))
+        .unwrap();
+    let page = page_path(&directory);
+    assert!(fs::metadata(&page).unwrap().len() < 4096);
+    assert!(
+        fs::metadata(
+            directory
+                .path()
+                .join(PRIVATE_DIRECTORY)
+                .join("discovery-journal.json")
+        )
+        .unwrap()
+        .len()
+            < 4096
+    );
+    assert_eq!(fs::read(&legacy).unwrap(), legacy_bytes);
+    let mut replacement = record(Source::Jm, "100001");
+    replacement.work.title = "更新的合成元数据".into();
+    store
+        .apply_discovery_patch_for_following(2, 0, patch(vec![replacement.clone()]))
+        .unwrap();
+    assert!(fs::metadata(page_path(&directory)).unwrap().len() < 4096);
+    let saved = WorkbenchStore::open(directory.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(saved.revision, 3);
+    assert_eq!(
+        saved.value.accounts[0].records.len(),
+        MAX_DISCOVERY_RECORDS + 1
+    );
+    assert_eq!(saved.value.accounts[0].records.last(), Some(&replacement));
+    assert!(!saved.value.accounts[0].records[0].author_verified);
+}
+
+#[test]
+fn rejected_page_never_advances_manifest_or_replaces_committed_results() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, document()).unwrap();
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "124")]))
+        .unwrap();
+    let before = store.read_discovery().unwrap();
+    let manifest_before = manifest(&directory);
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "125")]))
+            .unwrap_err()
+            .code,
+        "REVISION_CONFLICT"
+    );
+    store
+        .write_following(0, AccountFollowing::default())
+        .unwrap();
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(2, 0, patch(vec![record(Source::Jm, "125")]))
+            .unwrap_err()
+            .code,
+        "DISCOVERY_FOLLOWING_CHANGED"
+    );
+    let duplicate = record(Source::Jm, "125");
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(2, 1, patch(vec![duplicate.clone(), duplicate]))
+            .unwrap_err()
+            .code,
+        "VALIDATION_FAILED"
+    );
+    assert_eq!(manifest(&directory), manifest_before);
+    assert_eq!(store.read_discovery().unwrap(), before);
+    assert_eq!(
+        store
+            .checkpoint_discovery_for_following(2, 0)
+            .unwrap_err()
+            .code,
+        "DISCOVERY_FOLLOWING_CHANGED"
+    );
+    assert_eq!(manifest(&directory), manifest_before);
+}
+
+#[test]
+fn missing_corrupt_pages_and_a_missing_adopted_manifest_fail_closed() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, document()).unwrap();
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "124")]))
+        .unwrap();
+    let page = page_path(&directory);
+    let bytes = fs::read(&page).unwrap();
+    fs::remove_file(&page).unwrap();
+    assert!(store.read_discovery().is_err());
+    fs::write(&page, b"corrupt").unwrap();
+    assert_eq!(store.read_discovery().unwrap_err().code, "DOCUMENT_CORRUPT");
+    fs::write(&page, bytes).unwrap();
+    assert_eq!(store.read_discovery().unwrap().revision, 2);
+    fs::remove_file(
+        directory
+            .path()
+            .join(PRIVATE_DIRECTORY)
+            .join("discovery-journal.json"),
+    )
+    .unwrap();
+    assert_eq!(store.read_discovery().unwrap_err().code, "DOCUMENT_CORRUPT");
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(1, 0, patch(vec![]))
+            .unwrap_err()
+            .code,
+        "DOCUMENT_CORRUPT"
+    );
+}
+
+#[test]
+fn altered_legacy_base_is_not_accepted_under_a_new_journal() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, document()).unwrap();
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "124")]))
+        .unwrap();
+    let path = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    legacy["value"]["accounts"][0]["records"][0]["work"]["title"] = "外部修改".into();
+    fs::write(path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert_eq!(store.read_discovery().unwrap_err().code, "DOCUMENT_CORRUPT");
+}
+
+#[test]
+fn uncommitted_orphan_page_is_preserved_without_becoming_current() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, document()).unwrap();
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "124")]))
+        .unwrap();
+    let before = store.read_discovery().unwrap();
+    let orphan = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join(format!("discovery-page-{}.json", "d".repeat(64)));
+    fs::write(&orphan, b"an interrupted, unreferenced write").unwrap();
+    assert_eq!(store.read_discovery().unwrap(), before);
+    assert!(orphan.exists());
+}
+
+#[test]
+fn checkpoint_preserves_revision_and_base_then_reclaims_only_retired_pages() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, checkpoint_document()).unwrap();
+    let legacy = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    let legacy_bytes = fs::read(&legacy).unwrap();
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "124")]))
+        .unwrap();
+    let first_page = page_path(&directory);
+    store
+        .apply_discovery_patch_for_following(2, 0, patch(vec![record(Source::Jm, "125")]))
+        .unwrap();
+    let second_page = page_path(&directory);
+    let before = store.read_discovery().unwrap();
+    store.checkpoint_discovery_for_following(3, 0).unwrap();
+    assert_eq!(manifest(&directory)["patchCount"], 0);
+    assert_eq!(manifest(&directory)["revision"], 3);
+    assert!(!first_page.exists());
+    assert!(!second_page.exists());
+    assert_eq!(fs::read(&legacy).unwrap(), legacy_bytes);
+    assert_eq!(
+        WorkbenchStore::open(directory.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap(),
+        before
+    );
+    let first_checkpoint = directory.path().join(PRIVATE_DIRECTORY).join(format!(
+        "discovery-checkpoint-{}.json",
+        manifest(&directory)["checkpoint"]["sha256"]
+            .as_str()
+            .unwrap()
+    ));
+    store
+        .apply_discovery_patch_for_following(3, 0, patch(vec![record(Source::Jm, "126")]))
+        .unwrap();
+    assert_eq!(
+        store.read_discovery().unwrap().value.accounts[0]
+            .records
+            .len(),
+        4
+    );
+    store.checkpoint_discovery_for_following(4, 0).unwrap();
+    assert!(!first_checkpoint.exists());
+    let current_checkpoint = directory.path().join(PRIVATE_DIRECTORY).join(format!(
+        "discovery-checkpoint-{}.json",
+        manifest(&directory)["checkpoint"]["sha256"]
+            .as_str()
+            .unwrap()
+    ));
+    fs::remove_file(current_checkpoint).unwrap();
+    assert!(store.read_discovery().is_err());
+}
+
+#[test]
+fn range_reconciliation_never_deletes_raw_history_or_other_accounts() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut initial = document();
+    let mut other = initial.accounts[0].clone();
+    other.account_key = "c".repeat(64);
+    initial.accounts.push(other.clone());
+    store.write_discovery(0, initial).unwrap();
+    let mut update = patch(vec![]);
+    update.retain_authors = Some(vec![]);
+    store
+        .apply_discovery_patch_for_following(1, 0, update)
+        .unwrap();
+    let saved = store.read_discovery().unwrap();
+    assert!(saved.value.accounts[0].authors.is_empty());
+    assert_eq!(
+        saved.value.accounts[0].records,
+        vec![record(Source::Jm, "123")]
+    );
+    assert_eq!(saved.value.accounts[1], other);
+}
+
+#[test]
+fn fresh_profile_journal_and_checkpoint_do_not_require_a_legacy_file() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(0, 0, patch(vec![record(Source::Jm, "123")]))
+            .unwrap(),
+        1
+    );
+    let legacy = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    assert!(!legacy.exists());
+    let before = store.read_discovery().unwrap();
+    assert_eq!(before.revision, 1);
+    store.checkpoint_discovery_for_following(1, 0).unwrap();
+    assert_eq!(
+        WorkbenchStore::open(directory.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap(),
+        before
+    );
+    assert!(!legacy.exists());
+}
+
+#[test]
+fn future_or_inconsistent_manifest_cannot_be_loaded_or_overwritten() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store
+        .apply_discovery_patch_for_following(0, 0, patch(vec![record(Source::Jm, "123")]))
+        .unwrap();
+    let path = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery-journal.json");
+    let original = manifest(&directory);
+    let mut future = original.clone();
+    future["version"] = 2.into();
+    let mut broken_chain = original;
+    broken_chain["revision"] = 2.into();
+    broken_chain["patchCount"] = 2.into();
+    for (value, expected) in [
+        (future, "UNSUPPORTED_SCHEMA"),
+        (broken_chain, "DOCUMENT_CORRUPT"),
+    ] {
+        let bytes = serde_json::to_vec(&value).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(store.read_discovery().unwrap_err().code, expected);
+        assert_eq!(
+            store
+                .apply_discovery_patch_for_following(1, 0, patch(vec![]))
+                .unwrap_err()
+                .code,
+            expected
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
 }

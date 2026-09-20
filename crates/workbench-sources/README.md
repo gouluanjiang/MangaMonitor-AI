@@ -42,6 +42,18 @@ type and 2,000-unit limit. Nonblank entries retain their order and exact content
 This compatibility rule does not apply to Pica or relax IDs, titles, favorite
 state, counts, the whole-work budget, or cover transport validation.
 
+JM search, favorite and weekly lists retain a valid work ID with a blank string
+`name` as `来源作品信息缺失（JM{id}）`, preserving its position and source total.
+Only an actual blank string within the 2,000-unit limit gets this placeholder;
+missing, null, unsupported title types and oversized titles remain errors. The
+existing nonblank parsing, including supported numeric titles, is unchanged.
+Supplied author/tag metadata is validated normally and no author is inferred
+from the search keyword. These placeholders have no cover descriptor and cause
+no extra detail or cover requests.
+This listing-only exception never applies to Pica or to JM detail reads: detail
+and download preparation still reject blank titles rather than treating the
+placeholder as verified downloadable metadata.
+
 All metadata responses are limited to 8 MiB and each request has a 30-second
 timeout. Metadata redirects are rejected. There are no implicit retries or whole-list
 pagination loops. JM requests use the pinned primary `www.cdnhth.cc`; this crate

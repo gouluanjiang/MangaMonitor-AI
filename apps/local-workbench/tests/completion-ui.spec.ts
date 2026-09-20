@@ -1395,6 +1395,108 @@ test("full author selection includes circle members but never other keyword hits
   expect(inputs.sort()).toEqual(["456", "0123456789abcdef01234567"].sort());
 });
 
+test("a metadata placeholder stays inspectable outside complete author counts and bulk downloads", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const hooks = window.authorTest;
+    const placeholder = structuredClone(hooks.view.records[1]);
+    placeholder.work = {
+      ...placeholder.work,
+      workId: "789",
+      title: "来源作品信息缺失（JM789）",
+      authors: [],
+      description: null,
+      tags: [],
+      pageCount: null,
+      chapterCount: null,
+      coverAvailable: false,
+    };
+    // Even a legacy verified bit cannot invent the missing author credit.
+    placeholder.authorVerified = true;
+    hooks.view.records.push(placeholder);
+    for (const range of hooks.view.authors) {
+      range.state = "complete";
+      range.lastCompleteAt = Date.now();
+      range.errorCode = null;
+    }
+  });
+  await open(page);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完 · 已记录 3 条",
+  );
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "其他关键词结果 1 条",
+  );
+  await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await page.getByTestId("completion-select-all").click();
+  await expect(page.getByTestId("completion-selection-bar")).toContainText(
+    "已选 2 本",
+  );
+  await page.getByRole("button", { name: "查看下载计划", exact: true }).click();
+  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "jm_download_batch_prepare")
+        .flatMap((call) => call.args.inputs as string[])
+        .sort(),
+    ),
+  ).toEqual(["456", "0123456789abcdef01234567"].sort());
+});
+
+test("a placeholder prevents an all-owned author claim and has no download controls in other results", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const hooks = window.authorTest;
+    hooks.view.records[1].work = {
+      ...hooks.view.records[1].work,
+      title: "来源作品信息缺失（JM456）",
+      authors: [],
+      coverAvailable: false,
+    };
+    hooks.inventory.items = hooks.view.records
+      .filter((record) => record.work.authors.length)
+      .map((record) => ({
+        source: record.work.source,
+        workId: record.work.workId,
+        libraryEntryId: "b".repeat(64),
+        localFiles: "present",
+      }));
+    for (const range of hooks.view.authors) {
+      range.state = "complete";
+      range.lastCompleteAt = Date.now();
+      range.errorCode = null;
+    }
+  });
+  await page.getByTestId("nav-completion").click();
+  await page
+    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完 · 已记录 2 条 · 已入库 2 条 · 未入库 0 条",
+  );
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "查看其他关键词结果", exact: true })
+    .click();
+  const placeholder = page.getByTestId("author-update-JM:456");
+  await expect(placeholder).toContainText("来源作品信息缺失（JM456）");
+  await expect(placeholder).toContainText("作者信息未提供");
+  await expect(placeholder.getByRole("checkbox")).toHaveCount(0);
+  await expect(
+    placeholder.getByRole("button", { name: "下载到漫画库", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("completion-select-all")).toHaveCount(0);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "其他关键词结果（未确认作者归属）",
+  );
+});
+
 test("ad-hoc author search classifies every source page, retaining unrelated results for inspection", async ({
   page,
 }) => {

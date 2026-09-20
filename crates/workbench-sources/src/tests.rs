@@ -401,6 +401,182 @@ fn jm_optional_arrays_omit_only_blank_strings_without_reordering_content() {
     assert!(work.tags.is_empty());
 }
 
+#[tokio::test]
+async fn jm_search_keeps_blank_title_on_second_page_without_detail_or_cover_fanout() {
+    let sources = scripted(vec![
+        Ok(json!({"total":4,"content":[
+            {"id":"123","name":"First","author":"Queried author"},
+            {"id":"124","name":"Second","author":"Queried author"}
+        ]})),
+        Ok(json!({"total":4,"content":[
+            {"id":"125","name":"","author":"","image":"","description":null},
+            {"id":"126","name":"Last","author":"Queried author"}
+        ]})),
+    ]);
+    let jm = session(Source::Jm);
+    let first = sources.search(&jm, "Queried author", 1).await.unwrap();
+    let second = sources.search(&jm, "Queried author", 2).await.unwrap();
+    assert_eq!((first.page, second.page), (1, 2));
+    assert_eq!((first.total, second.total), (Some(4), Some(4)));
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .chain(&second.items)
+            .map(|work| work.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["123", "124", "125", "126"]
+    );
+    let placeholder = &second.items[0];
+    assert_eq!(placeholder.title, "来源作品信息缺失（JM125）");
+    assert!(placeholder.authors.is_empty());
+    assert!(!placeholder.cover_available);
+    assert_eq!(placeholder.page_count, None);
+    assert_eq!(placeholder.description, None);
+    assert!(matches!(
+        jm.covers.lock().unwrap().lookup("125"),
+        CoverLookup::Missing
+    ));
+    assert_eq!(sources.thumbnail_inner(&jm, "125").await.unwrap(), None);
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        &[
+            (
+                Source::Jm,
+                Method::GET,
+                "/search?main_tag=0&search_query=Queried+author&page=1&o=mr".to_owned()
+            ),
+            (
+                Source::Jm,
+                Method::GET,
+                "/search?main_tag=0&search_query=Queried+author&page=2&o=mr".to_owned()
+            )
+        ]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn jm_blank_title_favorites_and_weekly_preserve_source_metadata_and_positions() {
+    let records = json!([
+        {"id":"123","name":"Named work"},
+        {"id":"124","name":" \t\u{3000}","author":["Actual author"],"tags":["Tag"]}
+    ]);
+    let sources = scripted(vec![
+        Ok(json!({"total":2,"list":records.clone(),"folder_list":[]})),
+        Ok(json!({"total":2,"list":records})),
+    ]);
+    let jm = session(Source::Jm);
+    let favorites = sources
+        .favorites(
+            &jm,
+            FavoritePageRequest {
+                page: 1,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(favorites.items[1].favorite, Some(true));
+    let weekly = sources.ranking(&jm, Some("42"), "1").await.unwrap();
+    for page in [favorites, weekly] {
+        assert_eq!(page.total, Some(2));
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].work_id, "123");
+        let placeholder = &page.items[1];
+        assert_eq!(placeholder.work_id, "124");
+        assert_eq!(placeholder.title, "来源作品信息缺失（JM124）");
+        assert_eq!(placeholder.authors, ["Actual author"]);
+        assert_eq!(placeholder.tags, ["Tag"]);
+        assert!(!placeholder.cover_available);
+    }
+    assert_eq!(sources.thumbnail_inner(&jm, "124").await.unwrap(), None);
+    assert_eq!(sources.recorded.lock().unwrap().len(), 2);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[test]
+fn jm_blank_listing_titles_do_not_relax_detail_pica_or_other_metadata_guards() {
+    for invalid in [
+        Value::Null,
+        json!(false),
+        json!({}),
+        json!([]),
+        json!(" ".repeat(2001)),
+    ] {
+        let record = json!({"id":"123","name":invalid});
+        assert_eq!(
+            protocol::listing_work(Source::Jm, &record, false)
+                .unwrap_err()
+                .code,
+            "SOURCE_RESPONSE_INVALID"
+        );
+    }
+    for blank in ["", " \t\u{3000}"] {
+        assert_eq!(
+            protocol::work(Source::Jm, &json!({"id":"123","name":blank}), false)
+                .unwrap_err()
+                .code,
+            "SOURCE_RESPONSE_INVALID"
+        );
+        assert_eq!(
+            protocol::listing_work(Source::Pica, &json!({"_id":PICA_ID,"title":blank}), false)
+                .unwrap_err()
+                .code,
+            "SOURCE_RESPONSE_INVALID"
+        );
+    }
+    for (field, invalid) in [
+        ("id", json!("0")),
+        ("id", json!("../../123")),
+        ("author", json!([null])),
+        ("is_favorite", json!("false")),
+        ("total_photos", json!(-1)),
+        ("description", json!({})),
+        ("tags", json!(vec!["tag"; 65])),
+        ("author", json!(vec!["界".repeat(1000); 32])),
+    ] {
+        let mut record = json!({"id":"123","name":""});
+        record[field] = invalid;
+        assert_eq!(
+            protocol::listing_work(Source::Jm, &record, false)
+                .unwrap_err()
+                .code,
+            "SOURCE_RESPONSE_INVALID",
+            "{field}"
+        );
+    }
+    let numeric = json!({"id":"123","name":42});
+    let (work, _) = protocol::listing_work(Source::Jm, &numeric, false).unwrap();
+    assert_eq!(work.title, "42");
+    assert!(work.cover_available);
+    assert_eq!(work, protocol::work(Source::Jm, &numeric, false).unwrap().0);
+    let maximum_blank = json!({"id":"123","name":" ".repeat(2000)});
+    assert!(protocol::listing_work(Source::Jm, &maximum_blank, false).is_ok());
+}
+
+#[tokio::test]
+async fn jm_blank_title_detail_remains_unavailable_and_cannot_gain_cover_authority() {
+    let sources = scripted(vec![Ok(
+        json!({"id":"123","name":"","author":[],"images":[]}),
+    )]);
+    let jm = session(Source::Jm);
+    assert_eq!(
+        sources.detail(&jm, "123").await.unwrap_err().code,
+        "SOURCE_RESPONSE_INVALID"
+    );
+    assert!(matches!(
+        jm.covers.lock().unwrap().lookup("123"),
+        CoverLookup::Unknown
+    ));
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        &[(Source::Jm, Method::GET, "/album?id=123".to_owned())]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
 #[test]
 fn jm_optional_array_bounds_apply_before_blank_entries_are_filtered() {
     for field in ["author", "tags"] {

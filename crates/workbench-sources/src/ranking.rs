@@ -145,7 +145,7 @@ impl WorkbenchSources {
         let mut covers = vec![];
         let mut ids = std::collections::HashSet::new();
         for row in records {
-            let (work, cover) = protocol::work(session.source, row, false)?;
+            let (work, cover) = protocol::listing_work(session.source, row, false)?;
             if !ids.insert(work.work_id.clone()) {
                 return Err(protocol::error("SOURCE_PAGINATION_INVALID"));
             }

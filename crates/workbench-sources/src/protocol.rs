@@ -288,6 +288,23 @@ pub(crate) fn work(
     data: &Value,
     favorite_listing: bool,
 ) -> SourceResult<(SourceWork, Option<String>)> {
+    parse_work(source, data, favorite_listing, false)
+}
+
+pub(crate) fn listing_work(
+    source: Source,
+    data: &Value,
+    favorite_listing: bool,
+) -> SourceResult<(SourceWork, Option<String>)> {
+    parse_work(source, data, favorite_listing, true)
+}
+
+fn parse_work(
+    source: Source,
+    data: &Value,
+    favorite_listing: bool,
+    listing: bool,
+) -> SourceResult<(SourceWork, Option<String>)> {
     let id_field = match source {
         Source::Jm => "id",
         Source::Pica => "_id",
@@ -297,14 +314,31 @@ pub(crate) fn work(
         return Err(error("SOURCE_RESPONSE_INVALID"));
     }
     let work_id = normalize_id(source, &id);
-    let title = bounded_required_text(
-        &data[match source {
-            Source::Jm => "name",
-            Source::Pica => "title",
-        }],
-        2000,
-    )?;
-    let cover = cover_url(source, &work_id, data);
+    let title_value = &data[match source {
+        Source::Jm => "name",
+        Source::Pica => "title",
+    }];
+    let missing_title = listing
+        && source == Source::Jm
+        && title_value
+            .as_str()
+            .is_some_and(|name| name.trim().is_empty());
+    // JM can retain a valid catalog ID whose metadata has become blank. Keep
+    // its position/count without inventing an author or reading every detail.
+    // The strict detail path still rejects it before download preparation.
+    let title = if missing_title {
+        if !within_text_limit(title_value.as_str().unwrap(), 2000) {
+            return Err(error("SOURCE_RESPONSE_INVALID"));
+        }
+        format!("来源作品信息缺失（JM{work_id}）")
+    } else {
+        bounded_required_text(title_value, 2000)?
+    };
+    let cover = if missing_title {
+        None
+    } else {
+        cover_url(source, &work_id, data)
+    };
     let favorite = if favorite_listing {
         Some(true)
     } else {
@@ -410,7 +444,7 @@ pub(crate) fn page(
     let mut covers = Vec::new();
     let mut ids = std::collections::HashMap::new();
     for record in records {
-        let (item, cover) = work(source, record, favorites)?;
+        let (item, cover) = listing_work(source, record, favorites)?;
         // Preserve identical Pica favorite entries for pagination accounting.
         // Conflicting records, search results and JM remain strict.
         if ids

@@ -10,6 +10,8 @@ import { discoveryRecordLimit } from "../src/completion-types.ts";
 import { createAuthorSearchAdapter } from "../src/author-search.ts";
 import { readCompleteSearch } from "../src/source-search.ts";
 import { authorQueryError } from "../src/author-query.ts";
+import { partitionAuthorRecords } from "../src/author-evidence.ts";
+import { validateSourceWork } from "../src/source-runtime.ts";
 
 const scopes = [
   { source: "JM", sessionId: "synthetic-jm" },
@@ -512,6 +514,74 @@ test("short, repeated and failed pages retain partial data and never report full
     assert.ok(seen.length);
     assert.ok(seen.every((value) => !value.complete));
   }
+});
+
+test("a valid-ID metadata placeholder preserves both full pages without becoming author evidence", async () => {
+  const calls = [],
+    pageSizes = [];
+  const adapter = createAuthorSearchAdapter({
+    query: async (scope, query) => {
+      calls.push([scope.source, query.page]);
+      const count = scope.source === "JM" ? (query.page === 1 ? 80 : 70) : 0;
+      const items = Array.from({ length: count }, (_, index) => {
+        const id = (query.page - 1) * 80 + index + 1;
+        const item = work(scope.source, id);
+        return validateSourceWork(
+          id === 98
+            ? {
+                ...item,
+                title: "来源作品信息缺失（JM98）",
+                authors: [],
+                coverAvailable: false,
+              }
+            : item,
+        );
+      });
+      pageSizes.push(items.length);
+      return {
+        ...scope,
+        page: query.page,
+        pages: scope.source === "JM" ? 2 : 1,
+        total: scope.source === "JM" ? 150 : 0,
+        hasMore: scope.source === "JM" && query.page === 1,
+        folders: [],
+        items,
+      };
+    },
+  });
+  await adapter.start(scopes, ["Writer"]);
+  for (
+    let attempt = 0;
+    attempt < 10 && (await adapter.read(scopes)).run.phase === "checking";
+    attempt++
+  )
+    await flush();
+  const result = validateDiscoverySnapshot(await adapter.read(scopes), scopes);
+  assert.equal(result.run.phase, "complete");
+  assert.deepEqual(calls, [
+    ["JM", 1],
+    ["JM", 2],
+    ["Pica", 1],
+  ]);
+  assert.deepEqual(pageSizes, [80, 70, 0]);
+  assert.equal(result.records.length, 150);
+  assert.equal(
+    result.authors.find((range) => range.source === "JM").observedCount,
+    150,
+  );
+  assert.equal(
+    result.authors.find((range) => range.source === "JM").pagesRead,
+    2,
+  );
+  const partition = partitionAuthorRecords(result.records, "Writer", "JM");
+  assert.equal(partition.confirmed.length, 149);
+  assert.deepEqual(
+    partition.other.map((record) => record.work.workId),
+    ["98"],
+  );
+  assert.equal(partition.other[0].work.title, "来源作品信息缺失（JM98）");
+  assert.equal(partition.other[0].authorVerified, false);
+  assert.equal(partition.other[0].work.coverAvailable, false);
 });
 
 test("ad-hoc author lookup needs no following and visits both sources even when one fails", async () => {

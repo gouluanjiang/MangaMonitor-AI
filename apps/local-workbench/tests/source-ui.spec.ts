@@ -832,7 +832,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
           sessionId: "synthetic-JM-1",
           revision: 0,
           works: [],
-          authors: [],
+          authors: options.authorPolicyResults ? ["Mint"] : [],
         },
         Pica: {
           source: "Pica",

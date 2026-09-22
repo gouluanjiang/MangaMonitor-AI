@@ -1204,7 +1204,8 @@ async fn explicit_cleanup_lock_contention_is_bounded_and_a_new_service_can_retry
     ready_rx.recv().unwrap();
     let first = service(&root, FakeBackend::default(), SharedVault::default());
     let attempted = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        // A two-second storage-lock wait, without another transaction retry.
+        std::time::Duration::from_secs(5),
         first.cleanup_legacy_cover_cache(),
     )
     .await;

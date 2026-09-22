@@ -346,19 +346,12 @@ fn store_error(error: workbench_storage::StoreError) -> AccountError {
     AccountError::new(error.code)
 }
 
-/// Bounded private document lock contention only; never source IO, auth or CAS.
+/// Storage owns the bounded lock wait. Do not replay a compound read/commit or
+/// multiply that budget here after persistent contention, source IO or CAS.
 pub(crate) fn discovery_store_io<T>(
-    mut operation: impl FnMut() -> std::result::Result<T, workbench_storage::StoreError>,
+    operation: impl FnOnce() -> std::result::Result<T, workbench_storage::StoreError>,
 ) -> std::result::Result<T, workbench_storage::StoreError> {
-    for attempt in 0..5 {
-        let result = operation();
-        if attempt < 4 && result.as_ref().is_err_and(|error| error.code == "BUSY") {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        } else {
-            return result;
-        }
-    }
-    unreachable!("the final bounded attempt always returns")
+    operation()
 }
 fn storage_source(source: Source) -> workbench_storage::Source {
     match source {

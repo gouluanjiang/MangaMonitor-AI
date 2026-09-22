@@ -152,23 +152,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         *self
             .legacy_cover_cleanup
             .get_or_init(|| async {
-                for attempt in 0..3 {
-                    let root = self.root.clone();
-                    let cache_io = Arc::clone(&self.cache_io).lock_owned().await;
-                    let result = tokio::task::spawn_blocking(move || {
-                        let _cache_io = cache_io;
-                        workbench_storage::WorkbenchStore::open(root)?.cleanup_legacy_cover_cache()
-                    })
-                    .await
-                    .map_err(|_| AccountError::new("CACHE_UNAVAILABLE"))?
-                    .map_err(|error| AccountError::new(error.code));
-                    if result.as_ref().is_err_and(|error| error.code == "BUSY") && attempt < 2 {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        continue;
-                    }
-                    return result;
-                }
-                Err(AccountError::new("BUSY"))
+                let root = self.root.clone();
+                let cache_io = Arc::clone(&self.cache_io).lock_owned().await;
+                // The store waits before the transaction. Never replay cleanup
+                // or extend that budget after a persistently held document lock.
+                tokio::task::spawn_blocking(move || {
+                    let _cache_io = cache_io;
+                    workbench_storage::WorkbenchStore::open(root)?.cleanup_legacy_cover_cache()
+                })
+                .await
+                .map_err(|_| AccountError::new("CACHE_UNAVAILABLE"))?
+                .map_err(|error| AccountError::new(error.code))
             })
             .await
     }

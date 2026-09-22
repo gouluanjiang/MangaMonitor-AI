@@ -100,20 +100,18 @@ fn inventory_recovers_after_an_author_commit_releases_the_document_lock() {
         .open(private.join(".workbench.lock"))
         .unwrap();
     lock.lock().unwrap();
-    let mut attempts = 0;
-    let actual = downloads::inventory_read_with_busy_retry(|| {
-        attempts += 1;
-        let result = service.inventory(&store);
-        if attempts == 1 {
-            assert_eq!(result.as_ref().unwrap_err().code, "BUSY");
-            // Release only after the inventory read observes contention, so
-            // the replay does not depend on worker or timer scheduling.
-            lock.unlock().unwrap();
-        }
-        result
-    })
-    .unwrap();
-    assert_eq!(attempts, 2);
+    let (sent, received) = std::sync::mpsc::channel();
+    let reading = std::thread::spawn(move || {
+        sent.send(service.inventory(&store)).unwrap();
+    });
+    let early = received.recv_timeout(std::time::Duration::from_millis(150));
+    lock.unlock().unwrap();
+    reading.join().unwrap();
+    assert!(matches!(
+        early,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    let actual = received.recv().unwrap().unwrap();
     assert_eq!(serde_json::to_value(actual).unwrap(), expected);
     assert_eq!(std::fs::read(private.join("library.json")).unwrap(), before);
     assert!(!private.join("downloads.json").exists());
@@ -121,7 +119,7 @@ fn inventory_recovers_after_an_author_commit_releases_the_document_lock() {
 }
 
 #[test]
-fn inventory_lock_retry_is_bounded_and_native_errors_remain_retryable() {
+fn inventory_lock_wait_is_bounded_and_native_errors_remain_retryable() {
     let (root, app) = fixture();
     let main = window(&app, "main");
     let expected = invoke(&main, "download_inventory_read", json!({})).unwrap();
@@ -134,13 +132,7 @@ fn inventory_lock_retry_is_bounded_and_native_errors_remain_retryable() {
         .open(private.join(".workbench.lock"))
         .unwrap();
     lock.lock().unwrap();
-    let mut attempts = 0;
-    let problem = downloads::inventory_read_with_busy_retry(|| {
-        attempts += 1;
-        service.inventory(&store)
-    })
-    .unwrap_err();
-    assert_eq!(attempts, 5);
+    let problem = service.inventory(&store).unwrap_err();
     assert_eq!(problem.code, "BUSY");
     assert_eq!(
         invoke(&main, "download_inventory_read", json!({})).unwrap_err(),
@@ -165,13 +157,7 @@ fn inventory_never_retries_or_hides_corrupt_documents() {
     std::fs::write(private.join("library.json"), original).unwrap();
     let store = WorkbenchStore::open(root.path()).unwrap();
     let service = workbench_downloads::DownloadService::new();
-    let mut attempts = 0;
-    let problem = downloads::inventory_read_with_busy_retry(|| {
-        attempts += 1;
-        service.inventory(&store)
-    })
-    .unwrap_err();
-    assert_eq!(attempts, 1);
+    let problem = service.inventory(&store).unwrap_err();
     assert_eq!(problem.code, "DOCUMENT_CORRUPT");
     assert_eq!(
         invoke(&main, "download_inventory_read", json!({})).unwrap_err(),

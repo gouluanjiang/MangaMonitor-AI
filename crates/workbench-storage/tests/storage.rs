@@ -237,6 +237,109 @@ fn independent_instances_allow_exactly_one_compare_and_swap_winner() {
 }
 
 #[test]
+fn following_read_waits_for_an_independent_cache_transaction_without_refresh() {
+    let directory = TempDir::new().unwrap();
+    let owner = WorkbenchStore::open(directory.path()).unwrap();
+    let observer = WorkbenchStore::open(directory.path()).unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let held = thread::spawn(move || {
+        owner.with_account_cache(&"1".repeat(64), |_| {
+            ready_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+    });
+    ready_rx.recv().unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let read = thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        result_tx.send(observer.read_following()).unwrap();
+    });
+    started_rx.recv().unwrap();
+    let early = result_rx.recv_timeout(Duration::from_millis(150));
+    // Always release/join before asserting: a failure must not strand workers.
+    release_tx.send(()).unwrap();
+    held.join().unwrap().unwrap();
+    read.join().unwrap();
+    assert!(matches!(
+        early,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(result_rx.recv().unwrap().unwrap().revision, 0);
+    assert!(!document_path(directory.path(), "following.json").exists());
+}
+
+#[test]
+fn revision_is_read_after_lock_wait_and_a_stale_write_never_overwrites() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_booklists(0, Booklists::default()).unwrap();
+    let path = document_path(directory.path(), "booklists.json");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(document_path(directory.path(), ".workbench.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let root = directory.path().to_owned();
+    let writer = thread::spawn(move || {
+        let observer = WorkbenchStore::open(root).unwrap();
+        started_tx.send(()).unwrap();
+        result_tx
+            .send(observer.write_booklists(1, Booklists::default()))
+            .unwrap();
+    });
+    started_rx.recv().unwrap();
+    let early = result_rx.recv_timeout(Duration::from_millis(150));
+    // Simulate the current lock owner's newer commit before the waiter reads it.
+    let mut newer: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    newer["revision"] = json!(2);
+    let bytes = serde_json::to_vec(&newer).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    lock.unlock().unwrap();
+    writer.join().unwrap();
+    assert!(matches!(
+        early,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(
+        result_rx.recv().unwrap().unwrap_err().code,
+        "REVISION_CONFLICT"
+    );
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+}
+
+#[test]
+fn waiting_for_one_profile_does_not_block_another_profile() {
+    let first = TempDir::new().unwrap();
+    let second = TempDir::new().unwrap();
+    let first_store = WorkbenchStore::open(first.path()).unwrap();
+    let second_store = WorkbenchStore::open(second.path()).unwrap();
+    first_store.read_following().unwrap();
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(document_path(first.path(), ".workbench.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let blocked = thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        first_store.read_following()
+    });
+    started_rx.recv().unwrap();
+    let other = second_store.read_following();
+    lock.unlock().unwrap();
+    let first_result = blocked.join().unwrap();
+    assert_eq!(other.unwrap().revision, 0);
+    assert_eq!(first_result.unwrap().revision, 0);
+}
+
+#[test]
 fn live_os_lock_is_busy_but_an_unlocked_existing_lock_file_is_not_stale() {
     let directory = TempDir::new().unwrap();
     let store = WorkbenchStore::open(directory.path()).unwrap();

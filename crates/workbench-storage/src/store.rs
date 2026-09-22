@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
+    time::{Duration, Instant},
 };
 
 pub const PRIVATE_DIRECTORY: &str = "workbench-preview-v1";
@@ -27,6 +28,10 @@ const MAX_BOOKLISTS_BYTES: usize = 5 * 1024 * 1024;
 // Covers all permitted scopes and maximum-length UTF-8 names without truncation.
 pub(crate) const MAX_FOLLOWING_BYTES: usize = 32 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+// Independent account/catalog/document handles share the same OS lock, but not
+// local_lock. A short overlap must not fail an otherwise idle page's first read.
+const STORE_LOCK_WAIT: Duration = Duration::from_secs(2);
+const STORE_LOCK_POLL: Duration = Duration::from_millis(20);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -308,10 +313,24 @@ impl WorkbenchStore {
             .open(&path)
             .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
         check_open_regular(&file)?;
-        match file.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => return Err(StoreError::new("BUSY")),
-            Err(TryLockError::Error(_)) => return Err(StoreError::new("STORE_UNAVAILABLE")),
+        let started = Instant::now();
+        loop {
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(TryLockError::WouldBlock) => {
+                    let remaining = STORE_LOCK_WAIT.saturating_sub(started.elapsed());
+                    if remaining.is_zero() {
+                        return Err(StoreError::new("BUSY"));
+                    }
+                    // Wait only for lock ownership, before reading a revision or
+                    // changing bytes. Never replay a transaction, source request,
+                    // corrupt-file failure or compare-and-swap conflict.
+                    std::thread::sleep(STORE_LOCK_POLL.min(remaining));
+                }
+                Err(TryLockError::Error(_)) => {
+                    return Err(StoreError::new("STORE_UNAVAILABLE"));
+                }
+            }
         }
         // Guard all exits after successful acquisition, including path rechecks.
         let guard = StoreFileLock { file };

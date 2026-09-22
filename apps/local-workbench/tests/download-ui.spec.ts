@@ -244,6 +244,17 @@ async function install(page: Page, options: Options = {}) {
           if (command === "read_booklists")
             return { revision: 0, value: { version: 1, lists: [] } };
           if (command === "source_accounts") return clone(hooks.accounts);
+          if (command === "source_author_policy")
+            return {
+              source: args.source,
+              sessionId: args.sessionId,
+              revision: 0,
+              author: args.author,
+              queries: [args.author],
+              verifiedAliases: [],
+              exactCredits: [],
+              queryFingerprint: "a".repeat(64),
+            };
           if (command === "library_read") return clone(hooks.pc);
           if (command === "source_matches_read")
             return { revision: 0, pairs: [] };

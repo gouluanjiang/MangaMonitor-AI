@@ -12,6 +12,7 @@ import type {
   SourceWork,
   RankOptions,
   SourceItemIssue,
+  AuthorQueryPolicy,
 } from "./source-types.ts";
 import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
@@ -92,6 +93,57 @@ function scoped(
   ) {
     throw new SourceError("STALE_SESSION");
   }
+}
+const policyName = (value: unknown): value is string =>
+  text(value, 512) &&
+  !!value.trim() &&
+  value.trim() === value &&
+  !/[\x00-\x1f\x7f-\x9f]/u.test(value);
+export function validateAuthorQueryPolicy(
+  value: unknown,
+  expectedScope?: SourceScope,
+  expectedAuthor?: string,
+): AuthorQueryPolicy {
+  if (expectedScope) scoped(value, expectedScope);
+  if (
+    !object(value) ||
+    !validSource(value.source) ||
+    !policyName(value.author) ||
+    (expectedAuthor !== undefined && value.author !== expectedAuthor) ||
+    !Array.isArray(value.queries) ||
+    value.queries.length < 1 ||
+    value.queries.length > 4 ||
+    !value.queries.every(policyName) ||
+    new Set(value.queries).size !== value.queries.length ||
+    !Array.isArray(value.verifiedAliases) ||
+    value.verifiedAliases.length > 16 ||
+    !value.verifiedAliases.every(policyName) ||
+    new Set(value.verifiedAliases).size !== value.verifiedAliases.length ||
+    !text(value.queryFingerprint, 64) ||
+    !/^[a-f0-9]{64}$/.test(value.queryFingerprint)
+  )
+    invalid();
+  const credits = value.exactCredits ?? [];
+  if (
+    !Array.isArray(credits) ||
+    credits.length > 16 ||
+    !credits.every(
+      (credit) =>
+        text(credit, 4000) &&
+        !!credit.trim() &&
+        !/[\x00-\x1f\x7f-\x9f]/u.test(credit),
+    ) ||
+    new Set(credits).size !== credits.length
+  )
+    invalid();
+  return {
+    source: value.source,
+    author: value.author,
+    queries: [...value.queries] as string[],
+    verifiedAliases: [...value.verifiedAliases] as string[],
+    exactCredits: [...credits] as string[],
+    queryFingerprint: value.queryFingerprint,
+  };
 }
 export function validateSourceWork(
   value: unknown,
@@ -250,15 +302,16 @@ export function validateSourceIssues(
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > limit) invalid();
   const positions = new Set<string>();
-  let previousPage = 0,
-    previousIndex = 0;
+  const previous = new Map<string, { page: number; index: number }>();
+  let lastQuery = "";
   return value.map((issue: unknown) => {
     if (
       !object(issue) ||
-      Object.keys(issue).length !== 4 ||
+      ![4, 5].includes(Object.keys(issue).length) ||
       Object.keys(issue).some(
-        (key) => !["page", "index", "workId", "code"].includes(key),
+        (key) => !["page", "index", "workId", "code", "query"].includes(key),
       ) ||
+      (issue.query !== undefined && !policyName(issue.query)) ||
       !integer(issue.page) ||
       (issue.page as number) < 1 ||
       (issue.page as number) > maxPage ||
@@ -276,18 +329,28 @@ export function validateSourceIssues(
       !["SOURCE_ITEM_INVALID", "SOURCE_ITEM_METADATA_MISSING"].includes(
         issue.code as string,
       ) ||
-      (issue.code === "SOURCE_ITEM_METADATA_MISSING" &&
-        issue.workId === null) ||
-      (issue.page as number) < previousPage ||
-      (issue.page === previousPage && (issue.index as number) <= previousIndex)
+      (issue.code === "SOURCE_ITEM_METADATA_MISSING" && issue.workId === null)
     )
       invalid();
-    const position = `${issue.page}:${issue.index}`;
+    const query = (issue.query ?? "") as string;
+    const last = previous.get(query);
+    if (query !== lastQuery && last) invalid();
+    lastQuery = query;
+    if (
+      last &&
+      ((issue.page as number) < last.page ||
+        (issue.page === last.page && (issue.index as number) <= last.index))
+    )
+      invalid();
+    const position = JSON.stringify([query, issue.page, issue.index]);
     if (positions.has(position)) invalid();
     positions.add(position);
-    previousPage = issue.page as number;
-    previousIndex = issue.index as number;
+    previous.set(query, {
+      page: issue.page as number,
+      index: issue.index as number,
+    });
     return {
+      ...(issue.query === undefined ? {} : { query: issue.query as string }),
       page: issue.page as number,
       index: issue.index as number,
       workId: issue.workId as string | null,
@@ -516,6 +579,14 @@ export function createSourceAdapter(
       if (result.source !== scope.source || result.state === "connected")
         invalid();
       return result;
+    },
+    async authorPolicy(scope, author) {
+      checkScope(scope);
+      if (!policyName(author)) throw new SourceError("INVALID_INPUT");
+      const value = await call("source_author_policy", { ...scope, author });
+      const policy = validateAuthorQueryPolicy(value, scope, author);
+      if (!object(value) || !integer(value.revision)) invalid();
+      return { ...policy, ...scope, revision: value.revision as number };
     },
     async query(scope, query) {
       checkScope(scope);

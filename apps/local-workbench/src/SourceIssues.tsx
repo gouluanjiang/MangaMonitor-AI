@@ -33,8 +33,10 @@ export function SourceIssues({
       </p>
       {expanded &&
         issues.slice(0, limit).map((issue) => (
-          <p key={`${issue.page}:${issue.index}`}>
-            {sourceLabel(source)} · 第 {issue.page} 页 · 第 {issue.index} 条 ·{" "}
+          <p key={JSON.stringify([issue.query, issue.page, issue.index])}>
+            {sourceLabel(source)} ·{" "}
+            {issue.query ? `查询“${issue.query}” · ` : ""}第 {issue.page} 页 ·
+            第 {issue.index} 条 ·{" "}
             {issue.workId === null ? "编号缺失" : `编号 ${issue.workId}`} ·{" "}
             {issue.code === "SOURCE_ITEM_METADATA_MISSING"
               ? "作品信息缺失"

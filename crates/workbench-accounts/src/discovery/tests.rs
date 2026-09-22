@@ -1837,6 +1837,9 @@ async fn legacy_complete_rows_without_checkpoints_must_build_a_new_full_baseline
     let mut saved = store.read_discovery().unwrap();
     for range in &mut saved.value.accounts[0].authors {
         range.baseline = None;
+        range.query_baselines.clear();
+        range.completed_queries.clear();
+        range.query_fingerprint = None;
         range.last_checked_at = None;
         range.last_check_mode = None;
     }
@@ -2219,4 +2222,381 @@ async fn progress_omits_records_and_default_view_keeps_other_keyword_history_on_
             .len(),
         3
     );
+}
+
+fn save_policy(
+    root: &TempDir,
+    source: Source,
+    author: &str,
+    queries: &[&str],
+    aliases: &[&str],
+    exact: &[&str],
+) {
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    let following = store.read_following().unwrap();
+    let account = following
+        .value
+        .accounts
+        .iter()
+        .find(|account| account.source == storage_source(source))
+        .unwrap();
+    let current = store.read_author_query_policies().unwrap();
+    let incoming = workbench_storage::AuthorQueryDocument {
+        version: 1,
+        accounts: vec![workbench_storage::AuthorQueryAccount {
+            source: storage_source(source),
+            account_key: account.account_key.clone(),
+            profiles: vec![workbench_storage::AuthorQueryProfile {
+                author: author.into(),
+                queries: queries.iter().map(|name| (*name).into()).collect(),
+                verified_aliases: aliases.iter().map(|name| (*name).into()).collect(),
+                exact_credits: exact.iter().map(|name| (*name).into()).collect(),
+            }],
+        }],
+    };
+    let next = current
+        .value
+        .merged_import(&incoming, &following.value)
+        .unwrap();
+    store
+        .write_author_query_policies(current.revision, next)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn policy_aliases_reclassify_saved_records_offline_without_invalidating_query_baselines() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(
+            1,
+            2,
+            vec![
+                work(Source::Jm, "100", &["AuthorA"]),
+                work(Source::Jm, "101", &["Unrelated"]),
+            ],
+        ),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let before = finish(&service, &scopes).await;
+    assert_eq!(before.other_record_count, 2);
+    let saved_before = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    backend.0.calls.lock().unwrap().clear();
+    save_policy(
+        &root,
+        Source::Jm,
+        "Author A",
+        &["Author A"],
+        &["AuthorA"],
+        &[],
+    );
+    let after = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(after.records.len(), 1);
+    assert_eq!(after.records[0].work.work_id, "100");
+    assert_eq!(after.other_record_count, 1);
+    assert_eq!(after.authors, before.authors);
+    assert_eq!(after.author_policies[0].verified_aliases, ["AuthorA"]);
+    let progress = service.discovery_progress(scopes.clone()).await.unwrap();
+    assert_eq!(progress.other_record_count, 1);
+    assert_eq!(progress.author_policies, after.author_policies);
+    assert!(backend.0.calls.lock().unwrap().is_empty());
+    assert_eq!(
+        WorkbenchStore::open(root.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap(),
+        saved_before
+    );
+    let resolved = service
+        .author_query_policy(Source::Jm, &scopes[0].session_id, "Author A")
+        .await
+        .unwrap();
+    assert_eq!(resolved.policy, after.author_policies[0]);
+    let other = service
+        .author_query_policy(Source::Pica, &scopes[1].session_id, "Author A")
+        .await
+        .unwrap();
+    assert!(other.policy.verified_aliases.is_empty());
+}
+
+#[tokio::test]
+async fn query_policy_invalidates_only_the_changed_source_author_scope_and_retains_history() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    follow(&service, &scopes[0], "Author B", true).await;
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let before = finish(&service, &scopes).await;
+    backend.0.calls.lock().unwrap().clear();
+    save_policy(&root, Source::Jm, "Author A", &["Author～A"], &[], &[]);
+    let changed = service.discovery_progress(scopes.clone()).await.unwrap();
+    assert_eq!(
+        changed
+            .authors
+            .iter()
+            .filter(|range| range.state == DiscoveryRangeState::Partial)
+            .count(),
+        1
+    );
+    assert_eq!(
+        changed.authors[0].error_code.as_deref(),
+        Some("AUTHOR_QUERY_POLICY_CHANGED")
+    );
+    assert_eq!(changed.authors[1..], before.authors[1..]);
+    backend.put(
+        Source::Jm,
+        "Author～A",
+        1,
+        page(1, 1, vec![work(Source::Jm, "101", &["Author A"])]),
+    );
+    let run = service
+        .discovery_start_unfinished(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    assert_eq!(run.snapshot.run.unwrap().total_scopes, 1);
+    let completed = finish(&service, &scopes).await;
+    assert_eq!(completed.records.len(), 2);
+    assert_eq!(completed.authors[1..], before.authors[1..]);
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        [key(Source::Jm, "Author～A", 1)]
+    );
+    assert_eq!(completed.authors[0].state, DiscoveryRangeState::Complete);
+}
+
+#[tokio::test]
+async fn multiple_exact_queries_paginate_independently_deduplicate_and_checkpoint_each_query() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    save_policy(
+        &root,
+        Source::Jm,
+        "Author A",
+        &["Author~A", "Author～A"],
+        &["AuthorA"],
+        &[],
+    );
+    backend.put(
+        Source::Jm,
+        "Author~A",
+        1,
+        page(
+            1,
+            3,
+            vec![
+                work(Source::Jm, "100", &["AuthorA"]),
+                work(Source::Jm, "101", &["AuthorA"]),
+            ],
+        ),
+    );
+    backend.put(
+        Source::Jm,
+        "Author~A",
+        2,
+        page(2, 3, vec![work(Source::Jm, "102", &["AuthorA"])]),
+    );
+    backend.put(
+        Source::Jm,
+        "Author～A",
+        1,
+        page(
+            1,
+            2,
+            vec![
+                work(Source::Jm, "101", &["AuthorA"]),
+                work(Source::Jm, "103", &["AuthorA"]),
+            ],
+        ),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let completed = finish(&service, &scopes).await;
+    assert_eq!(completed.records.len(), 4);
+    assert_eq!(completed.other_record_count, 0);
+    let range = jm_range(&completed);
+    assert_eq!(range.pages_read, 3);
+    assert!(range.baseline.is_none());
+    assert_eq!(range.query_baselines.len(), 2);
+    assert_eq!(range.query_baselines[0].query, "Author~A");
+    assert_eq!(range.query_baselines[1].query, "Author～A");
+    assert!(range.pages_complete);
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        [
+            key(Source::Jm, "Author~A", 1),
+            key(Source::Jm, "Author~A", 2),
+            key(Source::Jm, "Author～A", 1),
+            key(Source::Pica, "Author A", 1)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn multiquery_issue_slots_keep_their_real_query_and_page_without_colliding() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    save_policy(
+        &root,
+        Source::Jm,
+        "Author A",
+        &["Query One", "Query Two"],
+        &[],
+        &[],
+    );
+    for query in ["Query One", "Query Two"] {
+        let mut response = page(1, 1, vec![]);
+        response.issues = vec![issue(1, 1, None)];
+        backend.put(Source::Jm, query, 1, response);
+    }
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let completed = finish(&service, &scopes).await;
+    let range = jm_range(&completed);
+    assert_eq!(range.state, DiscoveryRangeState::Partial);
+    assert_eq!(range.issue_count, 2);
+    assert_eq!(range.pages_read, 2);
+    assert!(range.pages_complete);
+    assert_eq!(
+        range
+            .issue_samples
+            .iter()
+            .map(|sample| (sample.query.as_deref(), sample.page, sample.index))
+            .collect::<Vec<_>>(),
+        [(Some("Query One"), 1, 1), (Some("Query Two"), 1, 1)]
+    );
+    assert!(range.query_baselines.is_empty());
+}
+
+#[tokio::test]
+async fn policy_revision_change_rejects_an_inflight_page_before_commit() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
+    backend.0.block_call.store(1, Ordering::SeqCst);
+    let started = backend.0.started.notified();
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    started.await;
+    save_policy(
+        &root,
+        Source::Jm,
+        "Author A",
+        &["Author A"],
+        &["AuthorA"],
+        &[],
+    );
+    backend.0.release.notify_one();
+    let snapshot = finish(&service, &scopes).await;
+    assert!(snapshot.records.is_empty());
+    assert_eq!(
+        WorkbenchStore::open(root.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap()
+            .value
+            .accounts[0]
+            .records
+            .len(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn partial_multiquery_reuses_only_queries_successfully_checked_in_that_attempt() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    save_policy(
+        &root,
+        Source::Jm,
+        "Author A",
+        &["Query One", "Query Two"],
+        &[],
+        &[],
+    );
+    backend.put(
+        Source::Jm,
+        "Query One",
+        1,
+        page(
+            1,
+            21,
+            (100..120)
+                .map(|id| work(Source::Jm, &id.to_string(), &["Author A"]))
+                .collect(),
+        ),
+    );
+    backend.put(
+        Source::Jm,
+        "Query One",
+        2,
+        page(2, 21, vec![work(Source::Jm, "120", &["Author A"])]),
+    );
+    backend.0.pages.lock().unwrap().insert(
+        key(Source::Jm, "Query Two", 1),
+        Err(AccountError::new("SOURCE_RESPONSE_INVALID")),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let partial = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&partial).completed_queries, ["Query One"]);
+    assert_eq!(jm_range(&partial).query_baselines.len(), 1);
+    assert_eq!(jm_range(&partial).state, DiscoveryRangeState::Partial);
+    backend.put(
+        Source::Jm,
+        "Query Two",
+        1,
+        page(1, 1, vec![work(Source::Jm, "200", &["Author A"])]),
+    );
+    backend.0.calls.lock().unwrap().clear();
+    service
+        .discovery_start_unfinished(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let complete = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&complete).state, DiscoveryRangeState::Complete);
+    assert_eq!(
+        jm_range(&complete).completed_queries,
+        ["Query One", "Query Two"]
+    );
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        [
+            key(Source::Jm, "Query One", 1),
+            key(Source::Jm, "Query Two", 1)
+        ]
+    );
+    assert_eq!(complete.records.len(), 22);
 }

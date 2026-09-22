@@ -24,6 +24,10 @@ export function authorQueryError(name: string): string | null {
 }
 
 export function authorQueryMessage(code: unknown): string | null {
+  if (code === "AUTHOR_QUERY_POLICY_CHANGED")
+    return "该来源的作者查询词已更新，历史结果已保留；下次检查会重读这个来源的完整目录。";
+  if (code === "DISCOVERY_POLICY_CHANGED")
+    return "作者查询设置在检查期间发生变化，已读结果保留；请重新开始检查以使用最新设置。";
   if (code === "AUTHOR_QUERY_PLACEHOLDER")
     return "作者名是缺失信息的占位值，本次未发送查询。请使用真实作者署名。";
   if (code === "AUTHOR_QUERY_TOO_BROAD")

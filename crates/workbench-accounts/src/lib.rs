@@ -72,6 +72,15 @@ pub struct QueryResult {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AuthorQueryPolicyResult {
+    pub session_id: String,
+    pub revision: u64,
+    #[serde(flatten)]
+    pub policy: workbench_storage::AuthorQueryPolicy,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RankOptionsResult {
     pub source: Source,
     pub session_id: String,

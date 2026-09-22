@@ -4,7 +4,11 @@ import { initialPreferences } from "../src/preferences.ts";
 import { emptyLibrary } from "../src/library-types.ts";
 import type { DiscoverySnapshot } from "../src/completion-types.ts";
 import type { DownloadInventorySnapshot } from "../src/download-types.ts";
-import type { AccountSummary, SourceWork } from "../src/source-types.ts";
+import type {
+  AccountSummary,
+  SourceWork,
+  AuthorQueryPolicy,
+} from "../src/source-types.ts";
 
 // Synthetic desktop IPC only. No real source, credentials, files or downloads.
 declare global {
@@ -16,6 +20,7 @@ declare global {
       otherRecords: DiscoverySnapshot["records"];
       inventory: DownloadInventorySnapshot;
       searchRecords: SourceWork[];
+      authorPolicies: AuthorQueryPolicy[];
       hold: boolean;
       release?: () => void;
       readFailure: string | null;
@@ -144,6 +149,7 @@ async function install(page: Page) {
         otherRecords: [],
         inventory,
         searchRecords: structuredClone(works),
+        authorPolicies: [],
         hold: false,
         readFailure: null,
         cancelFailure: null,
@@ -169,6 +175,23 @@ async function install(page: Page) {
               return clone(hooks.inventory);
             }
             if (command === "source_accounts") return clone(hooks.accounts);
+            if (command === "source_author_policy") {
+              const policy = hooks.authorPolicies.find(
+                (item) =>
+                  item.source === args.source && item.author === args.author,
+              );
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                revision: 0,
+                author: args.author,
+                queries: [args.author],
+                verifiedAliases: [],
+                exactCredits: [],
+                queryFingerprint: "a".repeat(64),
+                ...(policy ? structuredClone(policy) : {}),
+              };
+            }
             if (command === "jm_download_read")
               return { revision: 0, tasks: [] };
             if (command === "jm_download_batch_cancel") return null;
@@ -1495,6 +1518,117 @@ test("a placeholder prevents an all-owned author claim and has no download contr
   await expect(page.getByTestId("completion-counts")).toContainText(
     "其他关键词结果（未确认作者归属）",
   );
+});
+
+test("saved author policies reclassify cached other results without source IO and stay source scoped", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const hooks = window.authorTest;
+    hooks.view.records[0].work.authors = ["ReviewedAlias"];
+    hooks.view.records[1].work.authors = ["DifferentWriter"];
+    hooks.view.records[2].work.authors = ["ReviewedAlias"];
+    hooks.view.authorPolicies = [
+      {
+        source: "JM",
+        author: "合成作者",
+        queries: ["合成作者"],
+        verifiedAliases: ["ReviewedAlias"],
+        exactCredits: [],
+        queryFingerprint: "a".repeat(64),
+      },
+    ];
+  });
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "作者作品 1 条",
+  );
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "其他关键词结果 2 条",
+  );
+  await page.getByRole("button", { name: "全部 1", exact: true }).click();
+  await expect(page.getByTestId("author-update-JM:123")).toBeVisible();
+  await expect(
+    page.getByTestId("author-update-Pica:0123456789abcdef01234567"),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "查看其他关键词结果", exact: true })
+    .click();
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /^(source_query|source_author_policy|discovery_start|discovery_start_unfinished)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+  expect(await page.evaluate(() => window.authorTest.view.records.length)).toBe(
+    3,
+  );
+});
+
+test("ad-hoc author search applies source-specific policies across every term and preserves displayed author identity", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const hooks = window.authorTest;
+    hooks.searchRecords[0].authors = ["Studio (ReviewedAlias)"];
+    hooks.searchRecords[1].authors = ["DifferentWriter"];
+    hooks.searchRecords[2].authors = ["ReviewedPicaAlias"];
+    hooks.authorPolicies = [
+      {
+        source: "JM",
+        author: "新作者",
+        queries: ["Reviewed～Alias", "ReviewedAlias"],
+        verifiedAliases: ["ReviewedAlias"],
+        exactCredits: [],
+        queryFingerprint: "a".repeat(64),
+      },
+      {
+        source: "Pica",
+        author: "新作者",
+        queries: ["Reviewed Pica Alias"],
+        verifiedAliases: ["ReviewedPicaAlias"],
+        exactCredits: [],
+        queryFingerprint: "b".repeat(64),
+      },
+    ];
+  });
+  await page.getByTestId("nav-author-search").click();
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
+  await page.getByRole("button", { name: "搜索两站作品" }).click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完 · 已记录 2 条",
+  );
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "其他关键词结果 1 条",
+  );
+  await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
+    "新作者",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "source_query")
+        .map((call) => [call.args.source, call.args.query, call.args.page]),
+    ),
+  ).toEqual([
+    ["JM", "Reviewed～Alias", 1],
+    ["JM", "Reviewed～Alias", 2],
+    ["JM", "ReviewedAlias", 1],
+    ["JM", "ReviewedAlias", 2],
+    ["Pica", "Reviewed Pica Alias", 1],
+  ]);
+  await page.getByRole("button", { name: "全部 2", exact: true }).click();
+  await expect(page.getByTestId("author-update-JM:123")).toBeVisible();
+  await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
+  await expect(
+    page.getByTestId("author-update-Pica:0123456789abcdef01234567"),
+  ).toBeVisible();
 });
 
 test("ad-hoc author search classifies every source page, retaining unrelated results for inspection", async ({

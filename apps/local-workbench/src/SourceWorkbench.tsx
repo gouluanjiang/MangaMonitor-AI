@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { SourceIssues } from "./SourceIssues.tsx";
-import { jmSearchScopeNote, readCompleteSearch } from "./source-search.ts";
+import {
+  jmSearchScopeNote,
+  readCompleteSearch,
+  readCompleteAuthorSearch,
+} from "./source-search.ts";
+import type { SearchProgress } from "./source-search.ts";
 import { authorQueryError } from "./author-query.ts";
 import { partitionAuthorWorks } from "./author-evidence.ts";
 import { downloadSelectionLimit } from "./download-types.ts";
@@ -26,6 +31,7 @@ import type {
   SourceScope,
   SourceWork,
   SourceItemIssue,
+  AuthorQueryPolicy,
 } from "./source-types.ts";
 import {
   accountScope,
@@ -352,6 +358,12 @@ export function SourceWorkbench({
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const [searchComplete, setSearchComplete] = useState(false);
+  const [searchPolicy, setSearchPolicy] = useState<AuthorQueryPolicy>();
+  const [queryProgress, setQueryProgress] = useState<{
+    index: number;
+    count: number;
+    page: number;
+  }>();
   const [searchReadAt, setSearchReadAt] = useState<number | null>(null);
   const searchRecords = useRef(0);
   const searchIssues = useRef<SourceItemIssue[]>([]);
@@ -729,6 +741,10 @@ export function SourceWorkbench({
   ) {
     const captured = currentScope.current;
     if (!captured) return;
+    if (asAuthor) {
+      page = 1;
+      append = false;
+    }
     const request = ++listRequest.current;
     lastListQuery.current = { kind, query: value, folderId };
     lastRead.current = { kind, query: value, folderId, page, append };
@@ -736,6 +752,8 @@ export function SourceWorkbench({
     setError("");
     setSearchComplete(false);
     if (!append) {
+      setSearchPolicy(undefined);
+      setQueryProgress(undefined);
       setShowOtherAuthorResults(false);
       searchRecords.current = 0;
       searchIssues.current = [];
@@ -749,31 +767,48 @@ export function SourceWorkbench({
     try {
       const queryError = asAuthor ? authorQueryError(value) : null;
       if (queryError) throw new SourceError(queryError);
-      await readCompleteSearch(adapter, captured, value, {
-        current,
-        fromPage: page,
-        items: append ? itemsRef.current : [],
-        recordsRead: searchRecords.current,
-        issues: append ? searchIssues.current : [],
-        onPage: (progress) => {
-          searchRecords.current = progress.recordsRead;
-          searchIssues.current = progress.issues;
-          setSearchIssueView(progress.issues);
-          itemsRef.current = progress.items;
-          setItems(progress.items);
-          setPageInfo(progress.page);
-          setSearchComplete(progress.complete);
-          setSearchReadAt(Date.now());
-          lastRead.current = {
-            kind,
-            query: value,
-            folderId,
-            page: progress.page.page + 1,
-            append: true,
-          };
-          notifyWorks.current(captured, progress.items.slice(-1000));
-        },
-      });
+      const onPage = (progress: SearchProgress) => {
+        searchRecords.current = progress.recordsRead;
+        searchIssues.current = progress.issues;
+        setSearchIssueView(progress.issues);
+        itemsRef.current = progress.items;
+        setItems(progress.items);
+        setPageInfo(progress.page);
+        setSearchComplete(progress.complete);
+        setSearchReadAt(Date.now());
+        setQueryProgress(
+          progress.queryIndex
+            ? {
+                index: progress.queryIndex,
+                count: progress.queryCount ?? 1,
+                page: progress.queryPage ?? progress.page.page,
+              }
+            : undefined,
+        );
+        lastRead.current = {
+          kind,
+          query: value,
+          folderId,
+          page: asAuthor ? 1 : progress.page.page + 1,
+          append: !asAuthor,
+        };
+        notifyWorks.current(captured, progress.items.slice(-1000));
+      };
+      if (asAuthor)
+        await readCompleteAuthorSearch(adapter, captured, value, {
+          current,
+          onPolicy: setSearchPolicy,
+          onPage,
+        });
+      else
+        await readCompleteSearch(adapter, captured, value, {
+          current,
+          fromPage: page,
+          items: append ? itemsRef.current : [],
+          recordsRead: searchRecords.current,
+          issues: append ? searchIssues.current : [],
+          onPage,
+        });
     } catch (cause) {
       if (current()) {
         if (
@@ -996,9 +1031,9 @@ export function SourceWorkbench({
   const authorResults = useMemo(
     () =>
       authorQuery
-        ? partitionAuthorWorks(items, lastListQuery.current.query)
+        ? partitionAuthorWorks(items, lastListQuery.current.query, searchPolicy)
         : { confirmed: [], other: [] },
-    [items, authorQuery],
+    [items, authorQuery, searchPolicy],
   );
   const authorKeys = new Set(authorResults.confirmed.map(sourceWorkKey));
   const browsingWorks =
@@ -1987,6 +2022,14 @@ export function SourceWorkbench({
                   className="source-notice"
                   data-testid="source-author-evidence"
                 >
+                  {searchPolicy &&
+                    (searchPolicy.queries.length > 1 ||
+                      searchPolicy.queries[0] !== searchPolicy.author) && (
+                      <p className="source-muted">
+                        网站检索词：{searchPolicy.queries.join(" / ")}
+                        ；各词分页读完后合并同一来源编号。
+                      </p>
+                    )}
                   <p>
                     作者作品 {authorResults.confirmed.length} 部 ·
                     其他关键词结果 {authorResults.other.length}{" "}
@@ -2208,7 +2251,11 @@ export function SourceWorkbench({
                 </div>
               )}
               {loading && (
-                <p role="status">正在读取第 {lastRead.current.page} 页…</p>
+                <p role="status">
+                  {queryProgress && queryProgress.count > 1
+                    ? `正在读取检索词 ${queryProgress.index} / ${queryProgress.count} · 第 ${queryProgress.page} 页…`
+                    : `正在读取第 ${queryProgress?.page ?? lastRead.current.page} 页…`}
+                </p>
               )}
               {!loading && !error && !visible.length && (
                 <div className="source-empty" data-testid="source-empty">

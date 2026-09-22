@@ -16,6 +16,55 @@ import {
 
 const scope = { source: "JM", sessionId: "synthetic-session" };
 
+test("author policy IPC preserves original query spellings and validates the exact source and author", async () => {
+  const calls = [];
+  const policy = {
+    ...scope,
+    revision: 3,
+    author: "Displayed Writer",
+    queries: ["Writer～ Name", "Writer Name"],
+    verifiedAliases: ["WriterName"],
+    exactCredits: ["WriterName & Collaborator"],
+    queryFingerprint: "a".repeat(64),
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return structuredClone(policy);
+    },
+  });
+  const result = await adapter.authorPolicy(scope, policy.author);
+  assert.deepEqual(calls, [
+    {
+      command: "source_author_policy",
+      args: { ...scope, author: policy.author },
+    },
+  ]);
+  assert.deepEqual(result.queries, policy.queries);
+  assert.deepEqual(result.verifiedAliases, policy.verifiedAliases);
+  assert.deepEqual(result.exactCredits, policy.exactCredits);
+  for (const broken of [
+    { source: "Pica" },
+    { sessionId: "replaced-session" },
+    { author: "Another Writer" },
+    { revision: -1 },
+    { queryFingerprint: "not-a-sha256" },
+    { queries: [] },
+    { queries: [" "] },
+    { queries: ["Writer\nInjected"] },
+    { queries: ["One", "Two", "Three", "Four", "Five"] },
+    { queries: ["Writer", "Writer"] },
+    { verifiedAliases: Array.from({ length: 17 }, (_, i) => "Alias " + i) },
+  ]) {
+    const invalid = createSourceAdapter({
+      native: true,
+      invoke: async () => ({ ...policy, ...broken }),
+    });
+    await assert.rejects(invalid.authorPolicy(scope, policy.author));
+  }
+});
+
 test("catalog IPC preserves scope/reverse and rejects malformed terminal snapshots", async () => {
   const snapshot = {
     items: [work()],

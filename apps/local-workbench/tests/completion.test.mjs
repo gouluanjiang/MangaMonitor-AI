@@ -5,10 +5,14 @@ import {
   validateDiscoverySnapshot,
   validateDiscoveryProgress,
   unfinishedRangeMessage,
+  authorCatalogAt,
 } from "../src/completion-runtime.ts";
 import { discoveryRecordLimit } from "../src/completion-types.ts";
 import { createAuthorSearchAdapter } from "../src/author-search.ts";
-import { readCompleteSearch } from "../src/source-search.ts";
+import {
+  readCompleteSearch,
+  readCompleteAuthorSearch,
+} from "../src/source-search.ts";
 import { authorQueryError } from "../src/author-query.ts";
 import { partitionAuthorRecords } from "../src/author-evidence.ts";
 import { validateSourceWork } from "../src/source-runtime.ts";
@@ -37,6 +41,274 @@ const empty = () => ({
   run: null,
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+const defaultAuthorPolicy = async (scope, author) => ({
+  ...scope,
+  revision: 0,
+  author,
+  queries: [author],
+  verifiedAliases: [],
+  exactCredits: [],
+  queryFingerprint: "a".repeat(64),
+});
+
+test("catalog coverage follows current query baselines without deleting historical dates", async () => {
+  const policy = {
+    ...(await defaultAuthorPolicy(scopes[0], "Writer")),
+    queries: ["Writer", "WriterAlias"],
+  };
+  const range = {
+    author: "Writer",
+    source: "JM",
+    state: "partial",
+    lastCompleteAt: 100,
+    errorCode: "SOURCE_TIMEOUT",
+  };
+  assert.equal(
+    authorCatalogAt(range),
+    100,
+    "legacy historical catalog remains known",
+  );
+  assert.equal(
+    authorCatalogAt(range, [policy]),
+    null,
+    "changed query set is not covered by old time",
+  );
+  range.queryFingerprint = policy.queryFingerprint;
+  range.queryBaselines = [
+    { query: "Writer", baseline: { establishedAt: 100 } },
+  ];
+  assert.equal(authorCatalogAt(range, [policy]), null);
+  range.queryBaselines.push({
+    query: "WriterAlias",
+    baseline: { establishedAt: 200 },
+  });
+  range.lastCompleteAt = null;
+  assert.equal(
+    authorCatalogAt(range, [policy]),
+    100,
+    "queries completed at different times establish catalog coverage",
+  );
+  assert.equal(
+    authorCatalogAt(range, [{ ...policy, queryFingerprint: "b".repeat(64) }]),
+    null,
+  );
+});
+
+test("author search preserves raw source spellings, reads every term and deduplicates overlap only after traversal", async () => {
+  const calls = [],
+    seen = [],
+    policies = [];
+  const queries = ["Writer～ Name", "Writer Name"];
+  await readCompleteAuthorSearch(
+    {
+      authorPolicy: async (scope, author) => ({
+        ...(await defaultAuthorPolicy(scope, author)),
+        queries,
+        verifiedAliases: ["WriterName"],
+      }),
+      query: async (scope, request) => {
+        calls.push([request.query, request.page]);
+        const ids = request.query === queries[0] ? [1, 2] : [2, 3];
+        return {
+          ...scope,
+          items: [work(scope.source, ids[request.page - 1])],
+          page: request.page,
+          total: 2,
+          pages: 2,
+          hasMore: request.page < 2,
+          folders: [],
+        };
+      },
+    },
+    scopes[0],
+    "Displayed Writer",
+    {
+      current: () => true,
+      onPolicy: (policy) => policies.push(policy),
+      onPage: (progress) => seen.push(progress),
+    },
+  );
+  assert.equal(policies.length, 1);
+  assert.deepEqual(calls, [
+    [queries[0], 1],
+    [queries[0], 2],
+    [queries[1], 1],
+    [queries[1], 2],
+  ]);
+  assert.deepEqual(
+    seen.map((p) => p.complete),
+    [false, false, false, true],
+  );
+  assert.deepEqual(
+    seen.at(-1).items.map((item) => item.workId),
+    ["1", "2", "3"],
+  );
+  assert.equal(
+    seen.at(-1).page.total,
+    null,
+    "overlapping source totals are not an exact work total",
+  );
+  assert.equal(seen.at(-1).page.pages, null);
+  assert.equal(seen.at(-1).queryIndex, 2);
+  assert.equal(seen.at(-1).queryCount, 2);
+});
+
+test("a failed later query retains earlier results but never claims the full author range complete", async () => {
+  const seen = [];
+  await assert.rejects(
+    readCompleteAuthorSearch(
+      {
+        authorPolicy: async (scope, author) => ({
+          ...(await defaultAuthorPolicy(scope, author)),
+          queries: ["Writer", "Other spelling"],
+        }),
+        query: async (scope, request) => {
+          if (request.query === "Other spelling")
+            throw new Error("synthetic source failure");
+          return {
+            ...scope,
+            items: [work(scope.source, 1)],
+            page: 1,
+            total: 1,
+            pages: 1,
+            hasMore: false,
+            folders: [],
+          };
+        },
+      },
+      scopes[0],
+      "Writer",
+      {
+        current: () => true,
+        onPolicy() {},
+        onPage: (progress) => seen.push(progress),
+      },
+    ),
+  );
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].complete, false);
+  assert.deepEqual(
+    seen[0].items.map((item) => item.workId),
+    ["1"],
+  );
+});
+
+test("a later query with missing author metadata cannot erase the same work's earlier explicit credit", async () => {
+  const seen = [];
+  await readCompleteAuthorSearch(
+    {
+      authorPolicy: async (scope, author) => ({
+        ...(await defaultAuthorPolicy(scope, author)),
+        queries: ["Writer", "Other spelling"],
+      }),
+      query: async (scope, request) => ({
+        ...scope,
+        items: [
+          {
+            ...work(scope.source, 1),
+            authors: request.query === "Writer" ? ["Writer"] : [],
+          },
+        ],
+        page: 1,
+        total: 1,
+        pages: 1,
+        hasMore: false,
+        folders: [],
+      }),
+    },
+    scopes[0],
+    "Writer",
+    {
+      current: () => true,
+      onPolicy() {},
+      onPage: (progress) => seen.push(progress),
+    },
+  );
+  assert.equal(seen.at(-1).complete, true);
+  assert.equal(seen.at(-1).items.length, 1);
+  assert.deepEqual(seen.at(-1).items[0].authors, ["Writer"]);
+});
+
+test("cancel between complete query terms stops the next query and keeps the combined range incomplete", async () => {
+  const calls = [],
+    seen = [];
+  let current = true;
+  await readCompleteAuthorSearch(
+    {
+      authorPolicy: async (scope, author) => ({
+        ...(await defaultAuthorPolicy(scope, author)),
+        queries: ["Writer", "Other spelling"],
+      }),
+      query: async (scope, request) => {
+        calls.push(request.query);
+        return {
+          ...scope,
+          items: [work(scope.source, 1)],
+          page: 1,
+          total: 1,
+          pages: 1,
+          hasMore: false,
+          folders: [],
+        };
+      },
+    },
+    scopes[0],
+    "Writer",
+    {
+      current: () => current,
+      onPolicy() {},
+      onPage(progress) {
+        seen.push(progress);
+        current = false;
+      },
+    },
+  );
+  assert.deepEqual(calls, ["Writer"]);
+  assert.equal(seen[0].complete, false);
+});
+
+test("isolated rows from multiple query terms preserve each original source position and query", async () => {
+  const seen = [];
+  await readCompleteAuthorSearch(
+    {
+      authorPolicy: async (scope, author) => ({
+        ...(await defaultAuthorPolicy(scope, author)),
+        queries: ["Writer", "Other spelling"],
+      }),
+      query: async (scope, request) => ({
+        ...scope,
+        items: [],
+        page: 1,
+        pages: 1,
+        total: 1,
+        hasMore: false,
+        folders: [],
+        issues: [
+          { page: 1, index: 1, workId: null, code: "SOURCE_ITEM_INVALID" },
+        ],
+      }),
+    },
+    scopes[0],
+    "Writer",
+    {
+      current: () => true,
+      onPolicy() {},
+      onPage: (progress) => seen.push(progress),
+    },
+  );
+  assert.equal(
+    seen.at(-1).complete,
+    true,
+    "pagination completion does not clear isolated issue evidence",
+  );
+  assert.deepEqual(
+    seen.at(-1).issues.map((issue) => [issue.query, issue.page, issue.index]),
+    [
+      ["Writer", 1, 1],
+      ["Other spelling", 1, 1],
+    ],
+  );
+});
 
 test("progress validates metadata without traversing catalog records and rejects replaced sessions", async () => {
   const raw = { ...empty(), recordCount: 400000, otherRecordCount: 350000 };
@@ -76,6 +348,110 @@ test("progress validates metadata without traversing catalog records and rejects
   assert.deepEqual(calls, [
     { command: "discovery_progress", args: { scopes } },
   ]);
+});
+
+test("discovery contracts keep legacy baselines readable and carry per-query baselines and source-specific attribution policies", () => {
+  const baseline = {
+    queryVersion: 1,
+    headIds: ["123"],
+    total: 1,
+    establishedAt: 10,
+  };
+  const range = {
+    author: "Displayed Writer",
+    source: "JM",
+    state: "complete",
+    lastAttemptAt: 10,
+    lastCompleteAt: 10,
+    lastCheckedAt: 10,
+    lastCheckMode: "full",
+    observedCount: 1,
+    pagesRead: 1,
+    errorCode: null,
+    baseline,
+  };
+  const old = validateDiscoverySnapshot(
+    { ...empty(), authors: [range] },
+    scopes,
+  );
+  assert.deepEqual(old.authors[0].baseline, baseline);
+  assert.deepEqual(old.authorPolicies, []);
+  const policy = {
+    source: "JM",
+    author: range.author,
+    queries: ["Writer～"],
+    verifiedAliases: ["Writer"],
+    exactCredits: ["WriterCollaborator"],
+    queryFingerprint: "a".repeat(64),
+  };
+  const current = validateDiscoverySnapshot(
+    {
+      ...empty(),
+      authorPolicies: [policy],
+      authors: [
+        {
+          ...range,
+          queryFingerprint: policy.queryFingerprint,
+          queryBaselines: [{ query: "Writer～", baseline }],
+        },
+      ],
+    },
+    scopes,
+  );
+  assert.deepEqual(current.authorPolicies, [policy]);
+  assert.equal(current.authors[0].queryFingerprint, policy.queryFingerprint);
+  assert.deepEqual(current.authors[0].queryBaselines, [
+    { query: "Writer～", baseline },
+  ]);
+  for (const changed of [
+    { queryFingerprint: "invalid" },
+    { queryFingerprint: null },
+    { queryBaselines: [{ query: "", baseline }] },
+    {
+      queryBaselines: [
+        { query: "Writer～", baseline },
+        { query: "Writer～", baseline },
+      ],
+    },
+  ])
+    assert.throws(() =>
+      validateDiscoverySnapshot(
+        { ...current, authors: [{ ...current.authors[0], ...changed }] },
+        scopes,
+      ),
+    );
+  const partial = validateDiscoverySnapshot(
+    {
+      ...current,
+      authors: [
+        {
+          ...current.authors[0],
+          state: "partial",
+          baseline: null,
+          errorCode: "SOURCE_ITEMS_PARTIAL",
+          pagesRead: 2,
+          issueCount: 1,
+          pagesComplete: true,
+          issueSamples: [
+            {
+              query: "Another spelling",
+              page: 1,
+              index: 1,
+              workId: null,
+              code: "SOURCE_ITEM_INVALID",
+            },
+          ],
+        },
+      ],
+    },
+    scopes,
+  );
+  assert.equal(partial.authors[0].state, "partial");
+  assert.deepEqual(
+    partial.authors[0].queryBaselines,
+    [{ query: "Writer～", baseline }],
+    "a clean term can retain its baseline while another term remains unresolved",
+  );
 });
 
 test("cold keyword results require an explicit local read and legacy snapshots retain their complete records", async () => {
@@ -216,6 +592,7 @@ test("author query eligibility rejects placeholder and broad initials without re
 test("ad-hoc author search blocks broad queries before IO and preserves the previous complete result", async () => {
   const calls = [];
   const adapter = createAuthorSearchAdapter({
+    authorPolicy: defaultAuthorPolicy,
     query: async (scope, query) => {
       calls.push(query.query);
       return {
@@ -571,6 +948,7 @@ test("a bad later-page record is isolated while every valid author work is prese
   const calls = [],
     pageSizes = [];
   const adapter = createAuthorSearchAdapter({
+    authorPolicy: defaultAuthorPolicy,
     query: async (scope, query) => {
       calls.push([scope.source, query.page]);
       const count = scope.source === "JM" ? (query.page === 1 ? 80 : 70) : 0;
@@ -726,6 +1104,7 @@ test("a new isolated row cannot disguise repeated normal identities on a later s
 test("ad-hoc author lookup needs no following and visits both sources even when one fails", async () => {
   const calls = [];
   const adapter = createAuthorSearchAdapter({
+    authorPolicy: defaultAuthorPolicy,
     query: async (scope, query) => {
       calls.push([scope.source, query.page]);
       if (scope.source === "JM" && query.page === 2)
@@ -772,6 +1151,7 @@ test("cancellation and account changes reject late search responses and stop fur
   let release,
     count = 0;
   const adapter = createAuthorSearchAdapter({
+    authorPolicy: defaultAuthorPolicy,
     query: async (scope, query) => {
       count++;
       await new Promise((resolve) => {
@@ -789,12 +1169,14 @@ test("cancellation and account changes reject late search responses and stop fur
     },
   });
   const started = await adapter.start(scopes, ["Writer"]);
+  await flush();
   await adapter.cancel(started.run.id);
   release();
   await flush();
   assert.equal(count, 1);
   assert.equal((await adapter.read(scopes)).records.length, 0);
   await adapter.start(scopes, ["Writer"]);
+  await flush();
   const newScopes = [{ ...scopes[0], sessionId: "new-account" }, scopes[1]];
   await adapter.read(newScopes);
   release();

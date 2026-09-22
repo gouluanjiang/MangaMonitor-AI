@@ -292,3 +292,18 @@ pub(super) async fn source_rank_options<R: Runtime>(
         .ranking_options(source, &session_id)
         .await
 }
+
+#[tauri::command]
+pub(super) async fn source_author_policy<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    source: Source,
+    session_id: String,
+    author: String,
+) -> Result<workbench_accounts::AuthorQueryPolicyResult, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .author_query_policy(source, &session_id, &author)
+        .await
+}

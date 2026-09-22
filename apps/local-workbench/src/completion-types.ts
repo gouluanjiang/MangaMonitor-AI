@@ -3,6 +3,7 @@ import type {
   SourceScope,
   SourceWork,
   SourceItemIssue,
+  AuthorQueryPolicy,
 } from "./source-types.ts";
 export type ScanPhase =
   "checking" | "complete" | "partial" | "cancelled" | "error";
@@ -27,6 +28,8 @@ export interface DiscoveryRun {
   storageWarningCode?: string | null;
   mode?: DiscoveryMode;
   currentStrategy?: DiscoveryMode | null;
+  currentQueryIndex?: number | null;
+  currentQueryCount?: number | null;
 }
 export interface DiscoverySnapshot {
   scopes: SourceScope[];
@@ -34,6 +37,7 @@ export interface DiscoverySnapshot {
   run: DiscoveryRun | null;
   otherRecordCount?: number;
   includesOther?: boolean;
+  authorPolicies?: AuthorQueryPolicy[];
   authors: {
     author: string;
     source: Source;
@@ -43,6 +47,9 @@ export interface DiscoverySnapshot {
     lastCheckedAt?: number | null;
     lastCheckMode?: DiscoveryMode | null;
     baseline?: DiscoveryBaseline | null;
+    queryFingerprint?: string | null;
+    queryBaselines?: { query: string; baseline: DiscoveryBaseline }[];
+    completedQueries?: string[];
     observedCount: number;
     pagesRead: number;
     errorCode: string | null;

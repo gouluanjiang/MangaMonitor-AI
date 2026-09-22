@@ -15,12 +15,12 @@ use std::{
 use workbench_credentials::Vault;
 pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
-    discovery_author_is_valid, discovery_record_matches_author, DiscoveryAccount,
-    DiscoveryAuthorRange, DiscoveryBaseline, DiscoveryDocument, DiscoveryItemIssue,
-    DiscoveryItemIssueCode, DiscoveryPagePatch, DiscoveryRangeState, DiscoveryRecord,
-    DiscoveryWork, Document, WorkbenchStore, MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS,
-    MAX_DISCOVERY_ISSUE_SAMPLES, MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RAW_RECORDS,
-    MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
+    discovery_author_is_valid, discovery_record_matches_author, AuthorQueryDocument,
+    AuthorQueryPolicy, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline,
+    DiscoveryDocument, DiscoveryItemIssue, DiscoveryItemIssueCode, DiscoveryPagePatch,
+    DiscoveryQueryBaseline, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, Document,
+    WorkbenchStore, MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_ISSUE_SAMPLES,
+    MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RAW_RECORDS, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
 };
 
 const DISCOVERY_QUERY_VERSION: u32 = 1;
@@ -86,6 +86,8 @@ pub struct DiscoveryRun {
     pub current_author: Option<String>,
     pub current_source: Option<Source>,
     pub current_page: u64,
+    pub current_query_index: Option<usize>,
+    pub current_query_count: Option<usize>,
     pub requests_used: u64,
     pub completed_scopes: usize,
     pub total_scopes: usize,
@@ -100,6 +102,7 @@ pub struct DiscoverySnapshot {
     pub revision: u64,
     pub run: Option<DiscoveryRun>,
     pub authors: Vec<DiscoveryAuthorRange>,
+    pub author_policies: Vec<AuthorQueryPolicy>,
     pub records: Vec<DiscoveryRecord>,
     pub other_record_count: usize,
     pub includes_other: bool,
@@ -113,6 +116,7 @@ pub struct DiscoveryProgress {
     pub revision: u64,
     pub run: Option<DiscoveryRun>,
     pub authors: Vec<DiscoveryAuthorRange>,
+    pub author_policies: Vec<AuthorQueryPolicy>,
     pub record_count: usize,
     pub other_record_count: usize,
 }
@@ -124,6 +128,7 @@ impl From<&DiscoverySnapshot> for DiscoveryProgress {
             revision: snapshot.revision,
             run: snapshot.run.clone(),
             authors: snapshot.authors.clone(),
+            author_policies: snapshot.author_policies.clone(),
             record_count: snapshot.records.len()
                 + if snapshot.includes_other {
                     0
@@ -155,6 +160,8 @@ pub(crate) struct DiscoveryContext {
     pub identities: [DiscoveryIdentity; 2],
     pub root: PathBuf,
     pub following_revision: u64,
+    pub policy_revision: u64,
+    policies: HashMap<workbench_storage::Source, HashMap<String, AuthorQueryPolicy>>,
     pub authors: Vec<String>,
     pub account_key: String,
 }
@@ -164,6 +171,7 @@ impl DiscoveryContext {
         identities: [DiscoveryIdentity; 2],
         root: PathBuf,
         following: Document<workbench_storage::AccountFollowing>,
+        policies: Document<AuthorQueryDocument>,
     ) -> Self {
         let mut digest = Sha256::new();
         digest.update(b"discovery-pair-v1\0");
@@ -175,10 +183,13 @@ impl DiscoveryContext {
             identities,
             root,
             following_revision: following.revision,
+            policy_revision: policies.revision,
+            policies: HashMap::new(),
             authors: vec![],
             account_key: format!("{:x}", digest.finalize()),
         };
         result.authors = result.followed_authors(&following.value);
+        result.set_policies(&policies);
         result
     }
 
@@ -201,6 +212,61 @@ impl DiscoveryContext {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
+    }
+
+    fn set_policies(&mut self, document: &Document<AuthorQueryDocument>) {
+        self.policy_revision = document.revision;
+        self.policies.clear();
+        for identity in &self.identities {
+            let source = storage_source(identity.scope.source);
+            self.policies.insert(
+                source,
+                self.authors
+                    .iter()
+                    .map(|author| {
+                        (
+                            author.clone(),
+                            document
+                                .value
+                                .resolve(source, &identity.account_key, author),
+                        )
+                    })
+                    .collect(),
+            );
+        }
+    }
+
+    fn policy(
+        &self,
+        source: workbench_storage::Source,
+        author: &str,
+    ) -> Option<&AuthorQueryPolicy> {
+        self.policies
+            .get(&source)
+            .and_then(|policies| policies.get(author))
+    }
+
+    fn author_policies(&self) -> Vec<AuthorQueryPolicy> {
+        self.authors
+            .iter()
+            .flat_map(|author| {
+                [
+                    workbench_storage::Source::Jm,
+                    workbench_storage::Source::Pica,
+                ]
+                .into_iter()
+                .filter_map(|source| self.policy(source, author).cloned())
+            })
+            .collect()
+    }
+
+    fn record_matches(&self, record: &DiscoveryRecord) -> bool {
+        record.matched_authors.iter().any(|author| {
+            self.policy(record.work.source, author)
+                .is_some_and(|policy| {
+                    policy_error(policy).is_none() && policy.matches_credits(&record.work.authors)
+                })
+        })
     }
 
     fn scopes(&self) -> Vec<DiscoveryScope> {
@@ -285,6 +351,28 @@ fn now() -> Result<u64> {
         .ok_or_else(unavailable)
 }
 
+fn policy_error(policy: &AuthorQueryPolicy) -> Option<&'static str> {
+    policy
+        .queries
+        .iter()
+        .find_map(|query| author_query_error(query))
+}
+
+fn invalidate_changed_query(range: &mut DiscoveryAuthorRange, policy: &AuthorQueryPolicy) {
+    let unchanged = match &range.query_fingerprint {
+        Some(fingerprint) => fingerprint == &policy.query_fingerprint,
+        None => policy.is_original_query(),
+    };
+    if !unchanged {
+        range.state = DiscoveryRangeState::Partial;
+        range.error_code = Some("AUTHOR_QUERY_POLICY_CHANGED".into());
+        range.baseline = None;
+        range.query_baselines.clear();
+        range.completed_queries.clear();
+        range.pages_complete = false;
+    }
+}
+
 fn idle(author: &str, source: Source) -> DiscoveryAuthorRange {
     DiscoveryAuthorRange {
         author: author.into(),
@@ -295,6 +383,9 @@ fn idle(author: &str, source: Source) -> DiscoveryAuthorRange {
         last_checked_at: None,
         last_check_mode: None,
         baseline: None,
+        query_fingerprint: None,
+        query_baselines: vec![],
+        completed_queries: vec![],
         observed_count: 0,
         pages_read: 0,
         error_code: None,
@@ -327,6 +418,9 @@ fn project_view(
                 .get(&(author.as_str(), storage_source(source)))
                 .map(|range| (**range).clone())
                 .unwrap_or_else(|| idle(author, source));
+            if let Some(policy) = context.policy(range.source, author) {
+                invalidate_changed_query(&mut range, policy);
+            }
             // No persisted job is resumed just because a document was opened.
             if range.state == DiscoveryRangeState::Checking {
                 range.state = DiscoveryRangeState::Partial;
@@ -340,6 +434,7 @@ fn project_view(
         revision: document.revision,
         run: None,
         authors,
+        author_policies: context.author_policies(),
         records: account
             .map(|account| {
                 account
@@ -365,49 +460,58 @@ fn project_view(
         other_record_count: 0,
         includes_other: include_other,
     };
-    project_author_query_guards(&mut snapshot);
+    project_author_query_guards(context, &mut snapshot);
     snapshot.other_record_count = snapshot
         .records
         .iter()
-        .filter(|record| !discovery_record_matches_author(record))
+        .filter(|record| !context.record_matches(record))
         .count();
     if !include_other {
-        snapshot.records.retain(discovery_record_matches_author);
+        snapshot
+            .records
+            .retain(|record| context.record_matches(record));
     }
     snapshot
 }
 
 /// Only page-sized changed records use this projection during a scan.
-fn record_counts(record: &DiscoveryRecord, followed: &HashSet<&str>) -> (usize, usize) {
+fn record_counts(
+    context: &DiscoveryContext,
+    record: &DiscoveryRecord,
+    followed: &HashSet<&str>,
+) -> (usize, usize) {
     let mut projected = record.clone();
     projected.matched_authors.retain(|author| {
-        followed.contains(author.as_str()) && author_query_error(author).is_none()
+        followed.contains(author.as_str())
+            && context
+                .policy(record.work.source, author)
+                .is_some_and(|policy| policy_error(policy).is_none())
     });
     if projected.matched_authors.is_empty() {
         (0, 0)
     } else {
-        (1, usize::from(!discovery_record_matches_author(&projected)))
+        (1, usize::from(!context.record_matches(&projected)))
     }
 }
 
 /// Hide only associations that cannot be queried as authors. Do not delete saved
 /// results: a record shared with an eligible author remains available.
-fn project_author_query_guards(snapshot: &mut DiscoverySnapshot) {
-    let blocked: HashSet<&str> = snapshot
+fn project_author_query_guards(context: &DiscoveryContext, snapshot: &mut DiscoverySnapshot) {
+    let blocked: HashSet<(workbench_storage::Source, &str)> = snapshot
         .authors
         .iter_mut()
         .filter_map(|range| {
-            let code = author_query_error(&range.author)?;
+            let code = policy_error(context.policy(range.source, &range.author)?)?;
             range.state = DiscoveryRangeState::Partial;
             range.error_code = Some(code.into());
             range.baseline = None;
-            Some(range.author.as_str())
+            Some((range.source, range.author.as_str()))
         })
         .collect();
     for record in &mut snapshot.records {
         record
             .matched_authors
-            .retain(|author| !blocked.contains(author.as_str()));
+            .retain(|author| !blocked.contains(&(record.work.source, author.as_str())));
     }
     snapshot
         .records
@@ -524,9 +628,10 @@ impl DiscoveryControl {
             identity.lease.require_current()?;
         }
         let next_revision = discovery_store_io(|| {
-            store.apply_discovery_patch_for_following(
+            store.apply_discovery_patch_for_policy(
                 revision,
                 context.following_revision,
+                Some(context.policy_revision),
                 patch.clone(),
             )
         })
@@ -563,6 +668,20 @@ impl DiscoveryControl {
                 .filter(|run| run.id == run_id)
             {
                 run.completed_scopes += 1;
+            }
+        }
+    }
+
+    fn query_position(&self, run_id: &str, index: usize, count: usize) {
+        if let Ok(mut memory) = self.memory.lock() {
+            if let Some(run) = memory
+                .snapshot
+                .as_mut()
+                .and_then(|snapshot| snapshot.run.as_mut())
+                .filter(|run| run.id == run_id)
+            {
+                run.current_query_index = Some(index);
+                run.current_query_count = Some(count);
             }
         }
     }
@@ -671,6 +790,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if following.revision != context.following_revision {
             return Err(AccountError::new("DISCOVERY_FOLLOWING_CHANGED"));
         }
+        let policies = discovery_store_io(|| {
+            WorkbenchStore::open(&context.root)?.read_author_query_policies()
+        })
+        .map_err(store_error)?;
+        if policies.revision != context.policy_revision {
+            return Err(AccountError::new("DISCOVERY_POLICY_CHANGED"));
+        }
         Ok(())
     }
 
@@ -733,10 +859,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         };
         self.discovery_validate_context(&context)?;
         let root = context.root.clone();
-        let (following, document) = tokio::task::spawn_blocking(move || {
+        let (following, policies, document) = tokio::task::spawn_blocking(move || {
             discovery_store_io(|| {
                 let store = WorkbenchStore::open(&root)?;
-                Ok((store.read_following()?, store.read_discovery()?))
+                Ok((
+                    store.read_following()?,
+                    store.read_author_query_policies()?,
+                    store.read_discovery()?,
+                ))
             })
         })
         .await
@@ -745,10 +875,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self.discovery_validate_context(&context)?;
         context.authors = context.followed_authors(&following.value);
         context.following_revision = following.revision;
+        context.set_policies(&policies);
         let mut snapshot = project_view(&context, &document, include_other);
         let mut memory = self.discovery.memory.lock().map_err(|_| unavailable())?;
         if memory.context.as_ref().is_some_and(|cached| {
-            cached.scopes() == scopes && cached.account_key == context.account_key
+            cached.scopes() == scopes
+                && cached.account_key == context.account_key
+                && cached.policy_revision == context.policy_revision
         }) {
             if let Some(current) = &memory.snapshot {
                 // A final commit may finish while the catalog is being read.
@@ -765,6 +898,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 if current.revision == snapshot.revision
                     && memory.context.as_ref().is_some_and(|cached| {
                         cached.following_revision == context.following_revision
+                            && cached.policy_revision == context.policy_revision
                     })
                 {
                     snapshot.authors = current.authors.clone();
@@ -783,6 +917,21 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     }
                 }
             }
+        }
+        if memory.active
+            && memory.context.as_ref().is_some_and(|cached| {
+                cached.scopes() == scopes && cached.policy_revision != context.policy_revision
+            })
+        {
+            snapshot.run = memory
+                .snapshot
+                .as_ref()
+                .and_then(|current| current.run.clone())
+                .map(|mut run| {
+                    run.phase = DiscoveryPhase::Error;
+                    run.error_code = Some("DISCOVERY_POLICY_CHANGED".into());
+                    run
+                });
         }
         if !memory.active {
             memory.context = Some(context);
@@ -809,11 +958,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if let Some((context, progress)) = cached {
             self.discovery_validate_context(&context)?;
             let root = context.root.clone();
-            let revision = tokio::task::spawn_blocking(move || {
+            let (revision, policy_revision) = tokio::task::spawn_blocking(move || {
                 discovery_store_io(|| {
-                    WorkbenchStore::open(&root)?
-                        .read_following()
-                        .map(|following| following.revision)
+                    let store = WorkbenchStore::open(&root)?;
+                    Ok((
+                        store.read_following()?.revision,
+                        store.read_author_query_policies()?.revision,
+                    ))
                 })
             })
             .await
@@ -822,6 +973,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             self.discovery_validate_context(&context)?;
             if revision != context.following_revision {
                 return Err(AccountError::new("DISCOVERY_FOLLOWING_CHANGED"));
+            }
+            if policy_revision != context.policy_revision {
+                return self
+                    .discovery_read_view(scopes, false)
+                    .await
+                    .map(|snapshot| DiscoveryProgress::from(&snapshot));
             }
             return Ok(progress);
         }
@@ -926,6 +1083,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             current_author: None,
             current_source: None,
             current_page: 0,
+            current_query_index: None,
+            current_query_count: None,
             requests_used: 0,
             completed_scopes: 0,
             total_scopes: ranges.len(),
@@ -985,11 +1144,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self.discovery.check(run_id)?;
         self.discovery_validate_context(context)?;
         let root = context.root.clone();
-        let revision = tokio::task::spawn_blocking(move || {
+        let (revision, policy_revision) = tokio::task::spawn_blocking(move || {
             discovery_store_io(|| {
-                WorkbenchStore::open(&root)?
-                    .read_following()
-                    .map(|document| document.revision)
+                let store = WorkbenchStore::open(&root)?;
+                Ok((
+                    store.read_following()?.revision,
+                    store.read_author_query_policies()?.revision,
+                ))
             })
         })
         .await
@@ -1000,6 +1161,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if revision != context.following_revision {
             return Err(AccountError::new("DISCOVERY_FOLLOWING_CHANGED"));
         }
+        if policy_revision != context.policy_revision {
+            return Err(AccountError::new("DISCOVERY_POLICY_CHANGED"));
+        }
         Ok(())
     }
 
@@ -1008,6 +1172,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         context: &DiscoveryContext,
         run_id: &str,
         author: &str,
+        query: &str,
         source: Source,
         page: u64,
     ) -> Result<SourcePage> {
@@ -1024,7 +1189,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     source,
                     &scope.session_id,
                     QueryKind::Search,
-                    author,
+                    query,
                     None,
                     page,
                 )
@@ -1151,7 +1316,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let (record_count, other_record_count) = document.value.accounts[index]
             .records
             .iter()
-            .map(|record| record_counts(record, &followed))
+            .map(|record| record_counts(context, record, &followed))
             .fold((0, 0), |sum, count| (sum.0 + count.0, sum.1 + count.1));
         let mut state = DiscoveryCommitState {
             store,
@@ -1164,9 +1329,20 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 .value
                 .accounts
                 .iter()
-                .flat_map(|account| &account.records)
-                .filter(|record| discovery_record_matches_author(record))
-                .count(),
+                .map(|account| {
+                    account
+                        .records
+                        .iter()
+                        .filter(|record| {
+                            if account.account_key == context.account_key {
+                                context.record_matches(record)
+                            } else {
+                                discovery_record_matches_author(record)
+                            }
+                        })
+                        .count()
+                })
+                .sum(),
         };
         let mut partial = false;
         for (author, source) in ranges {
@@ -1191,17 +1367,29 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 })
                 .map(|record| record.work.work_id.clone())
                 .collect();
+            let policy = context
+                .policy(storage_source(source), author)
+                .cloned()
+                .ok_or_else(unavailable)?;
             let range = &mut account.authors[range_index];
-            if let Some(code) = author_query_error(author) {
+            invalidate_changed_query(range, &policy);
+            let old_range = range.clone();
+            range.last_attempt_at = Some(now()?);
+            range.pages_read = 0;
+            range.issue_count = 0;
+            range.issue_samples.clear();
+            range.pages_complete = false;
+            range.observed_count = known_ids.len();
+            range.error_code = None;
+            // Retain the last successful checkpoint as historical metadata.
+            // A failed or cancelled current attempt cannot authorize its reuse.
+            range.completed_queries.clear();
+            range.query_fingerprint = Some(policy.query_fingerprint.clone());
+            if let Some(code) = policy_error(&policy) {
                 range.state = DiscoveryRangeState::Partial;
-                range.last_attempt_at = Some(now()?);
-                range.pages_read = 0;
-                range.issue_count = 0;
-                range.issue_samples.clear();
-                range.pages_complete = false;
-                range.observed_count = known_ids.len();
                 range.error_code = Some(code.into());
                 range.baseline = None;
+                range.query_baselines.clear();
                 self.discovery_save_page(
                     context,
                     run_id,
@@ -1216,25 +1404,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 self.discovery.completed_scope(run_id);
                 continue;
             }
-            // Old complete flags alone are not a checkpoint. Interrupted or
-            // failed checks deliberately rebuild a complete source range.
-            let mut boundary = IncrementalBoundary::new(mode, range, &known_ids);
-            self.discovery.strategy(
-                run_id,
-                if boundary.is_some() {
-                    DiscoveryMode::Incremental
-                } else {
-                    DiscoveryMode::Full
-                },
-            );
             range.state = DiscoveryRangeState::Checking;
-            range.last_attempt_at = Some(now()?);
-            range.pages_read = 0;
-            range.issue_count = 0;
-            range.issue_samples.clear();
-            range.pages_complete = false;
-            range.observed_count = known_ids.len();
-            range.error_code = None;
             self.discovery_save_page(
                 context,
                 run_id,
@@ -1245,133 +1415,265 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 vec![],
             )
             .await?;
-            let mut traversal = Traversal::default();
-            let mut page = 1;
-            loop {
-                let response = self
-                    .discovery_query(context, run_id, author, source, page)
-                    .await;
-                let response = match response {
-                    Ok(response) => response,
-                    Err(error) => {
-                        if stops_run(error.code) {
-                            if matches!(error.code, "SOURCE_RATE_LIMITED" | "SOURCE_ACCESS_DENIED")
-                            {
-                                let range =
-                                    &mut document.value.accounts[index].authors[range_index];
-                                range.state = DiscoveryRangeState::Partial;
-                                range.error_code = Some(error.code.into());
-                                self.discovery_save_page(
-                                    context,
-                                    run_id,
-                                    &mut document,
-                                    index,
-                                    range_index,
-                                    &mut state,
-                                    vec![],
-                                )
-                                .await?;
-                            }
-                            return Err(error);
-                        }
-                        let range = &mut document.value.accounts[index].authors[range_index];
-                        range.state = DiscoveryRangeState::Partial;
-                        range.error_code = Some(error.code.into());
-                        self.discovery_save_page(
-                            context,
-                            run_id,
-                            &mut document,
-                            index,
-                            range_index,
-                            &mut state,
-                            vec![],
-                        )
-                        .await?;
-                        partial = true;
-                        break;
-                    }
-                };
-                let complete = match traversal.append(&response) {
-                    Ok(complete) => complete,
-                    Err(error) => {
-                        let range = &mut document.value.accounts[index].authors[range_index];
-                        range.state = DiscoveryRangeState::Partial;
-                        range.error_code = Some(error.code.into());
-                        self.discovery_save_page(
-                            context,
-                            run_id,
-                            &mut document,
-                            index,
-                            range_index,
-                            &mut state,
-                            vec![],
-                        )
-                        .await?;
-                        partial = true;
-                        break;
-                    }
-                };
-                // An isolated source slot is not a safe incremental anchor.
-                // Revisit the tail and keep the scope incomplete until a later
-                // clean traversal actually obtains those missing records.
-                if !response.issues.is_empty() {
-                    boundary = None;
-                    let range = &mut document.value.accounts[index].authors[range_index];
-                    range.baseline = None;
-                    self.discovery.strategy(run_id, DiscoveryMode::Full);
-                }
-                let incremental_complete = boundary
-                    .as_mut()
-                    .is_some_and(|boundary| boundary.append(&response));
-                if complete || boundary.as_ref().is_some_and(|boundary| !boundary.viable) {
-                    self.discovery.strategy(run_id, DiscoveryMode::Full);
-                }
-                // Stage only the incoming page. Retain every prior result if
-                // the page exceeds either storage budget or validation fails.
-                let mut changed = Vec::with_capacity(response.items.len());
-                let mut record_count = state.record_count;
-                let mut other_record_count = state.other_record_count;
-                let mut confirmed_count = state.confirmed_count;
-                let mut added = 0usize;
-                for work in response.items {
-                    let verified = work.authors.iter().any(|name| name.trim() == author.trim());
-                    let incoming = DiscoveryRecord {
-                        work: discovery_work_from_source(work),
-                        matched_authors: vec![author.clone()],
-                        author_verified: verified,
-                        observed_at: now()?,
-                        scan_id: run_id.into(),
-                    };
-                    let existing = record_index
-                        .get(&(incoming.work.source, incoming.work.work_id.clone()))
-                        .map(|position| &document.value.accounts[index].records[*position]);
-                    if let Some(existing) = existing {
-                        let counts = record_counts(existing, &followed);
-                        record_count -= counts.0;
-                        other_record_count -= counts.1;
-                        confirmed_count -= usize::from(discovery_record_matches_author(existing));
-                    } else {
-                        added += 1;
-                    }
-                    let record = merged_record(existing, incoming);
-                    let counts = record_counts(&record, &followed);
-                    record_count += counts.0;
-                    other_record_count += counts.1;
-                    confirmed_count += usize::from(discovery_record_matches_author(&record));
-                    changed.push(record);
-                }
-                let current_records: usize = document
-                    .value
-                    .accounts
-                    .iter()
-                    .map(|account| account.records.len())
-                    .sum();
-                if current_records.saturating_add(added) > MAX_DISCOVERY_RAW_RECORDS
-                    || confirmed_count > MAX_DISCOVERY_RECORDS
+            let mut scope_error = None;
+            let mut all_queries_full = true;
+            let mut all_queries_reached = true;
+            for (query_index, query) in policy.queries.iter().enumerate() {
+                self.discovery
+                    .query_position(run_id, query_index + 1, policy.queries.len());
+                let mut query_range = old_range.clone();
+                if let Some(saved) = old_range.query_baselines.iter().find(|saved| {
+                    saved.query == *query
+                        && (old_range.state == DiscoveryRangeState::Complete
+                            || old_range.completed_queries.contains(query))
+                }) {
+                    query_range.baseline = Some(saved.baseline.clone());
+                    query_range.state = DiscoveryRangeState::Complete;
+                    query_range.last_complete_at = Some(saved.baseline.established_at);
+                } else if !policy.is_original_query()
+                    || old_range
+                        .query_fingerprint
+                        .as_ref()
+                        .is_some_and(|fingerprint| fingerprint != &policy.query_fingerprint)
                 {
-                    let range = &mut document.value.accounts[index].authors[range_index];
-                    range.state = DiscoveryRangeState::Partial;
-                    range.error_code = Some("DISCOVERY_LIMIT".into());
+                    query_range.baseline = None;
+                }
+                let mut boundary = IncrementalBoundary::new(mode, &query_range, &known_ids);
+                self.discovery.strategy(
+                    run_id,
+                    if boundary.is_some() {
+                        DiscoveryMode::Incremental
+                    } else {
+                        DiscoveryMode::Full
+                    },
+                );
+                let mut query_issue_count = 0;
+                let mut traversal = Traversal::default();
+                let mut page = 1;
+                loop {
+                    let response = self
+                        .discovery_query(context, run_id, author, query, source, page)
+                        .await;
+                    let response = match response {
+                        Ok(response) => response,
+                        Err(error) => {
+                            if stops_run(error.code) {
+                                if matches!(
+                                    error.code,
+                                    "SOURCE_RATE_LIMITED" | "SOURCE_ACCESS_DENIED"
+                                ) {
+                                    let range =
+                                        &mut document.value.accounts[index].authors[range_index];
+                                    range.state = DiscoveryRangeState::Partial;
+                                    range.error_code = Some(error.code.into());
+                                    self.discovery_save_page(
+                                        context,
+                                        run_id,
+                                        &mut document,
+                                        index,
+                                        range_index,
+                                        &mut state,
+                                        vec![],
+                                    )
+                                    .await?;
+                                }
+                                return Err(error);
+                            }
+                            let range = &mut document.value.accounts[index].authors[range_index];
+                            range.state = DiscoveryRangeState::Partial;
+                            range.error_code = Some(error.code.into());
+                            self.discovery_save_page(
+                                context,
+                                run_id,
+                                &mut document,
+                                index,
+                                range_index,
+                                &mut state,
+                                vec![],
+                            )
+                            .await?;
+                            scope_error = Some(error.code.to_owned());
+                            all_queries_reached = false;
+                            break;
+                        }
+                    };
+                    let complete = match traversal.append(&response) {
+                        Ok(complete) => complete,
+                        Err(error) => {
+                            let range = &mut document.value.accounts[index].authors[range_index];
+                            range.state = DiscoveryRangeState::Partial;
+                            range.error_code = Some(error.code.into());
+                            self.discovery_save_page(
+                                context,
+                                run_id,
+                                &mut document,
+                                index,
+                                range_index,
+                                &mut state,
+                                vec![],
+                            )
+                            .await?;
+                            scope_error = Some(error.code.to_owned());
+                            all_queries_reached = false;
+                            break;
+                        }
+                    };
+                    // An isolated source slot is not a safe incremental anchor.
+                    // Revisit the tail and keep the scope incomplete until a later
+                    // clean traversal actually obtains those missing records.
+                    if !response.issues.is_empty() {
+                        boundary = None;
+                        let range = &mut document.value.accounts[index].authors[range_index];
+                        range.baseline = None;
+                        range.query_baselines.retain(|saved| saved.query != *query);
+                        range
+                            .completed_queries
+                            .retain(|completed| completed != query);
+                        self.discovery.strategy(run_id, DiscoveryMode::Full);
+                    }
+                    let incremental_complete = boundary
+                        .as_mut()
+                        .is_some_and(|boundary| boundary.append(&response));
+                    if complete || boundary.as_ref().is_some_and(|boundary| !boundary.viable) {
+                        self.discovery.strategy(run_id, DiscoveryMode::Full);
+                    }
+                    // Stage only the incoming page. Retain every prior result if
+                    // the page exceeds either storage budget or validation fails.
+                    let mut changed = Vec::with_capacity(response.items.len());
+                    let mut record_count = state.record_count;
+                    let mut other_record_count = state.other_record_count;
+                    let mut confirmed_count = state.confirmed_count;
+                    let mut added = 0usize;
+                    for work in response.items {
+                        let verified = work.authors.iter().any(|name| name.trim() == author.trim());
+                        let incoming = DiscoveryRecord {
+                            work: discovery_work_from_source(work),
+                            matched_authors: vec![author.clone()],
+                            author_verified: verified,
+                            observed_at: now()?,
+                            scan_id: run_id.into(),
+                        };
+                        let existing = record_index
+                            .get(&(incoming.work.source, incoming.work.work_id.clone()))
+                            .map(|position| &document.value.accounts[index].records[*position]);
+                        if let Some(existing) = existing {
+                            let counts = record_counts(context, existing, &followed);
+                            record_count -= counts.0;
+                            other_record_count -= counts.1;
+                            confirmed_count -= usize::from(context.record_matches(existing));
+                        } else {
+                            added += 1;
+                        }
+                        let record = merged_record(existing, incoming);
+                        let counts = record_counts(context, &record, &followed);
+                        record_count += counts.0;
+                        other_record_count += counts.1;
+                        confirmed_count += usize::from(context.record_matches(&record));
+                        changed.push(record);
+                    }
+                    let current_records: usize = document
+                        .value
+                        .accounts
+                        .iter()
+                        .map(|account| account.records.len())
+                        .sum();
+                    if current_records.saturating_add(added) > MAX_DISCOVERY_RAW_RECORDS
+                        || confirmed_count > MAX_DISCOVERY_RECORDS
+                    {
+                        let range = &mut document.value.accounts[index].authors[range_index];
+                        range.state = DiscoveryRangeState::Partial;
+                        range.error_code = Some("DISCOVERY_LIMIT".into());
+                        self.discovery_save_page(
+                            context,
+                            run_id,
+                            &mut document,
+                            index,
+                            range_index,
+                            &mut state,
+                            vec![],
+                        )
+                        .await?;
+                        return Err(AccountError::new("DISCOVERY_LIMIT"));
+                    }
+                    state.record_count = record_count;
+                    state.other_record_count = other_record_count;
+                    state.confirmed_count = confirmed_count;
+                    for record in &changed {
+                        known_ids.insert(record.work.work_id.clone());
+                        let key = (record.work.source, record.work.work_id.clone());
+                        if let Some(position) = record_index.get(&key) {
+                            document.value.accounts[index].records[*position] = record.clone();
+                        } else {
+                            record_index.insert(key, document.value.accounts[index].records.len());
+                            document.value.accounts[index].records.push(record.clone());
+                        }
+                    }
+                    let account = &mut document.value.accounts[index];
+                    let range = &mut account.authors[range_index];
+                    range.pages_read += 1;
+                    range.observed_count = known_ids.len();
+                    range.issue_count += response.issues.len();
+                    query_issue_count += response.issues.len();
+                    range.issue_samples.extend(
+                        response
+                            .issues
+                            .iter()
+                            .take(
+                                MAX_DISCOVERY_ISSUE_SAMPLES
+                                    .saturating_sub(range.issue_samples.len()),
+                            )
+                            .map(|issue| DiscoveryItemIssue {
+                                query: (policy.queries.len() > 1).then(|| query.clone()),
+                                page: issue.page,
+                                index: issue.index,
+                                work_id: issue.work_id.clone(),
+                                code: match issue.code {
+                                    crate::SourceItemIssueCode::Invalid => {
+                                        DiscoveryItemIssueCode::Invalid
+                                    }
+                                    crate::SourceItemIssueCode::MetadataMissing => {
+                                        DiscoveryItemIssueCode::MetadataMissing
+                                    }
+                                },
+                            }),
+                    );
+                    if complete || incremental_complete {
+                        all_queries_full &= complete;
+                        if !response.issues.is_empty() || query_issue_count > 0 {
+                            scope_error = Some("SOURCE_ITEMS_PARTIAL".into());
+                        } else {
+                            let checked_at = now()?;
+                            let baseline = DiscoveryBaseline {
+                                query_version: DISCOVERY_QUERY_VERSION,
+                                head_ids: traversal.head_ids.clone(),
+                                total: if complete {
+                                    traversal.record_count as u64
+                                } else {
+                                    traversal
+                                        .total
+                                        .expect("incremental boundary requires total")
+                                },
+                                established_at: if complete {
+                                    checked_at
+                                } else {
+                                    boundary
+                                        .as_ref()
+                                        .expect("incremental boundary")
+                                        .baseline
+                                        .established_at
+                                },
+                            };
+                            range.query_baselines.retain(|saved| saved.query != *query);
+                            range.query_baselines.push(DiscoveryQueryBaseline {
+                                query: query.clone(),
+                                baseline: baseline.clone(),
+                            });
+                            range.completed_queries.push(query.clone());
+                            if policy.queries.len() == 1 {
+                                range.baseline = Some(baseline);
+                            }
+                        }
+                    }
                     self.discovery_save_page(
                         context,
                         run_id,
@@ -1379,103 +1681,50 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                         index,
                         range_index,
                         &mut state,
-                        vec![],
+                        changed,
                     )
                     .await?;
-                    return Err(AccountError::new("DISCOVERY_LIMIT"));
-                }
-                state.record_count = record_count;
-                state.other_record_count = other_record_count;
-                state.confirmed_count = confirmed_count;
-                for record in &changed {
-                    known_ids.insert(record.work.work_id.clone());
-                    let key = (record.work.source, record.work.work_id.clone());
-                    if let Some(position) = record_index.get(&key) {
-                        document.value.accounts[index].records[*position] = record.clone();
-                    } else {
-                        record_index.insert(key, document.value.accounts[index].records.len());
-                        document.value.accounts[index].records.push(record.clone());
+                    if complete || incremental_complete {
+                        break;
                     }
+                    page += 1;
                 }
-                let account = &mut document.value.accounts[index];
-                let range = &mut account.authors[range_index];
-                range.pages_read = page;
-                range.observed_count = known_ids.len();
-                range.issue_count += response.issues.len();
-                range.issue_samples.extend(
-                    response
-                        .issues
-                        .iter()
-                        .take(MAX_DISCOVERY_ISSUE_SAMPLES.saturating_sub(range.issue_samples.len()))
-                        .map(|issue| DiscoveryItemIssue {
-                            page: issue.page,
-                            index: issue.index,
-                            work_id: issue.work_id.clone(),
-                            code: match issue.code {
-                                crate::SourceItemIssueCode::Invalid => {
-                                    DiscoveryItemIssueCode::Invalid
-                                }
-                                crate::SourceItemIssueCode::MetadataMissing => {
-                                    DiscoveryItemIssueCode::MetadataMissing
-                                }
-                            },
-                        }),
-                );
-                if complete || incremental_complete {
-                    let checked_at = now()?;
-                    range.pages_complete = complete;
-                    range.state = if range.issue_count == 0 {
-                        DiscoveryRangeState::Complete
-                    } else {
-                        range.error_code = Some("SOURCE_ITEMS_PARTIAL".into());
-                        partial = true;
-                        DiscoveryRangeState::Partial
-                    };
-                    range.last_checked_at = Some(checked_at);
-                    range.last_check_mode = Some(if complete {
-                        DiscoveryMode::Full
-                    } else {
-                        DiscoveryMode::Incremental
-                    });
-                    if complete && range.issue_count == 0 {
-                        range.last_complete_at = Some(checked_at);
-                    }
-                    range.baseline = (range.issue_count == 0).then(|| DiscoveryBaseline {
-                        query_version: DISCOVERY_QUERY_VERSION,
-                        head_ids: traversal.head_ids.clone(),
-                        total: if complete {
-                            traversal.record_count as u64
-                        } else {
-                            traversal
-                                .total
-                                .expect("an incremental boundary requires a total")
-                        },
-                        established_at: if complete {
-                            checked_at
-                        } else {
-                            boundary
-                                .as_ref()
-                                .expect("incremental boundary")
-                                .baseline
-                                .established_at
-                        },
-                    });
-                }
-                self.discovery_save_page(
-                    context,
-                    run_id,
-                    &mut document,
-                    index,
-                    range_index,
-                    &mut state,
-                    changed,
-                )
-                .await?;
-                if complete || incremental_complete {
-                    break;
-                }
-                page += 1;
             }
+            let range = &mut document.value.accounts[index].authors[range_index];
+            range.pages_complete = all_queries_reached && all_queries_full;
+            if all_queries_reached {
+                let checked_at = now()?;
+                range.last_checked_at = Some(checked_at);
+                range.last_check_mode = Some(if all_queries_full {
+                    DiscoveryMode::Full
+                } else {
+                    DiscoveryMode::Incremental
+                });
+                if scope_error.is_none() && all_queries_full {
+                    range.last_complete_at = Some(checked_at);
+                }
+            }
+            if let Some(error) = scope_error {
+                range.state = DiscoveryRangeState::Partial;
+                range.error_code = Some(error);
+                if range.issue_count > 0 {
+                    range.baseline = None;
+                }
+                partial = true;
+            } else {
+                range.state = DiscoveryRangeState::Complete;
+                range.error_code = None;
+            }
+            self.discovery_save_page(
+                context,
+                run_id,
+                &mut document,
+                index,
+                range_index,
+                &mut state,
+                vec![],
+            )
+            .await?;
             self.discovery.completed_scope(run_id);
         }
         Ok(partial)
@@ -1493,6 +1742,7 @@ fn stops_run(code: &str) -> bool {
             | "SOURCE_ACCESS_DENIED"
             | "DISCOVERY_CANCELLED"
             | "DISCOVERY_FOLLOWING_CHANGED"
+            | "DISCOVERY_POLICY_CHANGED"
             | "CREDENTIAL_STORE_UNAVAILABLE"
             | "VAULT_UNAVAILABLE"
             | "VAULT_ACCESS_DENIED"

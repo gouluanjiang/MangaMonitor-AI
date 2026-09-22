@@ -104,6 +104,8 @@ jobs:
         run: cargo +1.98.1 build --locked -p workbench-library --bin mangamonitor-library-review
       - name: Build the isolated catalog diagnostic
         run: cargo +1.98.1 build --locked -p workbench-storage --example discovery_catalog_probe
+      - name: Build the reviewed author policy import helper
+        run: cargo +1.98.1 build --locked -p workbench-storage --example author_query_policy
       - name: Build frontend assets for native context tests
         working-directory: apps/local-workbench
         run: pnpm build
@@ -235,6 +237,14 @@ jobs:
         with:
           name: mangamonitor-catalog-probe-${{ github.sha }}
           path: target/debug/examples/discovery_catalog_probe.exe
+          retention-days: 7
+          if-no-files-found: error
+      # Private author policies are supplied locally; this artifact contains code only.
+      - name: Upload reviewed author policy import helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-author-policy-${{ github.sha }}
+          path: target/debug/examples/author_query_policy.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload native smoke failure evidence

@@ -287,6 +287,17 @@ export async function installWorkflow(page: Page) {
                 return { revision: 0, value: preferences };
               case "source_accounts":
                 return clone(hooks.accounts);
+              case "source_author_policy":
+                return {
+                  source: args.source,
+                  sessionId: args.sessionId,
+                  revision: 0,
+                  author: args.author,
+                  queries: [args.author],
+                  verifiedAliases: [],
+                  exactCredits: [],
+                  queryFingerprint: "a".repeat(64),
+                };
               case "source_following":
                 return {
                   source: args.source,

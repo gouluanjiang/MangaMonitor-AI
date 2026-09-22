@@ -5,6 +5,18 @@ export interface SourceScope {
   source: Source;
   sessionId: string;
 }
+export interface AuthorQueryPolicy {
+  source: Source;
+  author: string;
+  queries: string[];
+  verifiedAliases: string[];
+  exactCredits?: string[];
+  queryFingerprint: string;
+}
+export interface ResolvedAuthorQueryPolicy
+  extends AuthorQueryPolicy, SourceScope {
+  revision: number;
+}
 export interface SourceWork {
   source: Source;
   workId: string;
@@ -28,6 +40,7 @@ export interface SourcePage {
   folders: SourceFolder[];
 }
 export interface SourceItemIssue {
+  query?: string;
   page: number;
   index: number;
   workId: string | null;
@@ -112,6 +125,10 @@ export interface SourceAdapter {
     sessionId: string | null;
   }): Promise<AccountSummary>;
   query(scope: SourceScope, query: SourceQuery): Promise<SourceQueryResult>;
+  authorPolicy(
+    scope: SourceScope,
+    author: string,
+  ): Promise<ResolvedAuthorQueryPolicy>;
   rankingOptions(scope: SourceScope): Promise<RankOptions>;
   catalog(scope: SourceScope, request: CatalogRequest): Promise<CatalogResult>;
   favorite(

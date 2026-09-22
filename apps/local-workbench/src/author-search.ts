@@ -2,9 +2,14 @@ import type {
   CompletionAdapter,
   DiscoverySnapshot,
 } from "./completion-types.ts";
-import type { SourceAdapter, SourceScope } from "./source-types.ts";
+import type {
+  AuthorQueryPolicy,
+  SourceAdapter,
+  SourceScope,
+} from "./source-types.ts";
 import { SourceError } from "./source-runtime.ts";
-import { readCompleteSearch } from "./source-search.ts";
+import { readCompleteAuthorSearch } from "./source-search.ts";
+import { workHasAuthor } from "./author-evidence.ts";
 import { authorQueryError } from "./author-query.ts";
 
 /** Ad-hoc author searches never change following, stored update results, or the queue. */
@@ -58,6 +63,7 @@ export function createAuthorSearchAdapter(
         scopes,
         revision: snapshot.revision + 1,
         records: [],
+        authorPolicies: [],
         authors: scopes.map((s) => ({
           source: s.source,
           author,
@@ -95,9 +101,15 @@ export function createAuthorSearchAdapter(
             (row) => row.source === scope.source,
           )!;
           snapshot.run!.currentSource = scope.source;
+          let policy: AuthorQueryPolicy | undefined;
           try {
-            await readCompleteSearch(adapter, scope, author, {
+            await readCompleteAuthorSearch(adapter, scope, author, {
               current: () => generation === request,
+              onPolicy(value) {
+                policy = value;
+                snapshot.authorPolicies!.push(value);
+                range.queryFingerprint = value.queryFingerprint;
+              },
               onPage: (progress) => {
                 const other = snapshot.records.filter(
                   (record) => record.work.source !== scope.source,
@@ -107,11 +119,7 @@ export function createAuthorSearchAdapter(
                   ...progress.items.map((work) => ({
                     work,
                     matchedAuthors: [author],
-                    authorVerified: work.authors.some(
-                      (name) =>
-                        name.normalize("NFKC").toLocaleLowerCase() ===
-                        author.normalize("NFKC").toLocaleLowerCase(),
-                    ),
+                    authorVerified: workHasAuthor(work, author, policy),
                     observedAt: now,
                     scanId: runId,
                   })),
@@ -134,7 +142,10 @@ export function createAuthorSearchAdapter(
                   range.lastCompleteAt = Date.now();
                   range.lastCheckedAt = range.lastCompleteAt;
                 }
-                snapshot.run!.currentPage = progress.page.page;
+                snapshot.run!.currentPage =
+                  progress.queryPage ?? progress.page.page;
+                snapshot.run!.currentQueryIndex = progress.queryIndex ?? null;
+                snapshot.run!.currentQueryCount = progress.queryCount ?? null;
                 snapshot.run!.requestsUsed++;
                 snapshot.revision++;
               },

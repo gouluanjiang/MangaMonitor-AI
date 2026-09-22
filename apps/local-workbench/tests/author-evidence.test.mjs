@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   authorNameMatches,
   partitionAuthorRecords,
+  partitionAuthorWorks,
 } from "../src/author-evidence.ts";
 
 test("author evidence accepts explicit circle/coauthor names and Unicode width/case differences", () => {
@@ -19,6 +20,82 @@ test("author evidence accepts explicit circle/coauthor names and Unicode width/c
     ["バナナ", "ハ\u3099ナナ"],
   ])
     assert.equal(authorNameMatches(query, name), true, `${query} / ${name}`);
+});
+
+test("evidenced aliases classify cached metadata per source without guessing spaces, traditional characters or circle membership", () => {
+  const policy = {
+    source: "JM",
+    author: "Writer Name",
+    queries: ["Writer Name"],
+    verifiedAliases: ["WriterName", "筆名"],
+    exactCredits: [],
+    queryFingerprint: "a".repeat(64),
+  };
+  const records = [
+    record("11", ["WriterName"], [policy.author], "JM"),
+    record("12", ["筆名"], [policy.author], "JM"),
+    record("13", ["笔名"], [policy.author], "JM"),
+    record("14", ["WriterName"], [policy.author], "Pica"),
+    record("15", ["WriterNameTwo"], [policy.author], "JM"),
+  ];
+  const before = structuredClone(records);
+  assert.equal(partitionAuthorRecords(records).confirmed.length, 0);
+  const classified = partitionAuthorRecords(records, "", "all", [policy]);
+  assert.deepEqual(
+    classified.confirmed.map((row) => row.work.workId),
+    ["11", "12"],
+  );
+  assert.deepEqual(
+    classified.other.map((row) => row.work.workId),
+    ["13", "14", "15"],
+  );
+  assert.deepEqual(
+    records,
+    before,
+    "alias-only projection never mutates stored works or ownership",
+  );
+  const joined = {
+    ...policy,
+    author: "Studio (Writer)",
+    verifiedAliases: ["WriterName"],
+  };
+  const candidates = [
+    record("21", ["Studio (Different Writer)"], [joined.author], "JM"),
+    record("22", ["WriterName"], [joined.author], "JM"),
+    record("23", ["Studio"], [joined.author], "JM"),
+  ];
+  assert.deepEqual(
+    partitionAuthorRecords(candidates, "", "all", [joined]).confirmed.map(
+      (row) => row.work.workId,
+    ),
+    ["22"],
+  );
+});
+
+test("whole-credit evidence accepts only the verified composite field and does not create a coauthor alias", () => {
+  const policy = {
+    source: "JM",
+    author: "Writer",
+    queries: ["Writer"],
+    verifiedAliases: [],
+    exactCredits: ["WriterCollaborator"],
+    queryFingerprint: "a".repeat(64),
+  };
+  const works = [
+    record("31", ["WriterCollaborator"], ["Writer"], "JM").work,
+    record("32", ["Collaborator"], ["Writer"], "JM").work,
+    record("33", ["Studio (WriterCollaborator)"], ["Writer"], "JM").work,
+    record("34", ["WriterCollaborator"], ["Writer"], "Pica").work,
+  ];
+  const result = partitionAuthorWorks(works, "Writer", policy);
+  assert.deepEqual(
+    result.confirmed.map((row) => row.workId),
+    ["31"],
+  );
+  assert.deepEqual(
+    result.other.map((row) => row.workId),
+    ["32", "33", "34"],
+  );
 });
 
 test("no substring, kana/voicing, common-circle or incomplete-label inference", () => {

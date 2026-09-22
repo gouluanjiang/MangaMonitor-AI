@@ -333,6 +333,52 @@ impl RawIndex {
 }
 
 impl WorkbenchStore {
+    /// Offline maintenance transaction. All three revisions and the persisted
+    /// scan state are checked under the same process/file lock as page commits.
+    /// An in-flight source request cannot commit after this revision changes.
+    pub fn import_author_query_policies(
+        &self,
+        expected_policy_revision: u64,
+        expected_following_revision: u64,
+        expected_discovery_revision: u64,
+        incoming: crate::AuthorQueryDocument,
+    ) -> Result<Document<crate::AuthorQueryDocument>> {
+        let _local = self
+            .local_lock
+            .lock()
+            .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+        let _file = self.acquire_lock()?;
+        let following: Document<AccountFollowing> =
+            self.read_unlocked("following.json", MAX_FOLLOWING_BYTES)?;
+        let policies: Document<crate::AuthorQueryDocument> = self.read_unlocked(
+            crate::author_query::AUTHOR_QUERY_FILE,
+            crate::author_query::MAX_AUTHOR_QUERY_BYTES,
+        )?;
+        let (discovery, _) = self.load_discovery_unlocked(self.discovery_manifest_unlocked()?)?;
+        if following.revision != expected_following_revision
+            || discovery.revision != expected_discovery_revision
+            || policies.revision != expected_policy_revision
+        {
+            return Err(StoreError::new("REVISION_CONFLICT"));
+        }
+        if discovery
+            .value
+            .accounts
+            .iter()
+            .flat_map(|account| &account.authors)
+            .any(|range| range.state == crate::DiscoveryRangeState::Checking)
+        {
+            return Err(StoreError::new("DISCOVERY_BUSY"));
+        }
+        let next = policies.value.merged_import(&incoming, &following.value)?;
+        self.write_unlocked(
+            crate::author_query::AUTHOR_QUERY_FILE,
+            crate::author_query::MAX_AUTHOR_QUERY_BYTES,
+            expected_policy_revision,
+            next,
+        )
+    }
+
     fn discovery_manifest_unlocked(&self) -> Result<Option<Manifest>> {
         let marker = self.root.join(JOURNAL_REQUIRED);
         let journal_required = check_optional_regular(&marker)?.is_some();
@@ -536,6 +582,16 @@ impl WorkbenchStore {
         following_revision: u64,
         patch: DiscoveryPagePatch,
     ) -> Result<u64> {
+        self.apply_discovery_patch_for_policy(expected_revision, following_revision, None, patch)
+    }
+
+    pub fn apply_discovery_patch_for_policy(
+        &self,
+        expected_revision: u64,
+        following_revision: u64,
+        policy_revision: Option<u64>,
+        patch: DiscoveryPagePatch,
+    ) -> Result<u64> {
         if expected_revision >= MAX_SAFE_INTEGER {
             return Err(StoreError::new("REVISION_EXHAUSTED"));
         }
@@ -550,6 +606,7 @@ impl WorkbenchStore {
         if following.revision != following_revision {
             return Err(StoreError::new("DISCOVERY_FOLLOWING_CHANGED"));
         }
+        self.require_author_query_revision_unlocked(policy_revision)?;
         let manifest = self.discovery_manifest_unlocked()?;
         let stamp = self.discovery_base_stamp_unlocked()?;
         let mut guard = self
@@ -669,6 +726,15 @@ impl WorkbenchStore {
         expected_revision: u64,
         following_revision: u64,
     ) -> Result<()> {
+        self.checkpoint_discovery_for_policy(expected_revision, following_revision, None)
+    }
+
+    pub fn checkpoint_discovery_for_policy(
+        &self,
+        expected_revision: u64,
+        following_revision: u64,
+        policy_revision: Option<u64>,
+    ) -> Result<()> {
         let _local = self
             .local_lock
             .lock()
@@ -679,6 +745,7 @@ impl WorkbenchStore {
         if following.revision != following_revision {
             return Err(StoreError::new("DISCOVERY_FOLLOWING_CHANGED"));
         }
+        self.require_author_query_revision_unlocked(policy_revision)?;
         let previous = self.discovery_manifest_unlocked()?;
         let current_revision = if let Some(manifest) = &previous {
             manifest.revision

@@ -46,6 +46,7 @@ type MockOptions = {
   libraryCandidate?: boolean;
   holdMatchDetail?: boolean;
   authorSearchResults?: boolean;
+  authorPolicyResults?: boolean;
   workDates?: boolean;
   isolatedListing?: boolean;
 };
@@ -1091,6 +1092,18 @@ async function installMock(page: Page, options: MockOptions = {}) {
             return clone(next);
           }
           const scope = { source, sessionId: raw.sessionId as string };
+          if (command === "source_author_policy")
+            return {
+              ...scope,
+              revision: 0,
+              author: raw.author,
+              queries: options.authorPolicyResults
+                ? [source === "JM" ? "Mentha～" : "Mentha Name", "Mentha"]
+                : [raw.author],
+              verifiedAliases: options.authorPolicyResults ? ["Mentha"] : [],
+              exactCredits: [],
+              queryFingerprint: "a".repeat(64),
+            };
           if (command === "source_catalog") {
             const key =
               source +
@@ -1216,6 +1229,15 @@ async function installMock(page: Page, options: MockOptions = {}) {
                 },
                 { ...makeWork(source, "204"), authors: ["Guest、Mint"] },
               ];
+              if (options.authorPolicyResults) {
+                candidates[3].authors = ["Harbor Studio (Mentha)"];
+                candidates[4].authors = ["Guest、Mentha"];
+                if (raw.query === "Mentha")
+                  candidates.push({
+                    ...makeWork(source, "206"),
+                    authors: ["Mentha"],
+                  });
+              }
               if (options.workDates)
                 candidates.forEach((work, index) => {
                   work.sourceUpdatedAt = [
@@ -2224,6 +2246,75 @@ test("explicit work-keyword mode retains all hits and mode changes clear author 
     "合成验收 JM 作品 203",
   );
 });
+
+for (const source of ["JM", "Pica"] as const) {
+  test(`${source} author lookup resolves source spelling and aliases identically from search and followed rows`, async ({
+    page,
+  }) => {
+    await installMock(page, {
+      authorSearchResults: true,
+      authorPolicyResults: true,
+    });
+    await page.goto("/");
+    const primary = source === "JM" ? "Mentha～" : "Mentha Name";
+    for (const entry of ["search", "following"] as const) {
+      if (entry === "search") {
+        await page.getByTestId("nav-discovery").click();
+        await page.getByTestId("source-tab-" + source).click();
+        await page.getByTestId("source-search-input").fill("Mint");
+        await page.getByTestId("source-search-submit").click();
+      } else {
+        await page.getByTestId("nav-authors").click();
+        await page.getByTestId("source-tab-" + source).click();
+        await page
+          .getByRole("button", { name: "搜索该作者", exact: true })
+          .click();
+      }
+      await expect(page.getByTestId("source-completeness")).toContainText(
+        "已读完",
+      );
+      await expect(page.getByTestId("source-author-evidence")).toContainText(
+        "作者作品 3 部 · 其他关键词结果 3 部",
+      );
+      for (const id of ["201", "204", "206"])
+        await expect(
+          page.getByTestId(`source-card-${source}:${id}`),
+        ).toBeVisible();
+      for (const id of ["202", "203", "205"])
+        await expect(
+          page.getByTestId(`source-card-${source}:${id}`),
+        ).toHaveCount(0);
+      await page.getByTestId("source-toggle-selection").click();
+      await page.getByTestId("source-select-all").click();
+      await expect(page.getByTestId("source-selection-bar")).toContainText(
+        "已选 3 部",
+      );
+    }
+    expect(
+      await page.evaluate(
+        (source) =>
+          window.sourceTest.calls
+            .filter(
+              (call) =>
+                call.command === "source_query" &&
+                call.kind === "search" &&
+                call.source === source,
+            )
+            .map((call) => [call.query, call.page]),
+        source,
+      ),
+    ).toEqual([
+      [primary, 1],
+      [primary, 2],
+      ["Mentha", 1],
+      ["Mentha", 2],
+      [primary, 1],
+      [primary, 2],
+      ["Mentha", 1],
+      ["Mentha", 2],
+    ]);
+  });
+}
 
 test("searching a followed source author uses the same explicit author evidence", async ({
   page,

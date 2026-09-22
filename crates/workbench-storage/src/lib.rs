@@ -2,6 +2,7 @@
 //!
 //! Library root paths are stored only as private metadata selected by the native picker.
 mod author_evidence;
+mod author_query;
 mod background;
 mod cache;
 mod discovery;
@@ -13,7 +14,8 @@ mod phone;
 mod store;
 mod work_date;
 
-pub use author_evidence::discovery_record_matches_author;
+pub use author_evidence::{author_credit_matches, discovery_record_matches_author};
+pub use author_query::*;
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
 pub use cache::{AccountCache, CacheEntry};
 pub use discovery::*;

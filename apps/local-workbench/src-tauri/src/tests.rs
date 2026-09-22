@@ -557,6 +557,10 @@ fn account_commands() -> Vec<(&'static str, Value)> {
             json!({"source":"JM","sessionId":"stale","workId":"123"}),
         ),
         (
+            "source_author_policy",
+            json!({"source":"JM","sessionId":"stale","author":"Fixture Writer"}),
+        ),
+        (
             "source_following",
             json!({"source":"JM","sessionId":"stale"}),
         ),

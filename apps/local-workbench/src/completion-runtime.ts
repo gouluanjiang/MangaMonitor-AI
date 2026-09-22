@@ -2,9 +2,10 @@ import { invokeDesktop, isDesktopRuntime } from "./runtime.ts";
 import {
   validateSourceWork,
   validateSourceIssues,
+  validateAuthorQueryPolicy,
   SourceError,
 } from "./source-runtime.ts";
-import type { Source, SourceScope } from "./source-types.ts";
+import type { AuthorQueryPolicy, Source, SourceScope } from "./source-types.ts";
 import type {
   CompletionAdapter,
   DiscoveryBaseline,
@@ -77,12 +78,24 @@ function scopesValue(v: unknown): SourceScope[] {
 }
 function runValue(v: unknown): DiscoveryRun {
   const r = object(v);
+  const queryIndex =
+    r.currentQueryIndex == null ? null : integer(r.currentQueryIndex);
+  const queryCount =
+    r.currentQueryCount == null ? null : integer(r.currentQueryCount);
+  if (
+    (queryIndex === null) !== (queryCount === null) ||
+    (queryIndex !== null &&
+      (queryIndex < 1 || queryCount! > 4 || queryIndex > queryCount!))
+  )
+    return invalid();
   return {
     id: str(r.id, 128),
     phase: phase(r.phase),
     currentAuthor: nullable(r.currentAuthor, str),
     currentSource: nullable(r.currentSource, source),
     currentPage: integer(r.currentPage),
+    currentQueryIndex: queryIndex,
+    currentQueryCount: queryCount,
     requestsUsed: integer(r.requestsUsed),
     completedScopes: integer(r.completedScopes),
     totalScopes: integer(r.totalScopes),
@@ -143,8 +156,22 @@ export function validateDiscoveryProgress(
     )
   )
     throw new SourceError("STALE_SESSION");
+  const authorPolicies = array(
+    r.authorPolicies ?? [],
+    (value) => validateAuthorQueryPolicy(value),
+    4000,
+  );
+  if (
+    new Set(
+      authorPolicies.map((policy) =>
+        JSON.stringify([policy.source, policy.author]),
+      ),
+    ).size !== authorPolicies.length
+  )
+    return invalid();
   return {
     scopes,
+    authorPolicies,
     revision: integer(r.revision),
     run: nullable(r.run, runValue),
     recordCount: integer(r.recordCount),
@@ -157,12 +184,48 @@ export function validateDiscoveryProgress(
         const issueCount =
           q.issueCount === undefined ? 0 : integer(q.issueCount);
         const pagesRead = integer(q.pagesRead);
+        if (pagesRead > 4000) return invalid();
+        const queryFingerprint =
+          q.queryFingerprint == null ? null : str(q.queryFingerprint, 64);
+        if (
+          queryFingerprint !== null &&
+          !/^[a-f0-9]{64}$/.test(queryFingerprint)
+        )
+          return invalid();
+        const queryBaselines = array(
+          q.queryBaselines ?? [],
+          (value) => {
+            const entry = object(value),
+              query = str(entry.query, 512);
+            if (!query.trim() || query.trim() !== query) return invalid();
+            return { query, baseline: baselineValue(entry.baseline) };
+          },
+          4,
+        );
+        if (
+          new Set(queryBaselines.map((entry) => entry.query)).size !==
+            queryBaselines.length ||
+          (queryBaselines.length > 0 && queryFingerprint === null)
+        )
+          return invalid();
         const issueSamples = validateSourceIssues(
           q.issueSamples,
           pagesRead,
           20,
           source(q.source),
         );
+        const completedQueries = array(
+          q.completedQueries ?? [],
+          (query) => str(query, 512),
+          4,
+        );
+        if (
+          new Set(completedQueries).size !== completedQueries.length ||
+          completedQueries.some(
+            (query) => !queryBaselines.some((entry) => entry.query === query),
+          )
+        )
+          return invalid();
         if (
           issueCount > 100000 ||
           issueCount > pagesRead * 1000 ||
@@ -172,7 +235,15 @@ export function validateDiscoveryProgress(
           (q.pagesComplete === true &&
             (pagesRead === 0 ||
               !["complete", "partial"].includes(q.state as string))) ||
-          (issueCount > 0 && (q.state === "complete" || q.baseline != null))
+          (issueCount > 0 &&
+            (q.state === "complete" ||
+              q.baseline != null ||
+              (queryBaselines.length > 0 &&
+                issueSamples.some(
+                  (issue) =>
+                    !issue.query ||
+                    queryBaselines.some((entry) => entry.query === issue.query),
+                ))))
         )
           return invalid();
         return {
@@ -200,6 +271,9 @@ export function validateDiscoveryProgress(
             q.baseline === undefined
               ? null
               : nullable(q.baseline, baselineValue),
+          queryFingerprint,
+          queryBaselines,
+          completedQueries,
           observedCount: integer(q.observedCount),
           pagesRead,
           errorCode: code(q.errorCode),
@@ -303,6 +377,34 @@ export interface CompletionReadFailure {
   code: string;
   failures: number;
   retryAfterMs: number | null;
+}
+
+/** Historical timestamps alone do not establish coverage of changed queries. */
+export function authorCatalogAt(
+  range: DiscoverySnapshot["authors"][number],
+  policies: AuthorQueryPolicy[] = [],
+): number | null {
+  if (authorQueryMessage(range.errorCode)) return null;
+  const policy = policies.find(
+    (item) => item.source === range.source && item.author === range.author,
+  );
+  if (range.queryFingerprint) {
+    if (!policy || policy.queryFingerprint !== range.queryFingerprint)
+      return null;
+    const baselines = policy.queries.map(
+      (query) =>
+        range.queryBaselines?.find((entry) => entry.query === query)?.baseline,
+    );
+    return baselines.every((baseline) => baseline !== undefined)
+      ? Math.min(...baselines.map((baseline) => baseline!.establishedAt))
+      : null;
+  }
+  if (
+    policy &&
+    (policy.queries.length !== 1 || policy.queries[0] !== range.author)
+  )
+    return null;
+  return range.lastCompleteAt;
 }
 
 export function unfinishedRangeMessage(

@@ -213,6 +213,7 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             accounts::source_favorite,
             accounts::source_cover,
             accounts::source_following,
+            accounts::source_author_policy,
             accounts::source_follow,
         ])
 }

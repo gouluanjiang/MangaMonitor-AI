@@ -397,9 +397,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         );
         let [jm_identity, pica_identity] = identities;
         let root = self.root.clone();
-        let following = tokio::task::spawn_blocking(move || {
+        let (following, policies) = tokio::task::spawn_blocking(move || {
             crate::discovery::discovery_store_io(|| {
-                workbench_storage::WorkbenchStore::open(&root)?.read_following()
+                let store = workbench_storage::WorkbenchStore::open(&root)?;
+                Ok((store.read_following()?, store.read_author_query_policies()?))
             })
         })
         .await
@@ -411,6 +412,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             [jm_identity?, pica_identity?],
             self.root.clone(),
             following,
+            policies,
         ))
     }
 
@@ -485,9 +487,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self.discovery_validate_context(context)?;
         self.discovery.check(run_id)?;
         let following_revision = context.following_revision;
+        let policy_revision = context.policy_revision;
         let result = tokio::task::spawn_blocking(move || {
             crate::discovery::discovery_store_io(|| {
-                store.checkpoint_discovery_for_following(revision, following_revision)
+                store.checkpoint_discovery_for_policy(
+                    revision,
+                    following_revision,
+                    Some(policy_revision),
+                )
             })
         })
         .await
@@ -886,6 +893,46 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self.check_saved(&mut slot)?;
         // Cache parsing or filesystem errors never expire a validated session.
         result
+    }
+
+    /// Resolve a private account-scoped policy without source requests or
+    /// accepting a renderer-provided account identity.
+    pub async fn author_query_policy(
+        &self,
+        source: Source,
+        session_id: &str,
+        author: &str,
+    ) -> Result<crate::AuthorQueryPolicyResult> {
+        if !workbench_storage::discovery_author_is_valid(author) {
+            return Err(AccountError::new("VALIDATION_FAILED"));
+        }
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
+        let key = account_key(
+            source,
+            &slot
+                .account
+                .as_ref()
+                .ok_or(AccountError::new("AUTH_REQUIRED"))?
+                .account_id,
+        );
+        let root = self.root.clone();
+        let document = tokio::task::spawn_blocking(move || {
+            crate::discovery::discovery_store_io(|| {
+                workbench_storage::WorkbenchStore::open(&root)?.read_author_query_policies()
+            })
+        })
+        .await
+        .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
+        .map_err(|error| AccountError::new(error.code))?;
+        self.check_saved(&mut slot)?;
+        Ok(crate::AuthorQueryPolicyResult {
+            session_id: session_id.into(),
+            revision: document.revision,
+            policy: document
+                .value
+                .resolve(storage_source(source), &key, author.trim()),
+        })
     }
 
     pub async fn following(&self, source: Source, session_id: &str) -> Result<FollowingSnapshot> {

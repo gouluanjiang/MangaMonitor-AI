@@ -136,6 +136,17 @@ async function install(page: Page) {
                       },
               };
             }
+            if (command === "source_author_policy")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                revision: 0,
+                author: args.author,
+                queries: [args.author],
+                verifiedAliases: [],
+                exactCredits: [],
+                queryFingerprint: "a".repeat(64),
+              };
             if (command === "source_query") {
               if (args.kind === "ranking" && hooks.hold) {
                 hooks.hold = false;

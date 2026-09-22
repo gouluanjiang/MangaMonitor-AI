@@ -42,6 +42,9 @@ fn document() -> DiscoveryDocument {
                 last_checked_at: None,
                 last_check_mode: None,
                 baseline: None,
+                query_fingerprint: None,
+                query_baselines: vec![],
+                completed_queries: vec![],
                 observed_count: 1,
                 pages_read: 1,
                 error_code: None,
@@ -127,12 +130,14 @@ fn isolated_source_issues_roundtrip_without_work_authority_or_false_completion()
     range.issue_count = 2;
     range.issue_samples = vec![
         DiscoveryItemIssue {
+            query: None,
             page: 1,
             index: 2,
             work_id: Some("124".into()),
             code: DiscoveryItemIssueCode::Invalid,
         },
         DiscoveryItemIssue {
+            query: None,
             page: 2,
             index: 1,
             work_id: Some("125".into()),

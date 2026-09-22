@@ -21,6 +21,7 @@ import {
   completionReadFailure,
   createCompletionAdapter,
   unfinishedRangeMessage,
+  authorCatalogAt,
 } from "./completion-runtime.ts";
 import type { CompletionReadFailure } from "./completion-runtime.ts";
 import {
@@ -35,7 +36,6 @@ import { SourceCover } from "./SourceWorkbench.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { createAuthorSearchAdapter } from "./author-search.ts";
 import { partitionAuthorRecords } from "./author-evidence.ts";
-import { authorQueryMessage } from "./author-query.ts";
 import { jmSearchScopeNote } from "./source-search.ts";
 import {
   formatWorkDate,
@@ -153,8 +153,14 @@ export function CompletionPanel({
     [library, inventorySnapshot, inventoryReady],
   );
   const authorResults = useMemo(
-    () => partitionAuthorRecords(view?.records ?? emptyRecords, author, source),
-    [view?.records, author, source],
+    () =>
+      partitionAuthorRecords(
+        view?.records ?? emptyRecords,
+        author,
+        source,
+        view?.authorPolicies,
+      ),
+    [view?.records, view?.authorPolicies, author, source],
   );
   const load = useCallback(
     async (
@@ -369,8 +375,7 @@ export function CompletionPanel({
     );
   const fullRangeChecked = complete && !includesIncremental;
   const catalogScopes = ranges.filter(
-    (range) =>
-      range.lastCompleteAt !== null && !authorQueryMessage(range.errorCode),
+    (range) => authorCatalogAt(range, view?.authorPolicies) !== null,
   ).length;
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
   const scopedRecords = showOther
@@ -449,9 +454,7 @@ export function CompletionPanel({
   );
   const lastFullCheck = Math.max(
     0,
-    ...ranges.map((range) =>
-      authorQueryMessage(range.errorCode) ? 0 : (range.lastCompleteAt ?? 0),
-    ),
+    ...ranges.map((range) => authorCatalogAt(range, view?.authorPolicies) ?? 0),
   );
   // Preserve state and memoized catalog while another page is visible.
   if (!active) return null;
@@ -586,6 +589,9 @@ export function CompletionPanel({
               {view?.run?.currentSource
                 ? sourceLabel(view.run.currentSource)
                 : "准备中"}{" "}
+              {view?.run?.currentQueryCount && view.run.currentQueryCount > 1
+                ? ` · 检索词 ${view.run.currentQueryIndex} / ${view.run.currentQueryCount}`
+                : ""}
               · 第 {view?.run?.currentPage ?? 0} 页 · 已检查{" "}
               {view?.run?.completedScopes ?? 0} / {view?.run?.totalScopes ?? 0}{" "}
               个来源范围

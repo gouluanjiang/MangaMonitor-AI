@@ -19,6 +19,10 @@ fn normalize(value: &str) -> String {
         .join(" ")
 }
 
+pub(crate) fn normalized_author_credit(value: &str) -> String {
+    normalize(value)
+}
+
 #[derive(Default)]
 struct Parts {
     names: HashSet<String>,
@@ -118,7 +122,7 @@ fn name_parts(value: &str) -> Parts {
     parts
 }
 
-fn name_matches(query: &str, credit: &str) -> bool {
+pub fn author_credit_matches(query: &str, credit: &str) -> bool {
     let expected = normalize(query);
     if expected.is_empty() {
         return false;
@@ -138,7 +142,7 @@ pub fn discovery_record_matches_author(record: &DiscoveryRecord) -> bool {
             .work
             .authors
             .iter()
-            .any(|credit| name_matches(query, credit))
+            .any(|credit| author_credit_matches(query, credit))
     })
 }
 
@@ -165,7 +169,11 @@ mod tests {
             ("Author Name", " Author\u{3000} Name ", true),
             ("", "Writer", false),
         ] {
-            assert_eq!(name_matches(query, credit), expected, "{query} / {credit}");
+            assert_eq!(
+                author_credit_matches(query, credit),
+                expected,
+                "{query} / {credit}"
+            );
         }
     }
 

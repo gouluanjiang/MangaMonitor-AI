@@ -74,6 +74,13 @@ pub struct DiscoveryBaseline {
     pub established_at: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiscoveryQueryBaseline {
+    pub query: String,
+    pub baseline: DiscoveryBaseline,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DiscoveryItemIssueCode {
     #[serde(rename = "SOURCE_ITEM_INVALID")]
@@ -86,6 +93,8 @@ pub enum DiscoveryItemIssueCode {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiscoveryItemIssue {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
     pub page: u64,
     pub index: u64,
     pub work_id: Option<String>,
@@ -114,6 +123,13 @@ pub struct DiscoveryAuthorRange {
     pub last_check_mode: Option<DiscoveryMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline: Option<DiscoveryBaseline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query_baselines: Vec<DiscoveryQueryBaseline>,
+    /// Queries successfully checked in this attempt, distinct from retained old checkpoints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completed_queries: Vec<String>,
     pub observed_count: usize,
     pub pages_read: u64,
     pub error_code: Option<String>,
@@ -198,6 +214,23 @@ impl DiscoveryWork {
     }
 }
 
+fn baseline_valid(baseline: &DiscoveryBaseline, source: Source) -> bool {
+    let mut ids = HashSet::new();
+    baseline.query_version > 0
+        && baseline.head_ids.len() <= MAX_DISCOVERY_HEAD_IDS
+        && baseline.total <= MAX_SAFE_INTEGER
+        && baseline.head_ids.len() == baseline.total.min(MAX_DISCOVERY_HEAD_IDS as u64) as usize
+        && baseline.established_at <= MAX_SAFE_INTEGER
+        && baseline.head_ids.iter().all(|id| {
+            ids.insert(id)
+                && LibraryReference {
+                    source,
+                    work_id: id.clone(),
+                }
+                .is_valid()
+        })
+}
+
 impl ValidatedDocument for DiscoveryDocument {
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("VALIDATION_FAILED");
@@ -219,9 +252,38 @@ impl ValidatedDocument for DiscoveryDocument {
             for range in &account.authors {
                 let mut issue_slots = HashSet::new();
                 let mut previous_issue = (0, 0);
+                let mut previous_query: Option<&str> = None;
+                let mut issue_queries = HashSet::from([None]);
+                let mut baseline_queries = HashSet::new();
+                let mut completed_queries = HashSet::new();
                 if !discovery_author_is_valid(&range.author)
                     || !ranges.insert((range.source, &range.author))
-                    || range.pages_read > MAX_DISCOVERY_PAGES
+                    || range.pages_read > MAX_DISCOVERY_PAGES * crate::MAX_AUTHOR_QUERIES as u64
+                    || range
+                        .query_fingerprint
+                        .as_ref()
+                        .is_some_and(|value| !library_hash_is_valid(value))
+                    || range.query_baselines.len() > crate::MAX_AUTHOR_QUERIES
+                    || (!range.query_baselines.is_empty() && range.query_fingerprint.is_none())
+                    || range.query_baselines.iter().any(|item| {
+                        !discovery_author_is_valid(&item.query)
+                            || !baseline_queries.insert(&item.query)
+                            || !baseline_valid(&item.baseline, range.source)
+                            || range.issue_samples.iter().any(|issue| {
+                                issue
+                                    .query
+                                    .as_ref()
+                                    .is_none_or(|query| query == &item.query)
+                            })
+                    })
+                    || range.completed_queries.len() > crate::MAX_AUTHOR_QUERIES
+                    || range.completed_queries.iter().any(|query| {
+                        !completed_queries.insert(query)
+                            || !range
+                                .query_baselines
+                                .iter()
+                                .any(|saved| &saved.query == query)
+                    })
                     || range.observed_count > MAX_DISCOVERY_RAW_RECORDS
                     || range.issue_count > MAX_DISCOVERY_RECORDS
                     || range.issue_count > range.pages_read as usize * 1000
@@ -238,13 +300,23 @@ impl ValidatedDocument for DiscoveryDocument {
                             )))
                     || range.issue_samples.iter().any(|issue| {
                         let position = (issue.page, issue.index);
-                        let out_of_order = position <= previous_issue;
+                        let query = issue.query.as_deref();
+                        let changed_query = query != previous_query;
+                        let repeated_query = changed_query && !issue_queries.insert(query);
+                        let out_of_order = !changed_query && position <= previous_issue;
                         previous_issue = position;
+                        previous_query = query;
                         issue.page == 0
                             || issue.page > range.pages_read
+                            || issue.page > MAX_DISCOVERY_PAGES
                             || !(1..=1000).contains(&issue.index)
+                            || issue
+                                .query
+                                .as_ref()
+                                .is_some_and(|query| !discovery_author_is_valid(query))
+                            || repeated_query
                             || out_of_order
-                            || !issue_slots.insert((issue.page, issue.index))
+                            || !issue_slots.insert((query, issue.page, issue.index))
                             || (issue.code == DiscoveryItemIssueCode::MetadataMissing
                                 && issue.work_id.is_none())
                             || issue.work_id.as_ref().is_some_and(|work_id| {
@@ -265,23 +337,10 @@ impl ValidatedDocument for DiscoveryDocument {
                     || range
                         .last_checked_at
                         .is_some_and(|value| value > MAX_SAFE_INTEGER)
-                    || range.baseline.as_ref().is_some_and(|baseline| {
-                        let mut ids = HashSet::new();
-                        baseline.query_version == 0
-                            || baseline.head_ids.len() > MAX_DISCOVERY_HEAD_IDS
-                            || baseline.total > MAX_SAFE_INTEGER
-                            || baseline.head_ids.len()
-                                != baseline.total.min(MAX_DISCOVERY_HEAD_IDS as u64) as usize
-                            || baseline.established_at > MAX_SAFE_INTEGER
-                            || baseline.head_ids.iter().any(|id| {
-                                !ids.insert(id)
-                                    || !LibraryReference {
-                                        source: range.source,
-                                        work_id: id.clone(),
-                                    }
-                                    .is_valid()
-                            })
-                    })
+                    || range
+                        .baseline
+                        .as_ref()
+                        .is_some_and(|baseline| !baseline_valid(baseline, range.source))
                     || range.error_code.as_ref().is_some_and(|code| {
                         code.is_empty()
                             || code.len() > 80

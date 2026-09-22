@@ -1,5 +1,5 @@
 import type { DiscoverySnapshot } from "./completion-types.ts";
-import type { Source, SourceWork } from "./source-types.ts";
+import type { AuthorQueryPolicy, Source, SourceWork } from "./source-types.ts";
 
 type DiscoveryRecord = DiscoverySnapshot["records"][number];
 
@@ -69,20 +69,32 @@ export function authorNameMatches(query: string, sourceName: string): boolean {
 }
 
 export function workHasAuthor(
-  work: Pick<SourceWork, "authors">,
+  work: Pick<SourceWork, "authors"> & Partial<Pick<SourceWork, "source">>,
   query: string,
+  policy?: AuthorQueryPolicy,
 ): boolean {
-  return work.authors.some((name) => authorNameMatches(query, name));
+  const applicable =
+    policy?.author === query && policy.source === work.source
+      ? policy
+      : undefined;
+  const names = [query, ...(applicable?.verifiedAliases ?? [])];
+  const credits = new Set((applicable?.exactCredits ?? []).map(normalize));
+  return work.authors.some(
+    (name) =>
+      names.some((expected) => authorNameMatches(expected, name)) ||
+      credits.has(normalize(name)),
+  );
 }
 
 export function partitionAuthorWorks(
   works: SourceWork[],
   query: string,
+  policy?: AuthorQueryPolicy,
 ): { confirmed: SourceWork[]; other: SourceWork[] } {
   const confirmed: SourceWork[] = [],
     other: SourceWork[] = [];
   for (const work of works)
-    (workHasAuthor(work, query) ? confirmed : other).push(work);
+    (workHasAuthor(work, query, policy) ? confirmed : other).push(work);
   return { confirmed, other };
 }
 
@@ -90,9 +102,16 @@ export function partitionAuthorRecords(
   records: DiscoveryRecord[],
   author = "",
   source: Source | "all" = "all",
+  policies: AuthorQueryPolicy[] = [],
 ): { confirmed: DiscoveryRecord[]; other: DiscoveryRecord[] } {
   const confirmed: DiscoveryRecord[] = [],
     other: DiscoveryRecord[] = [];
+  const policiesByAuthor = new Map(
+    policies.map((policy) => [
+      JSON.stringify([policy.source, policy.author]),
+      policy,
+    ]),
+  );
   for (const record of records) {
     if (source !== "all" && record.work.source !== source) continue;
     const queries = record.matchedAuthors.filter(
@@ -101,7 +120,13 @@ export function partitionAuthorRecords(
     if (!queries.length) continue;
     // Query membership and the legacy authorVerified flag are not authorship.
     // Derive from current metadata even for results saved by older versions.
-    const matches = queries.some((query) => workHasAuthor(record.work, query));
+    const matches = queries.some((query) =>
+      workHasAuthor(
+        record.work,
+        query,
+        policiesByAuthor.get(JSON.stringify([record.work.source, query])),
+      ),
+    );
     (matches ? confirmed : other).push(record);
   }
   return { confirmed, other };

@@ -47,6 +47,7 @@ type MockOptions = {
   holdMatchDetail?: boolean;
   authorSearchResults?: boolean;
   authorPolicyResults?: boolean;
+  reviewedWorkCredits?: boolean;
   workDates?: boolean;
   isolatedListing?: boolean;
 };
@@ -77,6 +78,7 @@ type Hooks = {
   releaseLogin?: (success: boolean) => void;
   releaseJM?: () => void;
   releasePica?: () => void;
+  changedDetailCredit?: boolean;
 };
 declare global {
   interface Window {
@@ -832,7 +834,10 @@ async function installMock(page: Page, options: MockOptions = {}) {
           sessionId: "synthetic-JM-1",
           revision: 0,
           works: [],
-          authors: options.authorPolicyResults ? ["Mint"] : [],
+          authors:
+            options.authorPolicyResults || options.reviewedWorkCredits
+              ? ["Mint"]
+              : [],
         },
         Pica: {
           source: "Pica",
@@ -1102,6 +1107,22 @@ async function installMock(page: Page, options: MockOptions = {}) {
                 : [raw.author],
               verifiedAliases: options.authorPolicyResults ? ["Mentha"] : [],
               exactCredits: [],
+              workCredits: options.reviewedWorkCredits
+                ? [
+                    {
+                      workId:
+                        source === "Pica" ? "201".padStart(24, "0") : "201",
+                      expectedAuthors: ["Incorrect credit"],
+                      correctedAuthors: ["Harbor Studio (Mint)"],
+                    },
+                    {
+                      workId:
+                        source === "Pica" ? "204".padStart(24, "0") : "204",
+                      expectedAuthors: ["Guest、Mint"],
+                      correctedAuthors: ["Different Writer"],
+                    },
+                  ]
+                : [],
               queryFingerprint: "a".repeat(64),
             };
           if (command === "source_catalog") {
@@ -1238,6 +1259,12 @@ async function installMock(page: Page, options: MockOptions = {}) {
                     authors: ["Mentha"],
                   });
               }
+              if (options.reviewedWorkCredits && source === "Pica")
+                candidates.forEach((work) => {
+                  work.workId = work.workId.padStart(24, "0");
+                });
+              if (options.reviewedWorkCredits)
+                candidates[3].authors = ["Incorrect credit"];
               if (options.workDates)
                 candidates.forEach((work, index) => {
                   work.sourceUpdatedAt = [
@@ -1305,6 +1332,17 @@ async function installMock(page: Page, options: MockOptions = {}) {
               epoch,
             );
             if (raw.kind === "detail") work.favorite = remoteFavorite[source];
+            if (
+              options.reviewedWorkCredits &&
+              raw.kind === "detail" &&
+              raw.query ===
+                (source === "Pica" ? "201".padStart(24, "0") : "201")
+            )
+              work.authors = [
+                hooks.changedDetailCredit
+                  ? "Website now changed credit"
+                  : "Incorrect credit",
+              ];
             if (
               options.workDates &&
               raw.kind === "detail" &&
@@ -2313,6 +2351,96 @@ for (const source of ["JM", "Pica"] as const) {
       ["Mentha", 1],
       ["Mentha", 2],
     ]);
+  });
+}
+
+for (const source of ["JM", "Pica"] as const) {
+  test(`${source} reviewed work credits agree between discovery and followed-author entries and never override fresh changed credits`, async ({
+    page,
+  }) => {
+    const correctId = source === "Pica" ? "201".padStart(24, "0") : "201";
+    const otherId = source === "Pica" ? "204".padStart(24, "0") : "204";
+    await installMock(page, {
+      authorSearchResults: true,
+      reviewedWorkCredits: true,
+    });
+    await page.goto("/");
+    for (const entry of ["search", "following"] as const) {
+      if (entry === "search") {
+        await page.getByTestId("nav-discovery").click();
+        await page.getByTestId("source-tab-" + source).click();
+        await page.getByTestId("source-search-input").fill("Mint");
+        await page.getByTestId("source-search-submit").click();
+      } else {
+        await page.getByTestId("nav-authors").click();
+        await page.getByTestId("source-tab-" + source).click();
+        await page
+          .getByRole("button", { name: "搜索该作者", exact: true })
+          .click();
+      }
+      await expect(page.getByTestId("source-completeness")).toContainText(
+        "已读完",
+      );
+      await expect(page.getByTestId("source-author-evidence")).toContainText(
+        "作者作品 1 部 · 其他关键词结果 4 部",
+      );
+      await expect(page.getByTestId("source-filter-count")).toContainText(
+        "未入库 1 部 · 当前显示 1 部",
+      );
+      const correct = page.getByTestId(`source-card-${source}:${correctId}`);
+      await expect(correct).toContainText("Harbor Studio (Mint)");
+      await expect(
+        correct.getByTestId("author-credit-reviewed"),
+      ).toHaveAttribute(
+        "title",
+        "已按本作品核对署名。来源原署名：Incorrect credit",
+      );
+      await expect(
+        page.getByTestId(`source-card-${source}:${otherId}`),
+      ).toHaveCount(0);
+      await page.getByTestId("source-toggle-selection").click();
+      await page.getByTestId("source-select-all").click();
+      await expect(page.getByTestId("source-selection-bar")).toContainText(
+        "已选 1 部",
+      );
+      await page.getByTestId("source-author-results-toggle").click();
+      const other = page.getByTestId(`source-card-${source}:${otherId}`);
+      await expect(other).toContainText("Different Writer");
+      await expect(other.getByTestId("author-credit-reviewed")).toHaveAttribute(
+        "title",
+        "已按本作品核对署名。来源原署名：Guest、Mint",
+      );
+      await expect(other.getByRole("checkbox")).toHaveCount(0);
+      await expect(page.getByTestId("source-select-all")).toHaveCount(0);
+      await page.getByTestId("source-author-results-toggle").click();
+      await correct.locator("h3 button").click();
+      await expect(page.getByTestId("source-detail")).toContainText(
+        "Harbor Studio (Mint)",
+      );
+      await expect(
+        page.getByTestId("source-detail").getByTestId("author-credit-reviewed"),
+      ).toHaveCount(1);
+      await page.getByTestId("source-detail-back").click();
+    }
+    await page
+      .getByTestId(`source-card-${source}:${correctId}`)
+      .locator("h3 button")
+      .click();
+    await page.evaluate(() => {
+      window.sourceTest.changedDetailCredit = true;
+    });
+    // Reopening obtains fresh metadata; the old expected-author guard must fail.
+    await page.getByTestId("source-detail-back").click();
+    await page
+      .getByTestId(`source-card-${source}:${correctId}`)
+      .locator("h3 button")
+      .click();
+    await expect(page.getByTestId("source-detail")).toContainText(
+      "Website now changed credit",
+    );
+    await expect(
+      page.getByTestId("source-detail").getByTestId("author-credit-reviewed"),
+    ).toHaveCount(0);
   });
 }
 

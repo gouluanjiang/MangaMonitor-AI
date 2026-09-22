@@ -7,7 +7,8 @@ import {
 } from "./source-search.ts";
 import type { SearchProgress } from "./source-search.ts";
 import { authorQueryError } from "./author-query.ts";
-import { partitionAuthorWorks } from "./author-evidence.ts";
+import { partitionAuthorWorks, projectAuthorWork } from "./author-evidence.ts";
+import { AuthorCreditNote } from "./AuthorCreditNote.tsx";
 import { downloadSelectionLimit } from "./download-types.ts";
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +33,7 @@ import type {
   SourceWork,
   SourceItemIssue,
   AuthorQueryPolicy,
+  AuthorCreditContext,
 } from "./source-types.ts";
 import {
   accountScope,
@@ -79,6 +81,7 @@ export interface SourceWorkbenchProps {
   onDensityChange(density: 5 | 7 | 9): void | Promise<unknown>;
   requestedSource?: Source;
   requestedWork?: WorkReference;
+  requestedAuthorContext?: AuthorCreditContext;
   requestKey?: number;
   loadingAccounts?: boolean;
   searchHost?: HTMLElement | null;
@@ -288,6 +291,7 @@ export function SourceWorkbench({
   onDensityChange,
   requestedSource,
   requestedWork,
+  requestedAuthorContext,
   requestKey,
   loadingAccounts = false,
   searchHost,
@@ -491,6 +495,7 @@ export function SourceWorkbench({
     selectedMetadata.current.clear();
     setItems([]);
     setSearchComplete(false);
+    setSearchPolicy(undefined);
     setShowOtherAuthorResults(false);
     setPageInfo(null);
     setDetailRef(null);
@@ -1036,6 +1041,30 @@ export function SourceWorkbench({
     [items, authorQuery, searchPolicy],
   );
   const authorKeys = new Set(authorResults.confirmed.map(sourceWorkKey));
+  const displayDetail = useMemo(() => {
+    if (!detail) return null;
+    const requestedApplies =
+      requestedAuthorContext &&
+      requestedAuthorContext.scope.source === scope?.source &&
+      requestedAuthorContext.scope.sessionId === scope?.sessionId &&
+      requestedWork?.source === detail.source &&
+      requestedWork.workId === detail.workId;
+    return projectAuthorWork(
+      detail,
+      requestedApplies
+        ? requestedAuthorContext.policies
+        : authorQuery && searchPolicy
+          ? [searchPolicy]
+          : [],
+    );
+  }, [
+    detail,
+    authorQuery,
+    searchPolicy,
+    requestedAuthorContext,
+    requestedWork,
+    scopeId,
+  ]);
   const browsingWorks =
     view === "following" && !authorSearch
       ? followedWorks
@@ -1344,6 +1373,7 @@ export function SourceWorkbench({
                   ? work.authors.join("、")
                   : "作者资料未取得"}
               </p>
+              <AuthorCreditNote work={work} />
               <p className="source-card-state">
                 {sourceLabel(work.source)} · {inventoryLabel(inventory(work))}
               </p>
@@ -1401,8 +1431,8 @@ export function SourceWorkbench({
               </p>
               <h1>{detail.title}</h1>
               <div className="source-detail-authors">
-                {detail.authors.length ? (
-                  detail.authors.map((author) => (
+                {displayDetail?.authors.length ? (
+                  displayDetail.authors.map((author) => (
                     <div key={author}>
                       <span>{author}</span>
                       <button
@@ -1428,6 +1458,7 @@ export function SourceWorkbench({
                   <p>作者资料未取得</p>
                 )}
               </div>
+              {displayDetail && <AuthorCreditNote work={displayDetail} />}
               <div className="source-tags">
                 {detail.tags.map((tag) => (
                   <span key={tag}>{tag}</span>

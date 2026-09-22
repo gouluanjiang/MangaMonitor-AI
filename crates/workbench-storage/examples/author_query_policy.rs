@@ -30,7 +30,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let next = current.value.merged_import(&incoming, &following.value)?;
     let mut query_changes = 0usize;
     let mut credit_changes = 0usize;
+    let mut work_credit_changes = 0usize;
     for account in &incoming.accounts {
+        let old_account = current.value.accounts.iter().find(|existing| {
+            existing.source == account.source && existing.account_key == account.account_key
+        });
+        work_credit_changes += account
+            .work_credits
+            .iter()
+            .filter(|rule| {
+                old_account.and_then(|existing| {
+                    existing
+                        .work_credits
+                        .iter()
+                        .find(|old| old.work_id == rule.work_id)
+                }) != Some(*rule)
+            })
+            .count();
         for profile in &account.profiles {
             let before =
                 current
@@ -77,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "followingRevision": following.revision, "discoveryRevision": discovery.revision,
             "scanIdle": scan_idle, "queryChangedScopes": query_changes,
             "creditChangedScopes": credit_changes,
+            "workCreditChangedRules": work_credit_changes,
             "followingChanged": false, "libraryChanged": false, "historyDeleted": false
         }))?
     );

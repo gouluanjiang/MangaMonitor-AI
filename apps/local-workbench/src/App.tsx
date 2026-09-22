@@ -73,6 +73,7 @@ import type {
   Source,
   SourceScope,
   SourceWork,
+  AuthorCreditContext,
 } from "./source-types.ts";
 const sourceAdapter = createSourceAdapter();
 const libraryAdapter = createLibraryAdapter();
@@ -242,6 +243,8 @@ export default function App() {
   );
   const [requestedSource, setRequestedSource] = useState<Source>();
   const [requestedWork, setRequestedWork] = useState<WorkReference>();
+  const [requestedAuthorContext, setRequestedAuthorContext] =
+    useState<AuthorCreditContext>();
   const [sourceRequestKey, setSourceRequestKey] = useState(0);
   const [sourceSearchHost, setSourceSearchHost] =
     useState<HTMLDivElement | null>(null);
@@ -465,7 +468,11 @@ export default function App() {
       ))}
     </div>
   );
-  function openEmbeddedWork(ref: WorkReference) {
+  function openEmbeddedWork(
+    ref: WorkReference,
+    creditContext?: AuthorCreditContext,
+  ) {
+    setRequestedAuthorContext(creditContext);
     embeddedScroll.current = contentRef.current?.scrollTop ?? 0;
     setRequestedSource(ref.source);
     setRequestedWork(ref);
@@ -474,13 +481,18 @@ export default function App() {
   }
   function returnFromEmbeddedDetail() {
     setEmbeddedSourceDetail(false);
+    setRequestedAuthorContext(undefined);
     requestAnimationFrame(() =>
       contentRef.current?.scrollTo(0, embeddedScroll.current),
     );
   }
-  function openSourceWork(ref: WorkReference) {
+  function openSourceWork(
+    ref: WorkReference,
+    creditContext?: AuthorCreditContext,
+  ) {
+    setRequestedAuthorContext(creditContext);
     if (["completion", "author-search"].includes(page)) {
-      openEmbeddedWork(ref);
+      openEmbeddedWork(ref, creditContext);
       return;
     }
     setDiscoveryPane("search");
@@ -2463,6 +2475,7 @@ export default function App() {
               onDensityChange={changeDensity}
               requestedSource={requestedSource}
               requestedWork={requestedWork}
+              requestedAuthorContext={requestedAuthorContext}
               requestKey={sourceRequestKey}
               loadingAccounts={loadingAccounts}
               searchHost={sourceSearchHost}

@@ -162,6 +162,8 @@ pub(crate) struct DiscoveryContext {
     pub following_revision: u64,
     pub policy_revision: u64,
     policies: HashMap<workbench_storage::Source, HashMap<String, AuthorQueryPolicy>>,
+    work_credits:
+        HashMap<workbench_storage::Source, HashMap<String, workbench_storage::AuthorWorkCredit>>,
     pub authors: Vec<String>,
     pub account_key: String,
 }
@@ -185,6 +187,7 @@ impl DiscoveryContext {
             following_revision: following.revision,
             policy_revision: policies.revision,
             policies: HashMap::new(),
+            work_credits: HashMap::new(),
             authors: vec![],
             account_key: format!("{:x}", digest.finalize()),
         };
@@ -217,8 +220,21 @@ impl DiscoveryContext {
     fn set_policies(&mut self, document: &Document<AuthorQueryDocument>) {
         self.policy_revision = document.revision;
         self.policies.clear();
+        self.work_credits.clear();
         for identity in &self.identities {
             let source = storage_source(identity.scope.source);
+            if let Some(account) = document.value.accounts.iter().find(|account| {
+                account.source == source && account.account_key == identity.account_key
+            }) {
+                self.work_credits.insert(
+                    source,
+                    account
+                        .work_credits
+                        .iter()
+                        .map(|rule| (rule.work_id.clone(), rule.clone()))
+                        .collect(),
+                );
+            }
             self.policies.insert(
                 source,
                 self.authors
@@ -261,12 +277,36 @@ impl DiscoveryContext {
     }
 
     fn record_matches(&self, record: &DiscoveryRecord) -> bool {
-        record.matched_authors.iter().any(|author| {
-            self.policy(record.work.source, author)
-                .is_some_and(|policy| {
-                    policy_error(policy).is_none() && policy.matches_credits(&record.work.authors)
-                })
-        })
+        self.corrected_record_matches(record)
+            || record.matched_authors.iter().any(|author| {
+                self.policy(record.work.source, author)
+                    .is_some_and(|policy| {
+                        policy_error(policy).is_none()
+                            && policy
+                                .matches_work_credits(&record.work.work_id, &record.work.authors)
+                    })
+            })
+    }
+
+    /// A reviewed work can have been discovered only under an incorrect author.
+    /// Admit its actual currently followed author without inventing a query hit
+    /// or altering that author's pagination/baseline. The indexed guard keeps
+    /// ordinary records on their original attribution path.
+    fn corrected_record_matches(&self, record: &DiscoveryRecord) -> bool {
+        self.work_credits
+            .get(&record.work.source)
+            .and_then(|rules| rules.get(&record.work.work_id))
+            .filter(|rule| rule.matches_expected(&record.work.authors))
+            .is_some_and(|rule| {
+                self.policies
+                    .get(&record.work.source)
+                    .is_some_and(|policies| {
+                        policies.values().any(|policy| {
+                            policy_error(policy).is_none()
+                                && policy.matches_credits(&rule.corrected_authors)
+                        })
+                    })
+            })
     }
 
     fn scopes(&self) -> Vec<DiscoveryScope> {
@@ -441,6 +481,9 @@ fn project_view(
                     .records
                     .iter()
                     .filter_map(|record| {
+                        if context.corrected_record_matches(record) {
+                            return Some(record.clone());
+                        }
                         if !record
                             .matched_authors
                             .iter()
@@ -480,6 +523,9 @@ fn record_counts(
     record: &DiscoveryRecord,
     followed: &HashSet<&str>,
 ) -> (usize, usize) {
+    if context.corrected_record_matches(record) {
+        return (1, 0);
+    }
     let mut projected = record.clone();
     projected.matched_authors.retain(|author| {
         followed.contains(author.as_str())
@@ -509,6 +555,9 @@ fn project_author_query_guards(context: &DiscoveryContext, snapshot: &mut Discov
         })
         .collect();
     for record in &mut snapshot.records {
+        if context.corrected_record_matches(record) {
+            continue;
+        }
         record
             .matched_authors
             .retain(|author| !blocked.contains(&(record.work.source, author.as_str())));

@@ -25,6 +25,13 @@ test("author policy IPC preserves original query spellings and validates the exa
     queries: ["Writer～ Name", "Writer Name"],
     verifiedAliases: ["WriterName"],
     exactCredits: ["WriterName & Collaborator"],
+    workCredits: [
+      {
+        workId: "123",
+        expectedAuthors: ["Wrong Writer"],
+        correctedAuthors: ["WriterName"],
+      },
+    ],
     queryFingerprint: "a".repeat(64),
   };
   const adapter = createSourceAdapter({
@@ -44,6 +51,12 @@ test("author policy IPC preserves original query spellings and validates the exa
   assert.deepEqual(result.queries, policy.queries);
   assert.deepEqual(result.verifiedAliases, policy.verifiedAliases);
   assert.deepEqual(result.exactCredits, policy.exactCredits);
+  assert.deepEqual(result.workCredits, policy.workCredits);
+  assert.notEqual(result.workCredits, policy.workCredits);
+  assert.notEqual(
+    result.workCredits[0].correctedAuthors,
+    policy.workCredits[0].correctedAuthors,
+  );
   for (const broken of [
     { source: "Pica" },
     { sessionId: "replaced-session" },
@@ -56,6 +69,43 @@ test("author policy IPC preserves original query spellings and validates the exa
     { queries: ["One", "Two", "Three", "Four", "Five"] },
     { queries: ["Writer", "Writer"] },
     { verifiedAliases: Array.from({ length: 17 }, (_, i) => "Alias " + i) },
+    { workCredits: [null] },
+    {
+      workCredits: [
+        { ...policy.workCredits[0], expectedAuthors: ["字".repeat(2001)] },
+      ],
+    },
+    {
+      workCredits: [
+        { ...policy.workCredits[0], correctedAuthors: ["字".repeat(2001)] },
+      ],
+    },
+    { workCredits: [{ ...policy.workCredits[0], workId: "0" }] },
+    { workCredits: [{ ...policy.workCredits[0], workId: "not-jm-id" }] },
+    { workCredits: [{ ...policy.workCredits[0], workId: "../123" }] },
+    { workCredits: [{ ...policy.workCredits[0], expectedAuthors: [] }] },
+    { workCredits: [{ ...policy.workCredits[0], correctedAuthors: [" "] }] },
+    {
+      workCredits: [
+        { ...policy.workCredits[0], correctedAuthors: ["A", "Ａ"] },
+      ],
+    },
+    { workCredits: [{ ...policy.workCredits[0], expectedAuthors: ["A\nB"] }] },
+    {
+      workCredits: [
+        {
+          ...policy.workCredits[0],
+          expectedAuthors: Array.from({ length: 65 }, (_, i) => "Credit " + i),
+        },
+      ],
+    },
+    { workCredits: [policy.workCredits[0], policy.workCredits[0]] },
+    {
+      workCredits: Array.from({ length: 501 }, (_, i) => ({
+        ...policy.workCredits[0],
+        workId: String(i + 1),
+      })),
+    },
   ]) {
     const invalid = createSourceAdapter({
       native: true,
@@ -63,6 +113,60 @@ test("author policy IPC preserves original query spellings and validates the exa
     });
     await assert.rejects(invalid.authorPolicy(scope, policy.author));
   }
+});
+
+test("source DTOs never trust an incoming display-only author review flag", () => {
+  const raw = work();
+  const parsed = validateSourceWork({
+    ...raw,
+    authorCreditReview: { originalAuthors: ["Injected author"] },
+  });
+  assert.deepEqual(parsed, raw);
+  assert.equal(parsed.authorCreditReview, undefined);
+});
+
+test("reviewed credit rule IDs use the source-specific contract and do not affect query identity", async () => {
+  const picaScope = { source: "Pica", sessionId: "pica-session" };
+  const base = {
+    ...picaScope,
+    revision: 1,
+    author: "Writer",
+    queries: ["Writer"],
+    verifiedAliases: [],
+    queryFingerprint: "b".repeat(64),
+  };
+  const rule = {
+    workId: "0123456789abcdef01234567",
+    expectedAuthors: ["Wrong"],
+    correctedAuthors: ["Writer"],
+  };
+  const read = (workId) =>
+    createSourceAdapter({
+      native: true,
+      invoke: async () => ({ ...base, workCredits: [{ ...rule, workId }] }),
+    }).authorPolicy(picaScope, "Writer");
+  assert.equal(
+    (await read(rule.workId)).queryFingerprint,
+    base.queryFingerprint,
+  );
+  const unicode = createSourceAdapter({
+    native: true,
+    invoke: async () => ({
+      ...base,
+      workCredits: [{ ...rule, correctedAuthors: ["🍊".repeat(2000)] }],
+    }),
+  });
+  assert.equal(
+    (await unicode.authorPolicy(picaScope, "Writer")).workCredits[0]
+      .correctedAuthors[0],
+    "🍊".repeat(2000),
+  );
+  for (const invalid of [
+    "123",
+    "0123456789ABCDEF01234567",
+    "0123456789abcdef0123456g",
+  ])
+    await assert.rejects(read(invalid), SourceError);
 });
 
 test("catalog IPC preserves scope/reverse and rejects malformed terminal snapshots", async () => {

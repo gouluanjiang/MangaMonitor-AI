@@ -20,6 +20,7 @@ declare global {
       otherRecords: DiscoverySnapshot["records"];
       inventory: DownloadInventorySnapshot;
       searchRecords: SourceWork[];
+      detailRecords: SourceWork[];
       authorPolicies: AuthorQueryPolicy[];
       hold: boolean;
       release?: () => void;
@@ -149,6 +150,7 @@ async function install(page: Page) {
         otherRecords: [],
         inventory,
         searchRecords: structuredClone(works),
+        detailRecords: structuredClone(works),
         authorPolicies: [],
         hold: false,
         readFailure: null,
@@ -295,7 +297,9 @@ async function install(page: Page) {
             }
             if (command === "source_query") {
               const sourceWorks = (
-                args.kind === "detail" ? works : hooks.searchRecords
+                args.kind === "detail"
+                  ? hooks.detailRecords
+                  : hooks.searchRecords
               ).filter((work) => work.source === args.source);
               const items =
                 args.kind === "detail"
@@ -1568,6 +1572,170 @@ test("saved author policies reclassify cached other results without source IO an
   expect(await page.evaluate(() => window.authorTest.view.records.length)).toBe(
     3,
   );
+});
+
+for (const mode of ["updates", "search"] as const) {
+  test(`${mode} reviewed work credits change attribution, counts and selection while retaining raw history and explaining details`, async ({
+    page,
+  }) => {
+    await install(page);
+    await page.evaluate((mode) => {
+      const h = window.authorTest;
+      const author = mode === "updates" ? "合成作者" : "新作者";
+      const policy: AuthorQueryPolicy = {
+        source: "JM",
+        author,
+        queries: [author],
+        verifiedAliases: [],
+        queryFingerprint: "a".repeat(64),
+        workCredits: [
+          {
+            workId: "123",
+            expectedAuthors: ["Wrong Credit"],
+            correctedAuthors: [author],
+          },
+          {
+            workId: "456",
+            expectedAuthors: [author],
+            correctedAuthors: ["Other Writer"],
+          },
+        ],
+      };
+      h.authorPolicies = [policy];
+      h.view.authorPolicies = [policy];
+      h.searchRecords[0].authors = ["Wrong Credit"];
+      h.searchRecords[1].authors = [author];
+      h.searchRecords[2].authors = [author];
+      h.detailRecords = structuredClone(h.searchRecords);
+      h.view.records = h.view.records.map((record, index) => ({
+        ...record,
+        work: structuredClone(h.searchRecords[index]),
+      }));
+      for (const range of h.view.authors) {
+        range.state = "complete";
+        range.lastCompleteAt = Date.now();
+        range.errorCode = null;
+      }
+    }, mode);
+    const rawBefore = await page.evaluate(() => ({
+      records: window.authorTest.view.records,
+      inventory: window.authorTest.inventory,
+    }));
+    if (mode === "updates") await page.getByTestId("nav-completion").click();
+    else {
+      await page.getByTestId("nav-author-search").click();
+      await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
+      await page.getByRole("button", { name: "搜索两站作品" }).click();
+    }
+    await expect(page.getByTestId("completion-counts")).toContainText(
+      "当前检查范围已读完 · 已记录 2 条 · 已入库 1 条 · 未入库 1 条",
+    );
+    await expect(page.getByTestId("completion-other-results")).toContainText(
+      "其他关键词结果 1 条",
+    );
+    await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
+    await page.getByRole("button", { name: "多选", exact: true }).click();
+    await page.getByTestId("completion-select-all").click();
+    await expect(page.getByTestId("completion-selection-bar")).toContainText(
+      "已选 1 本",
+    );
+    await page.getByRole("button", { name: "全部 2", exact: true }).click();
+    const correct = page.getByTestId("author-update-JM:123");
+    await expect(correct.getByTestId("author-credit-reviewed")).toHaveAttribute(
+      "title",
+      "已按本作品核对署名。来源原署名：Wrong Credit",
+    );
+    await correct.locator(".source-card-open").click();
+    const detail = page.getByTestId("source-detail");
+    await expect(detail.getByTestId("author-credit-reviewed")).toHaveAttribute(
+      "title",
+      "已按本作品核对署名。来源原署名：Wrong Credit",
+    );
+    await expect(detail.locator(".source-detail-authors")).toContainText(
+      mode === "updates" ? "合成作者" : "新作者",
+    );
+    await page.getByTestId("source-detail-back").click();
+    await page
+      .getByRole("button", { name: "查看其他关键词结果", exact: true })
+      .click();
+    const other = page.getByTestId("author-update-JM:456");
+    await expect(other).toContainText("Other Writer");
+    await expect(other.getByTestId("author-credit-reviewed")).toHaveCount(1);
+    await expect(other.getByRole("checkbox")).toHaveCount(0);
+    await expect(
+      other.getByRole("button", { name: "下载到漫画库", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByTestId("completion-select-all")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => ({
+        records: window.authorTest.view.records,
+        inventory: window.authorTest.inventory,
+      })),
+    ).toEqual(rawBefore);
+    const searchCalls = await page.evaluate(() =>
+      window.authorTest.calls.filter(
+        (call) =>
+          call.command === "source_query" && call.args.kind === "search",
+      ),
+    );
+    expect(searchCalls.length).toBe(mode === "updates" ? 0 : 3);
+  });
+}
+
+test("reviewed old records reach their actual followed author without inventing a completed search range", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    const raw = h.view.records[1];
+    h.view.records = [raw];
+    const policy: AuthorQueryPolicy = {
+      source: "JM",
+      author: "Actual Author",
+      queries: ["Actual Author"],
+      verifiedAliases: [],
+      queryFingerprint: "a".repeat(64),
+      workCredits: [
+        {
+          workId: "456",
+          expectedAuthors: ["合成作者"],
+          correctedAuthors: ["Actual Author"],
+        },
+      ],
+    };
+    h.view.authorPolicies = [
+      policy,
+      { ...policy, author: "合成作者", queries: ["合成作者"] },
+    ];
+    h.view.authors.push({
+      ...h.view.authors[0],
+      author: "Actual Author",
+      pagesRead: 0,
+      observedCount: 0,
+      lastCompleteAt: null,
+    });
+  });
+  await page.getByTestId("nav-completion").click();
+  await page.getByLabel("检查作者").selectOption("Actual Author");
+  await expect(page.getByTestId("author-update-JM:456")).toContainText(
+    "Actual Author",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "检查范围尚未读完",
+  );
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  await page.getByLabel("检查作者").selectOption("合成作者");
+  await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "查看其他关键词结果", exact: true })
+    .click();
+  await expect(page.getByTestId("author-update-JM:456")).toContainText(
+    "Actual Author",
+  );
+  expect(
+    await page.evaluate(() => window.authorTest.view.records[0].matchedAuthors),
+  ).toEqual(["合成作者"]);
 });
 
 test("ad-hoc author search applies source-specific policies across every term and preserves displayed author identity", async ({

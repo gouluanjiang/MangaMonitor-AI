@@ -13,6 +13,7 @@ import type {
   RankOptions,
   SourceItemIssue,
   AuthorQueryPolicy,
+  AuthorWorkCredit,
 } from "./source-types.ts";
 import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
@@ -136,12 +137,52 @@ export function validateAuthorQueryPolicy(
     new Set(credits).size !== credits.length
   )
     invalid();
+  const workCredits = value.workCredits ?? [];
+  const normalizedCredit = (name: string) =>
+    name.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const creditNames = (names: unknown): names is string[] =>
+    Array.isArray(names) &&
+    names.length > 0 &&
+    names.length <= 64 &&
+    names.every(
+      (name) =>
+        text(name, 4000) &&
+        [...name].length <= 2000 &&
+        !!normalizedCredit(name) &&
+        !/[\x00-\x1f\x7f-\x9f]/u.test(name),
+    ) &&
+    new Set(names.map(normalizedCredit)).size === names.length;
+  if (
+    !Array.isArray(workCredits) ||
+    workCredits.length > 500 ||
+    !workCredits.every(
+      (rule) =>
+        object(rule) &&
+        typeof rule.workId === "string" &&
+        (value.source === "JM" ? /^[1-9][0-9]{0,19}$/ : /^[0-9a-f]{24}$/).test(
+          rule.workId,
+        ) &&
+        creditNames(rule.expectedAuthors) &&
+        creditNames(rule.correctedAuthors),
+    ) ||
+    new Set(workCredits.map((rule) => rule.workId)).size !== workCredits.length
+  )
+    invalid();
   return {
     source: value.source,
     author: value.author,
     queries: [...value.queries] as string[],
     verifiedAliases: [...value.verifiedAliases] as string[],
     exactCredits: [...credits] as string[],
+    ...(value.workCredits === undefined
+      ? {}
+      : {
+          workCredits: (workCredits as AuthorWorkCredit[]).map((rule) => ({
+            workId: rule.workId,
+            expectedAuthors: [...rule.expectedAuthors],
+            correctedAuthors: [...rule.correctedAuthors],
+          })),
+        }),
     queryFingerprint: value.queryFingerprint,
   };
 }

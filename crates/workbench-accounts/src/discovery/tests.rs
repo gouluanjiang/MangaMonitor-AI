@@ -2246,6 +2246,7 @@ fn save_policy(
         accounts: vec![workbench_storage::AuthorQueryAccount {
             source: storage_source(source),
             account_key: account.account_key.clone(),
+            work_credits: vec![],
             profiles: vec![workbench_storage::AuthorQueryProfile {
                 author: author.into(),
                 queries: queries.iter().map(|name| (*name).into()).collect(),
@@ -2329,6 +2330,223 @@ async fn policy_aliases_reclassify_saved_records_offline_without_invalidating_qu
         .await
         .unwrap();
     assert!(other.policy.verified_aliases.is_empty());
+}
+
+#[tokio::test]
+async fn reviewed_work_credits_reclassify_native_views_offline_without_rewriting_raw_history() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(
+            1,
+            4,
+            vec![
+                work(Source::Jm, "100", &["Wrong Writer"]),
+                work(Source::Jm, "101", &["Wrong Writer"]),
+                work(Source::Jm, "102", &["Author A"]),
+                work(Source::Jm, "103", &["Author A"]),
+            ],
+        ),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let before = finish(&service, &scopes).await;
+    assert_eq!(before.other_record_count, 2);
+    let before_view = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        before_view
+            .records
+            .iter()
+            .map(|r| r.work.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["102", "103"]
+    );
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    let saved_before = store.read_discovery().unwrap();
+    let follows_before = store.read_following().unwrap();
+    let library_before = store.read_library().unwrap();
+    let downloads_before = store.read_downloads().unwrap();
+    let jm_account = follows_before
+        .value
+        .accounts
+        .iter()
+        .find(|a| a.source == storage_source(Source::Jm))
+        .unwrap();
+    let rule = |id: &str, old: &str, corrected: &str| workbench_storage::AuthorWorkCredit {
+        work_id: id.into(),
+        expected_authors: vec![old.into()],
+        corrected_authors: vec![corrected.into()],
+    };
+    let incoming = workbench_storage::AuthorQueryDocument {
+        version: 1,
+        accounts: vec![workbench_storage::AuthorQueryAccount {
+            source: storage_source(Source::Jm),
+            account_key: jm_account.account_key.clone(),
+            profiles: vec![],
+            work_credits: vec![
+                rule("100", "Wrong Writer", "Author A"),
+                rule("103", "Author A", "Different Writer"),
+            ],
+        }],
+    };
+    store
+        .import_author_query_policies(0, follows_before.revision, saved_before.revision, incoming)
+        .unwrap();
+    backend.0.calls.lock().unwrap().clear();
+    let after = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        after
+            .records
+            .iter()
+            .map(|r| r.work.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["100", "102"]
+    );
+    assert_eq!(after.records[0].work.authors, ["Wrong Writer"]);
+    assert_eq!(after.other_record_count, 2);
+    assert_eq!(after.authors, before.authors);
+    assert_eq!(
+        after.author_policies[0].query_fingerprint,
+        before.author_policies[0].query_fingerprint
+    );
+    assert_eq!(after.author_policies[0].work_credits.len(), 2);
+    let progress = service.discovery_progress(scopes.clone()).await.unwrap();
+    assert_eq!(progress.other_record_count, 2);
+    assert_eq!(progress.author_policies, after.author_policies);
+    assert!(backend.0.calls.lock().unwrap().is_empty());
+    assert_eq!(store.read_discovery().unwrap(), saved_before);
+    assert_eq!(store.read_following().unwrap(), follows_before);
+    assert_eq!(store.read_library().unwrap(), library_before);
+    assert_eq!(store.read_downloads().unwrap(), downloads_before);
+
+    // The same scoped native DTO feeds ad-hoc searches even when this corrected
+    // creator is not followed. Private account identifiers never enter the DTO.
+    let resolved = service
+        .author_query_policy(Source::Jm, &scopes[0].session_id, "Different Writer")
+        .await
+        .unwrap();
+    assert_eq!(resolved.policy.work_credits.len(), 1);
+    assert!(resolved
+        .policy
+        .matches_work_credits("103", &["Author A".into()]));
+    let json = serde_json::to_value(&resolved).unwrap();
+    assert_eq!(json["workCredits"][0]["workId"], "103");
+    assert_eq!(
+        json["workCredits"][0]["expectedAuthors"],
+        serde_json::json!(["Author A"])
+    );
+    assert_eq!(
+        json["workCredits"][0]["correctedAuthors"],
+        serde_json::json!(["Different Writer"])
+    );
+    assert!(json.get("accountKey").is_none());
+    assert!(service
+        .author_query_policy(Source::Jm, "stale-session", "Different Writer")
+        .await
+        .is_err());
+    let other = service
+        .author_query_policy(Source::Pica, &scopes[1].session_id, "Different Writer")
+        .await
+        .unwrap();
+    assert!(other.policy.work_credits.is_empty());
+    let unrelated = service
+        .author_query_policy(Source::Jm, &scopes[0].session_id, "Unrelated Writer")
+        .await
+        .unwrap();
+    assert!(unrelated.policy.work_credits.is_empty());
+}
+
+#[tokio::test]
+async fn reviewed_wrong_query_history_can_appear_for_correct_follow_without_claiming_coverage() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Wrong Writer", true).await;
+    backend.put(
+        Source::Jm,
+        "Wrong Writer",
+        1,
+        page(
+            1,
+            2,
+            vec![
+                work(Source::Jm, "100", &["Wrong Writer"]),
+                work(Source::Jm, "101", &["Wrong Writer"]),
+            ],
+        ),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    finish(&service, &scopes).await;
+    follow(&service, &scopes[0], "Wrong Writer", false).await;
+    follow(&service, &scopes[0], "Correct Writer", true).await;
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    let saved_before = store.read_discovery().unwrap();
+    let following = store.read_following().unwrap();
+    let account = following
+        .value
+        .accounts
+        .iter()
+        .find(|a| a.source == storage_source(Source::Jm))
+        .unwrap();
+    let before = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
+    assert!(before.records.is_empty());
+    store
+        .import_author_query_policies(
+            0,
+            following.revision,
+            saved_before.revision,
+            workbench_storage::AuthorQueryDocument {
+                version: 1,
+                accounts: vec![workbench_storage::AuthorQueryAccount {
+                    source: storage_source(Source::Jm),
+                    account_key: account.account_key.clone(),
+                    profiles: vec![],
+                    work_credits: vec![workbench_storage::AuthorWorkCredit {
+                        work_id: "100".into(),
+                        expected_authors: vec!["Wrong Writer".into()],
+                        corrected_authors: vec!["Correct Writer".into()],
+                    }],
+                }],
+            },
+        )
+        .unwrap();
+    backend.0.calls.lock().unwrap().clear();
+    let after = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(after.records.len(), 1);
+    assert_eq!(after.records[0].work.work_id, "100");
+    assert_eq!(after.records[0].work.authors, ["Wrong Writer"]);
+    assert_eq!(after.records[0].matched_authors, ["Wrong Writer"]);
+    assert_eq!(after.authors, before.authors);
+    assert!(after
+        .authors
+        .iter()
+        .all(|range| range.state == DiscoveryRangeState::Idle
+            && range.pages_read == 0
+            && range.last_complete_at.is_none()));
+    let progress = service.discovery_progress(scopes.clone()).await.unwrap();
+    assert_eq!(progress.record_count, 1);
+    assert_eq!(progress.other_record_count, 0);
+    assert!(backend.0.calls.lock().unwrap().is_empty());
+    assert_eq!(store.read_discovery().unwrap(), saved_before);
+    assert_eq!(store.read_following().unwrap(), following);
 }
 
 #[tokio::test]

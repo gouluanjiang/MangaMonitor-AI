@@ -4,6 +4,8 @@ import {
   authorNameMatches,
   partitionAuthorRecords,
   partitionAuthorWorks,
+  projectAuthorWork,
+  workHasAuthor,
 } from "../src/author-evidence.ts";
 
 test("author evidence accepts explicit circle/coauthor names and Unicode width/case differences", () => {
@@ -20,6 +22,169 @@ test("author evidence accepts explicit circle/coauthor names and Unicode width/c
     ["バナナ", "ハ\u3099ナナ"],
   ])
     assert.equal(authorNameMatches(query, name), true, `${query} / ${name}`);
+});
+
+test("reviewed per-work credits replace attribution without altering source records or creating aliases", () => {
+  const correction = {
+    workId: "101",
+    expectedAuthors: ["Wrong Writer", "Other credit"],
+    correctedAuthors: ["Studio (True Writer、Guest)"],
+  };
+  const policy = (author, source = "JM") => ({
+    source,
+    author,
+    queries: [author],
+    verifiedAliases: [],
+    queryFingerprint: "a".repeat(64),
+    workCredits: [correction],
+  });
+  const raw = record(
+    "101",
+    [" Other   credit ", "ＷＲＯＮＧ　ＷＲＩＴＥＲ"],
+    ["Wrong Writer", "True Writer"],
+    "JM",
+  );
+  const before = structuredClone(raw);
+  const trueResults = partitionAuthorWorks(
+    [raw.work],
+    "True Writer",
+    policy("True Writer"),
+  );
+  assert.equal(trueResults.confirmed.length, 1);
+  assert.deepEqual(
+    trueResults.confirmed[0].authors,
+    correction.correctedAuthors,
+  );
+  assert.deepEqual(
+    trueResults.confirmed[0].authorCreditReview.originalAuthors,
+    raw.work.authors,
+  );
+  assert.equal(
+    workHasAuthor(raw.work, "Wrong Writer", policy("Wrong Writer")),
+    false,
+  );
+  assert.equal(workHasAuthor(raw.work, "Guest", policy("Guest")), true);
+  assert.equal(
+    workHasAuthor(raw.work, "Unlisted Guest", policy("Unlisted Guest")),
+    false,
+  );
+  const policies = [policy("True Writer"), policy("Wrong Writer")];
+  assert.equal(
+    partitionAuthorRecords([raw], "Wrong Writer", "all", policies).confirmed
+      .length,
+    0,
+  );
+  assert.equal(
+    partitionAuthorRecords([raw], "True Writer", "all", policies).confirmed
+      .length,
+    1,
+  );
+  assert.equal(
+    partitionAuthorRecords([raw], "", "all", policies).confirmed.length,
+    1,
+  );
+  const wrongOnly = { ...raw, matchedAuthors: ["Wrong Writer"] };
+  assert.equal(
+    partitionAuthorRecords([wrongOnly], "True Writer", "JM", policies).confirmed
+      .length,
+    1,
+    "reviewed old record becomes visible to the actual followed author without a new website query",
+  );
+  assert.equal(
+    partitionAuthorRecords([wrongOnly], "Wrong Writer", "JM", policies).other
+      .length,
+    1,
+  );
+  assert.deepEqual(
+    wrongOnly.matchedAuthors,
+    ["Wrong Writer"],
+    "saved query membership and coverage are not rewritten",
+  );
+  assert.equal(
+    partitionAuthorRecords(
+      [{ ...wrongOnly, work: { ...wrongOnly.work, workId: "999" } }],
+      "True Writer",
+      "JM",
+      policies,
+    ).confirmed.length,
+    0,
+    "ordinary records do not gain memberships",
+  );
+  assert.deepEqual(
+    raw,
+    before,
+    "title, source ID, stored authors, query membership and metadata remain byte-equivalent",
+  );
+  for (const changed of [
+    { ...raw.work, source: "Pica" },
+    { ...raw.work, workId: "102" },
+    { ...raw.work, authors: ["Wrong Writer"] },
+    { ...raw.work, authors: ["Wrong Writer", "Other credit", "New credit"] },
+    { ...raw.work, authors: ["Site corrected this"] },
+  ]) {
+    assert.equal(projectAuthorWork(changed, [policy("True Writer")]), changed);
+    assert.equal(
+      workHasAuthor(changed, "True Writer", policy("True Writer")),
+      false,
+    );
+  }
+  assert.equal(
+    workHasAuthor(raw.work, "True Writer", policy("Wrong Writer")),
+    false,
+    "wrong active author policy is not reused",
+  );
+  assert.equal(
+    partitionAuthorWorks(
+      [{ ...raw.work, workId: "102" }],
+      "True Writer",
+      policy("True Writer"),
+    ).confirmed.length,
+    0,
+    "another work by the old credit is not an alias",
+  );
+});
+
+test("work-credit projections are idempotent, revocable and conservatively reject conflicting policy copies", () => {
+  const raw = record("103", ["Incorrect"], ["Correct"], "JM").work;
+  const policy = {
+    source: "JM",
+    author: "Correct",
+    queries: ["Correct"],
+    verifiedAliases: [],
+    queryFingerprint: "a".repeat(64),
+    workCredits: [
+      {
+        workId: "103",
+        expectedAuthors: ["Incorrect"],
+        correctedAuthors: ["Correct"],
+      },
+    ],
+  };
+  const projected = projectAuthorWork(raw, [policy]);
+  assert.deepEqual(projectAuthorWork(projected, [policy, policy]), projected);
+  assert.deepEqual(
+    projectAuthorWork(projected, []),
+    raw,
+    "removing a policy removes its ephemeral projection",
+  );
+  const conflict = {
+    ...policy,
+    author: "Conflicting",
+    workCredits: [
+      { ...policy.workCredits[0], correctedAuthors: ["Conflicting"] },
+    ],
+  };
+  assert.equal(projectAuthorWork(raw, [policy, conflict]), raw);
+  const aliasPolicy = {
+    ...policy,
+    author: "Display Name",
+    verifiedAliases: ["Correct"],
+  };
+  assert.equal(workHasAuthor(raw, "Display Name", aliasPolicy), true);
+  assert.equal(
+    workHasAuthor({ ...raw, workId: "104" }, "Display Name", aliasPolicy),
+    false,
+  );
 });
 
 test("evidenced aliases classify cached metadata per source without guessing spaces, traditional characters or circle membership", () => {

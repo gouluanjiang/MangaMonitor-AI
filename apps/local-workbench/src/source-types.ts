@@ -11,7 +11,17 @@ export interface AuthorQueryPolicy {
   queries: string[];
   verifiedAliases: string[];
   exactCredits?: string[];
+  workCredits?: AuthorWorkCredit[];
   queryFingerprint: string;
+}
+export interface AuthorWorkCredit {
+  workId: string;
+  expectedAuthors: string[];
+  correctedAuthors: string[];
+}
+export interface AuthorCreditContext {
+  scope: SourceScope;
+  policies: AuthorQueryPolicy[];
 }
 export interface ResolvedAuthorQueryPolicy
   extends AuthorQueryPolicy, SourceScope {
@@ -22,6 +32,8 @@ export interface SourceWork {
   workId: string;
   title: string;
   authors: string[];
+  /** Display projection only; never part of a stored source response. */
+  authorCreditReview?: { originalAuthors: string[] };
   description: string | null;
   tags: string[];
   favorite: boolean | null;

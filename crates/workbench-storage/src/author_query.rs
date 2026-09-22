@@ -11,6 +11,29 @@ pub(crate) const AUTHOR_QUERY_FILE: &str = "author-query-policies.json";
 pub(crate) const MAX_AUTHOR_QUERY_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_AUTHOR_QUERIES: usize = 4;
 pub const MAX_AUTHOR_ALIASES: usize = 16;
+pub const MAX_AUTHOR_WORK_CREDITS: usize = 500;
+pub const MAX_WORK_CREDIT_AUTHORS: usize = 64;
+
+/// Explicit evidence for one source work. Raw website credits stay immutable.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthorWorkCredit {
+    pub work_id: String,
+    pub expected_authors: Vec<String>,
+    pub corrected_authors: Vec<String>,
+}
+
+impl AuthorWorkCredit {
+    pub fn matches_expected(&self, credits: &[String]) -> bool {
+        let normalize = crate::author_evidence::normalized_author_credit;
+        let actual: HashSet<_> = credits.iter().map(|credit| normalize(credit)).collect();
+        self.expected_authors
+            .iter()
+            .map(|credit| normalize(credit))
+            .collect::<HashSet<_>>()
+            == actual
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -30,6 +53,8 @@ pub struct AuthorQueryAccount {
     pub source: Source,
     pub account_key: String,
     pub profiles: Vec<AuthorQueryProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub work_credits: Vec<AuthorWorkCredit>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -57,6 +82,9 @@ pub struct AuthorQueryPolicy {
     pub verified_aliases: Vec<String>,
     pub exact_credits: Vec<String>,
     pub query_fingerprint: String,
+    /// Only rules relevant to this author, including arbitrary unfollowed searches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub work_credits: Vec<AuthorWorkCredit>,
 }
 
 /// Exact UTF-8 query order/spelling and fixed source ordering semantics; aliases
@@ -77,21 +105,21 @@ pub fn author_query_fingerprint(source: Source, queries: &[String]) -> String {
 
 impl AuthorQueryDocument {
     pub fn resolve(&self, source: Source, account_key: &str, author: &str) -> AuthorQueryPolicy {
-        let profile = self
+        let account = self
             .accounts
             .iter()
-            .find(|account| account.source == source && account.account_key == account_key)
-            .and_then(|account| {
-                account
-                    .profiles
-                    .iter()
-                    .find(|profile| profile.author == author)
-            });
+            .find(|account| account.source == source && account.account_key == account_key);
+        let profile = account.and_then(|account| {
+            account
+                .profiles
+                .iter()
+                .find(|profile| profile.author == author)
+        });
         let queries = profile.map_or_else(
             || vec![author.to_owned()],
             |profile| profile.queries.clone(),
         );
-        AuthorQueryPolicy {
+        let mut policy = AuthorQueryPolicy {
             source,
             author: author.to_owned(),
             query_fingerprint: author_query_fingerprint(source, &queries),
@@ -99,7 +127,20 @@ impl AuthorQueryDocument {
             verified_aliases: profile
                 .map_or_else(Vec::new, |profile| profile.verified_aliases.clone()),
             exact_credits: profile.map_or_else(Vec::new, |profile| profile.exact_credits.clone()),
+            work_credits: vec![],
+        };
+        if let Some(account) = account {
+            policy.work_credits = account
+                .work_credits
+                .iter()
+                .filter(|rule| {
+                    policy.matches_credits(&rule.expected_authors)
+                        || policy.matches_credits(&rule.corrected_authors)
+                })
+                .cloned()
+                .collect();
         }
+        policy
     }
 
     /// Merge only explicitly supplied profiles. Existing scopes and unrelated
@@ -134,6 +175,7 @@ impl AuthorQueryDocument {
                     source: account.source,
                     account_key: account.account_key.clone(),
                     profiles: vec![],
+                    work_credits: vec![],
                 });
                 result.accounts.len() - 1
             });
@@ -148,6 +190,17 @@ impl AuthorQueryDocument {
                     result.accounts[position].profiles.push(profile.clone());
                 }
             }
+            for rule in &account.work_credits {
+                if let Some(existing) = result.accounts[position]
+                    .work_credits
+                    .iter_mut()
+                    .find(|item| item.work_id == rule.work_id)
+                {
+                    *existing = rule.clone();
+                } else {
+                    result.accounts[position].work_credits.push(rule.clone());
+                }
+            }
         }
         result.validate()?;
         Ok(result)
@@ -155,6 +208,31 @@ impl AuthorQueryDocument {
 }
 
 impl AuthorQueryPolicy {
+    /// Apply only an exact work-ID and normalized full-credit-set guard. This is
+    /// a view over reviewed evidence, never a rewrite of saved source metadata.
+    pub fn effective_work_credits<'a>(
+        &'a self,
+        work_id: &str,
+        credits: &'a [String],
+    ) -> &'a [String] {
+        let Some(rule) = self
+            .work_credits
+            .iter()
+            .find(|rule| rule.work_id == work_id)
+        else {
+            return credits;
+        };
+        if rule.matches_expected(credits) {
+            &rule.corrected_authors
+        } else {
+            credits
+        }
+    }
+
+    pub fn matches_work_credits(&self, work_id: &str, credits: &[String]) -> bool {
+        self.matches_credits(self.effective_work_credits(work_id, credits))
+    }
+
     pub fn matches_credits(&self, credits: &[String]) -> bool {
         std::iter::once(&self.author)
             .chain(&self.verified_aliases)
@@ -187,10 +265,38 @@ impl ValidatedDocument for AuthorQueryDocument {
             if !library_hash_is_valid(&account.account_key)
                 || !accounts.insert((account.source, &account.account_key))
                 || account.profiles.len() > MAX_FOLLOWED_AUTHORS_PER_ACCOUNT
+                || account.work_credits.len() > MAX_AUTHOR_WORK_CREDITS
             {
                 return Err(invalid());
             }
             let mut authors = HashSet::new();
+            let mut work_ids = HashSet::new();
+            for rule in &account.work_credits {
+                if !(crate::LibraryReference {
+                    source: account.source,
+                    work_id: rule.work_id.clone(),
+                })
+                .is_valid()
+                    || !work_ids.insert(&rule.work_id)
+                {
+                    return Err(invalid());
+                }
+                for names in [&rule.expected_authors, &rule.corrected_authors] {
+                    let mut unique = HashSet::new();
+                    if names.is_empty()
+                        || names.len() > MAX_WORK_CREDIT_AUTHORS
+                        || names.iter().any(|name| {
+                            let normalized = crate::author_evidence::normalized_author_credit(name);
+                            name.chars().count() > 2000
+                                || name.chars().any(char::is_control)
+                                || normalized.is_empty()
+                                || !unique.insert(normalized)
+                        })
+                    {
+                        return Err(invalid());
+                    }
+                }
+            }
             for profile in &account.profiles {
                 if !discovery_author_is_valid(&profile.author)
                     || profile.author.trim() != profile.author

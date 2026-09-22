@@ -1,7 +1,7 @@
 use tempfile::TempDir;
 use workbench_storage::{
     AccountFollowing, AuthorQueryAccount, AuthorQueryDocument, AuthorQueryProfile,
-    DiscoveryPagePatch, FollowedAccount, Source, WorkbenchStore,
+    AuthorWorkCredit, DiscoveryPagePatch, FollowedAccount, Source, WorkbenchStore,
 };
 
 fn policies() -> AuthorQueryDocument {
@@ -10,6 +10,7 @@ fn policies() -> AuthorQueryDocument {
         accounts: vec![AuthorQueryAccount {
             source: Source::Jm,
             account_key: "a".repeat(64),
+            work_credits: vec![],
             profiles: vec![AuthorQueryProfile {
                 author: "Writer Name".into(),
                 queries: vec!["Writer~Name".into(), "Writer～Name".into()],
@@ -18,6 +19,157 @@ fn policies() -> AuthorQueryDocument {
             }],
         }],
     }
+}
+
+fn work_credit(id: &str, expected: &[&str], corrected: &[&str]) -> AuthorWorkCredit {
+    AuthorWorkCredit {
+        work_id: id.into(),
+        expected_authors: expected.iter().map(|name| (*name).into()).collect(),
+        corrected_authors: corrected.iter().map(|name| (*name).into()).collect(),
+    }
+}
+
+#[test]
+fn work_credit_guard_is_exact_scoped_and_preserves_raw_authors_and_query_fingerprint() {
+    let mut document = policies();
+    let before = document.resolve(Source::Jm, &"a".repeat(64), "Writer Name");
+    document.accounts[0].work_credits = vec![
+        work_credit("100", &["Wrong Name", "Support"], &["WriterName"]),
+        work_credit("101", &["Unrelated"], &["SomebodyElse"]),
+    ];
+    let policy = document.resolve(Source::Jm, &"a".repeat(64), "Writer Name");
+    assert_eq!(policy.work_credits.len(), 1);
+    assert_eq!(policy.query_fingerprint, before.query_fingerprint);
+    let raw = vec![" SUPPORT ".into(), "ＷＲＯＮＧ　ＮＡＭＥ".into()];
+    let saved_raw = raw.clone();
+    assert!(policy.matches_work_credits("100", &raw));
+    assert_eq!(policy.effective_work_credits("100", &raw), ["WriterName"]);
+    assert!(!policy.matches_work_credits("102", &raw));
+    assert!(!policy.matches_work_credits("100", &["Wrong Name".into()]));
+    assert!(!policy.matches_work_credits(
+        "100",
+        &["Wrong Name".into(), "Support".into(), "Additional".into()]
+    ));
+    assert!(!policy.matches_work_credits("100", &["Wrong Name (Support)".into()]));
+    assert!(!policy.matches_work_credits("100", &[]));
+    assert!(policy.matches_work_credits("100", &["WriterName".into()])); // Source already fixed.
+    assert_eq!(raw, saved_raw);
+    let wrong_author = document.resolve(Source::Jm, &"a".repeat(64), "Wrong Name");
+    assert_eq!(wrong_author.work_credits.len(), 1);
+    assert!(!wrong_author.matches_work_credits("100", &raw));
+    assert!(wrong_author.matches_work_credits("102", &raw));
+    for (source, account) in [(Source::Pica, "a".repeat(64)), (Source::Jm, "b".repeat(64))] {
+        let other = document.resolve(source, &account, "Writer Name");
+        assert!(other.work_credits.is_empty());
+        assert!(!other.matches_work_credits("100", &raw));
+    }
+    let unrelated = document.resolve(Source::Jm, &"a".repeat(64), "Nobody");
+    assert!(unrelated.work_credits.is_empty());
+    // Previously reviewed complete collaboration fields can select a rule without
+    // turning the member's name into an inferred alias.
+    document.accounts[0].work_credits[0].corrected_authors = vec!["WriterName Coauthor".into()];
+    let exact = document.resolve(Source::Jm, &"a".repeat(64), "Writer Name");
+    assert_eq!(exact.work_credits.len(), 1);
+    assert!(exact.matches_work_credits("100", &raw));
+    assert!(document
+        .resolve(Source::Jm, &"a".repeat(64), "Coauthor")
+        .work_credits
+        .is_empty());
+}
+
+#[test]
+fn work_credit_import_merges_only_explicit_ids_and_supports_unfollowed_corrected_authors() {
+    let mut original = policies();
+    original.accounts[0].work_credits = vec![
+        work_credit("100", &["Old"], &["First"]),
+        work_credit("101", &["Old"], &["Second"]),
+    ];
+    let mut incoming = policies();
+    incoming.accounts[0].profiles.clear();
+    incoming.accounts[0].work_credits = vec![
+        work_credit("100", &["Old"], &["Unfollowed Writer"]),
+        work_credit("102", &["Old"], &["Third"]),
+    ];
+    let following = AccountFollowing {
+        version: 1,
+        accounts: vec![FollowedAccount {
+            source: Source::Jm,
+            account_key: "a".repeat(64),
+            works: vec![],
+            authors: vec!["Writer Name".into()],
+        }],
+    };
+    let merged = original.merged_import(&incoming, &following).unwrap();
+    assert_eq!(merged.accounts[0].profiles, original.accounts[0].profiles);
+    assert_eq!(merged.accounts[0].work_credits.len(), 3);
+    assert_eq!(
+        merged.accounts[0].work_credits[1],
+        original.accounts[0].work_credits[1]
+    );
+    let arbitrary = merged.resolve(Source::Jm, &"a".repeat(64), "Unfollowed Writer");
+    assert_eq!(arbitrary.queries, ["Unfollowed Writer"]);
+    assert_eq!(arbitrary.work_credits.len(), 1);
+    assert!(arbitrary.matches_work_credits("100", &["Old".into()]));
+    incoming.accounts[0].work_credits.clear();
+    assert_eq!(merged.merged_import(&incoming, &following).unwrap(), merged);
+    incoming.accounts[0].account_key = "b".repeat(64);
+    assert_eq!(
+        merged
+            .merged_import(&incoming, &following)
+            .unwrap_err()
+            .code,
+        "AUTHOR_POLICY_SCOPE_UNKNOWN"
+    );
+    let old_json = serde_json::to_value(policies()).unwrap();
+    assert!(old_json["accounts"][0].get("workCredits").is_none());
+    let decoded: AuthorQueryDocument = serde_json::from_value(old_json).unwrap();
+    assert!(decoded.accounts[0].work_credits.is_empty());
+}
+
+#[test]
+fn work_credit_validation_rejects_ambiguous_ids_credit_sets_and_unbounded_rules() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let valid_rule = work_credit("100", &["Old"], &["New"]);
+    for variation in 0..10 {
+        let mut invalid = policies();
+        invalid.accounts[0].work_credits.push(valid_rule.clone());
+        match variation {
+            0 => invalid.accounts[0].work_credits.push(valid_rule.clone()),
+            1 => invalid.accounts[0].work_credits[0].work_id = "0100".into(),
+            2 => invalid.accounts[0].work_credits[0].expected_authors.clear(),
+            3 => invalid.accounts[0].work_credits[0].corrected_authors = vec!["\u{feff}".into()],
+            4 => {
+                invalid.accounts[0].work_credits[0].expected_authors =
+                    vec!["Old".into(), "ＯＬＤ".into()]
+            }
+            5 => invalid.accounts[0].work_credits[0].corrected_authors = vec!["New\nName".into()],
+            6 => invalid.accounts[0].work_credits[0].expected_authors = vec!["x".repeat(2001)],
+            7 => {
+                invalid.accounts[0].work_credits[0].corrected_authors =
+                    (0..65).map(|i| format!("Author {i}")).collect()
+            }
+            8 => {
+                invalid.accounts[0].work_credits = (1..=501)
+                    .map(|id| work_credit(&id.to_string(), &["Old"], &["New"]))
+                    .collect()
+            }
+            _ => invalid.accounts[0].source = Source::Pica,
+        }
+        assert_eq!(
+            store
+                .write_author_query_policies(0, invalid)
+                .unwrap_err()
+                .code,
+            "VALIDATION_FAILED",
+            "variation {variation}"
+        );
+    }
+    let mut pica = policies();
+    pica.accounts[0].source = Source::Pica;
+    pica.accounts[0].work_credits =
+        vec![work_credit("abcdefabcdefabcdefabcdef", &["Old"], &["New"])];
+    store.write_author_query_policies(0, pica).unwrap();
 }
 
 #[test]

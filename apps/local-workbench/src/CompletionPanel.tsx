@@ -5,6 +5,7 @@ import type {
   SourceScope,
   SourceWork,
   Source,
+  AuthorCreditContext,
 } from "./source-types.ts";
 import { accountScope, sourceWorkKey, sourceLabel } from "./source-types.ts";
 import type { LibrarySnapshot } from "./library-types.ts";
@@ -36,6 +37,7 @@ import { SourceCover } from "./SourceWorkbench.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { createAuthorSearchAdapter } from "./author-search.ts";
 import { partitionAuthorRecords } from "./author-evidence.ts";
+import { AuthorCreditNote } from "./AuthorCreditNote.tsx";
 import { jmSearchScopeNote } from "./source-search.ts";
 import {
   formatWorkDate,
@@ -64,7 +66,10 @@ interface Props {
   inventoryError?: string | null;
   onRefreshInventory?(): Promise<void>;
   density: 5 | 7 | 9;
-  onOpenWork(reference: WorkReference): void;
+  onOpenWork(
+    reference: WorkReference,
+    creditContext?: AuthorCreditContext,
+  ): void;
   onDownload(work: SourceWork): void;
   onDownloadMany(works: SourceWork[]): void;
   downloadBusy?: boolean;
@@ -937,7 +942,15 @@ export function CompletionPanel({
                   <button
                     className="source-card-open"
                     onClick={() =>
-                      onOpenWork({ source: work.source, workId: work.workId })
+                      onOpenWork(
+                        { source: work.source, workId: work.workId },
+                        {
+                          scope,
+                          policies: (view?.authorPolicies ?? []).filter(
+                            (policy) => policy.source === work.source,
+                          ),
+                        },
+                      )
                     }
                   >
                     <SourceCover
@@ -947,6 +960,7 @@ export function CompletionPanel({
                     />
                     <strong>{work.title}</strong>
                     <span>{work.authors.join("、") || "作者信息未提供"}</span>
+                    <AuthorCreditNote work={work} />
                   </button>
                   <p>
                     {sourceLabel(work.source)} · {inventoryLabel(stock)}
@@ -963,7 +977,9 @@ export function CompletionPanel({
                   </p>
                   {showOther ? (
                     <p className="source-muted">
-                      作者归属未确认，可打开详情核对。
+                      {work.authorCreditReview
+                        ? "已核对为其他作者作品。"
+                        : "作者归属未确认，可打开详情核对。"}
                     </p>
                   ) : (
                     <button

@@ -1,10 +1,65 @@
 import type { DiscoverySnapshot } from "./completion-types.ts";
-import type { AuthorQueryPolicy, Source, SourceWork } from "./source-types.ts";
+import type {
+  AuthorQueryPolicy,
+  AuthorWorkCredit,
+  Source,
+  SourceWork,
+} from "./source-types.ts";
 
 type DiscoveryRecord = DiscoverySnapshot["records"][number];
 
 const normalize = (name: string) =>
   name.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+
+type CreditWork = Pick<SourceWork, "authors"> &
+  Partial<Pick<SourceWork, "source" | "workId" | "authorCreditReview">>;
+const creditSet = (authors: string[]) =>
+  JSON.stringify([...new Set(authors.map(normalize))].sort());
+
+/** Compile once for large saved catalogs; a rule never becomes a name alias. */
+function creditProjector(policies: AuthorQueryPolicy[]) {
+  const rules = new Map<string, AuthorWorkCredit | null>();
+  for (const policy of policies)
+    for (const rule of policy.workCredits ?? []) {
+      const key = JSON.stringify([policy.source, rule.workId]);
+      const existing = rules.get(key);
+      if (existing === null) continue;
+      if (
+        existing &&
+        (creditSet(existing.expectedAuthors) !==
+          creditSet(rule.expectedAuthors) ||
+          creditSet(existing.correctedAuthors) !==
+            creditSet(rule.correctedAuthors))
+      ) {
+        rules.set(key, null);
+      } else rules.set(key, rule);
+    }
+  return <T extends CreditWork>(work: T): T => {
+    const originalAuthors =
+      work.authorCreditReview?.originalAuthors ?? work.authors;
+    const rule = rules.get(JSON.stringify([work.source, work.workId]));
+    if (
+      !rule ||
+      creditSet(originalAuthors) !== creditSet(rule.expectedAuthors)
+    ) {
+      if (!work.authorCreditReview) return work;
+      const { authorCreditReview: _review, ...raw } = work;
+      return { ...raw, authors: [...originalAuthors] } as T;
+    }
+    return {
+      ...work,
+      authors: [...rule.correctedAuthors],
+      authorCreditReview: { originalAuthors: [...originalAuthors] },
+    };
+  };
+}
+
+export function projectAuthorWork<T extends CreditWork>(
+  work: T,
+  policies: AuthorQueryPolicy[] = [],
+): T {
+  return creditProjector(policies)(work);
+}
 
 /** Explicit name components only; never fold kana/voicing or match substrings. */
 function nameParts(name: string): { names: Set<string>; members: Set<string> } {
@@ -69,7 +124,7 @@ export function authorNameMatches(query: string, sourceName: string): boolean {
 }
 
 export function workHasAuthor(
-  work: Pick<SourceWork, "authors"> & Partial<Pick<SourceWork, "source">>,
+  work: CreditWork,
   query: string,
   policy?: AuthorQueryPolicy,
 ): boolean {
@@ -77,9 +132,21 @@ export function workHasAuthor(
     policy?.author === query && policy.source === work.source
       ? policy
       : undefined;
+  return authorsMatch(
+    projectAuthorWork(work, applicable ? [applicable] : []).authors,
+    query,
+    applicable,
+  );
+}
+
+function authorsMatch(
+  authors: string[],
+  query: string,
+  applicable?: AuthorQueryPolicy,
+): boolean {
   const names = [query, ...(applicable?.verifiedAliases ?? [])];
   const credits = new Set((applicable?.exactCredits ?? []).map(normalize));
-  return work.authors.some(
+  return authors.some(
     (name) =>
       names.some((expected) => authorNameMatches(expected, name)) ||
       credits.has(normalize(name)),
@@ -93,8 +160,19 @@ export function partitionAuthorWorks(
 ): { confirmed: SourceWork[]; other: SourceWork[] } {
   const confirmed: SourceWork[] = [],
     other: SourceWork[] = [];
-  for (const work of works)
-    (workHasAuthor(work, query, policy) ? confirmed : other).push(work);
+  const applicable = policy?.author === query ? policy : undefined;
+  const project = creditProjector(applicable ? [applicable] : []);
+  for (const raw of works) {
+    const work = project(raw);
+    (authorsMatch(
+      work.authors,
+      query,
+      applicable?.source === work.source ? applicable : undefined,
+    )
+      ? confirmed
+      : other
+    ).push(work);
+  }
   return { confirmed, other };
 }
 
@@ -112,22 +190,39 @@ export function partitionAuthorRecords(
       policy,
     ]),
   );
+  const project = creditProjector(policies);
+  const policiesBySource = new Map<Source, AuthorQueryPolicy[]>();
+  for (const policy of policies) {
+    const entries = policiesBySource.get(policy.source) ?? [];
+    entries.push(policy);
+    policiesBySource.set(policy.source, entries);
+  }
   for (const record of records) {
     if (source !== "all" && record.work.source !== source) continue;
-    const queries = record.matchedAuthors.filter(
+    const work = project(record.work);
+    const memberships = new Set(record.matchedAuthors);
+    // A reviewed work already saved under a wrong query can appear for the
+    // actual followed author. This is a view only, not search coverage evidence.
+    if (work.authorCreditReview)
+      for (const policy of policiesBySource.get(work.source) ?? [])
+        if (authorsMatch(work.authors, policy.author, policy))
+          memberships.add(policy.author);
+    const queries = [...memberships].filter(
       (name) => !author || name === author,
     );
     if (!queries.length) continue;
     // Query membership and the legacy authorVerified flag are not authorship.
     // Derive from current metadata even for results saved by older versions.
     const matches = queries.some((query) =>
-      workHasAuthor(
-        record.work,
+      authorsMatch(
+        work.authors,
         query,
         policiesByAuthor.get(JSON.stringify([record.work.source, query])),
       ),
     );
-    (matches ? confirmed : other).push(record);
+    (matches ? confirmed : other).push(
+      work === record.work ? record : { ...record, work },
+    );
   }
   return { confirmed, other };
 }

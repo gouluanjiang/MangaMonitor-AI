@@ -187,6 +187,60 @@ test("work-credit projections are idempotent, revocable and conservatively rejec
   );
 });
 
+test("reviewed list and detail credit variants stay exact and preserve all coauthors", () => {
+  const rule = {
+    workId: "105",
+    expectedAuthors: ["Wrong", "Guest"],
+    expectedAuthorVariants: [["Wrong Guest"], ["Listing spelling", "Guest"]],
+    correctedAuthors: ["Correct", "Guest"],
+  };
+  const policy = {
+    source: "JM",
+    author: "Correct",
+    queries: ["Correct"],
+    verifiedAliases: [],
+    queryFingerprint: "a".repeat(64),
+    workCredits: [rule],
+  };
+  for (const authors of [
+    rule.expectedAuthors,
+    ...rule.expectedAuthorVariants,
+  ]) {
+    const raw = record("105", authors, ["Wrong", "Correct"], "JM");
+    assert.deepEqual(
+      partitionAuthorWorks([raw.work], "Correct", policy).confirmed[0].authors,
+      rule.correctedAuthors,
+    );
+    assert.deepEqual(
+      partitionAuthorRecords([raw], "Correct", "JM", [policy]).confirmed[0].work
+        .authors,
+      rule.correctedAuthors,
+    );
+    assert.deepEqual(raw.work.authors, authors);
+    assert.equal(
+      projectAuthorWork({ ...raw.work, workId: "106" }, [policy])
+        .authorCreditReview,
+      undefined,
+    );
+  }
+  for (const authors of [
+    ["Listing spelling"],
+    ["Listing spelling", "Guest", "Additional"],
+    ["Unreviewed spelling", "Guest"],
+  ]) {
+    const raw = record("105", authors, ["Correct"], "JM").work;
+    assert.equal(projectAuthorWork(raw, [policy]), raw);
+  }
+  const raw = record("105", ["Wrong Guest"], ["Correct"], "JM").work;
+  const conflicting = {
+    ...policy,
+    workCredits: [
+      { ...rule, expectedAuthorVariants: [["Another list credit"]] },
+    ],
+  };
+  assert.equal(projectAuthorWork(raw, [policy, conflicting]), raw);
+});
+
 test("evidenced aliases classify cached metadata per source without guessing spaces, traditional characters or circle membership", () => {
   const policy = {
     source: "JM",

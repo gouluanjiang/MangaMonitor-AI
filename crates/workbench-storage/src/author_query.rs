@@ -20,6 +20,9 @@ pub const MAX_WORK_CREDIT_AUTHORS: usize = 64;
 pub struct AuthorWorkCredit {
     pub work_id: String,
     pub expected_authors: Vec<String>,
+    /// Reviewed complete credit sets returned by other listings of this work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expected_author_variants: Vec<Vec<String>>,
     pub corrected_authors: Vec<String>,
 }
 
@@ -27,11 +30,15 @@ impl AuthorWorkCredit {
     pub fn matches_expected(&self, credits: &[String]) -> bool {
         let normalize = crate::author_evidence::normalized_author_credit;
         let actual: HashSet<_> = credits.iter().map(|credit| normalize(credit)).collect();
-        self.expected_authors
-            .iter()
-            .map(|credit| normalize(credit))
-            .collect::<HashSet<_>>()
-            == actual
+        std::iter::once(&self.expected_authors)
+            .chain(&self.expected_author_variants)
+            .any(|names| {
+                names
+                    .iter()
+                    .map(|credit| normalize(credit))
+                    .collect::<HashSet<_>>()
+                    == actual
+            })
     }
 }
 
@@ -135,6 +142,10 @@ impl AuthorQueryDocument {
                 .iter()
                 .filter(|rule| {
                     policy.matches_credits(&rule.expected_authors)
+                        || rule
+                            .expected_author_variants
+                            .iter()
+                            .any(|names| policy.matches_credits(names))
                         || policy.matches_credits(&rule.corrected_authors)
                 })
                 .cloned()
@@ -278,10 +289,27 @@ impl ValidatedDocument for AuthorQueryDocument {
                 })
                 .is_valid()
                     || !work_ids.insert(&rule.work_id)
+                    || rule.expected_author_variants.len() > 4
                 {
                     return Err(invalid());
                 }
-                for names in [&rule.expected_authors, &rule.corrected_authors] {
+                let mut expected_sets = HashSet::new();
+                for names in
+                    std::iter::once(&rule.expected_authors).chain(&rule.expected_author_variants)
+                {
+                    let mut normalized: Vec<_> = names
+                        .iter()
+                        .map(|name| crate::author_evidence::normalized_author_credit(name))
+                        .collect();
+                    normalized.sort();
+                    if !expected_sets.insert(normalized) {
+                        return Err(invalid());
+                    }
+                }
+                for names in [&rule.expected_authors, &rule.corrected_authors]
+                    .into_iter()
+                    .chain(&rule.expected_author_variants)
+                {
                     let mut unique = HashSet::new();
                     if names.is_empty()
                         || names.len() > MAX_WORK_CREDIT_AUTHORS

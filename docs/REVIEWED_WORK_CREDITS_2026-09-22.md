@@ -10,6 +10,8 @@ An account/source may hold up to 500 `workCredits` rules alongside its existing 
 
 A rule applies only to the exact source/work ID and an equal complete set of expected raw author fields, compared using NFKC, lowercase and collapsed whitespace. A changed website credit does not silently inherit an outdated correction. The corrected field does not become a global alias or alter other works by the wrongly named author. Query fingerprints exclude credit rules, so an offline correction does not force a remote rescan. Policy-revision guards still prevent stale scan commits.
 
+An optional `expectedAuthorVariants` can list up to four additional, explicitly reviewed **complete** raw credit sets for the same work, because website listings and details sometimes use different spelling or join the collaborators into one field. These alternatives use the same bounded validation and complete-set guard; duplicate sets, partial credits and unreviewed later changes do not qualify. The list and detail projections share the rule. Legacy rules require no migration.
+
 Raw source credits and saved query associations remain unchanged. Author-facing views use an immutable corrected projection, retain the original website credit in an explicit review note, and classify counts, filters and batch eligibility consistently. For a guarded correction, saved author views can also show the work under the currently followed corrected author even if its old query association contained only the wrong author. This does not certify or rewrite that author's query coverage. Source IDs, ownership, ZIPs and download history are unchanged.
 
 ## Validation

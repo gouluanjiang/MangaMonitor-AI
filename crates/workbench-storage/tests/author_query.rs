@@ -25,6 +25,7 @@ fn work_credit(id: &str, expected: &[&str], corrected: &[&str]) -> AuthorWorkCre
     AuthorWorkCredit {
         work_id: id.into(),
         expected_authors: expected.iter().map(|name| (*name).into()).collect(),
+        expected_author_variants: vec![],
         corrected_authors: corrected.iter().map(|name| (*name).into()).collect(),
     }
 }
@@ -75,6 +76,51 @@ fn work_credit_guard_is_exact_scoped_and_preserves_raw_authors_and_query_fingerp
         .resolve(Source::Jm, &"a".repeat(64), "Coauthor")
         .work_credits
         .is_empty());
+}
+
+#[test]
+fn reviewed_listing_credit_variants_require_the_entire_credit_set_for_one_work() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut document = policies();
+    let mut rule = work_credit("100", &["Wrong", "Guest"], &["WriterName", "Guest"]);
+    rule.expected_author_variants = vec![
+        vec!["Wrong Guest".into()],
+        vec!["Other spelling".into(), "Guest".into()],
+    ];
+    document.accounts[0].work_credits = vec![rule.clone()];
+    let stored = store.write_author_query_policies(0, document).unwrap();
+    assert_eq!(store.read_author_query_policies().unwrap(), stored);
+    let policy = stored
+        .value
+        .resolve(Source::Jm, &"a".repeat(64), "Writer Name");
+    for names in std::iter::once(&rule.expected_authors).chain(&rule.expected_author_variants) {
+        assert_eq!(
+            policy.effective_work_credits("100", names),
+            rule.corrected_authors
+        );
+        assert_eq!(policy.effective_work_credits("101", names), *names);
+    }
+    let wrong = stored
+        .value
+        .resolve(Source::Jm, &"a".repeat(64), "Wrong Guest");
+    assert_eq!(wrong.work_credits.len(), 1);
+    assert!(!wrong.matches_work_credits("100", &["Wrong Guest".into()]));
+    for names in [
+        vec!["Other spelling".into()],
+        vec![
+            "Other spelling".into(),
+            "Guest".into(),
+            "New contributor".into(),
+        ],
+    ] {
+        assert_eq!(policy.effective_work_credits("100", &names), names);
+    }
+    let legacy: AuthorWorkCredit = serde_json::from_value(serde_json::json!({
+        "workId":"101", "expectedAuthors":["Old"], "correctedAuthors":["New"]
+    }))
+    .unwrap();
+    assert!(legacy.expected_author_variants.is_empty());
 }
 
 #[test]
@@ -131,7 +177,7 @@ fn work_credit_validation_rejects_ambiguous_ids_credit_sets_and_unbounded_rules(
     let directory = TempDir::new().unwrap();
     let store = WorkbenchStore::open(directory.path()).unwrap();
     let valid_rule = work_credit("100", &["Old"], &["New"]);
-    for variation in 0..10 {
+    for variation in 0..15 {
         let mut invalid = policies();
         invalid.accounts[0].work_credits.push(valid_rule.clone());
         match variation {
@@ -154,7 +200,24 @@ fn work_credit_validation_rejects_ambiguous_ids_credit_sets_and_unbounded_rules(
                     .map(|id| work_credit(&id.to_string(), &["Old"], &["New"]))
                     .collect()
             }
-            _ => invalid.accounts[0].source = Source::Pica,
+            9 => invalid.accounts[0].source = Source::Pica,
+            10 => invalid.accounts[0].work_credits[0].expected_author_variants = vec![vec![]],
+            11 => {
+                invalid.accounts[0].work_credits[0].expected_author_variants =
+                    vec![vec!["ＯＬＤ".into()]]
+            }
+            12 => {
+                invalid.accounts[0].work_credits[0].expected_author_variants =
+                    vec![vec!["Other".into(), "ＯＴＨＥＲ".into()]]
+            }
+            13 => {
+                invalid.accounts[0].work_credits[0].expected_author_variants =
+                    (0..5).map(|i| vec![format!("Other {i}")]).collect()
+            }
+            _ => {
+                invalid.accounts[0].work_credits[0].expected_author_variants =
+                    vec![vec!["Other\nCredit".into()]]
+            }
         }
         assert_eq!(
             store

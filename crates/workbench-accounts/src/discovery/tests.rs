@@ -2373,6 +2373,7 @@ async fn reviewed_work_credits_reclassify_native_views_offline_without_rewriting
     let rule = |id: &str, old: &str, corrected: &str| workbench_storage::AuthorWorkCredit {
         work_id: id.into(),
         expected_authors: vec![old.into()],
+        expected_author_variants: vec![],
         corrected_authors: vec![corrected.into()],
     };
     let incoming = workbench_storage::AuthorQueryDocument {
@@ -2509,6 +2510,7 @@ async fn reviewed_wrong_query_history_can_appear_for_correct_follow_without_clai
                     work_credits: vec![workbench_storage::AuthorWorkCredit {
                         work_id: "100".into(),
                         expected_authors: vec!["Wrong Writer".into()],
+                        expected_author_variants: vec![],
                         corrected_authors: vec!["Correct Writer".into()],
                     }],
                 }],

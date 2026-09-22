@@ -17,6 +17,7 @@ export interface AuthorQueryPolicy {
 export interface AuthorWorkCredit {
   workId: string;
   expectedAuthors: string[];
+  expectedAuthorVariants?: string[][];
   correctedAuthors: string[];
 }
 export interface AuthorCreditContext {

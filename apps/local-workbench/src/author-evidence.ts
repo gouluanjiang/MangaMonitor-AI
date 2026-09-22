@@ -15,6 +15,10 @@ type CreditWork = Pick<SourceWork, "authors"> &
   Partial<Pick<SourceWork, "source" | "workId" | "authorCreditReview">>;
 const creditSet = (authors: string[]) =>
   JSON.stringify([...new Set(authors.map(normalize))].sort());
+const expectedCreditSets = (rule: AuthorWorkCredit) =>
+  [rule.expectedAuthors, ...(rule.expectedAuthorVariants ?? [])]
+    .map(creditSet)
+    .sort();
 
 /** Compile once for large saved catalogs; a rule never becomes a name alias. */
 function creditProjector(policies: AuthorQueryPolicy[]) {
@@ -26,8 +30,8 @@ function creditProjector(policies: AuthorQueryPolicy[]) {
       if (existing === null) continue;
       if (
         existing &&
-        (creditSet(existing.expectedAuthors) !==
-          creditSet(rule.expectedAuthors) ||
+        (JSON.stringify(expectedCreditSets(existing)) !==
+          JSON.stringify(expectedCreditSets(rule)) ||
           creditSet(existing.correctedAuthors) !==
             creditSet(rule.correctedAuthors))
       ) {
@@ -40,7 +44,7 @@ function creditProjector(policies: AuthorQueryPolicy[]) {
     const rule = rules.get(JSON.stringify([work.source, work.workId]));
     if (
       !rule ||
-      creditSet(originalAuthors) !== creditSet(rule.expectedAuthors)
+      !expectedCreditSets(rule).includes(creditSet(originalAuthors))
     ) {
       if (!work.authorCreditReview) return work;
       const { authorCreditReview: _review, ...raw } = work;

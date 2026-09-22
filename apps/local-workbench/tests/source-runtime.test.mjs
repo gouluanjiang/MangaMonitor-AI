@@ -29,6 +29,10 @@ test("author policy IPC preserves original query spellings and validates the exa
       {
         workId: "123",
         expectedAuthors: ["Wrong Writer"],
+        expectedAuthorVariants: [
+          ["Listing credit"],
+          ["Joined credit", "Guest"],
+        ],
         correctedAuthors: ["WriterName"],
       },
     ],
@@ -54,6 +58,10 @@ test("author policy IPC preserves original query spellings and validates the exa
   assert.deepEqual(result.workCredits, policy.workCredits);
   assert.notEqual(result.workCredits, policy.workCredits);
   assert.notEqual(
+    result.workCredits[0].expectedAuthorVariants[0],
+    policy.workCredits[0].expectedAuthorVariants[0],
+  );
+  assert.notEqual(
     result.workCredits[0].correctedAuthors,
     policy.workCredits[0].correctedAuthors,
   );
@@ -70,6 +78,20 @@ test("author policy IPC preserves original query spellings and validates the exa
     { queries: ["Writer", "Writer"] },
     { verifiedAliases: Array.from({ length: 17 }, (_, i) => "Alias " + i) },
     { workCredits: [null] },
+    ...[
+      null,
+      "credit",
+      [[]],
+      [[" "]],
+      [["Wrong Writer"]],
+      [["A", "Ａ"]],
+      [["A\nB"]],
+      [["x".repeat(2001)]],
+      [["One"], ["One"]],
+      Array.from({ length: 5 }, (_, i) => [String(i)]),
+    ].map((expectedAuthorVariants) => ({
+      workCredits: [{ ...policy.workCredits[0], expectedAuthorVariants }],
+    })),
     {
       workCredits: [
         { ...policy.workCredits[0], expectedAuthors: ["字".repeat(2001)] },

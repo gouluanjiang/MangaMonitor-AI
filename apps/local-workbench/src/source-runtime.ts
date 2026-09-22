@@ -152,6 +152,22 @@ export function validateAuthorQueryPolicy(
         !/[\x00-\x1f\x7f-\x9f]/u.test(name),
     ) &&
     new Set(names.map(normalizedCredit)).size === names.length;
+  const creditVariants = (rule: Record<string, unknown>): boolean => {
+    const variants =
+      rule.expectedAuthorVariants === undefined
+        ? []
+        : rule.expectedAuthorVariants;
+    if (
+      !Array.isArray(variants) ||
+      variants.length > 4 ||
+      !variants.every(creditNames)
+    )
+      return false;
+    const sets = [rule.expectedAuthors as string[], ...variants].map((names) =>
+      JSON.stringify(names.map(normalizedCredit).sort()),
+    );
+    return new Set(sets).size === sets.length;
+  };
   if (
     !Array.isArray(workCredits) ||
     workCredits.length > 500 ||
@@ -163,6 +179,7 @@ export function validateAuthorQueryPolicy(
           rule.workId,
         ) &&
         creditNames(rule.expectedAuthors) &&
+        creditVariants(rule) &&
         creditNames(rule.correctedAuthors),
     ) ||
     new Set(workCredits.map((rule) => rule.workId)).size !== workCredits.length
@@ -180,6 +197,13 @@ export function validateAuthorQueryPolicy(
           workCredits: (workCredits as AuthorWorkCredit[]).map((rule) => ({
             workId: rule.workId,
             expectedAuthors: [...rule.expectedAuthors],
+            ...(rule.expectedAuthorVariants === undefined
+              ? {}
+              : {
+                  expectedAuthorVariants: rule.expectedAuthorVariants.map(
+                    (names) => [...names],
+                  ),
+                }),
             correctedAuthors: [...rule.correctedAuthors],
           })),
         }),

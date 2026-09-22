@@ -1434,20 +1434,17 @@ fn pagination_does_not_treat_unknown_totals_or_a_short_page_as_complete() {
 }
 
 #[test]
-fn document_contention_retries_only_busy_and_preserves_other_error_codes() {
+fn document_operations_are_not_replayed_after_storage_waits_for_the_lock() {
     let mut attempts = 0;
     let value = discovery_store_io(|| {
         attempts += 1;
-        if attempts < 3 {
-            Err(workbench_storage::StoreError { code: "BUSY" })
-        } else {
-            Ok(42)
-        }
+        Ok(42)
     })
     .unwrap();
     assert_eq!(value, 42);
-    assert_eq!(attempts, 3);
+    assert_eq!(attempts, 1);
     for code in [
+        "BUSY",
         "REVISION_CONFLICT",
         "DOCUMENT_CORRUPT",
         "UNSUPPORTED_SCHEMA",
@@ -1461,13 +1458,6 @@ fn document_contention_retries_only_busy_and_preserves_other_error_codes() {
         assert_eq!(result.unwrap_err().code, code);
         assert_eq!(attempts, 1);
     }
-    let mut attempts = 0;
-    let result: std::result::Result<(), _> = discovery_store_io(|| {
-        attempts += 1;
-        Err(workbench_storage::StoreError { code: "BUSY" })
-    });
-    assert_eq!(result.unwrap_err().code, "BUSY");
-    assert_eq!(attempts, 5);
 }
 
 #[tokio::test]

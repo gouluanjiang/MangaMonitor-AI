@@ -47,6 +47,7 @@ import {
 } from "./work-dates.ts";
 import type { UpdatedSort } from "./work-dates.ts";
 import "./completion.css";
+import { SourceIssues } from "./SourceIssues.tsx";
 
 const nativeAdapter = createCompletionAdapter();
 type ReadRequest = { kind: "full" | "progress"; includeOther: boolean };
@@ -352,6 +353,20 @@ export function CompletionPanel({
   const includesIncremental =
     mode === "updates" &&
     ranges.some((range) => range.lastCheckMode === "incremental");
+  const issueCount = ranges.reduce(
+    (sum, range) => sum + (range.issueCount ?? 0),
+    0,
+  );
+  const pagesComplete =
+    !running &&
+    !actionError &&
+    !readFailure &&
+    ranges.length > 0 &&
+    ranges.every(
+      (range) =>
+        range.pagesComplete ??
+        (range.state === "complete" && range.lastCheckMode !== "incremental"),
+    );
   const fullRangeChecked = complete && !includesIncremental;
   const catalogScopes = ranges.filter(
     (range) =>
@@ -713,11 +728,29 @@ export function CompletionPanel({
                 ? includesIncremental
                   ? "本轮检查已完成（含增量），历史目录已保留"
                   : "当前检查范围已读完"
-                : "检查范围尚未读完"}{" "}
+                : pagesComplete && issueCount
+                  ? "分页已读完，来源记录仍待核对"
+                  : "检查范围尚未读完"}{" "}
             · 已记录 {records.length} 条 · 已入库 {counts.owned} 条 · 未入库{" "}
             {counts.missing} 条 · 当前显示 {visible.length} 条
             {counts.unknown > 0 ? ` · 状态待核实 ${counts.unknown} 条` : ""}
           </p>
+          {ranges
+            .filter((range) => (range.issueCount ?? 0) > 0)
+            .map((range) => (
+              <div key={range.source + range.author}>
+                <span className="source-muted">
+                  {range.author} · {sourceLabel(range.source)}
+                </span>
+                <SourceIssues
+                  source={range.source}
+                  issues={range.issueSamples}
+                  count={range.issueCount}
+                  pagesComplete={range.pagesComplete}
+                  testId="completion-source-issues"
+                />
+              </div>
+            ))}
           {visible.length > 0 && (
             <p className="source-muted" data-testid="completion-date-coverage">
               当前显示作品：有更新时间 {datedCount} 条 · 更新时间未知{" "}
@@ -774,6 +807,7 @@ export function CompletionPanel({
             <p className="source-muted">{jmSearchScopeNote}</p>
           )}
           {fullRangeChecked &&
+            issueCount === 0 &&
             !showOther &&
             otherCount === 0 &&
             allScopedOwned && (

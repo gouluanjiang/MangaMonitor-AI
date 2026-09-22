@@ -1,5 +1,9 @@
 import { invokeDesktop, isDesktopRuntime } from "./runtime.ts";
-import { validateSourceWork, SourceError } from "./source-runtime.ts";
+import {
+  validateSourceWork,
+  validateSourceIssues,
+  SourceError,
+} from "./source-runtime.ts";
 import type { Source, SourceScope } from "./source-types.ts";
 import type {
   CompletionAdapter,
@@ -150,6 +154,27 @@ export function validateDiscoveryProgress(
       r.authors,
       (x) => {
         const q = object(x);
+        const issueCount =
+          q.issueCount === undefined ? 0 : integer(q.issueCount);
+        const pagesRead = integer(q.pagesRead);
+        const issueSamples = validateSourceIssues(
+          q.issueSamples,
+          pagesRead,
+          20,
+          source(q.source),
+        );
+        if (
+          issueCount > 100000 ||
+          issueCount > pagesRead * 1000 ||
+          issueSamples.length !== Math.min(issueCount, 20) ||
+          (q.pagesComplete !== undefined &&
+            typeof q.pagesComplete !== "boolean") ||
+          (q.pagesComplete === true &&
+            (pagesRead === 0 ||
+              !["complete", "partial"].includes(q.state as string))) ||
+          (issueCount > 0 && (q.state === "complete" || q.baseline != null))
+        )
+          return invalid();
         return {
           author: str(q.author),
           source: source(q.source),
@@ -176,8 +201,14 @@ export function validateDiscoveryProgress(
               ? null
               : nullable(q.baseline, baselineValue),
           observedCount: integer(q.observedCount),
-          pagesRead: integer(q.pagesRead),
+          pagesRead,
           errorCode: code(q.errorCode),
+          issueCount,
+          issueSamples,
+          pagesComplete:
+            q.pagesComplete === undefined
+              ? q.state === "complete" && q.lastCheckMode !== "incremental"
+              : q.pagesComplete,
         };
       },
       4000,
@@ -280,6 +311,10 @@ export function unfinishedRangeMessage(
   const queryMessage = authorQueryMessage(range.errorCode);
   if (queryMessage) return queryMessage;
   switch (range.errorCode) {
+    case "SOURCE_ITEMS_PARTIAL":
+      return range.pagesComplete
+        ? `分页已读完，${range.issueCount ?? 0} 条来源记录待核对`
+        : "部分来源记录待核对，已读取结果保留";
     case "SOURCE_CONNECTION_FAILED":
       return "连接失败，已读取结果保留";
     case "SOURCE_TIMEOUT":

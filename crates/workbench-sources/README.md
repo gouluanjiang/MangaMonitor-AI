@@ -42,17 +42,32 @@ type and 2,000-unit limit. Nonblank entries retain their order and exact content
 This compatibility rule does not apply to Pica or relax IDs, titles, favorite
 state, counts, the whole-work budget, or cover transport validation.
 
-JM search, favorite and weekly lists retain a valid work ID with a blank string
-`name` as `来源作品信息缺失（JM{id}）`, preserving its position and source total.
-Only an actual blank string within the 2,000-unit limit gets this placeholder;
-missing, null, unsupported title types and oversized titles remain errors. The
-existing nonblank parsing, including supported numeric titles, is unchanged.
-Supplied author/tag metadata is validated normally and no author is inferred
-from the search keyword. These placeholders have no cover descriptor and cause
-no extra detail or cover requests.
-This listing-only exception never applies to Pica or to JM detail reads: detail
-and download preparation still reject blank titles rather than treating the
-placeholder as verified downloadable metadata.
+JM and Pica search, favorite and ranking pages isolate malformed work records.
+`SourcePage.items` contains only validated works in their original relative order;
+`issues` contains `{page, index, workId, code}` for each rejected source row.
+Both page and index are one-based. `workId` is a normalized validated ID or null;
+raw titles, authors, URLs and error details are never copied into an issue.
+`SOURCE_ITEM_METADATA_MISSING` identifies the previously observed JM blank-string
+`name` within the 2,000-unit limit and with a valid ID. Other record validation
+failures use `SOURCE_ITEM_INVALID`. No placeholder is treated as a normal work,
+no author is inferred, and issues gain no cover/download authority or extra
+detail requests. Detail reads and download preparation remain strict.
+
+The issues field defaults to an empty list when decoding older DTOs and is
+omitted from serialized pages when empty. `SourcePage.record_count()` is
+`items.len() + issues.len()`: pagination must count every source row, including
+an entirely malformed page, while separately disclosing unresolved metadata.
+An issue does not establish authorship or permission to claim an author's works
+are fully owned. The response envelope, list/folder shape, source totals, page
+limits and contradictory pagination still fail the whole page. Duplicate valid
+IDs remain a pagination error even if one duplicate has malformed metadata;
+the established identical-Pica-favorites exception is preserved only for fully
+validated works, never for duplicate issues. Existing valid
+numeric titles, bounded optional metadata and update-date handling are unchanged.
+Titles containing only whitespace/control characters are invalid: replacing
+controls for the saved catalog would otherwise create an empty title and reject
+the later page transaction. Meaningful titles with mixed control characters
+retain their existing sanitization path.
 
 All metadata responses are limited to 8 MiB and each request has a 30-second
 timeout. Metadata redirects are rejected. There are no implicit retries or whole-list

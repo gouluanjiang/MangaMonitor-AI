@@ -11,6 +11,7 @@ import type {
   SourceScope,
   SourceWork,
   RankOptions,
+  SourceItemIssue,
 } from "./source-types.ts";
 import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
@@ -56,6 +57,8 @@ export function sourceErrorMessage(error: unknown): string {
     return "收藏操作结果未确认，请先重新读取核对。确认之前不会再次提交收藏操作。";
   if (code === "SOURCE_ACCESS_DENIED")
     return "来源拒绝访问或需要额外验证。账号会话未被清除，请稍后重试。";
+  if (code === "SOURCE_ITEMS_PARTIAL")
+    return "分页已读取，部分来源记录的信息仍需核对。正常作品已保留。";
   if (/RATE|BUDGET|BUSY/.test(code))
     return "来源请求暂时繁忙或达到限制，请稍后重试。";
   if (/INVALID|MALFORMED|VALIDATION/.test(code))
@@ -158,6 +161,7 @@ export function validateSourcePage(
   value: unknown,
   scope: SourceScope,
   favoriteEntries = false,
+  accumulated = false,
 ): SourceQueryResult {
   scoped(value, scope);
   if (
@@ -189,6 +193,22 @@ export function validateSourcePage(
   const items = value.items.map((item: unknown) =>
     validateSourceWork(item, scope.source),
   );
+  const issues = validateSourceIssues(
+    value.issues,
+    value.page as number,
+    20000,
+    scope.source,
+  );
+  const rawCount = items.length + issues.length;
+  if (
+    rawCount > (accumulated ? 20000 : 1000) ||
+    (value.total !== null && rawCount > (value.total as number)) ||
+    (!accumulated &&
+      issues.some(
+        (issue) => issue.page !== value.page || issue.index > rawCount,
+      ))
+  )
+    invalid();
   const seen = new Map<string, SourceWork>();
   for (const item of items) {
     const previous = seen.get(item.workId);
@@ -201,15 +221,79 @@ export function validateSourcePage(
       throw new SourceError("CATALOG_CHANGED");
     seen.set(item.workId, item);
   }
+  const issueIds = new Set<string>();
+  for (const issue of issues) {
+    if (issue.workId !== null) {
+      if (seen.has(issue.workId) || issueIds.has(issue.workId))
+        throw new SourceError("CATALOG_CHANGED");
+      issueIds.add(issue.workId);
+    }
+  }
   return {
     ...scope,
     items,
+    ...(issues.length ? { issues } : {}),
     page: value.page as number,
     total: value.total as number | null,
     pages: value.pages as number | null,
     hasMore: value.hasMore as boolean | null,
     folders,
   };
+}
+/** Only bounded diagnostic DTOs cross IPC; no raw source values or actions. */
+export function validateSourceIssues(
+  value: unknown,
+  maxPage = 1000,
+  limit = 20000,
+  source?: Source,
+): SourceItemIssue[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > limit) invalid();
+  const positions = new Set<string>();
+  let previousPage = 0,
+    previousIndex = 0;
+  return value.map((issue: unknown) => {
+    if (
+      !object(issue) ||
+      Object.keys(issue).length !== 4 ||
+      Object.keys(issue).some(
+        (key) => !["page", "index", "workId", "code"].includes(key),
+      ) ||
+      !integer(issue.page) ||
+      (issue.page as number) < 1 ||
+      (issue.page as number) > maxPage ||
+      (issue.page as number) > 1000 ||
+      !integer(issue.index) ||
+      (issue.index as number) < 1 ||
+      (issue.index as number) > 1000 ||
+      !(issue.workId === null || identity(issue.workId)) ||
+      (issue.workId !== null &&
+        source === "JM" &&
+        !/^[1-9][0-9]{0,18}$/.test(issue.workId as string)) ||
+      (issue.workId !== null &&
+        source === "Pica" &&
+        !/^[a-f0-9]{24}$/.test(issue.workId as string)) ||
+      !["SOURCE_ITEM_INVALID", "SOURCE_ITEM_METADATA_MISSING"].includes(
+        issue.code as string,
+      ) ||
+      (issue.code === "SOURCE_ITEM_METADATA_MISSING" &&
+        issue.workId === null) ||
+      (issue.page as number) < previousPage ||
+      (issue.page === previousPage && (issue.index as number) <= previousIndex)
+    )
+      invalid();
+    const position = `${issue.page}:${issue.index}`;
+    if (positions.has(position)) invalid();
+    positions.add(position);
+    previousPage = issue.page as number;
+    previousIndex = issue.index as number;
+    return {
+      page: issue.page as number,
+      index: issue.index as number,
+      workId: issue.workId as string | null,
+      code: issue.code as SourceItemIssue["code"],
+    };
+  });
 }
 export function validateCatalogSnapshot(
   value: unknown,
@@ -226,7 +310,12 @@ export function validateCatalogSnapshot(
     !value.firstPageIds.every(identity)
   )
     invalid();
-  const page = validateSourcePage({ ...value, ...scope }, scope, true);
+  const page = validateSourcePage({ ...value, ...scope }, scope, true, true);
+  const issues = page.issues ?? [];
+  const rawCount = page.items.length + issues.length;
+  const firstRawCount =
+    value.firstPageIds.length +
+    issues.filter((issue) => issue.page === 1).length;
   let pageEnds: number[] | undefined;
   if (value.pageEnds !== undefined && value.pageEnds !== null) {
     if (
@@ -241,17 +330,23 @@ export function validateCatalogSnapshot(
       pageEnds[pageEnds.length - 1] !== page.items.length ||
       pageEnds.some((end, index) => {
         const start = index === 0 ? 0 : pageEnds![index - 1];
-        const emptyFirst =
-          page.page === 1 && page.items.length === 0 && end === 0;
-        return !emptyFirst && (end <= start || end - start > 1000);
+        const pageIssues = issues.filter((issue) => issue.page === index + 1);
+        const raw = end - start + pageIssues.length;
+        const emptyFirst = page.page === 1 && rawCount === 0 && end === 0;
+        return (
+          end < start ||
+          (!emptyFirst && (raw === 0 || raw > 1000)) ||
+          pageIssues.some((issue) => issue.index > raw)
+        );
       })
     )
       invalid();
   }
+  if (issues.length && !pageEnds) invalid();
   const seenPages = new Map<string, number>();
   let pageIndex = 0;
   for (const [index, item] of page.items.entries()) {
-    if (pageEnds && index >= pageEnds[pageIndex]) pageIndex++;
+    while (pageEnds && index >= pageEnds[pageIndex]) pageIndex++;
     const previousPage = seenPages.get(item.workId);
     if (
       previousPage !== undefined &&
@@ -264,35 +359,33 @@ export function validateCatalogSnapshot(
     page.page > 1000 ||
     value.firstPageIds.length > page.items.length ||
     value.firstPageIds.some((id, index) => page.items[index]?.workId !== id) ||
-    (page.items.length > 0 && !value.firstPageIds.length) ||
+    (rawCount > 0 && !firstRawCount) ||
     (page.page === 1 &&
-      (value.firstPageIds.length !== page.items.length ||
-        page.items.length > 1000)) ||
+      (value.firstPageIds.length !== page.items.length || rawCount > 1000)) ||
     (page.page > 1 &&
-      (page.items.length <= value.firstPageIds.length ||
-        page.items.length > page.page * 1000)) ||
-    (!page.items.length &&
-      !(page.page === 1 && page.total === 0 && value.complete)) ||
+      (rawCount <= firstRawCount || rawCount > page.page * 1000)) ||
+    (!rawCount && !(page.page === 1 && page.total === 0 && value.complete)) ||
     (!value.complete &&
       (page.hasMore === false ||
         (page.pages !== null && page.page === Math.max(1, page.pages)) ||
-        (page.total !== null && page.total === page.items.length))) ||
+        (page.total !== null && page.total === rawCount))) ||
     (value.complete &&
       ((page.hasMore !== false &&
         !(page.pages !== null && page.page === Math.max(1, page.pages))) ||
         page.hasMore === true ||
-        (page.total !== null && page.total !== page.items.length))) ||
+        (page.total !== null && page.total !== rawCount))) ||
     (page.pages !== null &&
       (page.page > Math.max(1, page.pages) ||
         (value.complete && page.pages > page.page) ||
         (page.page === page.pages && page.hasMore === true) ||
-        (page.pages === 0 && page.items.length > 0))) ||
+        (page.pages === 0 && rawCount > 0))) ||
     new TextEncoder().encode(JSON.stringify(value)).byteLength >
       32 * 1024 * 1024
   )
     invalid();
   return {
     items: page.items,
+    ...(issues.length ? { issues } : {}),
     page: page.page,
     total: page.total,
     pages: page.pages,
@@ -447,7 +540,12 @@ export function createSourceAdapter(
         scope,
         query.kind === "favorites",
       );
-      if (result.page !== query.page || result.items.length > 1000) invalid();
+      if (
+        result.page !== query.page ||
+        result.items.length > 1000 ||
+        (query.kind === "detail" && (result.issues?.length ?? 0) > 0)
+      )
+        invalid();
       return result;
     },
     async rankingOptions(scope) {

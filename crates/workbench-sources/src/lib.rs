@@ -273,15 +273,7 @@ impl WorkbenchSources {
             )
             .await?;
         let (page, covers) = protocol::page(session.source, &data, request.page, true)?;
-        session.remember_covers(page.items.iter().map(|work| {
-            (
-                work.work_id.clone(),
-                covers
-                    .iter()
-                    .find(|(id, _)| id == &work.work_id)
-                    .map(|(_, url)| url.clone()),
-            )
-        }))?;
+        session.remember_covers(covers)?;
         Ok(page)
     }
 
@@ -343,18 +335,11 @@ impl WorkbenchSources {
                 has_more: Some(false),
                 folders: vec![],
                 items: vec![work],
+                issues: vec![],
             });
         }
         let (page, covers) = protocol::page(session.source, &data, page, false)?;
-        session.remember_covers(page.items.iter().map(|work| {
-            (
-                work.work_id.clone(),
-                covers
-                    .iter()
-                    .find(|(id, _)| id == &work.work_id)
-                    .map(|(_, url)| url.clone()),
-            )
-        }))?;
+        session.remember_covers(covers)?;
         Ok(page)
     }
 

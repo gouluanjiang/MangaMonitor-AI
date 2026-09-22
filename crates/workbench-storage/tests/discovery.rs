@@ -45,6 +45,9 @@ fn document() -> DiscoveryDocument {
                 observed_count: 1,
                 pages_read: 1,
                 error_code: None,
+                issue_count: 0,
+                issue_samples: vec![],
+                pages_complete: false,
             }],
             records: vec![record(Source::Jm, "123")],
         }],
@@ -83,6 +86,9 @@ fn legacy_ranges_load_without_claiming_an_incremental_checkpoint() {
     let store = WorkbenchStore::open(directory.path()).unwrap();
     let value = serde_json::to_value(document()).unwrap();
     assert!(value["accounts"][0]["authors"][0].get("baseline").is_none());
+    for field in ["issueCount", "issueSamples", "pagesComplete"] {
+        assert!(value["accounts"][0]["authors"][0].get(field).is_none());
+    }
     assert!(value["accounts"][0]["records"][0]["work"]
         .get("sourceUpdatedAt")
         .is_none());
@@ -105,6 +111,73 @@ fn legacy_ranges_load_without_claiming_an_incremental_checkpoint() {
         saved.value.accounts[0].records[0].work.source_updated_at,
         None
     );
+}
+
+#[test]
+fn isolated_source_issues_roundtrip_without_work_authority_or_false_completion() {
+    use workbench_storage::{DiscoveryItemIssue, DiscoveryItemIssueCode};
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut value = document();
+    let range = &mut value.accounts[0].authors[0];
+    range.state = DiscoveryRangeState::Partial;
+    range.pages_read = 2;
+    range.pages_complete = true;
+    range.error_code = Some("SOURCE_ITEMS_PARTIAL".into());
+    range.issue_count = 2;
+    range.issue_samples = vec![
+        DiscoveryItemIssue {
+            page: 1,
+            index: 2,
+            work_id: Some("124".into()),
+            code: DiscoveryItemIssueCode::Invalid,
+        },
+        DiscoveryItemIssue {
+            page: 2,
+            index: 1,
+            work_id: Some("125".into()),
+            code: DiscoveryItemIssueCode::MetadataMissing,
+        },
+    ];
+    store.write_discovery(0, value.clone()).unwrap();
+    let reopened = WorkbenchStore::open(directory.path()).unwrap();
+    assert_eq!(reopened.read_discovery().unwrap().value, value);
+    assert_eq!(
+        reopened.read_discovery().unwrap().value.accounts[0]
+            .records
+            .len(),
+        1
+    );
+    for invalid_case in 0..12 {
+        let mut invalid = value.clone();
+        let range = &mut invalid.accounts[0].authors[0];
+        match invalid_case {
+            0 => range.state = DiscoveryRangeState::Complete,
+            1 => range.issue_count = 3,
+            2 => range.issue_samples[0].page = 3,
+            3 => range.issue_samples[0].index = 0,
+            4 => range.issue_samples[0].work_id = Some("not-an-id".into()),
+            5 => range.issue_samples[1] = range.issue_samples[0].clone(),
+            6 => {
+                range.baseline = Some(DiscoveryBaseline {
+                    query_version: 1,
+                    head_ids: vec!["123".into()],
+                    total: 1,
+                    established_at: 10,
+                })
+            }
+            7 => range.state = DiscoveryRangeState::Checking,
+            8 => range.issue_samples[0].index = 1001,
+            9 => range.issue_samples[1].work_id = None,
+            10 => range.issue_samples.reverse(),
+            _ => range.issue_samples[0].work_id = Some("1".repeat(20)),
+        }
+        assert_eq!(
+            store.write_discovery(1, invalid).unwrap_err().code,
+            "VALIDATION_FAILED"
+        );
+        assert_eq!(store.read_discovery().unwrap().value, value);
+    }
 }
 
 #[test]

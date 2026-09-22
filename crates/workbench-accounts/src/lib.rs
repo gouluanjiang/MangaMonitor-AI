@@ -12,7 +12,9 @@ pub use discovery::{
 };
 pub use service::{AccountService, DownloadSession, SessionLease};
 pub use workbench_credentials::Source;
-pub use workbench_sources::{SourceAccount, SourceFolder, SourcePage, SourceWork};
+pub use workbench_sources::{
+    SourceAccount, SourceFolder, SourceItemIssue, SourceItemIssueCode, SourcePage, SourceWork,
+};
 
 use serde::{Deserialize, Serialize};
 

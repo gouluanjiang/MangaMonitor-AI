@@ -1558,6 +1558,48 @@ test("narrowing the title filter to an owned work does not claim the author's mi
   await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
 });
 
+test("completed pagination with isolated records shows positions without claiming all author works owned", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.inventory.items = h.view.records.map((record) => ({
+      source: record.work.source,
+      workId: record.work.workId,
+      libraryEntryId: "b".repeat(64),
+      localFiles: "present",
+    }));
+    for (const range of h.view.authors) {
+      range.state = range.source === "JM" ? "partial" : "complete";
+      range.pagesComplete = true;
+      range.errorCode = range.source === "JM" ? "SOURCE_ITEMS_PARTIAL" : null;
+      range.issueCount = range.source === "JM" ? 1 : 0;
+      range.issueSamples =
+        range.source === "JM"
+          ? [{ page: 1, index: 3, workId: "789", code: "SOURCE_ITEM_INVALID" }]
+          : [];
+    }
+  });
+  await open(page);
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "分页已读完，来源记录仍待核对",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "已入库 3 条",
+  );
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  const issues = page.getByTestId("completion-source-issues");
+  await issues.locator("summary").click();
+  await expect(issues).toContainText("JM · 第 1 页 · 第 3 条 · 编号 789");
+  await expect(issues.getByRole("button")).toHaveCount(0);
+  await expect(issues.getByRole("checkbox")).toHaveCount(0);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/author-isolated-records.png",
+  });
+});
+
 test("valid new receipts refresh counts, but all-owned is withheld until both source ranges finish", async ({
   page,
 }) => {

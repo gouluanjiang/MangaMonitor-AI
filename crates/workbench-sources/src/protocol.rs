@@ -10,7 +10,8 @@ use serde_json::Value;
 use sha2::Sha256;
 
 use crate::{
-    Source, SourceAccount, SourceError, SourceFolder, SourcePage, SourceResult, SourceWork,
+    Source, SourceAccount, SourceError, SourceFolder, SourceItemIssue, SourceItemIssueCode,
+    SourcePage, SourceResult, SourceWork,
 };
 
 pub(crate) const JM_HOST: &str = "www.cdnhth.cc";
@@ -288,23 +289,6 @@ pub(crate) fn work(
     data: &Value,
     favorite_listing: bool,
 ) -> SourceResult<(SourceWork, Option<String>)> {
-    parse_work(source, data, favorite_listing, false)
-}
-
-pub(crate) fn listing_work(
-    source: Source,
-    data: &Value,
-    favorite_listing: bool,
-) -> SourceResult<(SourceWork, Option<String>)> {
-    parse_work(source, data, favorite_listing, true)
-}
-
-fn parse_work(
-    source: Source,
-    data: &Value,
-    favorite_listing: bool,
-    listing: bool,
-) -> SourceResult<(SourceWork, Option<String>)> {
     let id_field = match source {
         Source::Jm => "id",
         Source::Pica => "_id",
@@ -318,27 +302,17 @@ fn parse_work(
         Source::Jm => "name",
         Source::Pica => "title",
     }];
-    let missing_title = listing
-        && source == Source::Jm
-        && title_value
-            .as_str()
-            .is_some_and(|name| name.trim().is_empty());
-    // JM can retain a valid catalog ID whose metadata has become blank. Keep
-    // its position/count without inventing an author or reading every detail.
-    // The strict detail path still rejects it before download preparation.
-    let title = if missing_title {
-        if !within_text_limit(title_value.as_str().unwrap(), 2000) {
-            return Err(error("SOURCE_RESPONSE_INVALID"));
-        }
-        format!("来源作品信息缺失（JM{work_id}）")
-    } else {
-        bounded_required_text(title_value, 2000)?
-    };
-    let cover = if missing_title {
-        None
-    } else {
-        cover_url(source, &work_id, data)
-    };
+    let title = bounded_required_text(title_value, 2000)?;
+    // The saved discovery projection replaces controls with spaces. A title
+    // made only of those characters would become invalid after the page had
+    // already been accepted, so reject that one work before listing isolation.
+    if !title
+        .chars()
+        .any(|character| !character.is_control() && !character.is_whitespace())
+    {
+        return Err(error("SOURCE_RESPONSE_INVALID"));
+    }
+    let cover = cover_url(source, &work_id, data);
     let favorite = if favorite_listing {
         Some(true)
     } else {
@@ -393,12 +367,80 @@ fn parse_work(
     Ok((work, cover))
 }
 
+type CoverDescriptors = Vec<(String, Option<String>)>;
+
+pub(crate) struct ListingRecords {
+    pub items: Vec<SourceWork>,
+    pub issues: Vec<SourceItemIssue>,
+    pub covers: CoverDescriptors,
+}
+
+pub(crate) fn listing_records(
+    source: Source,
+    records: &[Value],
+    page: u64,
+    favorites: bool,
+) -> SourceResult<ListingRecords> {
+    let mut parsed = ListingRecords {
+        items: Vec::with_capacity(records.len()),
+        issues: vec![],
+        covers: vec![],
+    };
+    let mut ids = std::collections::HashMap::new();
+    for (position, record) in records.iter().enumerate() {
+        let id_field = if source == Source::Jm { "id" } else { "_id" };
+        let work_id = required_text(&record[id_field])
+            .ok()
+            .filter(|id| valid_id(source, id))
+            .map(|id| normalize_id(source, &id));
+        let previous = work_id
+            .as_ref()
+            .and_then(|id| ids.insert(id.clone(), record));
+        // A malformed record must not hide evidence of contradictory paging.
+        // Only identical, successfully parsed Pica favorite rows qualify for
+        // the existing duplicate exception, checked again below on failure.
+        if previous
+            .is_some_and(|previous| source != Source::Pica || !favorites || previous != record)
+        {
+            return Err(error("SOURCE_PAGINATION_INVALID"));
+        }
+        match work(source, record, favorites) {
+            Ok((item, cover)) => {
+                parsed.covers.push((item.work_id.clone(), cover));
+                parsed.items.push(item);
+            }
+            Err(issue_error) if issue_error.code == "SOURCE_RESPONSE_INVALID" => {
+                if previous.is_some() {
+                    return Err(error("SOURCE_PAGINATION_INVALID"));
+                }
+                let missing_title = source == Source::Jm
+                    && work_id.is_some()
+                    && record["name"].as_str().is_some_and(|title| {
+                        title.trim().is_empty() && within_text_limit(title, 2000)
+                    });
+                parsed.issues.push(SourceItemIssue {
+                    page,
+                    index: position as u64 + 1,
+                    work_id,
+                    code: if missing_title {
+                        SourceItemIssueCode::MetadataMissing
+                    } else {
+                        SourceItemIssueCode::Invalid
+                    },
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(parsed)
+}
+
 pub(crate) fn page(
     source: Source,
     data: &Value,
     requested: u64,
     favorites: bool,
-) -> SourceResult<(SourcePage, Vec<(String, String)>)> {
+) -> SourceResult<(SourcePage, CoverDescriptors)> {
     validate_page(requested)?;
     let body = match source {
         Source::Jm => data,
@@ -440,24 +482,7 @@ pub(crate) fn page(
             (Some(pages), Some(page < pages))
         }
     };
-    let mut items = Vec::with_capacity(records.len());
-    let mut covers = Vec::new();
-    let mut ids = std::collections::HashMap::new();
-    for record in records {
-        let (item, cover) = listing_work(source, record, favorites)?;
-        // Preserve identical Pica favorite entries for pagination accounting.
-        // Conflicting records, search results and JM remain strict.
-        if ids
-            .insert(item.work_id.clone(), record)
-            .is_some_and(|previous| source != Source::Pica || !favorites || previous != record)
-        {
-            return Err(error("SOURCE_PAGINATION_INVALID"));
-        }
-        if let Some(cover) = cover {
-            covers.push((item.work_id.clone(), cover));
-        }
-        items.push(item);
-    }
+    let parsed = listing_records(source, records, requested, favorites)?;
     let mut folders = vec![];
     if source == Source::Jm && favorites {
         let values = data["folder_list"]
@@ -484,9 +509,10 @@ pub(crate) fn page(
             pages,
             has_more,
             folders,
-            items,
+            items: parsed.items,
+            issues: parsed.issues,
         },
-        covers,
+        parsed.covers,
     ))
 }
 

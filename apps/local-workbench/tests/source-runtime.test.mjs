@@ -6,6 +6,7 @@ import {
   sourceErrorMessage,
   validateSourceWork,
   validateCatalogSnapshot,
+  validateSourcePage,
 } from "../src/source-runtime.ts";
 import {
   mergeSourceWorks,
@@ -87,6 +88,49 @@ const page = (overrides = {}) => ({
   ...overrides,
 });
 const query = { kind: "favorites", query: "", folderId: null, page: 1 };
+
+test("isolated source issues retain bounded positions and never relax IPC work validation", () => {
+  const issue = {
+    page: 1,
+    index: 2,
+    workId: "456",
+    code: "SOURCE_ITEM_INVALID",
+  };
+  const result = validateSourcePage(
+    page({ items: [work()], issues: [issue], total: 2 }),
+    scope,
+  );
+  assert.deepEqual(result.issues, [
+    { page: 1, index: 2, workId: "456", code: "SOURCE_ITEM_INVALID" },
+  ]);
+  for (const broken of [
+    { ...issue, page: 2 },
+    { ...issue, index: 0 },
+    { ...issue, index: 3 },
+    { ...issue, workId: "123" },
+    { ...issue, workId: "../bad" },
+    { ...issue, code: "UNKNOWN" },
+    { ...issue, raw: "must not cross IPC" },
+    { ...issue, workId: "abc" },
+  ])
+    assert.throws(() => validateSourcePage(page({ issues: [broken] }), scope));
+  assert.throws(() =>
+    validateSourcePage(page({ issues: [issue, issue] }), scope),
+  );
+  assert.throws(() =>
+    validateSourcePage(
+      page({ items: [{ ...work(), title: "" }], issues: [issue] }),
+      scope,
+    ),
+  );
+  assert.equal(
+    validateSourcePage(
+      page({ items: [], issues: [{ ...issue, index: 1, workId: null }] }),
+      scope,
+    ).items.length,
+    0,
+  );
+});
 
 test("ranking choices are scoped metadata and ranking requests use a single source list", async () => {
   const calls = [];

@@ -13,6 +13,7 @@ pub const MAX_DISCOVERY_RECORDS: usize = 100_000;
 pub const MAX_DISCOVERY_RAW_RECORDS: usize = 500_000;
 pub const MAX_DISCOVERY_RAW_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_DISCOVERY_HEAD_IDS: usize = 20;
+pub const MAX_DISCOVERY_ISSUE_SAMPLES: usize = 20;
 pub const MAX_DISCOVERY_PAGES: u64 = 1000;
 pub const MAX_DISCOVERY_AUTHORS: usize = 2000;
 pub(crate) const MAX_DISCOVERY_ACCOUNTS: usize = 20;
@@ -73,6 +74,32 @@ pub struct DiscoveryBaseline {
     pub established_at: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum DiscoveryItemIssueCode {
+    #[serde(rename = "SOURCE_ITEM_INVALID")]
+    Invalid,
+    #[serde(rename = "SOURCE_ITEM_METADATA_MISSING")]
+    MetadataMissing,
+}
+
+/// A bounded source slot diagnostic, never a work or an author assertion.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiscoveryItemIssue {
+    pub page: u64,
+    pub index: u64,
+    pub work_id: Option<String>,
+    pub code: DiscoveryItemIssueCode,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiscoveryAuthorRange {
@@ -90,6 +117,13 @@ pub struct DiscoveryAuthorRange {
     pub observed_count: usize,
     pub pages_read: u64,
     pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub issue_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issue_samples: Vec<DiscoveryItemIssue>,
+    /// Pagination reached its end even though isolated records may need review.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pages_complete: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -183,10 +217,45 @@ impl ValidatedDocument for DiscoveryDocument {
             }
             let mut ranges = HashSet::new();
             for range in &account.authors {
+                let mut issue_slots = HashSet::new();
+                let mut previous_issue = (0, 0);
                 if !discovery_author_is_valid(&range.author)
                     || !ranges.insert((range.source, &range.author))
                     || range.pages_read > MAX_DISCOVERY_PAGES
                     || range.observed_count > MAX_DISCOVERY_RAW_RECORDS
+                    || range.issue_count > MAX_DISCOVERY_RECORDS
+                    || range.issue_count > range.pages_read as usize * 1000
+                    || range.issue_samples.len()
+                        != range.issue_count.min(MAX_DISCOVERY_ISSUE_SAMPLES)
+                    || (range.issue_count > 0
+                        && (range.state == DiscoveryRangeState::Complete
+                            || range.baseline.is_some()))
+                    || (range.pages_complete
+                        && (range.pages_read == 0
+                            || !matches!(
+                                range.state,
+                                DiscoveryRangeState::Complete | DiscoveryRangeState::Partial
+                            )))
+                    || range.issue_samples.iter().any(|issue| {
+                        let position = (issue.page, issue.index);
+                        let out_of_order = position <= previous_issue;
+                        previous_issue = position;
+                        issue.page == 0
+                            || issue.page > range.pages_read
+                            || !(1..=1000).contains(&issue.index)
+                            || out_of_order
+                            || !issue_slots.insert((issue.page, issue.index))
+                            || (issue.code == DiscoveryItemIssueCode::MetadataMissing
+                                && issue.work_id.is_none())
+                            || issue.work_id.as_ref().is_some_and(|work_id| {
+                                (range.source == Source::Jm && work_id.len() > 19)
+                                    || !LibraryReference {
+                                        source: range.source,
+                                        work_id: work_id.clone(),
+                                    }
+                                    .is_valid()
+                            })
+                    })
                     || range
                         .last_attempt_at
                         .is_some_and(|value| value > MAX_SAFE_INTEGER)

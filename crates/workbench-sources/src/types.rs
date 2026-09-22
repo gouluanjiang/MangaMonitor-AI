@@ -71,8 +71,27 @@ pub struct RankOptions {
     pub periods: Vec<RankOption>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum SourceItemIssueCode {
+    #[serde(rename = "SOURCE_ITEM_INVALID")]
+    Invalid,
+    #[serde(rename = "SOURCE_ITEM_METADATA_MISSING")]
+    MetadataMissing,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceItemIssue {
+    pub page: u64,
+    /// One-based position in the source page, including both works and issues.
+    pub index: u64,
+    /// Present only when the record supplied a validated, normalized source ID.
+    pub work_id: Option<String>,
+    pub code: SourceItemIssueCode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourcePage {
     pub page: u64,
     pub total: Option<u64>,
@@ -80,6 +99,15 @@ pub struct SourcePage {
     pub has_more: Option<bool>,
     pub folders: Vec<SourceFolder>,
     pub items: Vec<SourceWork>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<SourceItemIssue>,
+}
+
+impl SourcePage {
+    /// Source rows read, not the number of successfully decoded works.
+    pub fn record_count(&self) -> usize {
+        self.items.len() + self.issues.len()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]

@@ -44,6 +44,7 @@ fn empty() -> SourcePage {
         has_more: Some(false),
         folders: vec![],
         items: vec![],
+        issues: vec![],
     }
 }
 fn work(source: Source, id: &str, authors: &[&str]) -> SourceWork {
@@ -69,6 +70,322 @@ fn page(number: u64, total: u64, items: Vec<SourceWork>) -> SourcePage {
         has_more: None,
         folders: vec![],
         items,
+        issues: vec![],
+    }
+}
+
+fn issue(page: u64, index: u64, id: Option<&str>) -> crate::SourceItemIssue {
+    crate::SourceItemIssue {
+        page,
+        index,
+        work_id: id.map(str::to_owned),
+        code: crate::SourceItemIssueCode::Invalid,
+    }
+}
+
+#[tokio::test]
+async fn interrupted_isolated_pages_keep_diagnostics_without_claiming_pagination_completion() {
+    for cancel in [false, true] {
+        let (root, backend, service, scopes) = setup().await;
+        follow(&service, &scopes[0], "Author A", true).await;
+        let mut first = page(1, 3, vec![work(Source::Jm, "100", &["Author A"])]);
+        first.issues = vec![issue(1, 2, None)];
+        backend.put(Source::Jm, "Author A", 1, first);
+        backend.0.pages.lock().unwrap().insert(
+            key(Source::Jm, "Author A", 2),
+            Err(AccountError::new("SOURCE_TIMEOUT")),
+        );
+        backend.0.block_call.store(2, Ordering::SeqCst);
+        let run = service
+            .discovery_start(scopes.clone(), vec![])
+            .await
+            .unwrap();
+        backend.0.started.notified().await;
+        let progress = service.discovery_progress(scopes.clone()).await.unwrap();
+        let range = progress
+            .authors
+            .iter()
+            .find(|r| r.source == workbench_storage::Source::Jm)
+            .unwrap();
+        assert_eq!(range.issue_count, 1);
+        assert!(!range.pages_complete);
+        if cancel {
+            service.discovery_cancel(&run.run_id).unwrap();
+        }
+        backend.0.release.notify_one();
+        let saved = finish(&service, &scopes).await;
+        let range = jm_range(&saved);
+        assert_eq!(range.issue_count, 1);
+        assert_eq!(range.pages_read, 1);
+        assert!(!range.pages_complete);
+        assert!(range.baseline.is_none());
+        assert_eq!(saved.records.len(), 1);
+        assert_eq!(
+            saved.run.as_ref().unwrap().phase,
+            if cancel {
+                DiscoveryPhase::Cancelled
+            } else {
+                DiscoveryPhase::Partial
+            }
+        );
+        let disk = WorkbenchStore::open(root.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap();
+        assert_eq!(disk.value.accounts[0].authors[0].issue_count, 1);
+        assert!(!disk.value.accounts[0].authors[0].pages_complete);
+
+        // The next scan starts at page one with fresh issue accounting. Even
+        // an immediate failure cannot reuse the old page count/completion flag.
+        backend.0.pages.lock().unwrap().insert(
+            key(Source::Jm, "Author A", 1),
+            Err(AccountError::new("SOURCE_RESPONSE_INVALID")),
+        );
+        backend.0.block_call.store(0, Ordering::SeqCst);
+        service
+            .discovery_start_unfinished(scopes.clone(), vec![])
+            .await
+            .unwrap();
+        let retried = finish(&service, &scopes).await;
+        assert_eq!(jm_range(&retried).pages_read, 0);
+        assert_eq!(jm_range(&retried).issue_count, 0);
+        assert!(jm_range(&retried).issue_samples.is_empty());
+        assert!(!jm_range(&retried).pages_complete);
+        assert_eq!(retried.records.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn isolated_items_keep_later_pages_and_persist_incomplete_scope_until_clean_retry() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    let mut first = page(1, 5, vec![work(Source::Jm, "100", &["Author A"])]);
+    first.issues = vec![issue(1, 2, Some("101"))];
+    let mut second = page(2, 5, vec![]);
+    second.issues = vec![issue(2, 1, None), issue(2, 2, Some("102"))];
+    backend.put(Source::Jm, "Author A", 1, first);
+    backend.put(Source::Jm, "Author A", 2, second);
+    backend.put(
+        Source::Jm,
+        "Author A",
+        3,
+        page(3, 5, vec![work(Source::Jm, "103", &["Author A"])]),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let saved = finish(&service, &scopes).await;
+    let range = jm_range(&saved);
+    assert_eq!(saved.run.as_ref().unwrap().phase, DiscoveryPhase::Partial);
+    assert_eq!(range.state, DiscoveryRangeState::Partial);
+    assert_eq!(range.error_code.as_deref(), Some("SOURCE_ITEMS_PARTIAL"));
+    assert_eq!(range.pages_read, 3);
+    assert!(range.pages_complete);
+    assert_eq!(range.issue_count, 3);
+    assert_eq!(range.issue_samples.len(), 3);
+    assert_eq!(range.observed_count, 2);
+    assert!(range.baseline.is_none());
+    assert!(range.last_complete_at.is_none());
+    assert_eq!(
+        saved
+            .records
+            .iter()
+            .map(|r| r.work.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["100", "103"]
+    );
+    let disk = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(&disk.value.accounts[0].authors[0], range);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        [
+            key(Source::Jm, "Author A", 1),
+            key(Source::Jm, "Author A", 2),
+            key(Source::Jm, "Author A", 3),
+            key(Source::Pica, "Author A", 1),
+        ]
+    );
+
+    backend.0.calls.lock().unwrap().clear();
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(
+            1,
+            5,
+            vec![
+                work(Source::Jm, "100", &["Author A"]),
+                work(Source::Jm, "101", &["Author A"]),
+            ],
+        ),
+    );
+    backend.put(
+        Source::Jm,
+        "Author A",
+        2,
+        page(
+            2,
+            5,
+            vec![
+                work(Source::Jm, "104", &["Author A"]),
+                work(Source::Jm, "102", &["Author A"]),
+            ],
+        ),
+    );
+    let prior_pica = saved
+        .authors
+        .iter()
+        .find(|r| r.source == workbench_storage::Source::Pica)
+        .unwrap()
+        .clone();
+    service
+        .discovery_start_unfinished(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let clean = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&clean).state, DiscoveryRangeState::Complete);
+    assert_eq!(jm_range(&clean).issue_count, 0);
+    assert!(jm_range(&clean).issue_samples.is_empty());
+    assert!(jm_range(&clean).pages_complete);
+    assert_eq!(jm_range(&clean).baseline.as_ref().unwrap().total, 5);
+    assert_eq!(clean.records.len(), 5);
+    assert_eq!(
+        clean
+            .authors
+            .iter()
+            .find(|r| r.source == workbench_storage::Source::Pica)
+            .unwrap(),
+        &prior_pica
+    );
+    assert_eq!(
+        *backend.0.calls.lock().unwrap(),
+        [
+            key(Source::Jm, "Author A", 1),
+            key(Source::Jm, "Author A", 2),
+            key(Source::Jm, "Author A", 3)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn isolated_item_disables_incremental_anchor_and_preserves_previously_good_metadata() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    catalog(&backend, &(100..145).collect::<Vec<_>>());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let old = finish(&service, &scopes).await;
+    let old_missing = old
+        .records
+        .iter()
+        .find(|r| r.work.work_id == "110")
+        .unwrap()
+        .clone();
+    backend.0.calls.lock().unwrap().clear();
+    let mut partial = page(
+        1,
+        45,
+        (100..120)
+            .filter(|id| *id != 110)
+            .map(|id| work(Source::Jm, &id.to_string(), &["Author A"]))
+            .collect(),
+    );
+    partial.issues = vec![issue(1, 11, Some("110"))];
+    backend.put(Source::Jm, "Author A", 1, partial);
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let next = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&next).pages_read, 3);
+    assert_eq!(jm_range(&next).state, DiscoveryRangeState::Partial);
+    assert_eq!(
+        jm_range(&next).last_complete_at,
+        jm_range(&old).last_complete_at
+    );
+    assert!(jm_range(&next).baseline.is_none());
+    assert_eq!(
+        next.records
+            .iter()
+            .find(|r| r.work.work_id == "110")
+            .unwrap(),
+        &old_missing
+    );
+    assert_eq!(next.records.len(), 45);
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
+}
+
+#[test]
+fn isolated_slots_do_not_hide_duplicate_ids_or_invalid_page_envelopes() {
+    let mut first = page(1, 3, vec![work(Source::Jm, "100", &["Author A"])]);
+    first.issues = vec![issue(1, 2, Some("101"))];
+    let mut traversal = Traversal::default();
+    assert!(!traversal.append(&first).unwrap());
+    let duplicate = page(2, 3, vec![work(Source::Jm, "101", &["Author A"])]);
+    assert_eq!(
+        traversal.append(&duplicate).unwrap_err().code,
+        "DISCOVERY_PAGINATION_CHANGED"
+    );
+    let mut same_page = page(1, 2, vec![work(Source::Jm, "100", &["Author A"])]);
+    same_page.issues = vec![issue(1, 2, Some("100"))];
+    assert!(Traversal::default().append(&same_page).is_err());
+    let mut final_wrong_count = page(2, 3, vec![]);
+    final_wrong_count.has_more = Some(false);
+    assert!(traversal.append(&final_wrong_count).is_err());
+}
+
+#[tokio::test]
+async fn isolated_item_samples_are_bounded_and_malformed_issue_shapes_are_rejected() {
+    let (_root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    let mut only_issues = page(1, 25, vec![]);
+    only_issues.issues = (1..=25).map(|index| issue(1, index, None)).collect();
+    backend.put(Source::Jm, "Author A", 1, only_issues.clone());
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let saved = finish(&service, &scopes).await;
+    assert_eq!(jm_range(&saved).issue_count, 25);
+    assert_eq!(
+        jm_range(&saved).issue_samples.len(),
+        MAX_DISCOVERY_ISSUE_SAMPLES
+    );
+    assert!(jm_range(&saved).pages_complete);
+    assert!(saved.records.is_empty());
+    for change in 0..7 {
+        let mut invalid = only_issues.clone();
+        match change {
+            0 => invalid.issues[0].index = 0,
+            1 => invalid.issues[0].page = 2,
+            2 => invalid.issues[0].work_id = Some("invalid".into()),
+            3 => invalid.issues[0].index = 2,
+            4 => invalid.issues.reverse(),
+            5 => invalid.issues[0].code = crate::SourceItemIssueCode::MetadataMissing,
+            _ => invalid.issues[0].work_id = Some("1".repeat(20)),
+        }
+        backend.put(Source::Jm, "Author A", 1, invalid);
+        let error = service
+            .query(
+                Source::Jm,
+                &scopes[0].session_id,
+                QueryKind::Search,
+                "Author A",
+                None,
+                1,
+            )
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "SOURCE_RESPONSE_INVALID");
     }
 }
 

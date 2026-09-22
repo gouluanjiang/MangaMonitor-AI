@@ -101,6 +101,7 @@ fn page(source: Source, favorite: bool) -> SourcePage {
         pages: None,
         has_more: None,
         folders: vec![],
+        issues: vec![],
     }
 }
 
@@ -826,6 +827,7 @@ async fn concurrent_saved_login_is_not_overwritten_by_a_late_login_commit() {
 
 fn catalog_snapshot() -> CatalogSnapshot {
     CatalogSnapshot {
+        issues: vec![],
         items: vec![work(Source::Jm, false)],
         page: 1,
         total: Some(1),

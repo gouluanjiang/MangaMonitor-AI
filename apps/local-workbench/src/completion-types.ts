@@ -1,4 +1,9 @@
-import type { Source, SourceScope, SourceWork } from "./source-types.ts";
+import type {
+  Source,
+  SourceScope,
+  SourceWork,
+  SourceItemIssue,
+} from "./source-types.ts";
 export type ScanPhase =
   "checking" | "complete" | "partial" | "cancelled" | "error";
 export type DiscoveryMode = "incremental" | "full";
@@ -41,6 +46,9 @@ export interface DiscoverySnapshot {
     observedCount: number;
     pagesRead: number;
     errorCode: string | null;
+    issueCount?: number;
+    issueSamples?: SourceItemIssue[];
+    pagesComplete?: boolean;
   }[];
   records: {
     work: SourceWork;

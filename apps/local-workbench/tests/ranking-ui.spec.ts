@@ -12,6 +12,7 @@ declare global {
       failOptions: boolean;
       failList: boolean;
       hold: boolean;
+      isolated: boolean;
       release?: () => void;
     };
   }
@@ -69,6 +70,7 @@ async function install(page: Page) {
         failOptions: false,
         failList: false,
         hold: false,
+        isolated: false,
       } as Window["rankingTest"]);
       Object.defineProperty(window, "__TAURI_INTERNALS__", {
         configurable: true,
@@ -157,8 +159,22 @@ async function install(page: Page) {
                 source: args.source,
                 sessionId: args.sessionId,
                 items,
+                issues:
+                  hooks.isolated && args.kind === "ranking"
+                    ? [
+                        {
+                          page: 1,
+                          index: items.length + 1,
+                          workId: "999",
+                          code: "SOURCE_ITEM_INVALID",
+                        },
+                      ]
+                    : [],
                 page: 1,
-                total: hooks.partial ? 20 : items.length,
+                total: hooks.partial
+                  ? 20
+                  : items.length +
+                    (hooks.isolated && args.kind === "ranking" ? 1 : 0),
                 pages: hooks.partial ? null : 1,
                 hasMore: hooks.partial ? null : false,
                 folders: [],
@@ -190,6 +206,31 @@ async function install(page: Page) {
   await page.goto("/");
   await page.getByTestId("nav-discovery").click();
 }
+
+test("ranking retains good works and exposes isolated source positions as read-only diagnostics", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    window.rankingTest.isolated = true;
+  });
+  await page.getByTestId("discovery-JM").click();
+  await expect(page.getByTestId("ranking-counts")).toContainText(
+    "已读取 2 条 / 来源报告 3 条",
+  );
+  await expect(page.getByTestId("ranking-counts")).toContainText(
+    "分页已读完，仍有来源记录待核对",
+  );
+  const issues = page.getByTestId("ranking-issues");
+  await issues.locator("summary").click();
+  await expect(issues).toContainText("JM · 第 1 页 · 第 3 条 · 编号 999");
+  await expect(issues.getByRole("button")).toHaveCount(0);
+  await expect(page.getByTestId("rank-work-JM:2")).toBeVisible();
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/ranking-isolated-records.png",
+  });
+});
 
 test("weekly and Pica ranks share receipt filters while details preserve the selected list", async ({
   page,

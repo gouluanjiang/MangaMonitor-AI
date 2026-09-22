@@ -402,7 +402,7 @@ fn jm_optional_arrays_omit_only_blank_strings_without_reordering_content() {
 }
 
 #[tokio::test]
-async fn jm_search_keeps_blank_title_on_second_page_without_detail_or_cover_fanout() {
+async fn jm_search_isolates_blank_title_on_second_page_without_detail_or_cover_fanout() {
     let sources = scripted(vec![
         Ok(json!({"total":4,"content":[
             {"id":"123","name":"First","author":"Queried author"},
@@ -425,19 +425,27 @@ async fn jm_search_keeps_blank_title_on_second_page_without_detail_or_cover_fano
             .chain(&second.items)
             .map(|work| work.work_id.as_str())
             .collect::<Vec<_>>(),
-        ["123", "124", "125", "126"]
+        ["123", "124", "126"]
     );
-    let placeholder = &second.items[0];
-    assert_eq!(placeholder.title, "来源作品信息缺失（JM125）");
-    assert!(placeholder.authors.is_empty());
-    assert!(!placeholder.cover_available);
-    assert_eq!(placeholder.page_count, None);
-    assert_eq!(placeholder.description, None);
+    assert_eq!((first.record_count(), second.record_count()), (2, 2));
+    assert!(first.issues.is_empty());
+    assert_eq!(
+        second.issues,
+        [SourceItemIssue {
+            page: 2,
+            index: 1,
+            work_id: Some("125".into()),
+            code: SourceItemIssueCode::MetadataMissing,
+        }]
+    );
     assert!(matches!(
         jm.covers.lock().unwrap().lookup("125"),
-        CoverLookup::Missing
+        CoverLookup::Unknown
     ));
-    assert_eq!(sources.thumbnail_inner(&jm, "125").await.unwrap(), None);
+    assert_eq!(
+        sources.thumbnail_inner(&jm, "125").await.unwrap_err().code,
+        "WORK_NOT_LOADED"
+    );
     assert_eq!(
         sources.recorded.lock().unwrap().as_slice(),
         &[
@@ -457,7 +465,7 @@ async fn jm_search_keeps_blank_title_on_second_page_without_detail_or_cover_fano
 }
 
 #[tokio::test]
-async fn jm_blank_title_favorites_and_weekly_preserve_source_metadata_and_positions() {
+async fn jm_blank_title_favorites_and_weekly_keep_issue_positions_without_cover_authority() {
     let records = json!([
         {"id":"123","name":"Named work"},
         {"id":"124","name":" \t\u{3000}","author":["Actual author"],"tags":["Tag"]}
@@ -478,26 +486,33 @@ async fn jm_blank_title_favorites_and_weekly_preserve_source_metadata_and_positi
         )
         .await
         .unwrap();
-    assert_eq!(favorites.items[1].favorite, Some(true));
+    assert_eq!(favorites.items[0].favorite, Some(true));
     let weekly = sources.ranking(&jm, Some("42"), "1").await.unwrap();
     for page in [favorites, weekly] {
         assert_eq!(page.total, Some(2));
-        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.record_count(), 2);
         assert_eq!(page.items[0].work_id, "123");
-        let placeholder = &page.items[1];
-        assert_eq!(placeholder.work_id, "124");
-        assert_eq!(placeholder.title, "来源作品信息缺失（JM124）");
-        assert_eq!(placeholder.authors, ["Actual author"]);
-        assert_eq!(placeholder.tags, ["Tag"]);
-        assert!(!placeholder.cover_available);
+        assert_eq!(
+            page.issues,
+            [SourceItemIssue {
+                page: 1,
+                index: 2,
+                work_id: Some("124".into()),
+                code: SourceItemIssueCode::MetadataMissing,
+            }]
+        );
     }
-    assert_eq!(sources.thumbnail_inner(&jm, "124").await.unwrap(), None);
+    assert_eq!(
+        sources.thumbnail_inner(&jm, "124").await.unwrap_err().code,
+        "WORK_NOT_LOADED"
+    );
     assert_eq!(sources.recorded.lock().unwrap().len(), 2);
     assert!(sources.cover_recorded.lock().unwrap().is_empty());
 }
 
 #[test]
-fn jm_blank_listing_titles_do_not_relax_detail_pica_or_other_metadata_guards() {
+fn listing_isolation_does_not_relax_detail_or_work_metadata_guards() {
     for invalid in [
         Value::Null,
         json!(false),
@@ -507,9 +522,7 @@ fn jm_blank_listing_titles_do_not_relax_detail_pica_or_other_metadata_guards() {
     ] {
         let record = json!({"id":"123","name":invalid});
         assert_eq!(
-            protocol::listing_work(Source::Jm, &record, false)
-                .unwrap_err()
-                .code,
+            protocol::work(Source::Jm, &record, false).unwrap_err().code,
             "SOURCE_RESPONSE_INVALID"
         );
     }
@@ -521,7 +534,7 @@ fn jm_blank_listing_titles_do_not_relax_detail_pica_or_other_metadata_guards() {
             "SOURCE_RESPONSE_INVALID"
         );
         assert_eq!(
-            protocol::listing_work(Source::Pica, &json!({"_id":PICA_ID,"title":blank}), false)
+            protocol::work(Source::Pica, &json!({"_id":PICA_ID,"title":blank}), false)
                 .unwrap_err()
                 .code,
             "SOURCE_RESPONSE_INVALID"
@@ -540,20 +553,19 @@ fn jm_blank_listing_titles_do_not_relax_detail_pica_or_other_metadata_guards() {
         let mut record = json!({"id":"123","name":""});
         record[field] = invalid;
         assert_eq!(
-            protocol::listing_work(Source::Jm, &record, false)
-                .unwrap_err()
-                .code,
+            protocol::work(Source::Jm, &record, false).unwrap_err().code,
             "SOURCE_RESPONSE_INVALID",
             "{field}"
         );
     }
     let numeric = json!({"id":"123","name":42});
-    let (work, _) = protocol::listing_work(Source::Jm, &numeric, false).unwrap();
+    let (work, _) = protocol::work(Source::Jm, &numeric, false).unwrap();
     assert_eq!(work.title, "42");
     assert!(work.cover_available);
-    assert_eq!(work, protocol::work(Source::Jm, &numeric, false).unwrap().0);
     let maximum_blank = json!({"id":"123","name":" ".repeat(2000)});
-    assert!(protocol::listing_work(Source::Jm, &maximum_blank, false).is_ok());
+    let parsed = protocol::listing_records(Source::Jm, &[maximum_blank], 1, false).unwrap();
+    assert!(parsed.items.is_empty());
+    assert_eq!(parsed.issues[0].code, SourceItemIssueCode::MetadataMissing);
 }
 
 #[tokio::test]
@@ -575,6 +587,234 @@ async fn jm_blank_title_detail_remains_unavailable_and_cannot_gain_cover_authori
         &[(Source::Jm, Method::GET, "/album?id=123".to_owned())]
     );
     assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[test]
+fn listing_invalid_rows_preserve_valid_neighbors_and_only_expose_bounded_issue_identity() {
+    let invalid_rows = [
+        Value::Null,
+        json!(["raw private metadata"]),
+        json!({"id":"../../123","name":"Untrusted ID"}),
+        json!({"id":"00124","name":" ".repeat(2001)}),
+        json!({"id":"00124","name":"Title","author":[null]}),
+        json!({"id":"00124","name":"Title","is_favorite":"false"}),
+        json!({"id":"00124","name":"Title","total_photos":-1}),
+        json!({"id":"00124","name":"Title","description":{"private":"value"}}),
+        json!({"id":"00124","name":"Title","tags":vec!["tag"; 65]}),
+        json!({"id":"00124","name":"Title","author":vec!["界".repeat(1000); 32]}),
+    ];
+    for (position, invalid) in invalid_rows.into_iter().enumerate() {
+        let data = json!({"total":3,"content":[
+            {"id":"123","name":"First"}, invalid, {"id":"125","name":"Last"}
+        ]});
+        let (page, covers) = protocol::page(Source::Jm, &data, 1, false).unwrap();
+        assert_eq!(page.record_count(), 3);
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|work| work.work_id.as_str())
+                .collect::<Vec<_>>(),
+            ["123", "125"]
+        );
+        assert_eq!(covers.len(), 2);
+        assert_eq!(
+            serde_json::to_value(&page.issues).unwrap(),
+            json!([{
+                "page":1,"index":2,
+                "workId":if position < 3 { None } else { Some("124") },
+                "code":"SOURCE_ITEM_INVALID"
+            }])
+        );
+    }
+}
+
+#[test]
+fn control_only_titles_are_isolated_before_the_saved_projection_can_block_valid_neighbors() {
+    for source in [Source::Jm, Source::Pica] {
+        let (id_field, title_field, ids) = match source {
+            Source::Jm => ("id", "name", ["123", "124", "125"]),
+            Source::Pica => (
+                "_id",
+                "title",
+                [
+                    PICA_ID,
+                    "1123456789abcdef01234567",
+                    "2123456789abcdef01234567",
+                ],
+            ),
+        };
+        let first = json!({id_field:ids[0],title_field:"First\u{0000} meaningful title"});
+        let last = json!({id_field:ids[2],title_field:"Last"});
+        for title in ["\u{0000}", " \u{0001}\t\u{3000}"] {
+            let invalid = json!({id_field:ids[1],title_field:title});
+            assert_eq!(
+                protocol::work(source, &invalid, false).unwrap_err().code,
+                "SOURCE_RESPONSE_INVALID"
+            );
+            let rows = json!([first.clone(), invalid, last.clone()]);
+            let data = if source == Source::Jm {
+                json!({"total":3,"content":rows})
+            } else {
+                json!({"comics":{"page":1,"pages":1,"limit":20,"total":3,"docs":rows}})
+            };
+            let (page, covers) = protocol::page(source, &data, 1, false).unwrap();
+            assert_eq!(page.record_count(), 3);
+            assert_eq!(page.items.len(), 2);
+            assert_eq!(page.items[0].work_id, ids[0]);
+            assert_eq!(page.items[1].work_id, ids[2]);
+            assert_eq!(page.items[0].title, "First\u{0000} meaningful title");
+            assert_eq!(covers.len(), 2);
+            assert_eq!(
+                page.issues,
+                [SourceItemIssue {
+                    page: 1,
+                    index: 2,
+                    work_id: Some(ids[1].into()),
+                    code: SourceItemIssueCode::Invalid,
+                }]
+            );
+        }
+    }
+}
+
+#[test]
+fn all_invalid_pica_rows_keep_raw_pagination_counts_without_pretending_the_page_is_empty() {
+    let data = json!({"comics":{"page":2,"pages":2,"limit":2,"total":4,"docs":[
+        {"_id":PICA_ID.to_uppercase(),"title":"Good ID","epsCount":-1}, null
+    ]}});
+    let (page, covers) = protocol::page(Source::Pica, &data, 2, false).unwrap();
+    assert!(page.items.is_empty());
+    assert!(covers.is_empty());
+    assert_eq!(page.record_count(), 2);
+    assert_eq!(
+        (page.total, page.pages, page.has_more),
+        (Some(4), Some(2), Some(false))
+    );
+    assert_eq!(page.issues[0].work_id.as_deref(), Some(PICA_ID));
+    assert_eq!(page.issues[1].work_id, None);
+    assert!(page
+        .issues
+        .iter()
+        .all(|issue| issue.page == 2 && issue.code == SourceItemIssueCode::Invalid));
+    assert_eq!((page.issues[0].index, page.issues[1].index), (1, 2));
+    for (field, value) in [("total", json!(1)), ("limit", json!(1)), ("page", json!(1))] {
+        let mut invalid_page = data.clone();
+        invalid_page["comics"][field] = value;
+        assert_eq!(
+            protocol::page(Source::Pica, &invalid_page, 2, false)
+                .unwrap_err()
+                .code,
+            "SOURCE_PAGINATION_INVALID",
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn invalid_rows_cannot_conceal_duplicate_ids_even_in_identical_pica_favorites() {
+    for source in [Source::Jm, Source::Pica] {
+        let (valid, malformed) = if source == Source::Jm {
+            (
+                json!({"id":"123","name":"Good"}),
+                json!({"id":"00123","name":false}),
+            )
+        } else {
+            (
+                json!({"_id":PICA_ID,"title":"Good"}),
+                json!({"_id":PICA_ID.to_uppercase(),"title":false}),
+            )
+        };
+        for rows in [
+            vec![valid.clone(), malformed.clone()],
+            vec![malformed.clone(), valid],
+            vec![malformed.clone(), malformed.clone()],
+        ] {
+            assert_eq!(
+                protocol::listing_records(source, &rows, 1, false)
+                    .err()
+                    .unwrap()
+                    .code,
+                "SOURCE_PAGINATION_INVALID"
+            );
+        }
+        let favorites = protocol::listing_records(source, &[malformed.clone(), malformed], 1, true);
+        assert_eq!(favorites.err().unwrap().code, "SOURCE_PAGINATION_INVALID");
+    }
+    let good = json!({"_id":PICA_ID,"title":"Good"});
+    let parsed = protocol::listing_records(Source::Pica, &[good.clone(), good], 1, true).unwrap();
+    assert_eq!(parsed.items.len(), 2);
+    assert!(parsed.issues.is_empty());
+}
+
+#[tokio::test]
+async fn pica_search_favorites_and_rankings_isolate_bad_rows_without_extra_requests() {
+    let bad_id = "1123456789abcdef01234567";
+    let records = json!([
+        {"_id":PICA_ID,"title":"Good","thumb":{"fileServer":"https://storage1.picacomic.com","path":"cover/test.jpg"}},
+        {"_id":bad_id,"title":"Broken","author":{"private":"raw"}}
+    ]);
+    let paged = json!({"comics":{"page":1,"pages":1,"limit":20,"total":2,"docs":records}});
+    let sources = scripted(vec![
+        Ok(paged.clone()),
+        Ok(paged),
+        Ok(json!({"comics":records})),
+    ]);
+    let pica = session(Source::Pica);
+    let search = sources.search(&pica, "Author", 1).await.unwrap();
+    let favorites = sources
+        .favorites(
+            &pica,
+            FavoritePageRequest {
+                page: 1,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+        .unwrap();
+    let ranking = sources.ranking(&pica, None, "week").await.unwrap();
+    for page in [search, favorites, ranking] {
+        assert_eq!(page.record_count(), 2);
+        assert_eq!(
+            (page.total, page.pages, page.has_more),
+            (Some(2), Some(1), Some(false))
+        );
+        assert_eq!(page.items[0].work_id, PICA_ID);
+        assert_eq!(page.issues[0].work_id.as_deref(), Some(bad_id));
+        assert_eq!(page.issues[0].code, SourceItemIssueCode::Invalid);
+    }
+    assert!(matches!(
+        pica.covers.lock().unwrap().lookup(PICA_ID),
+        CoverLookup::Ready(_)
+    ));
+    assert!(matches!(
+        pica.covers.lock().unwrap().lookup(bad_id),
+        CoverLookup::Unknown
+    ));
+    assert_eq!(sources.recorded.lock().unwrap().len(), 3);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[test]
+fn source_page_issues_are_optional_for_old_dtos_but_have_a_closed_public_shape() {
+    let old = json!({"page":1,"total":0,"pages":1,"hasMore":false,"folders":[],"items":[]});
+    let old_page: SourcePage = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(old_page.record_count(), 0);
+    assert!(old_page.issues.is_empty());
+    assert_eq!(serde_json::to_value(old_page).unwrap(), old);
+    let mut with_issue = old;
+    with_issue["total"] = json!(1);
+    with_issue["issues"] = json!([{"page":1,"index":1,"workId":null,"code":"SOURCE_ITEM_INVALID"}]);
+    let issue_page: SourcePage = serde_json::from_value(with_issue.clone()).unwrap();
+    assert_eq!(issue_page.record_count(), 1);
+    assert_eq!(serde_json::to_value(issue_page).unwrap(), with_issue);
+    for key in ["title", "raw", "authors", "url"] {
+        let mut unknown = with_issue.clone();
+        unknown["issues"][0][key] = json!("must not cross IPC");
+        assert!(serde_json::from_value::<SourcePage>(unknown).is_err());
+    }
+    with_issue["issues"][0]["code"] = json!("SOURCE_RESPONSE_INVALID");
+    assert!(serde_json::from_value::<SourcePage>(with_issue).is_err());
 }
 
 #[test]

@@ -357,6 +357,57 @@ test("incremental scope markers retain the last full timestamp and reject malfor
     );
 });
 
+test("saved issue diagnostics validate sampling, identity, ordering and incomplete evidence", () => {
+  const issue = {
+    page: 1,
+    index: 1,
+    workId: "1",
+    code: "SOURCE_ITEM_METADATA_MISSING",
+  };
+  const range = {
+    author: "Writer",
+    source: "JM",
+    state: "partial",
+    lastAttemptAt: 10,
+    lastCompleteAt: null,
+    observedCount: 1,
+    pagesRead: 1,
+    errorCode: "SOURCE_ITEMS_PARTIAL",
+    issueCount: 1,
+    issueSamples: [issue],
+    pagesComplete: true,
+  };
+  const parsed = validateDiscoverySnapshot(
+    { ...empty(), authors: [range] },
+    scopes,
+  ).authors[0];
+  assert.equal(parsed.issueCount, 1);
+  assert.equal(
+    unfinishedRangeMessage(parsed),
+    "分页已读完，1 条来源记录待核对",
+  );
+  for (const change of [
+    { state: "complete" },
+    { issueCount: 0 },
+    { issueSamples: [] },
+    { pagesRead: 0 },
+    { issueSamples: [{ ...issue, workId: null }] },
+    { issueSamples: [{ ...issue, raw: "private" }] },
+    { issueCount: 2, issueSamples: [{ ...issue, index: 2 }, issue] },
+    { issueSamples: [{ ...issue, workId: "abc" }] },
+    { issueCount: 100001 },
+    {
+      baseline: { queryVersion: 1, headIds: ["1"], total: 1, establishedAt: 1 },
+    },
+  ])
+    assert.throws(() =>
+      validateDiscoverySnapshot(
+        { ...empty(), authors: [{ ...range, ...change }] },
+        scopes,
+      ),
+    );
+});
+
 test("catalog snapshots accept more than the former 20000 records without truncating and retain a hard upper bound", () => {
   const records = Array.from({ length: 20001 }, (_, index) => ({
     work: work("JM", index + 1),
@@ -516,7 +567,7 @@ test("short, repeated and failed pages retain partial data and never report full
   }
 });
 
-test("a valid-ID metadata placeholder preserves both full pages without becoming author evidence", async () => {
+test("a bad later-page record is isolated while every valid author work is preserved", async () => {
   const calls = [],
     pageSizes = [];
   const adapter = createAuthorSearchAdapter({
@@ -526,17 +577,8 @@ test("a valid-ID metadata placeholder preserves both full pages without becoming
       const items = Array.from({ length: count }, (_, index) => {
         const id = (query.page - 1) * 80 + index + 1;
         const item = work(scope.source, id);
-        return validateSourceWork(
-          id === 98
-            ? {
-                ...item,
-                title: "来源作品信息缺失（JM98）",
-                authors: [],
-                coverAvailable: false,
-              }
-            : item,
-        );
-      });
+        return validateSourceWork(item);
+      }).filter((item) => item.workId !== "98");
       pageSizes.push(items.length);
       return {
         ...scope,
@@ -546,6 +588,17 @@ test("a valid-ID metadata placeholder preserves both full pages without becoming
         hasMore: scope.source === "JM" && query.page === 1,
         folders: [],
         items,
+        issues:
+          scope.source === "JM" && query.page === 2
+            ? [
+                {
+                  page: 2,
+                  index: 18,
+                  workId: "98",
+                  code: "SOURCE_ITEM_METADATA_MISSING",
+                },
+              ]
+            : [],
       };
     },
   });
@@ -557,17 +610,17 @@ test("a valid-ID metadata placeholder preserves both full pages without becoming
   )
     await flush();
   const result = validateDiscoverySnapshot(await adapter.read(scopes), scopes);
-  assert.equal(result.run.phase, "complete");
+  assert.equal(result.run.phase, "partial");
   assert.deepEqual(calls, [
     ["JM", 1],
     ["JM", 2],
     ["Pica", 1],
   ]);
-  assert.deepEqual(pageSizes, [80, 70, 0]);
-  assert.equal(result.records.length, 150);
+  assert.deepEqual(pageSizes, [80, 69, 0]);
+  assert.equal(result.records.length, 149);
   assert.equal(
     result.authors.find((range) => range.source === "JM").observedCount,
-    150,
+    149,
   );
   assert.equal(
     result.authors.find((range) => range.source === "JM").pagesRead,
@@ -575,13 +628,99 @@ test("a valid-ID metadata placeholder preserves both full pages without becoming
   );
   const partition = partitionAuthorRecords(result.records, "Writer", "JM");
   assert.equal(partition.confirmed.length, 149);
-  assert.deepEqual(
-    partition.other.map((record) => record.work.workId),
-    ["98"],
+  assert.equal(partition.other.length, 0);
+  const range = result.authors.find((range) => range.source === "JM");
+  assert.equal(range.issueCount, 1);
+  assert.equal(range.pagesComplete, true);
+  assert.equal(range.state, "partial");
+  assert.equal(range.lastCompleteAt, null);
+  assert.equal(range.errorCode, "SOURCE_ITEMS_PARTIAL");
+  assert.deepEqual(range.issueSamples, [
+    { page: 2, index: 18, workId: "98", code: "SOURCE_ITEM_METADATA_MISSING" },
+  ]);
+});
+
+test("search traverses all-issue pages and retains diagnostics when resuming", async () => {
+  const seen = [],
+    calls = [];
+  const adapter = {
+    query: async (scope, query) => {
+      calls.push(query.page);
+      return {
+        ...scope,
+        page: query.page,
+        total: 3,
+        pages: 3,
+        hasMore: query.page < 3,
+        folders: [],
+        items: query.page === 2 ? [] : [work(scope.source, query.page)],
+        issues:
+          query.page === 2
+            ? [{ page: 2, index: 1, workId: null, code: "SOURCE_ITEM_INVALID" }]
+            : [],
+      };
+    },
+  };
+  let keepReading = true;
+  await readCompleteSearch(adapter, scopes[0], "Writer", {
+    current: () => keepReading,
+    onPage(value) {
+      seen.push(value);
+      if (value.page.page === 2) keepReading = false;
+    },
+  });
+  assert.deepEqual(calls, [1, 2]);
+  const paused = seen.at(-1);
+  assert.equal(paused.recordsRead, 2);
+  await readCompleteSearch(adapter, scopes[0], "Writer", {
+    current: () => true,
+    fromPage: 3,
+    items: paused.items,
+    issues: paused.issues,
+    recordsRead: paused.recordsRead,
+    onPage: (value) => seen.push(value),
+  });
+  assert.deepEqual(calls, [1, 2, 3]);
+  assert.equal(seen.at(-1).complete, true);
+  assert.equal(seen.at(-1).recordsRead, 3);
+  assert.equal(seen.at(-1).items.length, 2);
+  assert.equal(seen.at(-1).issues.length, 1);
+});
+
+test("a new isolated row cannot disguise repeated normal identities on a later search page", async () => {
+  const seen = [];
+  await assert.rejects(
+    readCompleteSearch(
+      {
+        query: async (scope, query) => ({
+          ...scope,
+          items: [work(scope.source, 1)],
+          issues:
+            query.page === 2
+              ? [
+                  {
+                    page: 2,
+                    index: 2,
+                    workId: "2",
+                    code: "SOURCE_ITEM_INVALID",
+                  },
+                ]
+              : [],
+          page: query.page,
+          total: 3,
+          pages: 2,
+          hasMore: query.page === 1,
+          folders: [],
+        }),
+      },
+      scopes[0],
+      "Writer",
+      { current: () => true, onPage: (value) => seen.push(value) },
+    ),
+    { code: "SEARCH_INCOMPLETE" },
   );
-  assert.equal(partition.other[0].work.title, "来源作品信息缺失（JM98）");
-  assert.equal(partition.other[0].authorVerified, false);
-  assert.equal(partition.other[0].work.coverAvailable, false);
+  assert.equal(seen.at(-1).complete, false);
+  assert.equal(seen.at(-1).items.length, 1);
 });
 
 test("ad-hoc author lookup needs no following and visits both sources even when one fails", async () => {

@@ -16,9 +16,10 @@ use workbench_credentials::Vault;
 pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
     discovery_author_is_valid, discovery_record_matches_author, DiscoveryAccount,
-    DiscoveryAuthorRange, DiscoveryBaseline, DiscoveryDocument, DiscoveryPagePatch,
-    DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, Document, WorkbenchStore,
-    MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RAW_RECORDS,
+    DiscoveryAuthorRange, DiscoveryBaseline, DiscoveryDocument, DiscoveryItemIssue,
+    DiscoveryItemIssueCode, DiscoveryPagePatch, DiscoveryRangeState, DiscoveryRecord,
+    DiscoveryWork, Document, WorkbenchStore, MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS,
+    MAX_DISCOVERY_ISSUE_SAMPLES, MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RAW_RECORDS,
     MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
 };
 
@@ -297,6 +298,9 @@ fn idle(author: &str, source: Source) -> DiscoveryAuthorRange {
         observed_count: 0,
         pages_read: 0,
         error_code: None,
+        issue_count: 0,
+        issue_samples: vec![],
+        pages_complete: false,
     }
 }
 
@@ -484,6 +488,7 @@ impl DiscoveryControl {
             .find(|range| range.author == author && range.source == storage_source(source))
         {
             range.state = DiscoveryRangeState::Checking;
+            range.pages_complete = false;
             range.error_code = None;
         }
         Ok(())
@@ -1191,6 +1196,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 range.state = DiscoveryRangeState::Partial;
                 range.last_attempt_at = Some(now()?);
                 range.pages_read = 0;
+                range.issue_count = 0;
+                range.issue_samples.clear();
+                range.pages_complete = false;
                 range.observed_count = known_ids.len();
                 range.error_code = Some(code.into());
                 range.baseline = None;
@@ -1222,6 +1230,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             range.state = DiscoveryRangeState::Checking;
             range.last_attempt_at = Some(now()?);
             range.pages_read = 0;
+            range.issue_count = 0;
+            range.issue_samples.clear();
+            range.pages_complete = false;
             range.observed_count = known_ids.len();
             range.error_code = None;
             self.discovery_save_page(
@@ -1300,6 +1311,15 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                         break;
                     }
                 };
+                // An isolated source slot is not a safe incremental anchor.
+                // Revisit the tail and keep the scope incomplete until a later
+                // clean traversal actually obtains those missing records.
+                if !response.issues.is_empty() {
+                    boundary = None;
+                    let range = &mut document.value.accounts[index].authors[range_index];
+                    range.baseline = None;
+                    self.discovery.strategy(run_id, DiscoveryMode::Full);
+                }
                 let incremental_complete = boundary
                     .as_mut()
                     .is_some_and(|boundary| boundary.append(&response));
@@ -1381,23 +1401,50 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 let range = &mut account.authors[range_index];
                 range.pages_read = page;
                 range.observed_count = known_ids.len();
+                range.issue_count += response.issues.len();
+                range.issue_samples.extend(
+                    response
+                        .issues
+                        .iter()
+                        .take(MAX_DISCOVERY_ISSUE_SAMPLES.saturating_sub(range.issue_samples.len()))
+                        .map(|issue| DiscoveryItemIssue {
+                            page: issue.page,
+                            index: issue.index,
+                            work_id: issue.work_id.clone(),
+                            code: match issue.code {
+                                crate::SourceItemIssueCode::Invalid => {
+                                    DiscoveryItemIssueCode::Invalid
+                                }
+                                crate::SourceItemIssueCode::MetadataMissing => {
+                                    DiscoveryItemIssueCode::MetadataMissing
+                                }
+                            },
+                        }),
+                );
                 if complete || incremental_complete {
                     let checked_at = now()?;
-                    range.state = DiscoveryRangeState::Complete;
+                    range.pages_complete = complete;
+                    range.state = if range.issue_count == 0 {
+                        DiscoveryRangeState::Complete
+                    } else {
+                        range.error_code = Some("SOURCE_ITEMS_PARTIAL".into());
+                        partial = true;
+                        DiscoveryRangeState::Partial
+                    };
                     range.last_checked_at = Some(checked_at);
                     range.last_check_mode = Some(if complete {
                         DiscoveryMode::Full
                     } else {
                         DiscoveryMode::Incremental
                     });
-                    if complete {
+                    if complete && range.issue_count == 0 {
                         range.last_complete_at = Some(checked_at);
                     }
-                    range.baseline = Some(DiscoveryBaseline {
+                    range.baseline = (range.issue_count == 0).then(|| DiscoveryBaseline {
                         query_version: DISCOVERY_QUERY_VERSION,
                         head_ids: traversal.head_ids.clone(),
                         total: if complete {
-                            traversal.ids.len() as u64
+                            traversal.record_count as u64
                         } else {
                             traversal
                                 .total
@@ -1563,7 +1610,10 @@ impl IncrementalBoundary {
     }
 
     fn append(&mut self, page: &SourcePage) -> bool {
-        if !self.viable || page.total.is_none_or(|total| total < self.baseline.total) {
+        if !self.viable
+            || !page.issues.is_empty()
+            || page.total.is_none_or(|total| total < self.baseline.total)
+        {
             self.viable = false;
             return false;
         }
@@ -1602,6 +1652,7 @@ struct Traversal {
     pages: Option<u64>,
     ids: HashSet<String>,
     head_ids: Vec<String>,
+    record_count: usize,
 }
 
 impl Traversal {
@@ -1609,12 +1660,12 @@ impl Traversal {
         let invalid = || AccountError::new("DISCOVERY_PAGINATION_CHANGED");
         if page.page != self.page + 1
             || page.page > MAX_DISCOVERY_PAGES
-            || page.items.len() > 1000
+            || page.record_count() > 1000
             || (self.page > 0 && (self.total != page.total || self.pages != page.pages))
         {
             return Err(invalid());
         }
-        if page.items.is_empty()
+        if page.record_count() == 0
             && !(page.page == 1 && page.total == Some(0) && page.has_more != Some(true))
         {
             return Err(invalid());
@@ -1623,11 +1674,17 @@ impl Traversal {
         if page
             .items
             .iter()
-            .any(|work| self.ids.contains(&work.work_id) || !current.insert(work.work_id.clone()))
+            .map(|work| &work.work_id)
+            .chain(
+                page.issues
+                    .iter()
+                    .filter_map(|issue| issue.work_id.as_ref()),
+            )
+            .any(|id| self.ids.contains(id) || !current.insert(id.clone()))
         {
             return Err(invalid());
         }
-        let count = self.ids.len() + current.len();
+        let count = self.record_count + page.record_count();
         if count > MAX_DISCOVERY_RECORDS {
             return Err(AccountError::new("DISCOVERY_LIMIT"));
         }
@@ -1656,6 +1713,7 @@ impl Traversal {
                 .map(|work| work.work_id.clone()),
         );
         self.ids.extend(current);
+        self.record_count = count;
         self.page = page.page;
         self.total = page.total;
         self.pages = page.pages;

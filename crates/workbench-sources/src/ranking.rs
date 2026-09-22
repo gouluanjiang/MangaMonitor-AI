@@ -141,17 +141,7 @@ impl WorkbenchSources {
         if records.len() > 1000 {
             return Err(protocol::error("SOURCE_RESPONSE_INVALID"));
         }
-        let mut items = vec![];
-        let mut covers = vec![];
-        let mut ids = std::collections::HashSet::new();
-        for row in records {
-            let (work, cover) = protocol::listing_work(session.source, row, false)?;
-            if !ids.insert(work.work_id.clone()) {
-                return Err(protocol::error("SOURCE_PAGINATION_INVALID"));
-            }
-            covers.push((work.work_id.clone(), cover));
-            items.push(work);
-        }
+        let parsed = protocol::listing_records(session.source, records, 1, false)?;
         let total = if session.source == Source::Jm {
             protocol::count(&data["total"])?
         } else {
@@ -163,14 +153,15 @@ impl WorkbenchSources {
         if total.is_some_and(|n| n < records.len() as u64) {
             return Err(protocol::error("SOURCE_PAGINATION_INVALID"));
         }
-        session.remember_covers(covers)?;
+        session.remember_covers(parsed.covers)?;
         Ok(SourcePage {
             page: 1,
             total,
             pages: if complete { Some(1) } else { None },
             has_more: if complete { Some(false) } else { None },
             folders: vec![],
-            items,
+            items: parsed.items,
+            issues: parsed.issues,
         })
     }
 }

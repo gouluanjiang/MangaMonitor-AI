@@ -23,6 +23,7 @@ import type { InventoryFilter } from "./inventory-model.ts";
 import { sourceErrorMessage } from "./source-runtime.ts";
 import { SourceCover } from "./SourceWorkbench.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
+import { SourceIssues } from "./SourceIssues.tsx";
 
 export function RankingPanel({
   source,
@@ -275,10 +276,18 @@ export function RankingPanel({
             {visible.length} 条。
             {data
               ? complete
-                ? "本次榜单已读完。"
+                ? data.page.issues?.length
+                  ? "本次榜单分页已读完，仍有来源记录待核对。"
+                  : "本次榜单已读完。"
                 : "本次榜单尚未完整确认，请刷新重试。"
               : ""}
           </p>
+          <SourceIssues
+            source={source}
+            issues={data?.page.issues}
+            pagesComplete={complete}
+            testId="ranking-issues"
+          />
           {data && (
             <p className="source-muted">
               来源排序 · {new Date(data.time).toLocaleString()} ·
@@ -381,7 +390,9 @@ export function RankingPanel({
           {!busy && !visible.length && (
             <p className="source-empty">
               {data
-                ? complete && data.page.items.length === 0
+                ? complete &&
+                  data.page.items.length === 0 &&
+                  !data.page.issues?.length
                   ? source === "JM"
                     ? "本期该类型暂无作品，可以切换期数或类型。"
                     : "来源当前榜单暂无作品。"

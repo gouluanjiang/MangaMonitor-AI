@@ -9,6 +9,7 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+use workbench_sources::{SourceItemIssue, SourceItemIssueCode};
 use workbench_storage::{CacheEntry, StoreError, WorkbenchStore, MAX_SAFE_INTEGER};
 
 pub(crate) const MAX_ITEMS: usize = 20_000;
@@ -94,6 +95,8 @@ pub enum CatalogAction {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CatalogSnapshot {
     pub items: Vec<SourceWork>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<SourceItemIssue>,
     pub page: u64,
     #[serde(deserialize_with = "required_option")]
     pub total: Option<u64>,
@@ -225,23 +228,61 @@ pub(crate) fn validate_work(source: Source, work: &SourceWork) -> Result<usize> 
 
 fn validate_snapshot(source: Source, snapshot: &CatalogSnapshot, now: u64) -> Result<()> {
     let invalid = || err("CATALOG_CACHE_INVALID");
-    if snapshot.items.len() > MAX_ITEMS
+    let record_count = snapshot
+        .items
+        .len()
+        .checked_add(snapshot.issues.len())
+        .ok_or_else(invalid)?;
+    if record_count > MAX_ITEMS
         || !(1..=1000).contains(&snapshot.page)
         || snapshot.updated_at > MAX_SAFE_INTEGER
         || snapshot.updated_at > now.saturating_add(300_000)
         || snapshot
             .total
-            .is_some_and(|n| n > MAX_SAFE_INTEGER || n < snapshot.items.len() as u64)
+            .is_some_and(|n| n > MAX_SAFE_INTEGER || n < record_count as u64)
         || snapshot.pages.is_some_and(|n| {
             n > 1000
                 || (n > 0 && snapshot.page > n)
-                || (n == 0 && (!snapshot.items.is_empty() || snapshot.page != 1))
+                || (n == 0 && (record_count != 0 || snapshot.page != 1))
         })
         || snapshot.folders.len() > 1000
         || snapshot.first_page_ids.len() > 1000
         || snapshot.first_page_ids.len() > snapshot.items.len()
+        || (!snapshot.issues.is_empty() && snapshot.page_ends.is_none())
     {
         return Err(invalid());
+    }
+    let mut issue_counts = vec![0u64; snapshot.page as usize];
+    let mut issue_last_indexes = vec![0u64; snapshot.page as usize];
+    let mut issue_ids = HashSet::new();
+    let mut previous_issue = None;
+    for issue in &snapshot.issues {
+        let position = (issue.page, issue.index);
+        if !(1..=snapshot.page).contains(&issue.page)
+            || !(1..=1000).contains(&issue.index)
+            || previous_issue.is_some_and(|previous| position <= previous)
+            || (issue.code == SourceItemIssueCode::MetadataMissing && issue.work_id.is_none())
+        {
+            return Err(invalid());
+        }
+        if let Some(id) = &issue.work_id {
+            let reference = workbench_storage::LibraryReference {
+                source: match source {
+                    Source::Jm => workbench_storage::Source::Jm,
+                    Source::Pica => workbench_storage::Source::Pica,
+                },
+                work_id: id.clone(),
+            };
+            if !reference.is_valid()
+                || (source == Source::Jm && id.len() > 19)
+                || !issue_ids.insert(id.clone())
+            {
+                return Err(invalid());
+            }
+        }
+        issue_counts[issue.page as usize - 1] += 1;
+        issue_last_indexes[issue.page as usize - 1] = issue.index;
+        previous_issue = Some(position);
     }
     if let Some(ends) = &snapshot.page_ends {
         if ends.len() as u64 != snapshot.page
@@ -251,9 +292,16 @@ fn validate_snapshot(source: Source, snapshot: &CatalogSnapshot, now: u64) -> Re
             return Err(invalid());
         }
         let mut start = 0;
-        for &end in ends {
-            let empty_first = snapshot.page == 1 && snapshot.items.is_empty() && end == 0;
-            if !empty_first && (end <= start || end - start > 1000) {
+        for (page_index, &end) in ends.iter().enumerate() {
+            let normal_count = end.checked_sub(start).ok_or_else(invalid)?;
+            let raw_count = normal_count
+                .checked_add(issue_counts[page_index])
+                .ok_or_else(invalid)?;
+            let empty_first = snapshot.page == 1 && record_count == 0 && end == 0;
+            if !empty_first && (raw_count == 0 || raw_count > 1000) {
+                return Err(invalid());
+            }
+            if issue_last_indexes[page_index] > raw_count {
                 return Err(invalid());
             }
             start = end;
@@ -263,12 +311,15 @@ fn validate_snapshot(source: Source, snapshot: &CatalogSnapshot, now: u64) -> Re
     let mut page_index = 0;
     for (index, work) in snapshot.items.iter().enumerate() {
         validate_work(source, work).map_err(|_| invalid())?;
-        if snapshot
+        while snapshot
             .page_ends
             .as_ref()
             .is_some_and(|ends| index as u64 >= ends[page_index])
         {
             page_index += 1;
+        }
+        if issue_ids.contains(&work.work_id) {
+            return Err(invalid());
         }
         if ids
             .insert(&work.work_id, (work, page_index))
@@ -290,12 +341,13 @@ fn validate_snapshot(source: Source, snapshot: &CatalogSnapshot, now: u64) -> Re
     {
         return Err(invalid());
     }
-    if !snapshot.items.is_empty() && snapshot.first_page_ids.is_empty() {
+    if record_count != 0 && snapshot.first_page_ids.is_empty() && issue_counts[0] == 0 {
         return Err(invalid());
     }
-    if snapshot.items.len() as u64 > snapshot.page * 1000
+    if record_count as u64 > snapshot.page * 1000
         || (snapshot.page == 1 && snapshot.first_page_ids.len() != snapshot.items.len())
-        || (snapshot.page > 1 && snapshot.items.len() <= snapshot.first_page_ids.len())
+        || (snapshot.page > 1
+            && record_count <= snapshot.first_page_ids.len() + issue_counts[0] as usize)
     {
         return Err(invalid());
     }
@@ -328,10 +380,10 @@ fn validate_snapshot(source: Source, snapshot: &CatalogSnapshot, now: u64) -> Re
     if snapshot.complete && snapshot.pages.is_some_and(|pages| pages > snapshot.page) {
         return Err(invalid());
     }
-    if !snapshot.complete && snapshot.total == Some(snapshot.items.len() as u64) {
+    if !snapshot.complete && snapshot.total == Some(record_count as u64) {
         return Err(invalid());
     }
-    if snapshot.items.is_empty()
+    if record_count == 0
         && (snapshot.page != 1 || snapshot.total != Some(0) || !snapshot.complete || !terminal)
     {
         return Err(invalid());
@@ -341,7 +393,7 @@ fn validate_snapshot(source: Source, snapshot: &CatalogSnapshot, now: u64) -> Re
             || snapshot.has_more == Some(true)
             || snapshot
                 .total
-                .is_some_and(|total| total != snapshot.items.len() as u64))
+                .is_some_and(|total| total != record_count as u64))
     {
         return Err(invalid());
     }
@@ -556,6 +608,7 @@ mod tests {
     fn snapshot(count: usize, updated_at: u64) -> CatalogSnapshot {
         let items: Vec<_> = (0..count).map(work).collect();
         CatalogSnapshot {
+            issues: vec![],
             first_page_ids: items.iter().take(1000).map(|w| w.work_id.clone()).collect(),
             page_ends: None,
             items,
@@ -634,6 +687,115 @@ mod tests {
             .snapshot
             .is_none());
         }
+    }
+
+    #[test]
+    fn isolated_rows_survive_catalog_reopen_including_an_issue_only_middle_page() {
+        let temp = TempDir::new().unwrap();
+        let mut value = snapshot(2, now_ms().unwrap());
+        value.page = 3;
+        value.pages = Some(3);
+        value.total = Some(4);
+        value.first_page_ids.truncate(1);
+        value.page_ends = Some(vec![1, 1, 2]);
+        value.issues = vec![
+            SourceItemIssue {
+                page: 1,
+                index: 2,
+                work_id: Some("123".into()),
+                code: SourceItemIssueCode::MetadataMissing,
+            },
+            SourceItemIssue {
+                page: 2,
+                index: 1,
+                work_id: None,
+                code: SourceItemIssueCode::Invalid,
+            },
+        ];
+        write(temp.path(), &key(1), value.clone()).unwrap();
+        let reopened = read(temp.path(), &key(1)).unwrap();
+        assert_eq!(reopened.snapshot, Some(value.clone()));
+        assert_eq!(reopened.complete_snapshot, Some(value.clone()));
+        let mut malformed = value.clone();
+        malformed.issues[1].index = 2;
+        assert_eq!(
+            code(write(temp.path(), &key(1), malformed)),
+            "CATALOG_CACHE_INVALID"
+        );
+        assert_eq!(
+            read(temp.path(), &key(1)).unwrap().snapshot,
+            Some(value.clone())
+        );
+        // Two issue-only pages must not misassign the later normal rows to a
+        // preceding empty item boundary when the cache is reopened.
+        value.first_page_ids.clear();
+        value.page_ends = Some(vec![0, 0, 2]);
+        value.issues[0].index = 1;
+        value.updated_at += 1;
+        write(temp.path(), &key(1), value.clone()).unwrap();
+        assert_eq!(read(temp.path(), &key(1)).unwrap().snapshot, Some(value));
+    }
+
+    #[test]
+    fn issue_only_catalog_has_raw_counts_and_cannot_forge_positions_or_identity() {
+        let now = now_ms().unwrap();
+        let mut value = snapshot(0, now);
+        value.total = Some(1);
+        value.page_ends = Some(vec![0]);
+        value.issues = vec![SourceItemIssue {
+            page: 1,
+            index: 1,
+            work_id: None,
+            code: SourceItemIssueCode::Invalid,
+        }];
+        assert!(validate_snapshot(Source::Jm, &value, now).is_ok());
+        let mut cases = vec![];
+        let mut bad = value.clone();
+        bad.total = Some(0);
+        cases.push(bad);
+        let mut bad = value.clone();
+        bad.page_ends = None;
+        cases.push(bad);
+        let mut bad = value.clone();
+        bad.issues[0].page = 2;
+        cases.push(bad);
+        let mut bad = value.clone();
+        bad.issues[0].index = 0;
+        cases.push(bad);
+        let mut bad = value.clone();
+        bad.issues[0].code = SourceItemIssueCode::MetadataMissing;
+        cases.push(bad);
+        let mut bad = value.clone();
+        bad.issues[0].work_id = Some("../private".into());
+        cases.push(bad);
+        let mut bad = value.clone();
+        bad.issues.push(bad.issues[0].clone());
+        bad.total = Some(2);
+        cases.push(bad);
+        let mut bad = snapshot(1, now);
+        bad.items[0].work_id = "123".into();
+        bad.first_page_ids = vec!["123".into()];
+        bad.page_ends = Some(vec![1]);
+        bad.total = Some(2);
+        bad.issues = vec![SourceItemIssue {
+            page: 1,
+            index: 2,
+            work_id: Some("123".into()),
+            code: SourceItemIssueCode::Invalid,
+        }];
+        cases.push(bad);
+        for bad in cases {
+            assert_eq!(
+                code(validate_snapshot(Source::Jm, &bad, now)),
+                "CATALOG_CACHE_INVALID"
+            );
+        }
+        let legacy = serde_json::to_value(snapshot(1, now)).unwrap();
+        assert!(legacy.get("issues").is_none());
+        assert!(serde_json::from_value::<CatalogSnapshot>(legacy)
+            .unwrap()
+            .issues
+            .is_empty());
     }
 
     #[test]

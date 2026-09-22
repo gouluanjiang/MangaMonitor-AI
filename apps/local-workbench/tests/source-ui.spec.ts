@@ -47,6 +47,7 @@ type MockOptions = {
   holdMatchDetail?: boolean;
   authorSearchResults?: boolean;
   workDates?: boolean;
+  isolatedListing?: boolean;
 };
 type Call = {
   command: string;
@@ -1163,6 +1164,34 @@ async function installMock(page: Page, options: MockOptions = {}) {
             }
             const epoch = Number(scope.sessionId.split("-").at(-1));
             const pageNumber = raw.page as number;
+            if (
+              options.isolatedListing &&
+              ["search", "favorites"].includes(raw.kind as string)
+            ) {
+              return {
+                ...scope,
+                items:
+                  pageNumber === 2
+                    ? []
+                    : [makeWork(source, String(pageNumber), epoch)],
+                issues:
+                  pageNumber === 2
+                    ? [
+                        {
+                          page: 2,
+                          index: 1,
+                          workId: null,
+                          code: "SOURCE_ITEM_INVALID",
+                        },
+                      ]
+                    : [],
+                page: pageNumber,
+                total: 3,
+                pages: 3,
+                hasMore: pageNumber < 3,
+                folders: [],
+              };
+            }
             if (options.authorSearchResults && raw.kind === "search") {
               if (
                 options.workDates &&
@@ -2056,6 +2085,71 @@ test("failed source pagination never labels a partial date order as a full catal
   await expect(page.getByTestId("source-date-sort-scope")).not.toContainText(
     "已读取完整范围",
   );
+});
+
+test("source searches keep later pages after isolated rows and show diagnostics separately", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { isolatedListing: true });
+  await page.goto("/");
+  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("source-query-mode").selectOption("search");
+  await page.getByTestId("source-search-input").fill("Synthetic query");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-completeness")).toContainText(
+    "分页已读完，来源记录仍待核对",
+  );
+  await expect(page.getByTestId("source-grid").locator("article")).toHaveCount(
+    2,
+  );
+  await expect(page.getByTestId("source-all-owned")).toHaveCount(0);
+  const issues = page.getByTestId("source-issues");
+  await issues.locator("summary").click();
+  await expect(issues).toContainText("JM · 第 2 页 · 第 1 条 · 编号缺失");
+  await expect(issues.getByRole("button")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls
+        .filter(
+          (call) => call.command === "source_query" && call.kind === "search",
+        )
+        .map((call) => call.page),
+    ),
+  ).toEqual([1, 2, 3]);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/search-isolated-records.png",
+  });
+});
+
+test("favorite inversion reads past an issue-only page and excludes it from selection", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { isolatedListing: true });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await page.getByTestId("source-sort").selectOption("source-reverse");
+  await expect(page.getByTestId("collection-progress")).toContainText(
+    "收藏分页已读完，来源记录仍待核对",
+  );
+  await expect(page.getByTestId("source-grid").locator("article")).toHaveCount(
+    2,
+  );
+  const issues = page.getByTestId("source-issues");
+  await issues.locator("summary").click();
+  await expect(issues).toContainText("哔咔 · 第 2 页 · 第 1 条 · 编号缺失");
+  await page.getByTestId("source-toggle-selection").click();
+  await page.getByTestId("source-select-all").click();
+  await expect(page.getByTestId("source-selection-bar")).toContainText(
+    "已选 2 部",
+  );
+  await expect(issues.getByRole("checkbox")).toHaveCount(0);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/favorites-isolated-records.png",
+  });
 });
 
 test("source author mode blocks broad initials while explicit keyword mode remains available", async ({

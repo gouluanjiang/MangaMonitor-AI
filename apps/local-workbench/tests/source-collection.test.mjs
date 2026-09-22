@@ -1,9 +1,67 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CollectionReader, appendCatalog } from "../src/source-collection.ts";
+import {
+  CollectionReader,
+  appendCatalog,
+  firstPageMatches,
+} from "../src/source-collection.ts";
+import { validateCatalogSnapshot } from "../src/source-runtime.ts";
 import { gridWindow } from "../src/source-grid-layout.ts";
 import { queueCover } from "../src/source-cover-queue.ts";
 const scope = { source: "JM", sessionId: "synthetic-collection" };
+
+test("favorites continue through entirely isolated pages and restore exact diagnostic positions", () => {
+  const issue = (page, index, workId = null) => ({
+    page,
+    index,
+    workId,
+    code: "SOURCE_ITEM_INVALID",
+  });
+  const pages = [
+    { page: 1, items: [], issues: [issue(1, 1)] },
+    { page: 2, items: [work(2)], issues: [] },
+    { page: 3, items: [], issues: [issue(3, 1, "3")] },
+    { page: 4, items: [work(4)], issues: [] },
+  ].map((value) => ({
+    ...value,
+    total: 4,
+    pages: 4,
+    hasMore: value.page < 4,
+    folders: [],
+  }));
+  let snapshot = null;
+  for (const value of pages) {
+    snapshot = appendCatalog(snapshot, value);
+    assert.doesNotThrow(() => validateCatalogSnapshot(snapshot, scope));
+  }
+  assert.equal(snapshot.complete, true);
+  assert.deepEqual(snapshot.pageEnds, [0, 1, 1, 2]);
+  assert.deepEqual(
+    snapshot.items.map((item) => item.workId),
+    ["2", "4"],
+  );
+  assert.equal(snapshot.issues.length, 2);
+  assert.equal(firstPageMatches(snapshot, pages[0]), true);
+  assert.equal(
+    firstPageMatches(snapshot, { ...pages[0], issues: [issue(1, 1, "9")] }),
+    false,
+  );
+  assert.throws(() =>
+    validateCatalogSnapshot({ ...snapshot, pageEnds: [0, 0, 1, 2] }, scope),
+  );
+  assert.throws(() =>
+    validateCatalogSnapshot({ ...snapshot, pageEnds: undefined }, scope),
+  );
+  assert.throws(() =>
+    validateCatalogSnapshot({ ...snapshot, total: 3 }, scope),
+  );
+  assert.throws(() =>
+    appendCatalog(
+      appendCatalog(null, { ...pages[0], issues: [issue(1, 1, "2")] }),
+      pages[1],
+    ),
+  );
+});
 
 test("refresh clears a failed next-page budget and compact indexes enforce the memory budget", async () => {
   const f = fixture(60),

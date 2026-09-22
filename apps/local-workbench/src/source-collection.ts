@@ -26,12 +26,15 @@ export function appendCatalog(
   if (
     page.page !== (previous?.page ?? 0) + 1 ||
     page.page > MAX_COLLECTION_PAGES ||
-    page.items.length > 1000
+    page.items.length + (page.issues?.length ?? 0) > 1000
   )
     changed();
-  const previousKeys = new Set(
-    previous?.items.map((work) => work.workId) ?? [],
-  );
+  const previousKeys = new Set([
+    ...(previous?.items.map((work) => work.workId) ?? []),
+    ...(previous?.issues ?? []).flatMap((issue) =>
+      issue.workId === null ? [] : [issue.workId],
+    ),
+  ]);
   const pageWorks = new Map<string, (typeof page.items)[number]>();
   for (const work of page.items) {
     if (previousKeys.has(work.workId)) changed();
@@ -45,8 +48,15 @@ export function appendCatalog(
       changed();
     pageWorks.set(work.workId, work);
   }
+  for (const issue of page.issues ?? []) {
+    if (issue.workId === null) continue;
+    if (previousKeys.has(issue.workId) || pageWorks.has(issue.workId))
+      changed();
+    previousKeys.add(issue.workId);
+  }
   if (
     !page.items.length &&
+    !page.issues?.length &&
     !(page.page === 1 && page.total === 0 && page.hasMore !== true)
   )
     changed();
@@ -63,38 +73,38 @@ export function appendCatalog(
   )
     changed();
   const items = [...(previous?.items ?? []), ...page.items.map(compactWork)];
-  if (items.length > MAX_COLLECTION_ITEMS)
-    throw new SourceError("CATALOG_LIMIT");
+  const issues = [...(previous?.issues ?? []), ...(page.issues ?? [])];
+  const rawCount = items.length + issues.length;
+  if (rawCount > MAX_COLLECTION_ITEMS) throw new SourceError("CATALOG_LIMIT");
   const terminalPage =
     page.pages !== null && page.page === Math.max(1, page.pages);
   if (
     page.total !== null &&
-    (items.length > page.total ||
-      ((page.hasMore === false || terminalPage) &&
-        items.length !== page.total) ||
-      (page.hasMore === true && items.length >= page.total))
+    (rawCount > page.total ||
+      ((page.hasMore === false || terminalPage) && rawCount !== page.total) ||
+      (page.hasMore === true && rawCount >= page.total))
   )
     changed();
   const complete =
     page.hasMore === false ||
     (terminalPage && page.hasMore !== true) ||
-    (page.total !== null && items.length === page.total);
+    (page.total !== null && rawCount === page.total);
   if (
     page.pages !== null &&
     (page.page > Math.max(1, page.pages) ||
       (complete && page.pages > page.page) ||
       (page.page === page.pages && page.hasMore === true) ||
-      (page.pages === 0 && items.length > 0))
+      (page.pages === 0 && rawCount > 0))
   )
     changed();
   if (
     !complete &&
-    (items.length === MAX_COLLECTION_ITEMS ||
-      page.page === MAX_COLLECTION_PAGES)
+    (rawCount === MAX_COLLECTION_ITEMS || page.page === MAX_COLLECTION_PAGES)
   )
     throw new SourceError("CATALOG_LIMIT");
   const snapshot: CatalogSnapshot = {
     items,
+    ...(issues.length ? { issues } : {}),
     page: page.page,
     total: page.total,
     pages: page.pages,
@@ -119,7 +129,12 @@ export function firstPageMatches(snapshot: CatalogSnapshot, page: SourcePage) {
     snapshot.total === page.total &&
     snapshot.pages === page.pages &&
     snapshot.firstPageIds.length === page.items.length &&
-    snapshot.firstPageIds.every((id, index) => id === page.items[index].workId)
+    snapshot.firstPageIds.every(
+      (id, index) => id === page.items[index].workId,
+    ) &&
+    JSON.stringify(
+      (snapshot.issues ?? []).filter((issue) => issue.page === 1),
+    ) === JSON.stringify(page.issues ?? [])
   );
 }
 export type CollectionPhase =
@@ -369,11 +384,7 @@ export class CollectionReader {
         if (
           cached &&
           firstPageMatches(cached, first) &&
-          !(
-            this.scope.source === "Pica" &&
-            !cached.complete &&
-            cached.pageEnds === undefined
-          )
+          !(!cached.complete && cached.pageEnds === undefined)
         )
           this.publish({ freshness: "verified-cache" });
         else this.accept(freshHead);

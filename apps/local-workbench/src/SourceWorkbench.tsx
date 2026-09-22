@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { SourceIssues } from "./SourceIssues.tsx";
 import { jmSearchScopeNote, readCompleteSearch } from "./source-search.ts";
 import { authorQueryError } from "./author-query.ts";
 import { partitionAuthorWorks } from "./author-evidence.ts";
@@ -24,6 +25,7 @@ import type {
   SourcePage,
   SourceScope,
   SourceWork,
+  SourceItemIssue,
 } from "./source-types.ts";
 import {
   accountScope,
@@ -352,6 +354,8 @@ export function SourceWorkbench({
   const [searchComplete, setSearchComplete] = useState(false);
   const [searchReadAt, setSearchReadAt] = useState<number | null>(null);
   const searchRecords = useRef(0);
+  const searchIssues = useRef<SourceItemIssue[]>([]);
+  const [searchIssueView, setSearchIssueView] = useState<SourceItemIssue[]>([]);
   const [pageInfo, setPageInfo] = useState<SourcePage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -734,6 +738,8 @@ export function SourceWorkbench({
     if (!append) {
       setShowOtherAuthorResults(false);
       searchRecords.current = 0;
+      searchIssues.current = [];
+      setSearchIssueView([]);
       setItems([]);
       setPageInfo(null);
       main()?.scrollTo(0, 0);
@@ -748,8 +754,11 @@ export function SourceWorkbench({
         fromPage: page,
         items: append ? itemsRef.current : [],
         recordsRead: searchRecords.current,
+        issues: append ? searchIssues.current : [],
         onPage: (progress) => {
           searchRecords.current = progress.recordsRead;
+          searchIssues.current = progress.issues;
+          setSearchIssueView(progress.issues);
           itemsRef.current = progress.items;
           setItems(progress.items);
           setPageInfo(progress.page);
@@ -1020,11 +1029,13 @@ export function SourceWorkbench({
     setInventoryFilter("all");
   }, [scopeId, folder, view]);
   const completeIndex = collectionState.snapshot?.complete ?? false;
-  const collectionRecords = collectionState.snapshot?.items.length ?? 0;
+  const collectionNormalRecords = collectionState.snapshot?.items.length ?? 0;
+  const collectionRecords =
+    collectionNormalRecords + (collectionState.snapshot?.issues?.length ?? 0);
   const collectionWorks = new Set(
     collectionState.snapshot?.items.map(sourceWorkKey) ?? [],
   ).size;
-  const collectionDuplicates = collectionRecords - collectionWorks;
+  const collectionDuplicates = collectionNormalRecords - collectionWorks;
   const reversePreparing =
     view === "favorites" && sort === "source-reverse" && !completeIndex;
   const visible =
@@ -1065,6 +1076,12 @@ export function SourceWorkbench({
     view === "favorites"
       ? Boolean(collectionState.snapshot?.complete)
       : searchComplete && !loading && !error;
+  const issues =
+    view === "favorites"
+      ? (pageInfo?.issues ?? [])
+      : pageInfo
+        ? searchIssueView
+        : [];
   const [fullSelectionScope, setFullSelectionScope] = useState<string | null>(
     null,
   );
@@ -1958,7 +1975,9 @@ export function SourceWorkbench({
                   data-testid="source-date-sort-scope"
                 >
                   {complete
-                    ? "按当前已读取完整范围的网站更新时间排序。"
+                    ? issues.length
+                      ? "分页已读完，按可展示作品的网站更新时间排序；异常记录仍待核对。"
+                      : "按当前已读取完整范围的网站更新时间排序。"
                     : "范围尚未读完，更新时间排序仅覆盖已读取结果。"}
                   更新时间未知的作品排在最后。
                 </p>
@@ -2053,14 +2072,21 @@ export function SourceWorkbench({
                     (view === "favorites" && collectionState.error !== null)
                       ? "本次读取未完成，保留上次已读结果"
                       : complete
-                        ? searching
-                          ? "已读完当前来源的搜索范围"
-                          : "已读取完整范围"
+                        ? issues.length
+                          ? "分页已读完，来源记录仍待核对"
+                          : searching
+                            ? "已读完当前来源的搜索范围"
+                            : "已读取完整范围"
                         : "范围尚未读全，未读取作品尚未参与筛选"}
                   </span>
                 )}
                 。
               </p>
+              <SourceIssues
+                source={source}
+                issues={issues}
+                pagesComplete={complete}
+              />
               <p className="source-muted">{inventoryScopeNote}</p>
               {searching && source === "JM" && (
                 <p className="source-muted">{jmSearchScopeNote}</p>
@@ -2094,7 +2120,9 @@ export function SourceWorkbench({
                     {collectionState.phase === "error"
                       ? "读取已停止，已读内容保留，请点击重试读取"
                       : collectionState.phase === "complete"
-                        ? "已读取全部收藏"
+                        ? issues.length
+                          ? "收藏分页已读完，来源记录仍待核对"
+                          : "已读取全部收藏"
                         : collectionState.phase === "restoring"
                           ? "正在读取本机缓存…"
                           : collectionState.phase === "verifying"
@@ -2190,7 +2218,9 @@ export function SourceWorkbench({
                       : query.trim()
                         ? "当前范围没有匹配作品"
                         : pageInfo
-                          ? "当前来源范围没有作品"
+                          ? issues.length
+                            ? "尚无可展示作品，来源记录待核对"
+                            : "当前来源范围没有作品"
                           : "尚未读取作品"}
                   </h2>
                   <p>
@@ -2224,6 +2254,7 @@ export function SourceWorkbench({
               )}
               {searching &&
                 complete &&
+                issues.length === 0 &&
                 !showingOtherAuthors &&
                 (!authorQuery || authorResults.other.length === 0) &&
                 browsingWorks.length > 0 &&

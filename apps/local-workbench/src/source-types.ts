@@ -20,11 +20,18 @@ export interface SourceWork {
 }
 export interface SourcePage {
   items: SourceWork[];
+  issues?: SourceItemIssue[];
   page: number;
   total: number | null;
   pages: number | null;
   hasMore: boolean | null;
   folders: SourceFolder[];
+}
+export interface SourceItemIssue {
+  page: number;
+  index: number;
+  workId: string | null;
+  code: "SOURCE_ITEM_INVALID" | "SOURCE_ITEM_METADATA_MISSING";
 }
 export interface RankOption {
   id: string;

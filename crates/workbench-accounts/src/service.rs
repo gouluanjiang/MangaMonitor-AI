@@ -633,11 +633,34 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     pages: Some(1),
                     has_more: Some(false),
                     folders: vec![],
+                    issues: vec![],
                 }),
         };
         let mut result = self.finish(&mut slot, result)?;
-        if result.items.len() > MAX_QUERY_ITEMS
+        let mut issue_slots = std::collections::HashSet::new();
+        let mut previous_issue = 0;
+        if result.record_count() > MAX_QUERY_ITEMS
             || result.items.iter().any(|work| work.source != source)
+            || (matches!(kind, QueryKind::Detail) && !result.issues.is_empty())
+            || result.issues.iter().any(|issue| {
+                let out_of_order = issue.index <= previous_issue;
+                previous_issue = issue.index;
+                issue.page != result.page
+                    || issue.index == 0
+                    || issue.index > result.record_count() as u64
+                    || out_of_order
+                    || !issue_slots.insert(issue.index)
+                    || (issue.code == crate::SourceItemIssueCode::MetadataMissing
+                        && issue.work_id.is_none())
+                    || issue.work_id.as_ref().is_some_and(|work_id| {
+                        (source == Source::Jm && work_id.len() > 19)
+                            || !workbench_storage::LibraryReference {
+                                source: storage_source(source),
+                                work_id: work_id.clone(),
+                            }
+                            .is_valid()
+                    })
+            })
         {
             return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
         }

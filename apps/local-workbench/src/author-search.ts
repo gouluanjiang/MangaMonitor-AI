@@ -69,6 +69,9 @@ export function createAuthorSearchAdapter(
           lastCheckedAt: null,
           lastCheckMode: "full",
           errorCode: null,
+          issueCount: 0,
+          issueSamples: [],
+          pagesComplete: false,
         })),
         run: {
           id: runId,
@@ -115,8 +118,19 @@ export function createAuthorSearchAdapter(
                 ];
                 range.pagesRead = progress.page.page;
                 range.observedCount = progress.items.length;
-                range.state = progress.complete ? "complete" : "checking";
-                if (progress.complete) {
+                range.issueCount = progress.issues.length;
+                range.issueSamples = progress.issues.slice(0, 20);
+                range.pagesComplete = progress.complete;
+                range.state = progress.complete
+                  ? range.issueCount
+                    ? "partial"
+                    : "complete"
+                  : "checking";
+                range.errorCode =
+                  progress.complete && range.issueCount
+                    ? "SOURCE_ITEMS_PARTIAL"
+                    : null;
+                if (progress.complete && !range.issueCount) {
                   range.lastCompleteAt = Date.now();
                   range.lastCheckedAt = range.lastCompleteAt;
                 }

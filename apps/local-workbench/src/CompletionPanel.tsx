@@ -769,7 +769,10 @@ export function CompletionPanel({
                   : undatedCount > 0
                     ? `仅 ${datedCount} 条按网站更新时间排序，其余 ${undatedCount} 条日期未知，排列在最后。`
                     : "按当前保存结果的网站更新时间排序。"}
-              {!complete && "检查范围尚未读完，更新时间排序仅覆盖已读取结果。"}
+              {!complete &&
+                (pagesComplete && issueCount > 0
+                  ? "异常记录仍待核对，更新时间排序仅覆盖可展示作品。"
+                  : "检查范围尚未读完，更新时间排序仅覆盖已读取结果。")}
             </p>
           )}
           {mode === "updates" && undatedCount > 0 && (

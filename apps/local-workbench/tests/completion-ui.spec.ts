@@ -1585,6 +1585,12 @@ test("completed pagination with isolated records shows positions without claimin
   await expect(page.getByTestId("completion-counts")).toContainText(
     "分页已读完，来源记录仍待核对",
   );
+  await expect(page.getByTestId("completion-date-sort-scope")).toContainText(
+    "异常记录仍待核对，更新时间排序仅覆盖可展示作品。",
+  );
+  await expect(
+    page.getByTestId("completion-date-sort-scope"),
+  ).not.toContainText("检查范围尚未读完");
   await expect(page.getByTestId("completion-counts")).toContainText(
     "已入库 3 条",
   );

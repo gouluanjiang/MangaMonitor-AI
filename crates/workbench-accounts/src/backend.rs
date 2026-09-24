@@ -17,6 +17,10 @@ pub struct Authenticated<S> {
 pub trait SourceBackend: Send + Sync + 'static {
     type Session: Send + Sync + 'static;
 
+    fn has_cover_metadata(&self, _session: &Self::Session, _work_id: &str) -> bool {
+        false
+    }
+
     fn pica_download_credential(&self, _session: &Self::Session) -> Result<StoredCredential> {
         Err(AccountError::new("DOWNLOAD_SOURCE_UNSUPPORTED"))
     }
@@ -77,6 +81,9 @@ pub trait SourceBackend: Send + Sync + 'static {
 
 impl SourceBackend for WorkbenchSources {
     type Session = SourceSession;
+    fn has_cover_metadata(&self, session: &Self::Session, work_id: &str) -> bool {
+        session.has_cover_metadata(work_id)
+    }
     async fn ranking_options(
         &self,
         session: &Self::Session,

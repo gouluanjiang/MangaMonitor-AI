@@ -788,7 +788,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         // work in the network-query authorization cache used by favorite/follow.
         let result = async {
             let mut hydrated = false;
-            if !known {
+            // Full work metadata may be evicted before its small cover descriptor.
+            // Reuse the native session descriptor without restoring action authority.
+            if !known && !self.backend.has_cover_metadata(&session, work_id) {
                 let work = self.backend.detail(&session, work_id).await?;
                 cache::validate_work(source, &work)?;
                 if work.work_id != work_id {

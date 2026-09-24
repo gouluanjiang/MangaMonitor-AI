@@ -20,7 +20,7 @@ Formal checks/builds run only in CI. Focused regressions cover visible-first pri
 
 A controlled 21-cover equal-latency diagnostic compares scheduling waves: two source slots require 11 waves versus 6 with four; one local slot requires 21 versus 11 with two. It uses synthetic promises and the same request count, not source traffic or a real ZIP/network timing measurement. It must not be reported as a real-world speedup factor. Actual network/ZIP latency, first-screen paint, scrolling and return-to-view behavior remain user acceptance items.
 
-CI result and executable delivery revision will be recorded in the handoff after completion. No all-author scan, real media download, account change, library mutation, installer, merge or production enablement is part of this batch.
+Final revision `82048feadcd19681669bd91fe43c56c51fde1d8e` passed [frontend CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/35947947927) (192 logic / 159 Chromium), [baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/35947947801) and [desktop CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/35947947880) (including 39 native IPC tests, Clippy and actual isolated Windows WebView startup/restart). The verified executable and updated Dev shortcuts are recorded in the handoff. Real user experience acceptance remains pending. No all-author scan, real media download, account change, library mutation, installer, merge or production enablement is part of this batch.
 
 ## User acceptance
 

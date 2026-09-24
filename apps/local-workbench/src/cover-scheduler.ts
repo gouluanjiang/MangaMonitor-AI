@@ -18,9 +18,11 @@ export class CoverScheduler<T> {
   private scheduled = false;
   private maximumActive: number;
   private maximumWaiting: number;
-  constructor(maximumActive: number, maximumWaiting = 64) {
+  private maximumNearby: number;
+  constructor(maximumActive: number, maximumWaiting = 64, maximumNearby = 1) {
     this.maximumActive = maximumActive;
     this.maximumWaiting = maximumWaiting;
+    this.maximumNearby = Math.max(1, Math.min(maximumActive, maximumNearby));
   }
   enqueue(
     run: () => Promise<T>,
@@ -63,8 +65,11 @@ export class CoverScheduler<T> {
     while (this.running.size < this.maximumActive && this.waiting.length) {
       let index = this.waiting.findIndex((task) => task.priority === "visible");
       if (index < 0) {
-        // One speculative thumbnail leaves capacity for cards entering the viewport.
-        if ([...this.running].some((task) => task.priority === "nearby"))
+        // Reserve room for visible arrivals; started work may finish after demotion.
+        if (
+          [...this.running].filter((task) => task.priority === "nearby")
+            .length >= this.maximumNearby
+        )
           return;
         index = 0;
       }

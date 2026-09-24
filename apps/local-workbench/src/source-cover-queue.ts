@@ -6,6 +6,7 @@ export const SOURCE_COVER_MAX_WAITING = 64;
 const queue = new CoverScheduler<string | null>(
   SOURCE_COVER_CONCURRENCY,
   SOURCE_COVER_MAX_WAITING,
+  2,
 );
 export function queueCover(
   run: () => Promise<string | null>,

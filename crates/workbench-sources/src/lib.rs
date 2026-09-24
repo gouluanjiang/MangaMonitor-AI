@@ -13,7 +13,7 @@ use protocol::{error, JM_HOST, PICA_HOST, PICA_KEY, PICA_NONCE};
 use reqwest::{header::HeaderValue, Client, Method, Url};
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -22,7 +22,8 @@ use workbench_credentials::{CredentialKind, StoredCredential};
 
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const MAX_KNOWN_WORKS: usize = 20_000;
-const MAX_COVER_DESCRIPTORS: usize = 128;
+const MAX_COVER_DESCRIPTORS: usize = 8192;
+const MAX_COVER_DESCRIPTOR_BYTES: usize = 4 * 1024 * 1024;
 
 /// An opaque session. Secrets and remote cover URLs are never serialized.
 pub struct SourceSession {
@@ -32,12 +33,34 @@ pub struct SourceSession {
     covers: Mutex<CoverCache>,
 }
 
-#[derive(Default)]
 struct CoverCache {
     known: HashMap<String, bool>,
     known_order: VecDeque<String>,
-    urls: HashMap<String, String>,
-    url_order: VecDeque<String>,
+    urls: HashMap<String, CoverDescriptor>,
+    url_order: BTreeMap<u64, String>,
+    url_bytes: usize,
+    maximum_url_bytes: usize,
+    clock: u64,
+}
+
+struct CoverDescriptor {
+    url: String,
+    bytes: usize,
+    used_at: u64,
+}
+
+impl Default for CoverCache {
+    fn default() -> Self {
+        Self {
+            known: HashMap::new(),
+            known_order: VecDeque::new(),
+            urls: HashMap::new(),
+            url_order: BTreeMap::new(),
+            url_bytes: 0,
+            maximum_url_bytes: MAX_COVER_DESCRIPTOR_BYTES,
+            clock: 0,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -49,42 +72,75 @@ enum CoverLookup {
 }
 
 impl CoverCache {
+    fn remove_url(&mut self, id: &str) {
+        if let Some(entry) = self.urls.remove(id) {
+            self.url_bytes -= entry.bytes;
+            self.url_order.remove(&entry.used_at);
+        }
+    }
+
+    fn tick(&mut self) -> u64 {
+        if self.clock == u64::MAX {
+            self.urls.clear();
+            self.url_order.clear();
+            self.url_bytes = 0;
+            self.clock = 0;
+        }
+        self.clock += 1;
+        self.clock
+    }
+
     fn remember(&mut self, work_id: String, url: Option<String>) {
         if !self.known.contains_key(&work_id) {
             if self.known.len() >= MAX_KNOWN_WORKS {
                 if let Some(oldest) = self.known_order.pop_front() {
                     self.known.remove(&oldest);
-                    self.urls.remove(&oldest);
-                    self.url_order.retain(|id| id != &oldest);
+                    self.remove_url(&oldest);
                 }
             }
             self.known_order.push_back(work_id.clone());
         }
         self.known.insert(work_id.clone(), url.is_some());
-        self.url_order.retain(|id| id != &work_id);
+        self.remove_url(&work_id);
         if let Some(url) = url {
-            if !self.urls.contains_key(&work_id) && self.urls.len() >= MAX_COVER_DESCRIPTORS {
-                if let Some(oldest) = self.url_order.pop_front() {
-                    self.urls.remove(&oldest);
-                }
+            // URL/key strings and entry bookkeeping, separately from image Blobs.
+            let bytes = url.len() + work_id.len() * 2 + 128;
+            if bytes > self.maximum_url_bytes {
+                return;
             }
-            self.url_order.push_back(work_id.clone());
-            self.urls.insert(work_id, url);
-        } else {
-            self.urls.remove(&work_id);
+            let used_at = self.tick();
+            while self.urls.len() >= MAX_COVER_DESCRIPTORS
+                || self.url_bytes + bytes > self.maximum_url_bytes
+            {
+                let Some((_, oldest)) = self.url_order.pop_first() else {
+                    break;
+                };
+                self.remove_url(&oldest);
+            }
+            self.url_bytes += bytes;
+            self.url_order.insert(used_at, work_id.clone());
+            self.urls.insert(
+                work_id,
+                CoverDescriptor {
+                    url,
+                    bytes,
+                    used_at,
+                },
+            );
         }
     }
 
     fn lookup(&mut self, work_id: &str) -> CoverLookup {
+        let used_at = self.tick();
         match self.known.get(work_id) {
             None => CoverLookup::Unknown,
             Some(false) => CoverLookup::Missing,
-            Some(true) => match self.urls.get(work_id) {
-                Some(url) => {
-                    let url = url.clone();
-                    self.url_order.retain(|id| id != work_id);
-                    self.url_order.push_back(work_id.to_owned());
-                    CoverLookup::Ready(url)
+            Some(true) => match self.urls.get_mut(work_id) {
+                Some(entry) => {
+                    self.url_order.remove(&entry.used_at);
+                    entry.used_at = used_at;
+                    self.url_order.insert(used_at, work_id.to_owned());
+                    CoverLookup::Ready(entry.url.clone())
                 }
                 None => CoverLookup::Evicted,
             },
@@ -95,6 +151,17 @@ impl CoverCache {
 impl SourceSession {
     pub fn source(&self) -> Source {
         self.source
+    }
+
+    /// Native session metadata only; this grants no favorite/follow authority.
+    pub fn has_cover_metadata(&self, work_id: &str) -> bool {
+        self.covers
+            .lock()
+            .is_ok_and(|cache| match cache.known.get(work_id) {
+                Some(false) => true,
+                Some(true) => cache.urls.contains_key(work_id),
+                None => false,
+            })
     }
 
     /// Native-only transfer to an explicitly confirmed desktop worker. This

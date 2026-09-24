@@ -5,6 +5,63 @@ use aes::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use image::ImageEncoder;
+#[test]
+fn descriptor_budget_evicts_the_least_recently_used_url_and_replacements_release_bytes() {
+    let mut cache = CoverCache {
+        maximum_url_bytes: 300,
+        ..CoverCache::default()
+    };
+    cache.remember("a".into(), Some("a-url".into()));
+    cache.remember("b".into(), Some("b-url".into()));
+    assert_eq!(cache.lookup("a"), CoverLookup::Ready("a-url".into()));
+    cache.remember("c".into(), Some("c-url".into()));
+    assert_eq!(cache.lookup("b"), CoverLookup::Evicted);
+    assert_eq!(cache.lookup("a"), CoverLookup::Ready("a-url".into()));
+    assert!(cache.url_bytes <= cache.maximum_url_bytes);
+    cache.remember("a".into(), None);
+    assert_eq!(cache.lookup("a"), CoverLookup::Missing);
+    assert_eq!(
+        cache.url_bytes,
+        cache.urls.values().map(|value| value.bytes).sum::<usize>()
+    );
+    cache.remember("c".into(), Some("x".repeat(400)));
+    assert_eq!(cache.lookup("c"), CoverLookup::Evicted);
+    assert_eq!(cache.url_bytes, 0);
+    assert!(cache.url_order.is_empty());
+    assert_eq!(cache.lookup("unknown"), CoverLookup::Unknown);
+}
+
+#[tokio::test]
+async fn large_current_session_catalog_reuses_early_addresses_without_detail_requests() {
+    let sources = with_cover_script(
+        scripted(vec![]),
+        (0..4)
+            .map(|_| Ok(cover::CoverResponse::Bytes(tiny_cover())))
+            .collect(),
+    );
+    let session = session(Source::Jm);
+    session
+        .remember_covers((1..=1500).map(|id| {
+            (
+                id.to_string(),
+                Some(format!(
+                    "https://cdn-msp3.18comic.vip/media/albums/{id}_3x4.jpg"
+                )),
+            )
+        }))
+        .unwrap();
+    for id in ["1", "101", "501", "1001"] {
+        assert!(session.has_cover_metadata(id));
+        assert!(sources.thumbnail(&session, id).await.unwrap().is_some());
+    }
+    assert!(!session.has_cover_metadata("unqueried"));
+    assert!(sources.recorded.lock().unwrap().is_empty());
+    assert_eq!(sources.cover_recorded.lock().unwrap().len(), 4);
+    let cache = session.covers.lock().unwrap();
+    assert_eq!(cache.urls.len(), 1500);
+    assert_eq!(cache.urls.len(), cache.url_order.len());
+    assert!(cache.url_bytes <= MAX_COVER_DESCRIPTOR_BYTES);
+}
 
 const PICA_ID: &str = "0123456789abcdef01234567";
 
@@ -1881,6 +1938,7 @@ async fn evicted_cover_recovers_once_from_jm_detail_with_blank_optional_entries(
         ],
     );
     let session = session(Source::Jm);
+    session.covers.lock().unwrap().maximum_url_bytes = 1024;
     session
         .remember_covers((1..=1500).map(|id| {
             (
@@ -1904,16 +1962,14 @@ async fn evicted_cover_recovers_once_from_jm_detail_with_blank_optional_entries(
     );
     assert_eq!(sources.cover_recorded.lock().unwrap().len(), 2);
     assert_eq!(session.covers.lock().unwrap().known.len(), 1500);
-    assert_eq!(
-        session.covers.lock().unwrap().urls.len(),
-        MAX_COVER_DESCRIPTORS
-    );
+    assert!(session.covers.lock().unwrap().url_bytes <= 1024);
 }
 
 #[tokio::test]
 async fn failed_descriptor_recovery_is_an_error_not_a_missing_cover() {
     let sources = with_cover_script(scripted(vec![Err(error("SOURCE_TIMEOUT"))]), vec![]);
     let session = session(Source::Jm);
+    session.covers.lock().unwrap().maximum_url_bytes = 1024;
     session
         .remember_covers((1..=129).map(|id| {
             (

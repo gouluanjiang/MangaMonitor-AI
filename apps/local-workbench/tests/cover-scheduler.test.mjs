@@ -133,53 +133,157 @@ test("local queued cancellation is immediate, and a late old generation cannot a
   cache.clear();
 });
 
-test("actual viewport entry promotes a prefetched cover and leaving both regions releases it", async () => {
+test("shared visibility observes each card, turns preloading with scroll direction and ignores retired callbacks", async () => {
   const observers = [];
   const oldWindow = globalThis.window;
   const oldObserver = globalThis.IntersectionObserver;
+  class Target extends EventTarget {
+    scrollTop = 0;
+    clientHeight = 800;
+  }
   class Observer {
+    elements = new Set();
     constructor(callback, options) {
       this.callback = callback;
       this.options = options;
       observers.push(this);
     }
-    observe() {}
+    observe(element) {
+      this.elements.add(element);
+    }
+    unobserve(element) {
+      this.elements.delete(element);
+    }
     disconnect() {
       this.disconnected = true;
+      this.elements.clear();
     }
-    emit(value) {
-      this.callback([{ isIntersecting: value }]);
+    emit(element, value) {
+      this.callback([{ target: element, isIntersecting: value }]);
     }
   }
-  globalThis.window = { IntersectionObserver: Observer };
+  const windowTarget = new Target();
+  windowTarget.IntersectionObserver = Observer;
+  windowTarget.innerHeight = 800;
+  globalThis.window = windowTarget;
   globalThis.IntersectionObserver = Observer;
+  const stops = [];
   try {
-    const root = {};
-    const states = [];
-    const stop = observeCover({ closest: () => root }, (value) =>
-      states.push(value),
-    );
-    assert.ok(observers.every((observer) => observer.options.root === root));
-    observers[1].emit(true);
+    const root = new Target();
+    const first = { closest: () => root };
+    const second = { closest: () => root };
+    const states = [],
+      other = [];
+    stops.push(observeCover(first, (value) => states.push(value)));
+    stops.push(observeCover(second, (value) => other.push(value)));
+    assert.equal(observers.length, 2, "all cards share one observer pair");
+    assert.equal(observers[1].options.rootMargin, "200px 0px 800px 0px");
+    observers[1].emit(first, true);
     await flush();
-    observers[0].emit(true);
+    observers[0].emit(first, true);
     await flush();
-    observers[0].emit(false);
+    observers[0].emit(first, false);
     await flush();
-    observers[1].emit(false);
+    observers[1].emit(first, false);
     await flush();
     assert.deepEqual(states, ["nearby", "visible", "nearby", null]);
-    stop();
-    observers[0].emit(true);
+    root.scrollTop = 500;
+    root.dispatchEvent(new Event("scroll"));
+    root.scrollTop = 480;
+    root.dispatchEvent(new Event("scroll"));
+    assert.equal(
+      observers.length,
+      2,
+      "small scroll jitter does not recreate observers",
+    );
+    root.scrollTop = 400;
+    root.dispatchEvent(new Event("scroll"));
+    await flush();
+    assert.equal(observers.length, 3);
+    assert.equal(observers[2].options.rootMargin, "800px 0px 200px 0px");
+    observers[1].emit(second, true);
+    await flush();
+    assert.equal(
+      other.at(-1),
+      null,
+      "retired preload results cannot revive old requests",
+    );
+    observers[2].emit(second, true);
+    await flush();
+    assert.equal(other.at(-1), "nearby");
+    stops[0]();
+    observers[0].emit(first, true);
     await flush();
     assert.equal(states.length, 4);
+    assert.equal(observers[0].elements.size, 1);
+    root.clientHeight = 1800;
+    windowTarget.dispatchEvent(new Event("resize"));
+    assert.equal(observers.at(-1).options.rootMargin, "1200px 0px 200px 0px");
+    stops[1]();
     assert.ok(observers.every((observer) => observer.disconnected));
+    root.scrollTop = 900;
+    root.dispatchEvent(new Event("scroll"));
+    assert.equal(
+      observers.length,
+      4,
+      "last unmount removes the shared listeners",
+    );
   } finally {
+    stops.forEach((stop) => stop());
     if (oldWindow === undefined) delete globalThis.window;
     else globalThis.window = oldWindow;
     if (oldObserver === undefined) delete globalThis.IntersectionObserver;
     else globalThis.IntersectionObserver = oldObserver;
   }
+});
+test("two idle network slots prepare the next screen while visible arrivals keep capacity", async (t) => {
+  const queue = new CoverScheduler(4, 64, 2);
+  const started = [];
+  const releases = new Map();
+  const load = (id, priority) =>
+    queue.enqueue(() => {
+      started.push(id);
+      return new Promise((resolve) => releases.set(id, () => resolve(id)));
+    }, priority);
+  const near = Array.from({ length: 12 }, (_, i) =>
+    load("next-" + i, "nearby"),
+  );
+  await flush();
+  assert.deepEqual(started, ["next-0", "next-1"]);
+  const visible = [load("visible-1", "visible"), load("visible-2", "visible")];
+  await flush();
+  assert.deepEqual(started.slice(-2), ["visible-1", "visible-2"]);
+  releases.get("visible-1")();
+  releases.get("visible-2")();
+  await Promise.all(visible.map((job) => job.promise));
+  await flush();
+  assert.equal(
+    started.length,
+    4,
+    "prefetch remains capped even with two more free slots",
+  );
+  let waves = 0;
+  while (near.some((_, i) => releases.has("next-" + i))) {
+    const batch = [...releases].filter(([id]) => id.startsWith("next-"));
+    batch.forEach(([id, resolve]) => {
+      releases.delete(id);
+      resolve();
+    });
+    waves++;
+    await flush();
+  }
+  await Promise.all(near.map((job) => job.promise));
+  assert.equal(waves, 6);
+  t.diagnostic(
+    JSON.stringify({
+      prefetchCovers: 12,
+      previousWaves: 12,
+      currentWaves: waves,
+      networkMaximum: 4,
+      prefetchMaximum: 2,
+      liveSpeedupMeasured: false,
+    }),
+  );
 });
 
 test("late local image errors do not discard a replacement thumbnail", async () => {

@@ -51,6 +51,7 @@ struct FakeState {
     detail_calls: AtomicUsize,
     cover_calls: AtomicUsize,
     cover_missing_once: AtomicBool,
+    cover_metadata: AtomicBool,
     cover_image: Mutex<Option<String>>,
     query_batch_size: AtomicUsize,
     last_request: Mutex<Option<(u64, Option<String>, bool)>>,
@@ -107,6 +108,10 @@ fn page(source: Source, favorite: bool) -> SourcePage {
 
 impl SourceBackend for FakeBackend {
     type Session = FakeSession;
+
+    fn has_cover_metadata(&self, _: &Self::Session, id: &str) -> bool {
+        id == "123" && self.0.cover_metadata.load(Ordering::SeqCst)
+    }
 
     fn pica_download_credential(&self, session: &Self::Session) -> Result<StoredCredential> {
         Ok(credential(session.source, &session.name))
@@ -878,6 +883,36 @@ async fn three_thousand_network_items_keep_early_work_and_cover_rehydrates_sourc
         .await
         .unwrap();
     assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn retained_cover_metadata_skips_detail_without_granting_action_authority() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "synthetic", false).await;
+    backend.0.cover_metadata.store(true, Ordering::SeqCst);
+    *backend.0.cover_image.lock().unwrap() = Some(cover_image());
+    assert!(service
+        .cover(Source::Jm, &session, "123")
+        .await
+        .unwrap()
+        .data_url
+        .is_some());
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        error(service.favorite(Source::Jm, &session, "123", true).await),
+        "WORK_NOT_LOADED"
+    );
+    // A descriptor may disappear between the fast check and the actual read.
+    backend.0.cover_missing_once.store(true, Ordering::SeqCst);
+    service.cover(Source::Jm, &session, "123").await.unwrap();
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        error(service.favorite(Source::Jm, &session, "123", true).await),
+        "WORK_NOT_LOADED"
+    );
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

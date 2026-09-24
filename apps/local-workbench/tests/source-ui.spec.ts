@@ -1772,6 +1772,51 @@ test("following conflict reload keeps the requested action for explicit retry an
   );
 });
 
+test("the next screen is prefetched without scrolling or loading the whole catalog", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { coverCount: 120, coverDelay: 80 });
+  await openFavorites(page);
+  await expect(
+    page.getByTestId("source-cover-JM:100").locator("img"),
+  ).toBeVisible();
+  const candidate = await page.getByTestId("source-grid").evaluate((grid) => {
+    const main = grid.closest("main")!;
+    const edge = main.getBoundingClientRect().bottom;
+    return [
+      ...grid.querySelectorAll<HTMLElement>(
+        '[data-testid^="source-cover-JM:"]',
+      ),
+    ].find((card) => {
+      const top = card.getBoundingClientRect().top;
+      return top > edge + 80 && top < edge + 550;
+    })?.dataset.testid;
+  });
+  expect(candidate).toBeTruthy();
+  const card = page.getByTestId(candidate!);
+  await expect(card.locator("img")).toHaveCount(1);
+  await expect(card).not.toBeInViewport();
+  expect(
+    await page.getByRole("main").evaluate((element) => element.scrollTop),
+  ).toBe(0);
+  const id = candidate!.split(":")[1];
+  await card.scrollIntoViewIfNeeded();
+  await expect(card.locator("img")).toBeVisible();
+  expect(
+    await page.evaluate(
+      (id) =>
+        window.sourceTest.calls.filter(
+          (call) => call.command === "source_cover" && call.workId === id,
+        ).length,
+      id,
+    ),
+  ).toBe(1);
+  expect(
+    await page.evaluate(() => window.sourceTest.coverMax),
+  ).toBeLessThanOrEqual(4);
+});
+
 test("slow source covers use four bounded slots without fetching the full catalog", async ({
   page,
 }) => {

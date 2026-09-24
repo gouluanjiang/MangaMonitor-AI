@@ -135,7 +135,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             backend,
             vault: Arc::new(vault),
             root: app_data_root,
-            cover_slots: Semaphore::new(2),
+            // Match the renderer's bounded visible-first cover queue.
+            cover_slots: Semaphore::new(4),
             cache_io: Arc::new(Mutex::new(())),
             legacy_cover_cleanup: OnceCell::new(),
             slots: [

@@ -117,9 +117,18 @@ fn reveal_location(_path: &std::path::Path) -> Result<(), StoreError> {
     })
 }
 
-#[derive(Default)]
 pub(crate) struct DesktopLibrary {
     service: Mutex<LibraryService>,
+    covers: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for DesktopLibrary {
+    fn default() -> Self {
+        Self {
+            service: Mutex::new(LibraryService::default()),
+            covers: Arc::new(tokio::sync::Semaphore::new(2)),
+        }
+    }
 }
 
 pub(super) async fn with_library<T, F>(
@@ -267,10 +276,83 @@ pub(crate) async fn library_cover<R: Runtime>(
     entry_id: String,
 ) -> Result<LibraryCover, StoreError> {
     require_main(window.label())?;
-    with_library(
+    with_library_cover(
         Arc::clone(library.inner()),
         Arc::clone(store.inner()),
-        move |service, store| service.cover(store, &root_id, generation, &entry_id),
+        move |store| LibraryService::read_cover(store, &root_id, generation, &entry_id),
     )
     .await
+}
+
+async fn with_library_cover<T, F>(
+    library: Arc<DesktopLibrary>,
+    store: Arc<DesktopStore>,
+    operation: F,
+) -> Result<T, StoreError>
+where
+    T: Send + 'static,
+    F: FnOnce(&WorkbenchStore) -> Result<T, StoreError> + Send + 'static,
+{
+    let permit = Arc::clone(&library.covers)
+        .acquire_owned()
+        .await
+        .map_err(|_| StoreError {
+            code: "LIBRARY_UNAVAILABLE",
+        })?;
+    // ZIP reads/decoding no longer hold the scan/registration mutex. read_cover
+    // revalidates the stored revision and the actual file before returning bytes.
+    tauri::async_runtime::spawn_blocking(move || {
+        // Keep the permit inside the blocking task even if its IPC waiter closes.
+        let _permit = permit;
+        let store = store.open()?;
+        operation(&store)
+    })
+    .await
+    .map_err(|_| StoreError {
+        code: "LIBRARY_UNAVAILABLE",
+    })?
+}
+
+#[cfg(test)]
+#[test]
+fn cover_workers_are_bounded_and_do_not_hold_the_scan_mutex() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(DesktopStore::new(Ok(root.path().to_owned())));
+    let library = Arc::new(DesktopLibrary::default());
+    let scan = library.service.lock().unwrap();
+    let (entered, started) = mpsc::channel();
+    let mut releases = vec![];
+    let mut tasks = vec![];
+    for index in 0..3 {
+        let (release, wait) = mpsc::channel();
+        releases.push(release);
+        let entered = entered.clone();
+        tasks.push(tauri::async_runtime::spawn(with_library_cover(
+            Arc::clone(&library),
+            Arc::clone(&store),
+            move |_| {
+                entered.send(index).unwrap();
+                wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(index)
+            },
+        )));
+    }
+    let first = started.recv_timeout(Duration::from_secs(3)).unwrap();
+    let second = started.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert_ne!(first, second);
+    assert!(started.recv_timeout(Duration::from_millis(100)).is_err());
+    // Both workers entered while the scan mutex was still held. A third waits.
+    assert_eq!(library.covers.available_permits(), 0);
+    drop(scan);
+    releases[first].send(()).unwrap();
+    let third = started.recv_timeout(Duration::from_secs(3)).unwrap();
+    releases[second].send(()).unwrap();
+    releases[third].send(()).unwrap();
+    for task in tasks {
+        tauri::async_runtime::block_on(task).unwrap().unwrap();
+    }
+    assert_eq!(library.covers.available_permits(), 2);
 }

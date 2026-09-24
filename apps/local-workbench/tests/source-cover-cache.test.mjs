@@ -4,7 +4,11 @@ import {
   CoverSessionCache,
   coverErrorMessage,
 } from "../src/source-cover-cache.ts";
-import { queueCover } from "../src/source-cover-queue.ts";
+import {
+  queueCover,
+  SOURCE_COVER_CONCURRENCY,
+  SOURCE_COVER_MAX_WAITING,
+} from "../src/source-cover-queue.ts";
 const jm = { source: "JM", sessionId: "synthetic-jm-session" };
 const pica = { source: "Pica", sessionId: "synthetic-pica-session" };
 const image =
@@ -103,7 +107,9 @@ test("a last consumer leaving cancels queued work without creating a failed cove
   const waiting = new Promise((resolve) => {
     release = resolve;
   });
-  const blockers = [queueCover(() => waiting), queueCover(() => waiting)];
+  const blockers = Array.from({ length: SOURCE_COVER_CONCURRENCY }, () =>
+    queueCover(() => waiting),
+  );
   await Promise.resolve();
   let calls = 0;
   const lease = cache.acquire(jm, "queued", async () => {
@@ -131,7 +137,15 @@ test("queue pressure is not negatively cached and a later visible request can su
   const waiting = new Promise((resolve) => {
     release = resolve;
   });
-  const occupied = Array.from({ length: 66 }, () => queueCover(() => waiting));
+  const occupied = Array.from({ length: SOURCE_COVER_CONCURRENCY }, () =>
+    queueCover(() => waiting),
+  );
+  await Promise.resolve();
+  occupied.push(
+    ...Array.from({ length: SOURCE_COVER_MAX_WAITING }, () =>
+      queueCover(() => waiting),
+    ),
+  );
   const settled = Promise.allSettled(occupied.map((task) => task.promise));
   assert.deepEqual(
     await cache.acquire(jm, "overflow", async () => image).promise,

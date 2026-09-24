@@ -242,7 +242,18 @@ impl LibraryService {
     }
 
     pub fn cover(
-        &mut self,
+        &self,
+        store: &WorkbenchStore,
+        root_id: &str,
+        generation: u64,
+        entry_id: &str,
+    ) -> Result<LibraryCover> {
+        Self::read_cover(store, root_id, generation, entry_id)
+    }
+
+    /// Independent of the scan cursor. The native caller bounds parallel reads;
+    /// persisted scope, revision and file identities are still checked on both sides.
+    pub fn read_cover(
         store: &WorkbenchStore,
         root_id: &str,
         generation: u64,

@@ -1,50 +1,15 @@
-type Task = {
-  run(): Promise<string | null>;
-  resolve(value: string | null): void;
-  reject(error: unknown): void;
-  cancelled: boolean;
-};
-const queue: Task[] = [];
-let active = 0;
-const MAX_ACTIVE = 2;
-const MAX_WAITING = 64;
-function drain() {
-  while (active < MAX_ACTIVE && queue.length) {
-    const task = queue.shift()!;
-    if (task.cancelled) continue;
-    active++;
-    void Promise.resolve()
-      .then(task.run)
-      .then(task.resolve, task.reject)
-      .finally(() => {
-        active--;
-        drain();
-      });
-  }
-}
-export function queueCover(run: () => Promise<string | null>) {
-  let task: Task;
-  const promise = new Promise<string | null>((resolve, reject) => {
-    task = { run, resolve, reject, cancelled: false };
-    if (queue.length >= MAX_WAITING) {
-      reject(new Error("COVER_QUEUE_FULL"));
-      return;
-    }
-    queue.push(task);
-    drain();
-  });
-  return {
-    promise,
-    cancel() {
-      if (!task || task.cancelled) return false;
-      const index = queue.indexOf(task);
-      if (index >= 0) {
-        queue.splice(index, 1);
-        task.cancelled = true;
-        task.resolve(null);
-        return true;
-      }
-      return false;
-    },
-  };
+import { CoverScheduler } from "./cover-scheduler.ts";
+import type { CoverPriority } from "./cover-scheduler.ts";
+
+export const SOURCE_COVER_CONCURRENCY = 4;
+export const SOURCE_COVER_MAX_WAITING = 64;
+const queue = new CoverScheduler<string | null>(
+  SOURCE_COVER_CONCURRENCY,
+  SOURCE_COVER_MAX_WAITING,
+);
+export function queueCover(
+  run: () => Promise<string | null>,
+  priority: CoverPriority = "visible",
+) {
+  return queue.enqueue(run, priority);
 }

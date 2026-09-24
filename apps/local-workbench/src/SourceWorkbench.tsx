@@ -49,6 +49,8 @@ import type { CollectionState } from "./source-collection.ts";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
 import { getCoverCache, coverErrorMessage } from "./source-cover-cache.ts";
+import { observeCover } from "./cover-visibility.ts";
+import type { CoverPriority } from "./cover-scheduler.ts";
 import {
   formatWorkDate,
   readSortPreference,
@@ -126,6 +128,7 @@ export function SourceCover({
   useEffect(() => {
     let disposed = false;
     let visible: boolean | null = null;
+    let priority: CoverPriority = "visible";
     let request: CoverLease | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     setState({
@@ -148,8 +151,11 @@ export function SourceCover({
         return;
       }
       setState({ identity, result: cached, shown: true, loading: !cached });
-      const job = cache.acquire(scope, work.workId, () =>
-        adapter.cover(scope, work.workId),
+      const job = cache.acquire(
+        scope,
+        work.workId,
+        () => adapter.cover(scope, work.workId),
+        priority,
       );
       request = job;
       void job.promise
@@ -174,7 +180,12 @@ export function SourceCover({
           job.release();
         });
     };
-    const updateVisibility = (next: boolean) => {
+    const updateVisibility = (nextPriority: CoverPriority | null) => {
+      const next = nextPriority !== null;
+      if (nextPriority) {
+        priority = nextPriority;
+        request?.setPriority(priority);
+      }
       if (visible === next) return;
       visible = next;
       if (visible) load();
@@ -185,18 +196,11 @@ export function SourceCover({
         setState((previous) => ({ ...previous, shown: false, loading: false }));
       }
     };
-    const observer =
-      "IntersectionObserver" in window
-        ? new IntersectionObserver(
-            (entries) => {
-              updateVisibility(entries.some((entry) => entry.isIntersecting));
-            },
-            { rootMargin: "160px" },
-          )
-        : null;
-    if (container.current) observer?.observe(container.current);
+    const stopObserving = container.current
+      ? observeCover(container.current, updateVisibility)
+      : undefined;
     // Without visibility observation, avoid fetching every mounted cover.
-    if (!observer)
+    if (!("IntersectionObserver" in window))
       setState({
         identity,
         result: { status: "error", code: "SOURCE_UNAVAILABLE" },
@@ -208,7 +212,7 @@ export function SourceCover({
       request?.release();
       clearTimeout(retryTimer);
       visible = false;
-      observer?.disconnect();
+      stopObserving?.();
     };
   }, [
     adapter,
@@ -227,7 +231,8 @@ export function SourceCover({
     >
       {current.shown && current.result?.status === "ready" ? (
         <img
-          loading="lazy"
+          loading="eager"
+          decoding="async"
           src={current.result.url}
           alt=""
           onError={() => {

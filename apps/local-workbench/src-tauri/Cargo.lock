@@ -2051,6 +2051,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
+ "tokio",
  "windows-sys 0.61.2",
  "workbench-accounts",
  "workbench-credentials",

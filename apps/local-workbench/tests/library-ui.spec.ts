@@ -876,7 +876,7 @@ test("decoded offscreen covers release while compressed covers survive scrolling
       (call) => call.args.entryId === id(1),
     ),
   ).toHaveLength(1);
-  expect(await page.evaluate(() => window.libraryTest.coverMax)).toBe(1);
+  expect(await page.evaluate(() => window.libraryTest.coverMax)).toBe(2);
   expect(await commands(page, "library_scan")).toEqual([]);
 });
 

@@ -30,6 +30,7 @@ type MockOptions = {
   unknownFavorite?: boolean;
   followConflict?: boolean;
   coverCount?: number;
+  coverDelay?: number;
   expireJM?: boolean;
   collectionCount?: number;
   collectionCover?: boolean;
@@ -79,6 +80,8 @@ type Hooks = {
   releaseJM?: () => void;
   releasePica?: () => void;
   changedDetailCredit?: boolean;
+  coverActive?: number;
+  coverMax?: number;
 };
 declare global {
   interface Window {
@@ -1399,6 +1402,13 @@ async function installMock(page: Page, options: MockOptions = {}) {
             };
           }
           if (command === "source_cover") {
+            hooks.coverActive = (hooks.coverActive ?? 0) + 1;
+            hooks.coverMax = Math.max(hooks.coverMax ?? 0, hooks.coverActive);
+            if (options.coverDelay)
+              await new Promise((resolve) =>
+                setTimeout(resolve, options.coverDelay),
+              );
+            hooks.coverActive--;
             if (
               options.coverFailureOnce &&
               source === "Pica" &&
@@ -1760,6 +1770,43 @@ test("following conflict reload keeps the requested action for explicit retry an
   await expect(page.getByTestId("source-workbench")).toContainText(
     "手动查看与检查",
   );
+});
+
+test("slow source covers use four bounded slots without fetching the full catalog", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, { coverCount: 120, coverDelay: 80 });
+  await openFavorites(page);
+  await expect(
+    page.getByTestId("source-cover-JM:100").locator("img"),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.sourceTest.coverMax))
+    .toBe(4);
+  expect(
+    await page.evaluate(
+      () =>
+        window.sourceTest.calls.filter(
+          (call) => call.command === "source_cover",
+        ).length,
+    ),
+  ).toBeLessThan(35);
+  await page.getByTestId("source-grid").evaluate((element) => {
+    const main = element.closest("main")!;
+    main.scrollTop = main.scrollHeight;
+  });
+  await expect(
+    page.getByTestId("source-cover-JM:219").locator("img"),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.sourceTest.coverMax)).toBe(4);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.some(
+        (call) => call.command === "source_cover" && call.workId === "160",
+      ),
+    ),
+  ).toBe(false);
 });
 
 test("source covers release offscreen images but reuse successful session thumbnails after scrolling, settings and detail", async ({

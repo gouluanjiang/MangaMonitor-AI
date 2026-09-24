@@ -408,6 +408,7 @@ test("successful compressed covers are reused in the same run and cannot leak in
         release = resolve;
       }),
   );
+  await Promise.resolve();
   cache.setScope(otherRoot, 3);
   release({
     rootId,

@@ -1,5 +1,6 @@
 import type { SourceAdapter, SourceScope } from "./source-types.ts";
 import { queueCover } from "./source-cover-queue.ts";
+import type { CoverPriority } from "./cover-scheduler.ts";
 
 const messages = {
   SOURCE_TIMEOUT: "封面请求超时，可重试。",
@@ -57,10 +58,12 @@ type Pending = {
   users: number;
   discarded: boolean;
   token: symbol;
+  priorities: Map<symbol, CoverPriority>;
 };
 export interface CoverLease {
   promise: Promise<CoverResult>;
   release(): void;
+  setPriority(priority: CoverPriority): void;
 }
 export interface CoverAsset {
   url: string;
@@ -174,6 +177,7 @@ export class CoverSessionCache {
     scope: SourceScope,
     workId: string,
     load: () => Promise<string | null>,
+    priority: CoverPriority = "visible",
   ): CoverLease {
     const key = keyOf(scope, workId);
     const cached = this.peek(scope, workId);
@@ -187,6 +191,7 @@ export class CoverSessionCache {
       let released = false;
       return {
         promise: Promise.resolve(cached),
+        setPriority() {},
         release() {
           if (!released && entry) entry.users--;
           released = true;
@@ -199,8 +204,9 @@ export class CoverSessionCache {
         return {
           promise: Promise.resolve({ status: "deferred", reason: "busy" }),
           release() {},
+          setPriority() {},
         };
-      const job = queueCover(load);
+      const job = queueCover(load, priority);
       const created: Pending = {
         scope: scopeOf(scope),
         job,
@@ -208,6 +214,7 @@ export class CoverSessionCache {
         users: 0,
         discarded: false,
         token: Symbol(),
+        priorities: new Map(),
       };
       created.promise = job.promise
         .then((dataUrl): CoverResult => {
@@ -248,14 +255,30 @@ export class CoverSessionCache {
       request = created;
     }
     const shared = request;
+    const consumer = Symbol();
+    shared.priorities.set(consumer, priority);
+    const reprioritize = () =>
+      shared.job.setPriority(
+        [...shared.priorities.values()].includes("visible")
+          ? "visible"
+          : "nearby",
+      );
+    reprioritize();
     shared.users++;
     let released = false;
     return {
       promise: shared.promise,
+      setPriority: (next) => {
+        if (released) return;
+        shared.priorities.set(consumer, next);
+        reprioritize();
+      },
       release: () => {
         if (released) return;
         released = true;
         shared.users--;
+        shared.priorities.delete(consumer);
+        reprioritize();
         const ready = this.ready.get(key);
         if (ready?.token === shared.token) ready.users--;
         if (shared.users === 0 && shared.job.cancel()) {

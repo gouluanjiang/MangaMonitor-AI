@@ -20,6 +20,8 @@ import {
   writeSortPreference,
 } from "./work-dates.ts";
 import { getLibraryCoverCache } from "./library-cover-cache.ts";
+import { observeCover } from "./cover-visibility.ts";
+import type { CoverPriority } from "./cover-scheduler.ts";
 import type {
   LibraryCoverLease,
   LibraryCoverResult,
@@ -76,10 +78,20 @@ function LibraryCover({
     let disposed = false,
       shown = false,
       lease: LibraryCoverLease | undefined;
+    let priority: CoverPriority = "visible";
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    setResult(undefined);
+    setResult(
+      snapshot.rootId
+        ? cache.peek(snapshot.rootId, snapshot.generation, item.id)
+        : undefined,
+    );
     setVisible(false);
-    const update = (next: boolean) => {
+    const update = (nextPriority: CoverPriority | null) => {
+      const next = nextPriority !== null;
+      if (nextPriority) {
+        priority = nextPriority;
+        lease?.setPriority(priority);
+      }
       if (next === shown) return;
       shown = next;
       setVisible(next);
@@ -95,6 +107,7 @@ function LibraryCover({
         snapshot.generation,
         item.id,
         () => adapter.cover(snapshot.rootId!, snapshot.generation, item.id),
+        priority,
       );
       lease = current;
       void current.promise.then((value) => {
@@ -106,21 +119,19 @@ function LibraryCover({
               lease?.release();
               lease = undefined;
               shown = false;
-              update(true);
+              update(priority);
             }, 500);
         }
       });
     };
-    const observer = new IntersectionObserver(
-      (entries) => update(entries.some((entry) => entry.isIntersecting)),
-      { root: root.current?.closest("main") ?? null, rootMargin: "120px" },
-    );
-    if (root.current) observer.observe(root.current);
+    const stopObserving = root.current
+      ? observeCover(root.current, update)
+      : undefined;
     return () => {
       disposed = true;
       clearTimeout(retryTimer);
       lease?.release();
-      observer.disconnect();
+      stopObserving?.();
     };
   }, [
     adapter,
@@ -140,11 +151,19 @@ function LibraryCover({
       {visible && result?.status === "ready" ? (
         <img
           src={result.url}
+          decoding="async"
           alt=""
           onError={() => {
-            if (snapshot.rootId)
-              cache.invalidate(snapshot.rootId, snapshot.generation, item.id);
-            setResult({ status: "error" });
+            if (
+              snapshot.rootId &&
+              cache.invalidate(
+                snapshot.rootId,
+                snapshot.generation,
+                item.id,
+                result.url,
+              )
+            )
+              setResult({ status: "error" });
           }}
         />
       ) : (

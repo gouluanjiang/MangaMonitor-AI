@@ -12,6 +12,8 @@ Source requests allow four active jobs in both the renderer and account service.
 
 Ready Blob images use the explicit visibility scheduler instead of a second browser lazy-loading delay. Decoding is asynchronous. Existing bounds remain: network compressed cover cache 256 MiB / 4096 entries; local compressed cache 64 MiB. These are compressed-data budgets, not a total process-RAM limit. No persistent cover files or settings are added. Closing the application clears runtime cover data. Late local image errors cannot evict a replacement URL, and cancellation/temporary queue pressure is not cached as a permanent failure.
 
+Concurrent directory refresh or successful registration can advance the stored revision during a cover read. A `LIBRARY_STALE_SNAPSHOT` response is deferred and retried by the existing observed-card retry timer rather than cached as a permanent cover failure. Leaving the observed region cancels this retry; changed/missing files and other errors keep their normal explicit failure behavior.
+
 ## Verification
 
 Formal checks/builds run only in CI. Focused regressions cover visible-first priority, promotion, bounded speculative work, queue cancellation/overflow, exception recovery, shared cache requests, stale library generations, stale image errors, source-session logout, retained thumbnails after scrolling/detail/settings, and two independent native workers without holding the scan mutex. Existing file/scope/identity tests continue to apply to the shared reader.

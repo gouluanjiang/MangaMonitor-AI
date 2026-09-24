@@ -191,8 +191,17 @@ export class LibraryCoverCache {
       this.bytes += bytes.length;
       return result;
     } catch (cause) {
+      // Concurrent scan/registration can legitimately advance the revision while
+      // a thumbnail is decoded. Retry only while the card is observed; no negative
+      // cache entry may outlive that transient revision change.
+      const changedSnapshot =
+        typeof cause === "object" &&
+        cause !== null &&
+        "code" in cause &&
+        cause.code === "LIBRARY_STALE_SNAPSHOT";
       if (
         job.epoch !== this.epoch ||
+        changedSnapshot ||
         (cause instanceof Error && cause.message === "COVER_QUEUE_FULL")
       )
         return { status: "cancelled" };

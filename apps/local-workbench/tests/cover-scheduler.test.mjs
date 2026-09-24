@@ -201,6 +201,29 @@ test("late local image errors do not discard a replacement thumbnail", async () 
   cache.clear();
 });
 
+test("a concurrent directory revision is deferred without caching failure; real file errors remain explicit", async () => {
+  const cache = new LibraryCoverCache();
+  cache.setScope("root", 1);
+  const stale = cache.acquire("root", 1, "a", async () => {
+    throw { code: "LIBRARY_STALE_SNAPSHOT" };
+  });
+  assert.equal((await stale.promise).status, "cancelled");
+  stale.release();
+  assert.equal(cache.peek("root", 1, "a"), undefined);
+  const current = cache.acquire("root", 1, "a", async () => ({
+    dataUrl: image,
+  }));
+  assert.equal((await current.promise).status, "ready");
+  current.release();
+  const changed = cache.acquire("root", 1, "b", async () => {
+    throw { code: "LIBRARY_FILE_CHANGED" };
+  });
+  assert.equal((await changed.promise).status, "error");
+  assert.equal(cache.peek("root", 1, "b").status, "error");
+  changed.release();
+  cache.clear();
+});
+
 test("controlled equal-latency covers require fewer waiting waves without increasing request count", async (t) => {
   async function waves(concurrency) {
     const queue = new CoverScheduler(concurrency);

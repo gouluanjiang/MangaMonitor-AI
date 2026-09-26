@@ -19,6 +19,7 @@ declare global {
       release?: () => void;
       total: number;
       observedWheelDelta?: number;
+      directionInputs?: { x: number; y: number; shift: boolean }[];
     };
   }
 }
@@ -507,11 +508,39 @@ test("downward input at an already reached edge loads one page, ignores other di
   });
   await page.clock.runFor(100);
   await main.hover();
+  const initialEdge = await main.evaluate((element) => element.scrollTop);
+  await main.evaluate((element) => {
+    window.recentTest.directionInputs = [];
+    element.addEventListener(
+      "wheel",
+      (event) => {
+        const wheel = event as WheelEvent;
+        window.recentTest.directionInputs!.push({
+          x: wheel.deltaX,
+          y: wheel.deltaY,
+          shift: wheel.shiftKey,
+        });
+      },
+      { passive: true },
+    );
+  });
   await page.mouse.wheel(300, 0);
   await page.keyboard.down("Shift");
   await page.mouse.wheel(0, 200);
+  await expect
+    .poll(() => page.evaluate(() => window.recentTest.directionInputs))
+    .toEqual([
+      { x: 300, y: 0, shift: false },
+      { x: 0, y: 200, shift: true },
+    ]);
   await page.keyboard.up("Shift");
   await page.mouse.wheel(0, -80);
+  // Native wheel delivery and compositor scrolling are not advanced by the
+  // fake JavaScript clock. Let the upward gesture finish before resetting the
+  // edge; otherwise its delayed -80 movement contaminates the next assertion.
+  await expect
+    .poll(() => main.evaluate((element) => element.scrollTop))
+    .toBe(initialEdge - 80);
   await page.clock.runFor(100);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
   await main.evaluate((element) => {

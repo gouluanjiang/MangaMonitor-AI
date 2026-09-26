@@ -515,6 +515,12 @@ test("closing during open cancels its token and closes a late obsolete book with
   await expect
     .poll(() => page.evaluate(() => typeof window.readerTest.releaseOpen))
     .toBe("function");
+  const openingToken = await page.evaluate(
+    () =>
+      window.readerTest.calls.find(({ command }) => command === "reader_open")
+        ?.args.requestId,
+  );
+  expect(openingToken).toEqual(expect.any(String));
   await expect(page.locator(".app-shell")).toHaveAttribute("inert", "");
   await page
     .getByTestId("nav-library")
@@ -525,16 +531,20 @@ test("closing during open cancels its token and closes a late obsolete book with
     .getByRole("button", { name: "返回", exact: true })
     .click();
   await expect(page.getByTestId("comic-reader")).toHaveCount(0);
-  const tokens = await page.evaluate(() =>
-    window.readerTest.calls
-      .filter(
-        ({ command }) =>
-          command === "reader_open" || command === "reader_cancel_open",
-      )
-      .map(({ args }) => args.requestId),
-  );
-  expect(tokens).toHaveLength(2);
-  expect(tokens[0]).toBe(tokens[1]);
+  // Removing the reader precedes passive-effect cleanup and the async bridge.
+  // Wait for the exact cancellation pair before releasing the pending open.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.readerTest.calls
+          .filter(
+            ({ command }) =>
+              command === "reader_open" || command === "reader_cancel_open",
+          )
+          .map(({ args }) => args.requestId),
+      ),
+    )
+    .toEqual([openingToken, openingToken]);
   await page.evaluate(() => {
     window.readerTest.holdOpen = false;
     window.readerTest.releaseOpen?.();

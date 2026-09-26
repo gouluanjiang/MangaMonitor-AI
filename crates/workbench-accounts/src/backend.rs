@@ -52,6 +52,13 @@ pub trait SourceBackend: Send + Sync + 'static {
         session: &Self::Session,
         input: &str,
     ) -> impl Future<Output = Result<SourceWork>> + Send;
+    fn reader_detail(
+        &self,
+        session: &Self::Session,
+        input: &str,
+    ) -> impl Future<Output = Result<SourceWork>> + Send {
+        self.detail(session, input)
+    }
     fn recent(
         &self,
         _session: &Self::Session,
@@ -88,6 +95,13 @@ pub trait SourceBackend: Send + Sync + 'static {
 
 impl SourceBackend for WorkbenchSources {
     type Session = SourceSession;
+    async fn reader_detail(&self, session: &Self::Session, input: &str) -> Result<SourceWork> {
+        cloud_monitor::online_reader::require_local_runtime()
+            .map_err(|problem| AccountError::new(problem.code))?;
+        self.detail(session, input)
+            .await
+            .map_err(|problem| AccountError::new(problem.code))
+    }
     fn has_cover_metadata(&self, session: &Self::Session, work_id: &str) -> bool {
         session.has_cover_metadata(work_id)
     }

@@ -16,6 +16,7 @@ zeroize = "=1.9.0"
 workbench-credentials = { path = "../workbench-credentials" }
 workbench-sources = { path = "../workbench-sources" }
 workbench-storage = { path = "../workbench-storage" }
+cloud-monitor = { path = "../cloud-monitor" }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

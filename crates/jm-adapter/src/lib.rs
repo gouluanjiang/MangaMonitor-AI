@@ -5,6 +5,7 @@
 pub mod media_descriptors;
 #[cfg(test)]
 mod media_fetch;
+pub mod reader;
 
 use aes::{
     cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit},
@@ -79,12 +80,13 @@ pub struct JmPreflightChapter {
 enum MetadataPacing {
     Monitor,
     AuthorizedDownload,
+    InteractiveReader,
 }
 
 impl MetadataPacing {
     fn delay_range(self, path: &str) -> std::ops::RangeInclusive<u64> {
         match (self, path) {
-            (Self::AuthorizedDownload, "/album" | "/chapter") => 0..=0,
+            (Self::AuthorizedDownload | Self::InteractiveReader, "/album" | "/chapter") => 0..=0,
             _ => 1000..=3000,
         }
     }
@@ -105,6 +107,12 @@ impl JmClient {
     /// skips monitor pacing. The caller still owns the current approval gate.
     pub fn new_for_download(domain: &str) -> Result<Self, String> {
         Self::with_pacing(domain, MetadataPacing::AuthorizedDownload)
+    }
+
+    /// Interactive metadata only. The reader owns its own revocable session;
+    /// this constructor grants no download, staging or library authority.
+    pub fn new_for_reader() -> Result<Self, String> {
+        Self::with_pacing(DEFAULT_DOMAIN, MetadataPacing::InteractiveReader)
     }
 
     fn with_pacing(domain: &str, pacing: MetadataPacing) -> Result<Self, String> {
@@ -133,6 +141,24 @@ impl JmClient {
         query: &[(&str, String)],
         page: Option<u64>,
     ) -> Result<Value, String> {
+        self.request_with_guard(path, query, page, || Ok(())).await
+    }
+
+    async fn request_with_guard<Guard>(
+        &mut self,
+        path: &str,
+        query: &[(&str, String)],
+        page: Option<u64>,
+        mut before_request: Guard,
+    ) -> Result<Value, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
+        if matches!(self.pacing, MetadataPacing::InteractiveReader)
+            && std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+        {
+            return Err("READER_GITHUB_ACTIONS_FORBIDDEN".into());
+        }
         let domains = self.domains.clone();
         let mut last_retryable_error = None;
 
@@ -141,6 +167,7 @@ impl JmClient {
             if delay_ms != 0 {
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
+            before_request()?;
             let started = Instant::now();
             let ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)

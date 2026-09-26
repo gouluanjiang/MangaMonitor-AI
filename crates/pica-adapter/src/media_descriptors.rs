@@ -39,7 +39,7 @@ fn source_format_from_path(path: &str) -> Result<String, String> {
     Ok(extension)
 }
 
-fn parse_media_doc(value: &Value) -> Result<PicaMediaItem, String> {
+pub(crate) fn parse_media_doc(value: &Value) -> Result<PicaMediaItem, String> {
     let media_id = string(&value["_id"]).ok_or("MISSING_PICA_IMAGE_ID")?;
     if !valid_id(&media_id) {
         return Err("INVALID_PICA_IMAGE_ID".into());

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
 import type { ReactNode } from "react";
 import type {
   AccountSummary,
@@ -55,6 +56,7 @@ export function RankingPanel({
   onDownloadMany(works: SourceWork[]): void;
   onAccounts(): void;
 }) {
+  const readerAccess = useReaderAccess();
   const scope = accountScope(
     accounts.find((account) => account.source === source),
   );
@@ -370,8 +372,14 @@ export function RankingPanel({
                 <div className="source-card-cover">
                   <button
                     className="source-cover-button source-language-cover"
-                    aria-label={"查看《" + work.title + "》详情"}
-                    onClick={() => onOpen(work)}
+                    aria-label={"打开《" + work.title + "》"}
+                    onClick={() =>
+                      readerAccess.choose(
+                        sourceReaderRequest(scope, work),
+                        work.title,
+                        () => onOpen(work),
+                      )
+                    }
                   >
                     <SourceCover adapter={adapter} scope={scope} work={work} />
                     <SourceLanguageBadge

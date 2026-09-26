@@ -64,22 +64,7 @@ pub(crate) fn apply(
 ) -> Result<Vec<u8>, String> {
     match (source_format, transform, transform_parameter) {
         ("webp", "JM_SCRAMBLE_BLOCKS_JPEG", parameter) => {
-            let block_num = u32::try_from(parameter).map_err(|_| "JM_MEDIA_BLOCK_COUNT_INVALID")?;
-            let src = crate::media_validation::decode("webp", &bytes)
-                .map_err(|_| "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED")?
-                .into_rgb8();
-            let dst = if block_num == 0 {
-                src
-            } else {
-                stitch_rgb(&src, block_num)?
-            };
-            let mut encoded = Cursor::new(Vec::new());
-            // Same default JPEG encoder/quality as the pinned downloader. No
-            // intermediate lossless WEBP encode and no additional CPU workers.
-            DynamicImage::ImageRgb8(dst)
-                .write_to(&mut encoded, ImageFormat::Jpeg)
-                .map_err(|_| "JM_MEDIA_JPEG_ENCODE_FAILED")?;
-            Ok(encoded.into_inner())
+            jpeg_with_dimensions(parameter, &bytes).map(|(bytes, _, _)| bytes)
         }
         ("gif", "NONE", 0) | ("webp", "JM_SCRAMBLE_BLOCKS", 0) => Ok(bytes),
         ("webp", "JM_SCRAMBLE_BLOCKS", parameter) => {
@@ -105,6 +90,30 @@ pub(crate) fn apply(
         }
         _ => Err("LIVE_MEDIA_FETCH_TRANSFORM_NOT_SUPPORTED".into()),
     }
+}
+
+/// Same bounded decode, pinned block transform and JPEG encoder for downloader
+/// and reader. Returns dimensions from that decode, without a second decode or
+/// any filesystem/authorization dependency.
+pub(crate) fn jpeg_with_dimensions(
+    parameter: u64,
+    bytes: &[u8],
+) -> Result<(Vec<u8>, u32, u32), String> {
+    let block_num = u32::try_from(parameter).map_err(|_| "JM_MEDIA_BLOCK_COUNT_INVALID")?;
+    let src = crate::media_validation::decode("webp", bytes)
+        .map_err(|_| "LIVE_MEDIA_SOURCE_IMAGE_DECODE_FAILED")?
+        .into_rgb8();
+    let (width, height) = src.dimensions();
+    let dst = if block_num == 0 {
+        src
+    } else {
+        stitch_rgb(&src, block_num)?
+    };
+    let mut encoded = Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(dst)
+        .write_to(&mut encoded, ImageFormat::Jpeg)
+        .map_err(|_| "JM_MEDIA_JPEG_ENCODE_FAILED")?;
+    Ok((encoded.into_inner(), width, height))
 }
 
 #[cfg(test)]

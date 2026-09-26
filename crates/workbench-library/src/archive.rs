@@ -140,7 +140,7 @@ pub(crate) fn preflight<R: Read + Seek>(reader: &mut R) -> Result<usize> {
     Ok(count)
 }
 
-fn open(file: &mut File) -> Result<ZipArchive<&mut File>> {
+pub(crate) fn open(file: &mut File) -> Result<ZipArchive<&mut File>> {
     let count = preflight(file)?;
     let archive = ZipArchive::new(file).map_err(|_| error("LIBRARY_ARCHIVE_INVALID"))?;
     if archive.len() != count || archive.offset() != 0 {

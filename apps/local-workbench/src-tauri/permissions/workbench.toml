@@ -41,3 +41,8 @@ commands.allow = ["jm_download_prepare", "jm_download_confirm", "jm_download_rea
 identifier = "workbench-library"
 description = "Read the native-picked existing comic library and update its private index and verified download path locations; no media writes or execution authority."
 commands.allow = ["library_read", "library_choose", "library_import_paths", "library_scan", "library_cover", "library_reveal"]
+
+[[permission]]
+identifier = "workbench-reader"
+description = "Read selected indexed ZIP or authenticated source pages and save reading coordinates. No generic path, URL, download or inventory mutation."
+commands.allow = ["reader_open", "reader_cancel_open", "reader_chapter", "reader_page", "reader_save_position", "reader_close", "reader_fullscreen"]

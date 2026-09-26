@@ -183,6 +183,10 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
     ).toBeLessThan(90);
   }
   await page.getByTestId("source-open-" + anchor).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByTestId("source-card-" + anchor)).toBeVisible();
@@ -209,6 +213,10 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
     page.getByTestId("source-cover-JM:2000").locator("img"),
   ).toBeVisible();
   await page.getByTestId("source-open-JM:2000").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await page.mouse.move(1200, 700);
@@ -667,6 +675,10 @@ test("partial favorites rebind scrolling after detail and do not fetch more for 
   expect(await favoritePages(page)).toEqual([1]);
   await page.getByRole("button", { name: "清空来源搜索", exact: true }).click();
   await page.getByTestId("source-open-JM:1").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByTestId("source-card-JM:1")).toBeInViewport();
@@ -1587,6 +1599,10 @@ test("both source lists show tag-only language badges without detail requests an
   }
 
   await page.getByTestId("source-open-Pica:3").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(
     page.getByTestId("source-detail").getByTestId("source-language-badge"),
   ).toHaveText("已汉化");
@@ -2087,6 +2103,10 @@ test("source covers release offscreen images but reuse successful session thumbn
     ),
   ).toBe(1);
   await page.getByTestId("source-open-JM:100").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await expect(
     page.getByTestId("source-cover-JM:100").locator("img"),
@@ -2221,6 +2241,10 @@ test("source search stays right-aligned at baseline width and fits a narrow wind
   }
   await page.getByTestId("nav-favorites").click();
   await page.getByTestId("source-open-JM:123").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-detail").locator("h1")).toBeVisible();
   const detailLayout = await page
     .getByTestId("source-detail")
@@ -2364,9 +2388,17 @@ test("source search date order is stable, unknown-last, persistent and independe
     "已读取完整范围",
   );
   await page.getByTestId("source-open-JM:201").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-15");
   await page.getByTestId("source-detail-back").click();
   await page.getByTestId("source-open-JM:203").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-22");
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByTestId("source-card-JM:203")).toContainText(
@@ -2789,6 +2821,10 @@ async function detail(page: Page, source: Source = "JM") {
   await openFavorites(page);
   await page.getByTestId("source-tab-" + source).click();
   await page.getByTestId("source-open-" + source + ":123").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-detail")).toContainText(
     "合成验收 " + source,
   );

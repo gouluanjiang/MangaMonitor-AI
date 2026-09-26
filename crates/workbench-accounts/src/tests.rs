@@ -1489,6 +1489,69 @@ async fn session_leases_are_revoked_by_logout_and_cannot_revive_after_login() {
 }
 
 #[tokio::test]
+async fn online_reader_uses_exact_source_identity_and_revokes_after_logout() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "reader", false).await;
+    let reader = service
+        .online_reader(Source::Jm, &session, "123")
+        .await
+        .unwrap();
+    assert_eq!(reader.source(), ReaderSource::Jm);
+    assert_eq!(reader.work_id(), "123");
+    assert!(reader.require_current().is_ok());
+    assert_eq!(
+        error(
+            service
+                .online_reader(Source::Pica, &session, "111111111111111111111111")
+                .await
+        ),
+        "SESSION_CHANGED"
+    );
+    assert_eq!(
+        error(service.online_reader(Source::Jm, &session, "../999").await),
+        "READER_REQUEST_INVALID"
+    );
+    service.logout(Source::Jm, Some(&session)).await.unwrap();
+    assert_eq!(
+        reader.require_current().unwrap_err().code,
+        "SESSION_CHANGED"
+    );
+    assert_eq!(
+        reader.chapters(1).await.unwrap_err().code,
+        "SESSION_CHANGED"
+    );
+    assert!(backend.0.detail_calls.load(Ordering::SeqCst) >= 1);
+}
+
+#[tokio::test]
+async fn online_reader_open_cannot_publish_details_from_an_account_switched_inflight() {
+    let root = tempfile::tempdir().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "first", false).await;
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    let worker = Arc::clone(&service);
+    let old_session = session.clone();
+    let opening =
+        tokio::spawn(async move { worker.online_reader(Source::Jm, &old_session, "123").await });
+    backend.0.detail_started.notified().await;
+    // Online open releases the account mutex during network IO, so logout and
+    // another login do not wait for an old work-detail request to finish.
+    service.logout(Source::Jm, Some(&session)).await.unwrap();
+    let current = login(&service, Source::Jm, "second", false).await;
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(opening.await.unwrap()), "SESSION_CHANGED");
+    assert!(service
+        .session_lease(Source::Jm, &current)
+        .await
+        .unwrap()
+        .require_current()
+        .is_ok());
+}
+
+#[tokio::test]
 async fn pica_download_session_is_native_only_source_bound_and_revoked_on_account_change() {
     let root = tempfile::tempdir().unwrap();
     let backend = FakeBackend::default();

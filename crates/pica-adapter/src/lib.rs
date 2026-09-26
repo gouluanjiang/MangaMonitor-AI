@@ -6,6 +6,7 @@ pub mod media_descriptors;
 #[cfg(test)]
 mod media_fetch;
 mod pagination;
+pub mod reader;
 
 use hmac::{Hmac, Mac};
 use rand::Rng;
@@ -95,16 +96,20 @@ pub struct PicaClient {
 enum MetadataPacing {
     Monitor,
     AuthorizedDownload,
+    InteractiveReader,
 }
 
 impl MetadataPacing {
     fn delay_ms(self, method: &reqwest::Method, operation: &str) -> u64 {
-        if matches!(self, Self::AuthorizedDownload)
+        if (matches!(self, Self::AuthorizedDownload)
             && method == reqwest::Method::GET
             && matches!(
                 operation,
                 "preflight_chapters" | "preflight_images" | "live_media_descriptors"
-            )
+            ))
+            || (matches!(self, Self::InteractiveReader)
+                && method == reqwest::Method::GET
+                && matches!(operation, "reader_chapters" | "reader_images"))
         {
             0
         } else {
@@ -122,6 +127,11 @@ impl PicaClient {
     /// metadata pacing. Monitoring, login and unrelated APIs retain the delay.
     pub fn new_for_download(token: String) -> Result<Self, String> {
         Self::with_pacing(token, MetadataPacing::AuthorizedDownload)
+    }
+
+    /// Isolated, interactive metadata client. No downloader state or authority.
+    pub fn new_for_reader(token: String) -> Result<Self, String> {
+        Self::with_pacing(token, MetadataPacing::InteractiveReader)
     }
 
     fn with_pacing(token: String, pacing: MetadataPacing) -> Result<Self, String> {
@@ -177,8 +187,17 @@ impl PicaClient {
         operation: &str,
         page: Option<u64>,
     ) -> Result<Value, String> {
+        if matches!(self.pacing, MetadataPacing::InteractiveReader)
+            && std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+        {
+            return Err("READER_GITHUB_ACTIONS_FORBIDDEN".into());
+        }
         let delay_ms = self.pacing.delay_ms(&method, operation);
-        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        // Reader requests have no pacing await between the caller's generation
+        // check and dispatch. Existing monitor/download timing is unchanged.
+        if delay_ms != 0 || !matches!(self.pacing, MetadataPacing::InteractiveReader) {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
         let started = Instant::now();
         let time = SystemTime::now()
             .duration_since(UNIX_EPOCH)

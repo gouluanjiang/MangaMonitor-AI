@@ -2,6 +2,9 @@ use super::*;
 use serde_json::{json, Value};
 use tauri::test::{get_ipc_response, mock_builder, MockRuntime};
 
+#[path = "reader/native_tests.rs"]
+mod reader_tests;
+
 #[test]
 fn app_information_and_file_reveal_keep_native_origin_and_item_boundaries() {
     let (_root, app) = fixture();

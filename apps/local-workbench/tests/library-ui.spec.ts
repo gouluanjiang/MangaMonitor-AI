@@ -496,6 +496,10 @@ test("library languages use saved version tags and leave linked historical versi
     await page.evaluate(() => window.libraryTest.pc.items[0].sourceRef),
   ).toEqual({ source: "JM", workId: "123" });
   await page.getByTestId("library-open-" + id(1)).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
   await expect(
@@ -530,6 +534,10 @@ test("library detail reveals only the selected item and retains missing-file fee
   await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { pcCount: 3, failRevealOnce: true });
   await page.getByTestId("library-open-" + id(1)).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   expect(await commands(page, "library_reveal")).toEqual([]);
   await page.getByTestId("library-reveal").click();
   await expect(page.getByTestId("library-location-status")).toContainText(
@@ -704,6 +712,10 @@ test("library admission sorting and state filters combine with search and preser
   await page.getByTestId("search-input").fill("0004");
   await expect(cards).toHaveCount(1);
   await page.getByTestId("library-open-" + id(4)).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("library-added-at")).toContainText(
     "历史记录未知",
   );
@@ -745,6 +757,10 @@ test("library version and admission dates display independently, compose with fi
   await page.getByTestId("search-input").fill("0004");
   await expect(cards).toHaveCount(1);
   await page.getByTestId("library-open-" + id(4)).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("library-version-updated-at")).toHaveText(
     "版本更新：2026-09-02",
   );
@@ -920,6 +936,10 @@ test("decoded offscreen covers release while compressed covers survive scrolling
   });
   await expect(firstCover).toBeVisible();
   await page.getByTestId("library-open-" + id(1)).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("library-detail").locator("img")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
   await page.getByTestId("nav-settings").click();
@@ -982,6 +1002,10 @@ test("PC density changes and a detail return retain a deep catalog anchor", asyn
     ).toBeLessThan(90);
   }
   await page.getByTestId("library-open-" + anchor).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
   await expect(page.getByTestId("library-card-" + anchor)).toBeVisible();
@@ -1009,6 +1033,10 @@ test("retired phone and classification lists neither appear nor load, while PC s
   expect(await commands(page, "phone_library_read")).toEqual([]);
   expect(await commands(page, "read_booklists")).toEqual([]);
   await page.getByTestId("library-open-" + id(1)).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("library-source-id")).toHaveCount(0);
   await expect(page.getByTestId("library-link")).toHaveCount(0);
   const title = await page
@@ -1018,6 +1046,10 @@ test("retired phone and classification lists neither appear nor load, while PC s
   await expect(page.getByTestId("phone-mark")).toHaveCount(0);
   await page.reload();
   await page.getByTestId("library-open-" + id(1)).click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(
     page.getByTestId("library-detail").getByRole("heading", { level: 1 }),
   ).toHaveText(title);

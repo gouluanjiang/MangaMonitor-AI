@@ -1,3 +1,4 @@
+import { useReaderAccess } from "./reader-access.tsx";
 import {
   useCallback,
   useEffect,
@@ -337,6 +338,7 @@ function LibraryDetail({
   library: LibraryState;
   onBack(): void;
 }) {
+  const readerAccess = useReaderAccess();
   const [opening, setOpening] = useState(false);
   const [locationMessage, setLocationMessage] = useState("");
   const request = useRef(0);
@@ -442,8 +444,24 @@ function LibraryDetail({
           )}
           <h2>电脑位置</h2>
           <div className="source-actions">
+            {readerAccess.available && library.snapshot.rootId && (
+              <button
+                className="button primary"
+                data-testid="library-read"
+                onClick={() =>
+                  readerAccess.read({
+                    kind: "library",
+                    rootId: library.snapshot.rootId!,
+                    generation: library.snapshot.generation,
+                    entryId: item.id,
+                  })
+                }
+              >
+                阅读
+              </button>
+            )}
             <button
-              className="button primary"
+              className="button secondary"
               data-testid="library-reveal"
               disabled={opening || library.busy || !library.snapshot.rootId}
               onClick={() => void reveal()}
@@ -494,6 +512,16 @@ export function LibraryWorkbench({
   externalEntryId?: string | null;
   requestKey?: number;
 }) {
+  const readerAccess = useReaderAccess();
+  const choose = (item: LibraryItem) => {
+    const { rootId, generation } = library.snapshot;
+    if (!rootId) return open(item);
+    readerAccess.choose(
+      { kind: "library", rootId, generation, entryId: item.id },
+      item.title,
+      () => open(item),
+    );
+  };
   const [sort, setSort] = useState<LibrarySort>(() =>
       readSortPreference("library", librarySorts, "added-desc"),
     ),
@@ -728,13 +756,13 @@ export function LibraryWorkbench({
                         className="library-cover-open source-language-cover"
                         role="button"
                         tabIndex={0}
-                        aria-label={"查看《" + item.title + "》电脑详情"}
+                        aria-label={"打开《" + item.title + "》"}
                         data-testid={"library-open-" + item.id}
-                        onClick={() => open(item)}
+                        onClick={() => choose(item)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            open(item);
+                            choose(item);
                           }
                         }}
                       >

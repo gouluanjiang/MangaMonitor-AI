@@ -35,6 +35,7 @@ pub mod matcher_m2;
 mod media_request_guard;
 pub(crate) mod media_validation;
 pub mod monitor;
+pub mod online_reader;
 mod parallel_media_processing;
 pub mod persistence;
 pub mod runner;

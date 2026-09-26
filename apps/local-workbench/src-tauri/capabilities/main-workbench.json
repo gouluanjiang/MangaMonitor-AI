@@ -8,6 +8,7 @@
     "workbench-documents",
     "workbench-accounts",
     "workbench-library",
+    "workbench-reader",
     "workbench-downloads"
   ]
 }

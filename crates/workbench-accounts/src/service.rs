@@ -530,6 +530,78 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         })
     }
 
+    /// An explicitly opened, memory-only reader. The source credential is
+    /// borrowed from the authenticated account, never from a download permit;
+    /// no task, library root, staging workspace or completion record is created.
+    pub async fn online_reader(
+        &self,
+        source: Source,
+        session_id: &str,
+        work_id: &str,
+    ) -> Result<crate::OnlineReader> {
+        if !(workbench_storage::LibraryReference {
+            source: storage_source(source),
+            work_id: work_id.into(),
+        })
+        .is_valid()
+        {
+            return Err(AccountError::new("READER_REQUEST_INVALID"));
+        }
+        let (lease, credential, session) = {
+            let mut slot = self.slot(source).lock().await;
+            self.require_scope(&mut slot, session_id)?;
+            slot.lease.require_current()?;
+            let credential = if source == Source::Pica {
+                let session = slot
+                    .session
+                    .as_ref()
+                    .ok_or(AccountError::new("SESSION_CHANGED"))?;
+                // Existing accessor returns account metadata credentials only;
+                // it does not execute or authorize a download.
+                let value = self.backend.pica_download_credential(session)?;
+                if value.kind() != CredentialKind::SessionToken {
+                    return Err(AccountError::new("READER_REQUEST_INVALID"));
+                }
+                Some(value)
+            } else {
+                None
+            };
+            let session = Arc::clone(
+                slot.session
+                    .as_ref()
+                    .ok_or(AccountError::new("SESSION_CHANGED"))?,
+            );
+            (slot.lease.clone(), credential, session)
+        };
+        // Use the same source-qualified details and error/session handling as
+        // other account entry points. An unverified renderer title is not used.
+        let details = self.backend.reader_detail(&session, work_id).await;
+        lease.require_current()?;
+        let work = {
+            let mut slot = self.slot(source).lock().await;
+            self.require_scope(&mut slot, session_id)?;
+            self.finish(&mut slot, details)?
+        };
+        if work.source != source || work.work_id != work_id {
+            return Err(AccountError::new("READER_REQUEST_INVALID"));
+        }
+        crate::OnlineReader::new(
+            match source {
+                Source::Jm => crate::ReaderSource::Jm,
+                Source::Pica => crate::ReaderSource::Pica,
+            },
+            work_id,
+            &work.title,
+            credential.as_ref().map(|value| value.secret().to_owned()),
+            move || {
+                lease
+                    .require_current()
+                    .map_err(|problem| problem.code.to_owned())
+            },
+        )
+        .map_err(|problem| AccountError::new(problem.code))
+    }
+
     fn finish<T>(&self, slot: &mut Slot<B::Session>, result: Result<T>) -> Result<T> {
         self.check_saved(slot)?;
         if let Err(error) = &result {

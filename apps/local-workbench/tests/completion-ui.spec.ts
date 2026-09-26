@@ -1543,6 +1543,10 @@ for (const entry of ["saved updates", "author search"] as const) {
       "author-update-Pica:0123456789abcdef01234567",
     );
     await unknown.locator(".source-card-open").click();
+    await page
+      .getByTestId("reader-cover-actions")
+      .getByRole("button", { name: "作品详情", exact: true })
+      .click();
     await expect(
       page.getByTestId("source-detail").getByTestId("source-language-badge"),
     ).toHaveText("已汉化");
@@ -2054,6 +2058,10 @@ for (const mode of ["updates", "search"] as const) {
       "已按本作品核对署名。来源原署名：Wrong Credit",
     );
     await correct.locator(".source-card-open").click();
+    await page
+      .getByTestId("reader-cover-actions")
+      .getByRole("button", { name: "作品详情", exact: true })
+      .click();
     const detail = page.getByTestId("source-detail");
     await expect(detail.getByTestId("author-credit-reviewed")).toHaveAttribute(
       "title",

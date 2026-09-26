@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
 import type {
   AccountSummary,
   SourceAdapter,
@@ -101,6 +102,7 @@ export function CompletionPanel({
   onOpenLibrary,
   onOpenAccounts,
 }: Props) {
+  const readerAccess = useReaderAccess();
   const searchAdapter = useMemo(
     () => createAuthorSearchAdapter(sourceAdapter),
     [sourceAdapter],
@@ -1105,15 +1107,21 @@ export function CompletionPanel({
                   )}
                   <button
                     className="source-card-open"
+                    aria-label={"打开《" + work.title + "》"}
                     onClick={() =>
-                      onOpenWork(
-                        { source: work.source, workId: work.workId },
-                        {
-                          scope,
-                          policies: (view?.authorPolicies ?? []).filter(
-                            (policy) => policy.source === work.source,
+                      readerAccess.choose(
+                        sourceReaderRequest(scope, work),
+                        work.title,
+                        () =>
+                          onOpenWork(
+                            { source: work.source, workId: work.workId },
+                            {
+                              scope,
+                              policies: (view?.authorPolicies ?? []).filter(
+                                (policy) => policy.source === work.source,
+                              ),
+                            },
                           ),
-                        },
                       )
                     }
                   >

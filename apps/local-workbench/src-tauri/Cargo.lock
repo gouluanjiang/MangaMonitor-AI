@@ -2044,7 +2044,9 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 name = "mangamonitor-workbench-preview"
 version = "0.3.4"
 dependencies = [
+ "base64 0.22.1",
  "dunce",
+ "image",
  "serde",
  "serde_json",
  "tauri",
@@ -2060,6 +2062,7 @@ dependencies = [
  "workbench-sources",
  "workbench-storage",
  "zeroize",
+ "zip",
 ]
 
 [[package]]
@@ -5250,6 +5253,7 @@ name = "workbench-accounts"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "cloud-monitor",
  "image",
  "rand",
  "serde",

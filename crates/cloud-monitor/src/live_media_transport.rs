@@ -1,12 +1,14 @@
 //! Private A6.14 media-byte HTTP transport.
 //!
 //! This module is intentionally not exported from the crate API. The only
-//! supported caller is the guarded `live_media_fetch` bridge, which is then
-//! wrapped by A6.12's per-fetch/per-write authorization generation checks.
+//! download caller is the guarded `live_media_fetch` bridge, wrapped by
+//! A6.12's per-fetch/per-write authorization generation checks. The independent
+//! in-memory reader uses smaller response limits and its own revocable session;
+//! it has no staging or completion authority.
 //! These clients own no source API/session credentials, disable automatic
 //! redirects/retries, bound each response in memory, and never touch files.
 //! Desktop Pica may follow at most two same-origin /static/ redirects; every
-//! physical GET first obtains a fresh grant from the staging coordinator.
+//! physical GET first obtains a fresh staging grant or reader account guard.
 
 use reqwest::{
     header::{LOCATION, USER_AGENT},
@@ -67,6 +69,7 @@ async fn execute_exact(
     client: &Client,
     request: Request,
     exact_url: &str,
+    maximum: u64,
 ) -> Result<Vec<u8>, String> {
     if request.url().as_str() != exact_url {
         return Err(format!("{prefix}_MEDIA_REQUEST_URL_MISMATCH"));
@@ -84,16 +87,17 @@ async fn execute_exact(
             response.status().as_u16()
         ));
     }
-    read_bounded_body(prefix, response).await
+    read_bounded_body(prefix, response, maximum).await
 }
 
 async fn read_bounded_body(
     prefix: &str,
     mut response: reqwest::Response,
+    maximum: u64,
 ) -> Result<Vec<u8>, String> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_MEDIA_BYTES)
+        .is_some_and(|length| length > maximum)
     {
         return Err(format!("{prefix}_MEDIA_RESPONSE_TOO_LARGE"));
     }
@@ -104,6 +108,9 @@ async fn read_bounded_body(
         .await
         .map_err(|error| transport_error(prefix, error))?
     {
+        if (body.len() as u64).saturating_add(chunk.len() as u64) > maximum {
+            return Err(format!("{prefix}_MEDIA_RESPONSE_TOO_LARGE"));
+        }
         append_bounded(prefix, &mut body, &chunk)?;
     }
     if body.is_empty() {
@@ -115,6 +122,7 @@ async fn read_bounded_body(
 #[derive(Clone)]
 pub(crate) struct JmTransport {
     client: Client,
+    maximum: u64,
 }
 
 fn validate_jm_url_exact(url: &str) -> Result<Url, String> {
@@ -140,6 +148,14 @@ impl JmTransport {
     pub(crate) fn new() -> Result<Self, String> {
         Ok(Self {
             client: base_client("JM")?,
+            maximum: MAX_MEDIA_BYTES,
+        })
+    }
+
+    pub(crate) fn for_reader() -> Result<Self, String> {
+        Ok(Self {
+            client: base_client("JM")?,
+            maximum: 32 * 1024 * 1024,
         })
     }
 
@@ -157,13 +173,14 @@ impl JmTransport {
     /// different URL and an additional fetch without a fresh generation check.
     pub(crate) async fn fetch_exact(&self, url: &str) -> Result<Vec<u8>, String> {
         let request = self.build_request(url)?;
-        execute_exact("JM", &self.client, request, url).await
+        execute_exact("JM", &self.client, request, url, self.maximum).await
     }
 }
 
 #[derive(Clone)]
 pub(crate) struct PicaTransport {
     client: Client,
+    maximum: u64,
 }
 
 fn audited_pica_storage_host(host: &str) -> bool {
@@ -199,6 +216,14 @@ impl PicaTransport {
     pub(crate) fn new() -> Result<Self, String> {
         Ok(Self {
             client: base_client("PICA")?,
+            maximum: MAX_MEDIA_BYTES,
+        })
+    }
+
+    pub(crate) fn for_reader() -> Result<Self, String> {
+        Ok(Self {
+            client: base_client("PICA")?,
+            maximum: 32 * 1024 * 1024,
         })
     }
 
@@ -212,7 +237,7 @@ impl PicaTransport {
 
     pub(crate) async fn fetch_exact(&self, url: &str) -> Result<Vec<u8>, String> {
         let request = self.build_request(url)?;
-        execute_exact("PICA", &self.client, request, url).await
+        execute_exact("PICA", &self.client, request, url, self.maximum).await
     }
 
     /// The descriptor keeps its original source URL, so existing checkpoints
@@ -245,7 +270,7 @@ impl PicaTransport {
             // A redirect's HTML body is never decoded as an image or saved.
             return Ok(PicaHop::Redirect(location));
         }
-        read_bounded_body("PICA", response)
+        read_bounded_body("PICA", response, self.maximum)
             .await
             .map(PicaHop::Bytes)
     }
@@ -624,6 +649,24 @@ mod tests {
         assert_eq!(
             next_body_len("PICA", MAX_MEDIA_BYTES, 1).unwrap_err(),
             "PICA_MEDIA_RESPONSE_TOO_LARGE"
+        );
+    }
+
+    #[test]
+    fn reader_uses_smaller_private_transports_without_changing_download_limits() {
+        let jm = JmTransport::for_reader().unwrap();
+        let pica = PicaTransport::for_reader().unwrap();
+        assert_eq!(jm.maximum, 32 * 1024 * 1024);
+        assert_eq!(pica.maximum, jm.maximum);
+        assert_eq!(JmTransport::new().unwrap().maximum, MAX_MEDIA_BYTES);
+        assert_eq!(PicaTransport::new().unwrap().maximum, MAX_MEDIA_BYTES);
+        assert!(pica
+            .build_request("https://example.com/static/test.jpg")
+            .is_err());
+        assert_no_sensitive_headers(
+            &pica
+                .build_request("https://storage-b.picacomic.com/static/fixture.jpg")
+                .unwrap(),
         );
     }
 

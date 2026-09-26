@@ -334,7 +334,11 @@ test("weekly and Pica ranks share receipt filters while details preserve the sel
   await expect(page.getByTestId("rank-work-JM:1")).toHaveCount(0);
   await page
     .getByTestId("rank-work-JM:2")
-    .getByRole("button", { name: /查看.*详情/ })
+    .getByRole("button", { name: /打开《/ })
+    .click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();

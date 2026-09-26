@@ -11,6 +11,7 @@ mod downloads;
 mod library;
 mod model;
 mod phone;
+mod reader;
 mod store;
 mod work_date;
 
@@ -32,6 +33,7 @@ pub use phone::{
     phone_library_from_path, phone_library_mark, phone_library_read, phone_library_unmark,
     PhoneLibraryDocument, PhoneLibraryEntry, PhoneLibrarySnapshot,
 };
+pub use reader::ReaderPosition;
 pub use store::{Document, WorkbenchStore, PRIVATE_DIRECTORY};
 pub use work_date::{normalize_work_date, work_date_is_valid};
 

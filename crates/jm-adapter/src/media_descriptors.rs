@@ -5,9 +5,7 @@
 //! filesystem. Unlike the upstream GUI, an unparseable scramble ID is fatal;
 //! the upstream fallback value is not accepted as proof of the live source.
 
-use super::{
-    is_retryable_transport, retryable_http_status, string, transport_code, JmClient,
-};
+use super::{is_retryable_transport, retryable_http_status, string, transport_code, JmClient};
 use serde_json::Value;
 use state_model::RequestTrace;
 use std::{
@@ -141,13 +139,31 @@ fn parse_media(
 
 impl JmClient {
     async fn live_scramble_id(&mut self, chapter_id: &str) -> Result<u64, String> {
+        self.live_scramble_id_with_guard(chapter_id, || Ok(()))
+            .await
+    }
+
+    async fn live_scramble_id_with_guard<Guard>(
+        &mut self,
+        chapter_id: &str,
+        mut before_request: Guard,
+    ) -> Result<u64, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
         if !valid_chapter_id(chapter_id) {
             return Err("INVALID_JM_CHAPTER_ID".into());
+        }
+        if matches!(self.pacing, super::MetadataPacing::InteractiveReader)
+            && std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+        {
+            return Err("READER_GITHUB_ACTIONS_FORBIDDEN".into());
         }
 
         let domains = self.domains.clone();
         let mut last_retryable_error = None;
         for domain in domains {
+            before_request()?;
             let started = Instant::now();
             let ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -179,14 +195,17 @@ impl JmClient {
                 if !response.status().is_success() {
                     return Err(format!("HTTP_{status}"));
                 }
-                let body = String::from_utf8(super::read_bounded_response(response).await.map_err(
-                    |error| if error == "METADATA_RESPONSE_TOO_LARGE" {
-                        "JM_SCRAMBLE_RESPONSE_TOO_LARGE"
-                    } else {
-                        "INVALID_JM_SCRAMBLE_BODY"
-                    },
-                )?)
-                .map_err(|_| "INVALID_JM_SCRAMBLE_BODY")?;
+                let body =
+                    String::from_utf8(super::read_bounded_response(response).await.map_err(
+                        |error| {
+                            if error == "METADATA_RESPONSE_TOO_LARGE" {
+                                "JM_SCRAMBLE_RESPONSE_TOO_LARGE"
+                            } else {
+                                "INVALID_JM_SCRAMBLE_BODY"
+                            }
+                        },
+                    )?)
+                    .map_err(|_| "INVALID_JM_SCRAMBLE_BODY")?;
                 parse_scramble_id(&body)
             }
             .await;
@@ -222,7 +241,8 @@ impl JmClient {
         &mut self,
         chapter_id: &str,
     ) -> Result<JmChapterMediaEnumeration, String> {
-        self.live_chapter_media_with_guard(chapter_id, || Ok(())).await
+        self.live_chapter_media_with_guard(chapter_id, || Ok(()))
+            .await
     }
 
     /// Guarded A6.13 enumeration. `before_request` is invoked immediately
@@ -246,6 +266,42 @@ impl JmClient {
             .request("/chapter", &[("id", chapter_id.into())], None)
             .await?;
         let media = parse_media(chapter_id, scramble_id, &body)?;
+        Ok(JmChapterMediaEnumeration {
+            chapter_id: chapter_id.into(),
+            scramble_id,
+            media,
+        })
+    }
+
+    /// Reader-specific guard checks every physical API attempt, including JM
+    /// domain failover. Existing download enumeration keeps its own contract.
+    pub async fn reader_chapter_media<Guard>(
+        &mut self,
+        chapter_id: &str,
+        mut before_request: Guard,
+    ) -> Result<JmChapterMediaEnumeration, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
+        if !valid_chapter_id(chapter_id) || chapter_id.len() > 20 {
+            return Err("INVALID_JM_CHAPTER_ID".into());
+        }
+        let scramble_id = self
+            .live_scramble_id_with_guard(chapter_id, &mut before_request)
+            .await?;
+        let body = self
+            .request_with_guard(
+                "/chapter",
+                &[("id", chapter_id.into())],
+                None,
+                &mut before_request,
+            )
+            .await?;
+        before_request()?;
+        let media = parse_media(chapter_id, scramble_id, &body)?;
+        if media.is_empty() || media.len() > 50_000 {
+            return Err("READER_IMAGE_COUNT_INVALID".into());
+        }
         Ok(JmChapterMediaEnumeration {
             chapter_id: chapter_id.into(),
             scramble_id,

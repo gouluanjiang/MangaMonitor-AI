@@ -6,6 +6,9 @@ mod service;
 
 pub use backend::{Authenticated, SourceBackend};
 pub use cache::{CatalogAction, CatalogResult, CatalogSnapshot};
+pub use cloud_monitor::online_reader::{
+    Chapter, ChapterInfo, ChapterPage, OnlineReader, ReaderError, ReaderImage, ReaderSource,
+};
 pub use discovery::{
     discovery_work_from_source, DiscoveryMode, DiscoveryPhase, DiscoveryProgress, DiscoveryRun,
     DiscoveryScope, DiscoverySnapshot, DiscoveryStart,

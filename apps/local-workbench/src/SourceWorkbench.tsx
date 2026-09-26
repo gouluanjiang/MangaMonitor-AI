@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
 import { SourceIssues } from "./SourceIssues.tsx";
 import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import {
@@ -306,6 +307,7 @@ export function SourceWorkbench({
   loadingAccounts = false,
   searchHost,
 }: SourceWorkbenchProps) {
+  const readerAccess = useReaderAccess();
   const inventory = useMemo(
     () =>
       createInventoryMatcher(
@@ -1353,8 +1355,16 @@ export function SourceWorkbench({
                   type="button"
                   className="source-cover-button source-language-cover"
                   data-testid={"source-open-" + key}
-                  onClick={() => void openDetail(toWorkReference(work))}
-                  aria-label={"查看《" + work.title + "》详情"}
+                  onClick={() =>
+                    scope
+                      ? readerAccess.choose(
+                          sourceReaderRequest(scope, work),
+                          work.title,
+                          () => void openDetail(toWorkReference(work)),
+                        )
+                      : void openDetail(toWorkReference(work))
+                  }
+                  aria-label={"打开《" + work.title + "》"}
                 >
                   {scope && (
                     <SourceCover
@@ -1527,6 +1537,18 @@ export function SourceWorkbench({
                 </div>
               </dl>
               <div className="source-actions">
+                {readerAccess.available && scope && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    data-testid="source-read"
+                    onClick={() =>
+                      readerAccess.read(sourceReaderRequest(scope, detail))
+                    }
+                  >
+                    阅读
+                  </button>
+                )}
                 {onOpenLibrary &&
                   inventory(detail).kind === "owned" &&
                   inventory(detail).items.length > 0 && (

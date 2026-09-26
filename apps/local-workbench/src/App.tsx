@@ -1,4 +1,6 @@
 import { RankingPanel } from "./RankingPanel.tsx";
+import { ReaderAccessProvider, useReaderHost } from "./reader-access.tsx";
+import { ReaderDownloadError } from "./reader/runtime.ts";
 import { RecentUpdatesPanel } from "./RecentUpdatesPanel.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -191,6 +193,22 @@ function Dialog({
 }
 
 export default function App() {
+  const readerHost = useReaderHost(persistence.native, async (reference) => {
+    if (!getDownloadScope(accountsRef.current, reference.source))
+      throw new ReaderDownloadError("请返回设置连接对应来源账号，再准备下载。");
+    if (!library.controller.getState().snapshot.rootId)
+      throw new ReaderDownloadError("请先在设置中选择漫画库目录，再准备下载。");
+    if (downloads.controller.getState().busy)
+      throw new ReaderDownloadError("其他下载正在准备，请稍后再试。");
+    await beginDownload(reference.workId, undefined, reference.source);
+    const current = downloads.controller.getState();
+    if (current.error)
+      throw new ReaderDownloadError(downloadErrorMessage(current.error));
+    if (!current.plan)
+      throw new ReaderDownloadError(
+        "暂时无法准备下载，请返回下载队列查看状态。",
+      );
+  });
   const [downloadInput, setDownloadInput] = useState("");
   const [downloadSource, setDownloadSource] = useState<DownloadSource>("JM");
   const [downloadFeedback, setDownloadFeedback] = useState(false);
@@ -662,12 +680,12 @@ export default function App() {
       return;
     }
     if (inputs.length > 1) {
-      void downloads.controller.prepareBatch(downloadContext, inputs);
+      await downloads.controller.prepareBatch(downloadContext, inputs);
       return;
     }
     const id =
       work?.workId ?? parseLibraryReference(requestedSource, input)?.workId;
-    void downloads.controller.prepare(downloadContext, id ?? input);
+    await downloads.controller.prepare(downloadContext, id ?? input);
   }
   function openSourceFavorites(source: Source) {
     setRequestedSource(source);
@@ -2184,6 +2202,7 @@ export default function App() {
   const content = (
     <div
       className="app-shell"
+      inert={readerHost.isOpen}
       data-background-mode={appearance.backgroundMode}
       style={
         {
@@ -2424,7 +2443,9 @@ export default function App() {
               onPrepare={() => beginDownload(downloadInput)}
               onChooseLibrary={chooseDownloadLibrary}
               onOpenAccounts={() => openSettings("accounts")}
-              onConfirmed={() => navigate("queue")}
+              onConfirmed={() => {
+                if (!readerHost.isOpen) navigate("queue");
+              }}
               onOpenDownloaded={openDownloaded}
               onReprepare={(task) => {
                 if (
@@ -2724,7 +2745,10 @@ export default function App() {
   );
   return (
     <SourceLanguageProvider cache={sourceCache}>
-      {content}
+      <ReaderAccessProvider value={readerHost.actions}>
+        {content}
+        {readerHost.layer}
+      </ReaderAccessProvider>
     </SourceLanguageProvider>
   );
 }

@@ -9,7 +9,7 @@ use serde_json::Value;
 pub(crate) struct PageScope {
     pub total: u64,
     pub pages: u64,
-    limit: u64,
+    pub(crate) limit: u64,
 }
 
 pub(crate) fn read_page<'a>(

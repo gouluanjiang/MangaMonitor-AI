@@ -1323,6 +1323,10 @@ test("JM and Pica source details prepare only their own source without creating 
   await install(page);
   await page.getByTestId("nav-favorites").click();
   await page.getByTestId("source-open-JM:123").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await page.getByTestId("source-download").click();
   await expect(page.getByTestId("download-confirmation")).toBeVisible();
   await expect(page.getByTestId("download-plan-source")).toContainText(
@@ -1332,6 +1336,10 @@ test("JM and Pica source details prepare only their own source without creating 
   await page.getByTestId("source-detail-back").click();
   await page.getByTestId("source-tab-Pica").click();
   await page.getByTestId("source-open-Pica:0123456789abcdef01234567").click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
+    .click();
   await expect(page.getByTestId("source-download")).toBeEnabled();
   await page.getByTestId("source-download").click();
   await expect(page.getByTestId("download-confirmation")).toBeVisible();

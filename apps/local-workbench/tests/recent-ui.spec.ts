@@ -324,7 +324,11 @@ test("both recent feeds preserve source order, language and unknown dates and re
   await expect(recentCard(page, "JM", 1)).toHaveCount(0);
   await expect(recentCard(page, "JM", 2)).toBeVisible();
   await recentCard(page, "JM", 2)
-    .getByRole("button", { name: /查看.*详情/ })
+    .getByRole("button", { name: /打开《/ })
+    .click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -684,7 +688,11 @@ test("programmatic position changes, resizing, detail return and hidden or filte
   await page.clock.runFor(100);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
   await recentCard(page, "Pica", 20)
-    .getByRole("button", { name: /查看.*详情/ })
+    .getByRole("button", { name: /打开《/ })
+    .click();
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("button", { name: "作品详情", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();

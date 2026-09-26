@@ -438,15 +438,15 @@ test("fifty-thousand-page chapters cross scroll bands while dragging and reach t
   const before = Number(
     (await page.getByLabel("当前页码").innerText()).split(" / ")[0],
   );
-  const oldFirst = await page
+  const oldLast = await page
     .locator(".reader-pages")
-    .getAttribute("data-first-page");
+    .getAttribute("data-last-page");
   await page.mouse.move(640, 730);
   await page.mouse.down();
   await page.mouse.move(640, 200, { steps: 12 });
   await expect(page.locator(".reader-pages")).not.toHaveAttribute(
-    "data-first-page",
-    oldFirst!,
+    "data-last-page",
+    oldLast!,
   );
   await page.mouse.move(640, 100, { steps: 5 });
   await page.mouse.up();

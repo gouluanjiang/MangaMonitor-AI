@@ -707,6 +707,10 @@ async function expectQueueCounts(
 }
 
 async function captureQueue(page: Page, testInfo: TestInfo, name: string) {
+  // The application scrolls inside its main pane; fullPage alone only captures
+  // the header at the top. Include actual task rows in the review evidence.
+  await taskRows(page).first().scrollIntoViewIfNeeded();
+  await expect(taskRows(page).first()).toBeInViewport({ ratio: 0.99 });
   const body = await page.screenshot({
     path: `visual-evidence/${name}.png`,
     fullPage: true,

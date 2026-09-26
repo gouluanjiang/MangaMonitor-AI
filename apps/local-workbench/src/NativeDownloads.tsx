@@ -500,6 +500,10 @@ export function NativeDownloads({
   >(null);
   const scope = getDownloadScope(accounts, selectedSource);
   const context = contexts[selectedSource];
+  const confirmed = () => {
+    setFilter("active");
+    onConfirmed();
+  };
   useEffect(() => {
     if (!active) return;
     void downloads.controller.read(true);
@@ -534,7 +538,7 @@ export function NativeDownloads({
         <BatchDownloadConfirmation
           downloads={downloads}
           contexts={contexts}
-          onConfirmed={onConfirmed}
+          onConfirmed={confirmed}
           inventoryHint={inventoryHint}
         />
       )}
@@ -552,7 +556,7 @@ export function NativeDownloads({
         <DownloadConfirmation
           downloads={downloads}
           context={contexts[downloads.plan.source]}
-          onConfirmed={onConfirmed}
+          onConfirmed={confirmed}
           inventoryHint={inventoryHint}
         />
       )}

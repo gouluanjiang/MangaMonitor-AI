@@ -1042,7 +1042,7 @@ export default function App() {
     setSelection([]);
     setDetail(null);
     setPage("queue");
-    setQueueFilter("all");
+    setQueueFilter("active");
     setNotice(`${selected.length} 部作品已加入模拟队列`);
     contentRef.current?.scrollTo(0, 0);
   };

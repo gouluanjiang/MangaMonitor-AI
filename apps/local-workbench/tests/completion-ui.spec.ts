@@ -2402,6 +2402,7 @@ test("a new author is searched across every page of both sources without requiri
     .getByRole("button")
     .first()
     .click();
+  await page.getByRole("button", { name: "作品详情", exact: true }).click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(

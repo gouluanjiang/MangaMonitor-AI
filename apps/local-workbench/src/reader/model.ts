@@ -28,6 +28,41 @@ export function clampPosition(
   };
 }
 export type PageLayout = { tops: number[]; heights: number[]; total: number };
+export const maxReaderPageHeight = 250_000;
+export type PageSegment = {
+  first: number;
+  last: number;
+  start: number;
+  total: number;
+};
+
+// Native/browser scrolling clamps very large CSS coordinates. Keep one nearby
+// physical band and translate it to logical chapter coordinates, without loading
+// the chapter's images or making the progress slider depend on that band.
+export function pageSegment(
+  layout: PageLayout,
+  page: number,
+  budget = 1_000_000,
+): PageSegment {
+  if (!layout.tops.length) return { first: 0, last: 0, start: 0, total: 0 };
+  const current = Math.max(0, Math.min(layout.tops.length - 1, page));
+  let first = current,
+    last = current;
+  const center = layout.tops[current] + layout.heights[current] / 2;
+  while (first > 0 && center - layout.tops[first - 1] <= budget / 2) first--;
+  while (
+    last + 1 < layout.tops.length &&
+    layout.tops[last + 1] + layout.heights[last + 1] + 12 - center <= budget / 2
+  )
+    last++;
+  const start = layout.tops[first];
+  return {
+    first,
+    last,
+    start,
+    total: layout.tops[last] + layout.heights[last] + 12 - start,
+  };
+}
 export function pageLayout(
   count: number,
   width: number,
@@ -38,7 +73,10 @@ export function pageLayout(
   let total = 0;
   for (let index = 0; index < count; index++) {
     tops.push(total);
-    const height = Math.max(1, width * (ratios.get(index) ?? 1.45));
+    const height = Math.max(
+      1,
+      Math.min(maxReaderPageHeight, width * (ratios.get(index) ?? 1.45)),
+    );
     heights.push(height);
     total += height + 12;
   }

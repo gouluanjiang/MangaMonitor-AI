@@ -10,6 +10,8 @@ declare global {
       saved: ReaderPosition | null;
       fail: number | null;
       failChapter: string | null;
+      firstChapterPages: number;
+      imageHeight: number;
       hold: boolean;
       release?: () => void;
       holdOpen: boolean;
@@ -46,6 +48,8 @@ test.beforeEach(async ({ page }) => {
       saved: null,
       fail: null,
       failChapter: null,
+      firstChapterPages: 10000,
+      imageHeight: 1000,
       hold: false,
       holdOpen: false,
     } as Window["readerTest"]);
@@ -85,7 +89,7 @@ test.beforeEach(async ({ page }) => {
           return {
             readerId: args.readerId,
             chapterId: args.chapterId,
-            pageCount: args.chapterId === "one" ? 10000 : 3,
+            pageCount: args.chapterId === "one" ? state.firstChapterPages : 3,
           };
         case "reader_page": {
           if (state.hold && args.chapterId === "one" && args.pageIndex === 0)
@@ -96,10 +100,10 @@ test.beforeEach(async ({ page }) => {
             throw { code: "READER_IMAGE_DECODE" };
           const canvas = document.createElement("canvas");
           canvas.width = 720;
-          canvas.height = 1000;
+          canvas.height = state.imageHeight;
           const context = canvas.getContext("2d")!;
           context.fillStyle = args.chapterId === "one" ? "#593982" : "#245e47";
-          context.fillRect(0, 0, 720, 1000);
+          context.fillRect(0, 0, 720, state.imageHeight);
           context.fillStyle = "#fff";
           context.font = "50px sans-serif";
           context.fillText(
@@ -113,7 +117,7 @@ test.beforeEach(async ({ page }) => {
             pageIndex: args.pageIndex,
             dataUrl: canvas.toDataURL("image/png"),
             width: 720,
-            height: 1000,
+            height: state.imageHeight,
           };
         }
         case "reader_save_position":
@@ -150,14 +154,26 @@ async function showToolbar(page: Page) {
     "1",
   );
 }
-async function openLibrary(page: Page) {
+async function openLibrary(page: Page, pageCount = 10000) {
   await page.getByTestId("nav-library").click();
   await page
     .getByRole("button", { name: "打开《已保存作品》", exact: true })
     .click();
   await page.getByRole("button", { name: "直接阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
-  await expect(page.getByLabel("当前页码")).toContainText("10000");
+  await expect(page.getByLabel("当前页码")).toContainText(String(pageCount));
+}
+async function openOnline(page: Page) {
+  await page.getByTestId("nav-completion").click();
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  await page.evaluate(() => window.workflowTest.finishCheck());
+  await page
+    .getByTestId("author-update-JM:102")
+    .getByRole("button", { name: /打开/ })
+    .click();
+  await page.getByRole("button", { name: "直接阅读", exact: true }).click();
+  await expect(page.getByTestId("comic-reader")).toBeVisible();
 }
 async function jump(page: Page, number: number) {
   await showToolbar(page);
@@ -275,14 +291,19 @@ test("single-page clicks and arrows advance, ordinary wheel only scrolls, zoom d
   await page.mouse.wheel(0, 300);
   await expect(page.getByLabel("当前页码")).toHaveText("3 / 10000");
   await page.keyboard.press("F11");
-  expect(
-    await page.evaluate(
-      () =>
-        window.readerTest.calls
-          .filter(({ command }) => command === "reader_fullscreen")
-          .at(-1)?.args,
-    ),
-  ).toEqual({ fullscreen: true });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.readerTest.calls
+            .filter(({ command }) => command === "reader_fullscreen")
+            .at(-1)?.args,
+      ),
+    )
+    .toEqual({ fullscreen: true });
+  await expect(
+    page.getByRole("button", { name: "退出全屏", exact: true }),
+  ).toHaveCount(1);
   await showToolbar(page);
   await page.getByLabel("选择章节").focus();
   await page.mouse.move(640, 250);
@@ -296,6 +317,16 @@ test("single-page clicks and arrows advance, ordinary wheel only scrolls, zoom d
   await viewport.focus();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("comic-reader")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.readerTest.calls
+            .filter(({ command }) => command === "reader_fullscreen")
+            .at(-1)?.args,
+      ),
+    )
+    .toEqual({ fullscreen: false });
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("comic-reader")).toHaveCount(0);
 });
@@ -331,6 +362,8 @@ test("chapter changes discard delayed images, retry stays page-specific, and cha
   await expect(page.getByLabel("当前页码")).toHaveText("1 / 10000");
   await jump(page, 10000);
   await expect(page.getByRole("button", { name: "重试此页" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "重试此页" })).toBeInViewport();
+  await expect(page.getByLabel("当前页码")).toHaveText("10000 / 10000");
   await page.evaluate(() => {
     window.readerTest.fail = null;
   });
@@ -338,6 +371,7 @@ test("chapter changes discard delayed images, retry stays page-specific, and cha
   await expect(
     page.getByRole("img", { name: "第 10000 页", exact: true }),
   ).toBeVisible();
+  await expect(page.getByLabel("当前页码")).toHaveText("10000 / 10000");
   const viewport = page.getByTestId("reader-viewport");
   await viewport.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -369,6 +403,83 @@ test("chapter changes discard delayed images, retry stays page-specific, and cha
   expect(await page.evaluate(() => window.readerTest.saved?.chapterId)).toBe(
     "two",
   );
+});
+
+test("fifty-thousand-page chapters cross scroll bands while dragging and reach their last page through the real slider", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    window.readerTest.firstChapterPages = 50000;
+    window.readerTest.imageHeight = 1044;
+  });
+  await openLibrary(page, 50000);
+  const viewport = page.getByTestId("reader-viewport");
+  await expect(
+    page.getByRole("img", { name: "第 1 页", exact: true }),
+  ).toBeVisible();
+  await page.mouse.move(600, 400);
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, -500);
+  await page.keyboard.up("Control");
+  await expect
+    .poll(async () => Number(await viewport.getAttribute("data-zoom")))
+    .toBeGreaterThan(1);
+  await viewport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight - element.clientHeight * 3.5;
+  });
+  await expect
+    .poll(() => viewport.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(100000);
+  await expect
+    .poll(async () =>
+      Number((await page.getByLabel("当前页码").innerText()).split(" / ")[0]),
+    )
+    .toBeGreaterThan(1);
+  const before = Number(
+    (await page.getByLabel("当前页码").innerText()).split(" / ")[0],
+  );
+  const oldFirst = await page
+    .locator(".reader-pages")
+    .getAttribute("data-first-page");
+  await page.mouse.move(640, 730);
+  await page.mouse.down();
+  await page.mouse.move(640, 200, { steps: 12 });
+  await expect(page.locator(".reader-pages")).not.toHaveAttribute(
+    "data-first-page",
+    oldFirst!,
+  );
+  await page.mouse.move(640, 100, { steps: 5 });
+  await page.mouse.up();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  const after = Number(
+    (await page.getByLabel("当前页码").innerText()).split(" / ")[0],
+  );
+  expect(after).toBeGreaterThanOrEqual(before);
+  expect(after - before).toBeLessThanOrEqual(2);
+  expect(
+    await viewport.evaluate((element) => element.scrollHeight),
+  ).toBeLessThanOrEqual(1_000_001);
+  await showToolbar(page);
+  await page.getByRole("slider", { name: "阅读进度" }).focus();
+  await page.keyboard.press("End");
+  await expect(page.getByLabel("当前页码")).toHaveText("50000 / 50000");
+  await expect(
+    page.getByRole("img", { name: "第 50000 页", exact: true }),
+  ).toBeInViewport();
+  await expect(page.getByLabel("当前页码")).toHaveText("50000 / 50000");
+  expect(await page.locator("[data-reader-page]").count()).toBeLessThanOrEqual(
+    12,
+  );
+  await page.keyboard.press("Home");
+  await expect(
+    page.getByRole("img", { name: "第 1 页", exact: true }),
+  ).toBeInViewport();
+  await expect(page.getByLabel("当前页码")).toHaveText("1 / 50000");
 });
 
 test("closing during open cancels its token and closes a late obsolete book without reopening the reader", async ({
@@ -437,13 +548,7 @@ test("a temporarily unavailable saved online chapter keeps the directory usable 
     };
     window.readerTest.failChapter = "one";
   });
-  await page.getByTestId("nav-completion").click();
-  await page
-    .getByTestId("author-update-JM:102")
-    .getByRole("button", { name: /打开/ })
-    .click();
-  await page.getByRole("button", { name: "直接阅读", exact: true }).click();
-  await expect(page.getByTestId("comic-reader")).toBeVisible();
+  await openOnline(page);
   await expect(page.getByRole("button", { name: "重试章节" })).toBeVisible();
   expect(
     await page.evaluate(() =>
@@ -472,13 +577,7 @@ test("a temporarily unavailable saved online chapter keeps the directory usable 
 test("online read does not download; download button uses the existing confirmation and reader keys leave that dialog alone", async ({
   page,
 }) => {
-  await page.getByTestId("nav-completion").click();
-  await page
-    .getByTestId("author-update-JM:102")
-    .getByRole("button", { name: /打开/ })
-    .click();
-  await page.getByRole("button", { name: "直接阅读", exact: true }).click();
-  await expect(page.getByTestId("comic-reader")).toBeVisible();
+  await openOnline(page);
   await expect(
     page.getByRole("img", { name: "第 1 页", exact: true }),
   ).toBeVisible();

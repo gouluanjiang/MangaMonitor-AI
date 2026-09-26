@@ -6,6 +6,8 @@ import {
   clampPosition,
   pageAtOffset,
   pageLayout,
+  pageSegment,
+  maxReaderPageHeight,
   readerWindow,
   visiblePages,
 } from "../src/reader/model.ts";
@@ -65,6 +67,24 @@ test("large chapters render a bounded viewport window, preserving page-relative 
     clampPosition({ chapterId: "c", pageIndex: 90000, offset: NaN }, 10),
     { chapterId: "c", pageIndex: 9, offset: 0 },
   );
+});
+
+test("long chapter bands preserve logical anchors within bounded browser coordinates, including extreme aspect ratios", () => {
+  const layout = pageLayout(50000, 1280, new Map([[100, 20000]]));
+  assert.ok(layout.total > 16_777_216);
+  assert.equal(layout.heights[100], maxReaderPageHeight);
+  for (const index of [0, 100, 5000, 9999, 25000, 49999]) {
+    const band = pageSegment(layout, index);
+    assert.ok(band.total <= 1_000_000);
+    assert.ok(band.first <= index && band.last >= index);
+    const logical = layout.tops[index] + layout.heights[index] * 0.35;
+    const physical = logical - band.start;
+    assert.ok(physical >= 0 && physical < band.total);
+    assert.equal(pageAtOffset(layout, band.start + physical), index);
+    const shifted = pageSegment(layout, Math.min(49999, index + 1));
+    const rebasedPhysical = logical - shifted.start;
+    assert.equal(shifted.start + rebasedPhysical, logical);
+  }
 });
 
 test("page cache prioritizes current pages, caps concurrent reads and discards stale chapter work on disposal", async () => {

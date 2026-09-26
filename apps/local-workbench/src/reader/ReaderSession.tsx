@@ -12,6 +12,7 @@ import {
   clampPosition,
   pageAtOffset,
   pageLayout,
+  pageSegment,
   readerWindow,
   visiblePages,
 } from "./model.ts";
@@ -50,6 +51,7 @@ export function ReaderSession({
       : { chapterId: initialChapter.id, pageIndex: 0, offset: 0 },
   );
   const [scrollTop, setScrollTop] = useState(0);
+  const [segmentPage, setSegmentPage] = useState(position.pageIndex);
   const [viewport, setViewport] = useState({ width: 1000, height: 700 });
   const [toolbarHover, setToolbarHover] = useState(false);
   const [toolbarFocus, setToolbarFocus] = useState(false);
@@ -71,6 +73,8 @@ export function ReaderSession({
     moved: boolean;
     drag: boolean;
     id: number;
+    lastX: number;
+    lastY: number;
   } | null>(null);
   const fullscreenBusy = useRef(false);
   const count = chapterCount?.id === chapterId ? chapterCount.count : 0;
@@ -81,6 +85,10 @@ export function ReaderSession({
     () => pageLayout(count, viewport.width * zoom, ratios.current),
     [count, viewport.width, zoom, revision],
   );
+  const segment = useMemo(
+    () => pageSegment(layout, segmentPage),
+    [layout, segmentPage],
+  );
   const latest = useRef({
     layout,
     mode,
@@ -89,8 +97,18 @@ export function ReaderSession({
     zoom,
     chapterId,
     viewport,
+    segment,
   });
-  latest.current = { layout, mode, position, count, zoom, chapterId, viewport };
+  latest.current = {
+    layout,
+    mode,
+    position,
+    count,
+    zoom,
+    chapterId,
+    viewport,
+    segment,
+  };
   const capturePosition = (): ReaderPosition => {
     const element = viewportRef.current;
     const state = latest.current;
@@ -108,7 +126,8 @@ export function ReaderSession({
         offset: Math.min(1, element.scrollTop / height),
       };
     }
-    const pageIndex = pageAtOffset(state.layout, element.scrollTop);
+    const logicalTop = state.segment.start + element.scrollTop;
+    const pageIndex = pageAtOffset(state.layout, logicalTop);
     return {
       chapterId: state.chapterId,
       pageIndex,
@@ -116,7 +135,7 @@ export function ReaderSession({
         0,
         Math.min(
           1,
-          (element.scrollTop - state.layout.tops[pageIndex]) /
+          (logicalTop - state.layout.tops[pageIndex]) /
             state.layout.heights[pageIndex],
         ),
       ),
@@ -145,6 +164,7 @@ export function ReaderSession({
     element.focus({ preventScroll: true });
     const observer = new ResizeObserver(() => {
       pendingAnchor.current = capturePosition();
+      setSegmentPage(pendingAnchor.current.pageIndex);
       setViewport({
         width: Math.max(1, element.clientWidth),
         height: Math.max(1, element.clientHeight),
@@ -173,11 +193,14 @@ export function ReaderSession({
           if (entry.state === "ready") {
             const ratio = entry.image.height / entry.image.width;
             if (ratios.current.get(index) !== ratio) {
+              if ((ratios.current.get(index) ?? 1.45) !== ratio) changed = true;
               ratios.current.set(index, ratio);
-              changed = true;
             }
           }
-        if (changed) pendingAnchor.current = anchor;
+        if (changed) {
+          pendingAnchor.current = anchor;
+          setSegmentPage(anchor.pageIndex);
+        }
         setRevision((n) => n + 1);
       },
     );
@@ -201,6 +224,7 @@ export function ReaderSession({
         pendingAnchor.current = target;
         currentPosition.current = target;
         setPosition(target);
+        setSegmentPage(target.pageIndex);
         setChapterCount({ id: chapterId, count: info.pageCount });
       })
       .catch((failure: unknown) => {
@@ -223,16 +247,32 @@ export function ReaderSession({
       Math.min(viewport.width, viewport.height / ratio) * zoom * ratio;
     element.scrollTop =
       mode === "vertical"
-        ? layout.tops[target.pageIndex] +
+        ? layout.tops[target.pageIndex] -
+          segment.start +
           layout.heights[target.pageIndex] * target.offset
         : singleHeight * target.offset;
     setScrollTop(element.scrollTop);
+    const active = gesture.current;
+    if (active?.drag) {
+      active.x = active.lastX;
+      active.y = active.lastY;
+      active.top = element.scrollTop;
+      active.left = element.scrollLeft;
+    }
     currentPosition.current = target;
     setPosition(target);
-  }, [layout, count, mode, zoom, viewport.height]);
+  }, [layout, segment, count, mode, zoom, viewport.height]);
+  const logicalTop =
+    pendingAnchor.current && count && mode === "vertical"
+      ? layout.tops[Math.min(count - 1, pendingAnchor.current.pageIndex)] +
+        layout.heights[Math.min(count - 1, pendingAnchor.current.pageIndex)] *
+          pendingAnchor.current.offset
+      : segment.start + scrollTop;
   const visible = count
     ? mode === "vertical"
-      ? visiblePages(layout, scrollTop, viewport.height)
+      ? visiblePages(layout, logicalTop, viewport.height).filter(
+          (index) => index >= segment.first && index <= segment.last,
+        )
       : [position.pageIndex]
     : [];
   const visibleKey = visible.join(",");
@@ -253,6 +293,7 @@ export function ReaderSession({
     pendingAnchor.current = pendingChapterPosition.current;
     currentPosition.current = pendingChapterPosition.current;
     setChapterId(id);
+    setSegmentPage(0);
     setPosition(pendingChapterPosition.current);
     setScrollTop(0);
   };
@@ -265,8 +306,14 @@ export function ReaderSession({
     };
     pendingAnchor.current = value;
     remember(value);
-    if (mode === "vertical" && viewportRef.current) {
-      viewportRef.current.scrollTop = layout.tops[value.pageIndex];
+    if (
+      mode === "vertical" &&
+      (value.pageIndex < segment.first || value.pageIndex > segment.last)
+    ) {
+      setSegmentPage(value.pageIndex);
+    } else if (mode === "vertical" && viewportRef.current) {
+      viewportRef.current.scrollTop =
+        layout.tops[value.pageIndex] - segment.start;
       setScrollTop(viewportRef.current.scrollTop);
       pendingAnchor.current = null;
     } else if (viewportRef.current) {
@@ -279,6 +326,7 @@ export function ReaderSession({
     if (next === mode) return;
     const value = { ...capturePosition(), offset: 0 };
     pendingAnchor.current = value;
+    setSegmentPage(value.pageIndex);
     setMode(next);
     setZoom(1);
     remember(value);
@@ -294,6 +342,7 @@ export function ReaderSession({
     );
     if (next === latest.current.zoom) return;
     pendingAnchor.current = capturePosition();
+    setSegmentPage(pendingAnchor.current.pageIndex);
     setZoom(next);
   };
   const toggleFullscreen = async () => {
@@ -397,6 +446,8 @@ export function ReaderSession({
       moved: false,
       drag: zoom > 1,
       id: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
     };
     if (zoom > 1) {
       event.preventDefault();
@@ -407,6 +458,8 @@ export function ReaderSession({
     const active = gesture.current,
       element = viewportRef.current;
     if (!active || !element) return;
+    active.lastX = event.clientX;
+    active.lastY = event.clientY;
     if (Math.hypot(event.clientX - active.x, event.clientY - active.y) > 5)
       active.moved = true;
     if (active.drag && active.moved) {
@@ -439,8 +492,11 @@ export function ReaderSession({
       mode === "vertical"
         ? {
             position: "absolute",
-            top: layout.tops[index],
-            width: viewport.width * zoom,
+            top: layout.tops[index] - segment.start,
+            width: Math.min(
+              viewport.width * zoom,
+              layout.heights[index] / ratio,
+            ),
             height: layout.heights[index],
           }
         : {
@@ -454,6 +510,19 @@ export function ReaderSession({
         index={index}
         entry={entry}
         style={style}
+        statusStyle={{
+          position: "absolute",
+          left: 0,
+          width: "100%",
+          height: Math.min(viewport.height, Number(style.height)),
+          top: Math.max(
+            0,
+            Math.min(
+              Number(style.height) - viewport.height,
+              mode === "vertical" ? logicalTop - layout.tops[index] : scrollTop,
+            ),
+          ),
+        }}
         onDecodeError={() => {
           cacheRef.current?.entries.set(index, {
             state: "error",
@@ -471,7 +540,7 @@ export function ReaderSession({
   const atEnd =
     count > 0 &&
     position.pageIndex === count - 1 &&
-    (mode === "single" || scrollTop + viewport.height >= layout.total - 36);
+    (mode === "single" || logicalTop + viewport.height >= layout.total - 36);
   return (
     <>
       <div
@@ -486,6 +555,17 @@ export function ReaderSession({
           if (!pendingAnchor.current && count) {
             const value = capturePosition();
             remember(value);
+            const element = viewportRef.current!;
+            if (
+              mode === "vertical" &&
+              value.pageIndex !== segmentPage &&
+              ((segment.first > 0 && element.scrollTop < viewport.height * 2) ||
+                (segment.last < count - 1 &&
+                  element.scrollTop + viewport.height * 3 > segment.total))
+            ) {
+              pendingAnchor.current = value;
+              setSegmentPage(value.pageIndex);
+            }
           }
           setScrollTop(viewportRef.current?.scrollTop ?? 0);
         }}
@@ -512,10 +592,12 @@ export function ReaderSession({
         ) : (
           <div
             className="reader-pages"
+            data-first-page={segment.first + 1}
+            data-last-page={segment.last + 1}
             style={
               mode === "vertical"
                 ? {
-                    height: layout.total,
+                    height: segment.total,
                     width: Math.max(viewport.width, viewport.width * zoom),
                   }
                 : { minHeight: viewport.height, minWidth: viewport.width }
@@ -563,6 +645,7 @@ export function ReaderSession({
         onResetZoom={() => {
           if (zoom !== 1) {
             pendingAnchor.current = capturePosition();
+            setSegmentPage(pendingAnchor.current.pageIndex);
             setZoom(1);
           }
         }}

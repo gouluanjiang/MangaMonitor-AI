@@ -12,6 +12,7 @@ The user completed the reader Q&A and authorized development on 2026-09-26. Loca
 - The toolbar has chapter selection and a draggable current-chapter page slider with xx/xx text. There is no numeric page input. Chapter end stops and exposes an explicit next-chapter action.
 - Online reading has a download-this-book action routed through the existing preparation and confirmation dialogs. It does not bypass confirmation or change the download executor's authority.
 - Page bytes exist only in bounded runtime memory. Local ZIPs are read by entry, not extracted in full. Only small progress metadata persists. Failed pages can be retried or skipped.
+- Long chapters retain logical page positions while using a bounded physical scroll segment, avoiding browser coordinate limits. Repositioning a segment preserves the current page, page-relative offset and active drag reference. Extremely narrow/tall images are proportionally constrained to a 250,000 CSS-pixel page height; original bytes remain unchanged.
 
 ## Reuse decisions
 

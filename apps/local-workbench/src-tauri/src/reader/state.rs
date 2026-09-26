@@ -178,8 +178,8 @@ impl PendingOpen {
 
 pub(crate) struct DesktopReader {
     pub sequence: AtomicU64,
-    pub current: Mutex<Option<Arc<Session>>>,
-    pub pending: Mutex<Option<Arc<PendingOpen>>>,
+    pub(super) current: Mutex<Option<Arc<Session>>>,
+    pub(super) pending: Mutex<Option<Arc<PendingOpen>>>,
     cancelled_requests: Mutex<VecDeque<String>>,
     pub pages: Arc<tokio::sync::Semaphore>,
     pub fullscreen_before: Mutex<Option<bool>>,
@@ -201,7 +201,7 @@ impl Default for DesktopReader {
 }
 
 impl DesktopReader {
-    pub fn begin(&self, request_id: &str) -> Result<Arc<PendingOpen>> {
+    pub(super) fn begin(&self, request_id: &str) -> Result<Arc<PendingOpen>> {
         validate_request_id(request_id)?;
         let mut current = self
             .current
@@ -252,7 +252,7 @@ impl DesktopReader {
             Ok(())
         }
     }
-    pub fn session(&self, id: &str) -> Result<Arc<Session>> {
+    pub(super) fn session(&self, id: &str) -> Result<Arc<Session>> {
         let current = self
             .current
             .lock()
@@ -265,7 +265,7 @@ impl DesktopReader {
         session.require_current()?;
         Ok(session)
     }
-    pub fn publish(&self, session: Arc<Session>) -> Result<()> {
+    pub(super) fn publish(&self, session: Arc<Session>) -> Result<()> {
         let mut current = self
             .current
             .lock()

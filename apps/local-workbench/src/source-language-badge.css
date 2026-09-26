@@ -1,0 +1,53 @@
+.source-language-cover {
+  position: relative;
+  width: 100%;
+}
+
+.source-language-badge[data-language-kind] {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: calc(100% - 14px);
+  padding: 3px 7px;
+  border: 1px solid #ffffff38;
+  border-radius: 4px;
+  background: #15141beb;
+  color: #ddd9e5;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  white-space: nowrap;
+  box-shadow: 0 1px 5px #0005;
+}
+
+.source-language-badge[data-language-kind="chinese"] {
+  border-color: #aa96d673;
+  background: #312346f0;
+  color: #edddff;
+}
+
+.source-language-badge[data-language-kind="untranslated"] {
+  border-color: #baaa8c73;
+  background: #362e23f0;
+  color: #f1dfbd;
+}
+
+.source-language-badge.source-language-inline {
+  position: static;
+  max-width: 100%;
+  box-shadow: none;
+}
+
+.cover-button.source-language-cover .cover-open {
+  bottom: 28px;
+}
+
+/* Keep the existing cover retry action clear of the lower corner badge. */
+.source-language-cover .library-cover-retry {
+  bottom: 40px;
+}

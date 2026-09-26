@@ -28,6 +28,22 @@ fn record(source: Source, id: &str) -> DiscoveryRecord {
     }
 }
 
+#[test]
+fn language_supplements_fit_beside_all_sixty_four_source_tags() {
+    let mut work = record(Source::Jm, "123").work;
+    work.tags = (0..64).map(|i| format!("Tag {i}")).collect();
+    work.tags.extend(["中文".into(), "生肉".into()]);
+    assert!(work.is_valid());
+    let encoded = serde_json::to_vec(&work).unwrap();
+    let decoded: DiscoveryWork = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(decoded.tags, work.tags);
+    work.tags.push("Overflow".into());
+    assert!(!work.is_valid());
+    work.tags.pop();
+    work.tags[65] = String::new();
+    assert!(!work.is_valid());
+}
+
 fn document() -> DiscoveryDocument {
     DiscoveryDocument {
         version: 1,

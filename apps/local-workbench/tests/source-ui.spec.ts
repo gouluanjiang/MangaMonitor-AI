@@ -51,6 +51,8 @@ type MockOptions = {
   reviewedWorkCredits?: boolean;
   workDates?: boolean;
   isolatedListing?: boolean;
+  workTags?: Record<string, string[]>;
+  detailTags?: Record<string, string[]>;
 };
 type Call = {
   command: string;
@@ -771,7 +773,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
           ? ["合成验收作者"]
           : [],
       description: null,
-      tags: [],
+      tags: options.workTags?.[workId] ?? [],
       favorite: null,
       chapterCount: null,
       pageCount: null,
@@ -1334,7 +1336,10 @@ async function installMock(page: Page, options: MockOptions = {}) {
                   : "123",
               epoch,
             );
-            if (raw.kind === "detail") work.favorite = remoteFavorite[source];
+            if (raw.kind === "detail") {
+              work.favorite = remoteFavorite[source];
+              work.tags = options.detailTags?.[work.workId] ?? work.tags;
+            }
             if (
               options.reviewedWorkCredits &&
               raw.kind === "detail" &&
@@ -1490,6 +1495,181 @@ async function openFavorites(page: Page) {
   await page.getByTestId("nav-favorites").click();
   await expect(page.getByTestId("source-workbench")).toBeVisible();
 }
+
+test("both source lists show tag-only language badges without detail requests and keep selection reachable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, {
+    collectionCount: 5,
+    workTags: {
+      "1": ["中文"],
+      "2": ["生肉"],
+      "3": ["日漫", "合成汉化组"],
+      "4": ["中文", "日本語"],
+      "5": ["日本語"],
+    },
+    detailTags: { "3": ["中文"] },
+  });
+  await openFavorites(page);
+  await mkdir("visual-evidence", { recursive: true });
+  for (const source of ["JM", "Pica"] as const) {
+    await page.getByTestId("source-tab-" + source).click();
+    for (const [workId, label, kind] of [
+      ["1", "已汉化", "chinese"],
+      ["2", "生肉", "untranslated"],
+      ["3", "未知", "unknown"],
+      ["4", "未知", "unknown"],
+      ["5", "生肉", "untranslated"],
+    ]) {
+      const badge = page
+        .getByTestId(`source-card-${source}:${workId}`)
+        .getByTestId("source-language-badge");
+      await expect(badge).toHaveText(label);
+      await expect(badge).toHaveAttribute("data-language-kind", kind);
+      await expect(badge).toHaveAttribute("data-language-context", "source");
+      await expect(badge).toHaveAttribute("aria-label", new RegExp(label));
+    }
+    await expect(
+      page
+        .getByTestId(`source-card-${source}:4`)
+        .getByTestId("source-language-badge"),
+    ).toHaveAttribute("title", /冲突/);
+    expect(
+      await page.evaluate(() =>
+        window.sourceTest.calls.filter(
+          (call) => call.command === "source_query" && call.kind === "detail",
+        ),
+      ),
+    ).toEqual([]);
+    await page.getByTestId("source-toggle-selection").click();
+    await page.getByTestId(`source-select-${source}:1`).check();
+    await page.getByTestId(`source-select-${source}:2`).check();
+    await expect(page.getByTestId("source-selection-bar")).toContainText(
+      "已选 2 部",
+    );
+    await page.getByTestId(`source-card-${source}:1`).scrollIntoViewIfNeeded();
+    for (const workId of ["1", "2", "3", "4", "5"]) {
+      await expect(
+        page
+          .getByTestId(`source-card-${source}:${workId}`)
+          .getByTestId("source-language-badge"),
+      ).toBeInViewport({ ratio: 1 });
+    }
+    await expect(page.getByTestId(`source-select-${source}:1`)).toBeInViewport({
+      ratio: 1,
+    });
+    await expect(page.getByTestId(`source-select-${source}:2`)).toBeInViewport({
+      ratio: 1,
+    });
+    const badge = await page
+      .getByTestId(`source-card-${source}:1`)
+      .getByTestId("source-language-badge")
+      .boundingBox();
+    const selection = await page
+      .getByTestId(`source-select-${source}:1`)
+      .boundingBox();
+    expect(badge).not.toBeNull();
+    expect(selection).not.toBeNull();
+    expect(
+      badge!.x + badge!.width <= selection!.x ||
+        selection!.x + selection!.width <= badge!.x ||
+        badge!.y + badge!.height <= selection!.y ||
+        selection!.y + selection!.height <= badge!.y,
+      "the language badge must not cover the selection control",
+    ).toBe(true);
+    await page.screenshot({
+      path: `visual-evidence/source-language-${source.toLowerCase()}-selection.png`,
+    });
+    await page.getByTestId("source-toggle-selection").click();
+    if (source === "JM")
+      await page.setViewportSize({ width: 1280, height: 900 });
+  }
+
+  await page.getByTestId("source-open-Pica:3").click();
+  await expect(
+    page.getByTestId("source-detail").getByTestId("source-language-badge"),
+  ).toHaveText("已汉化");
+  await page.getByTestId("source-detail-back").click();
+  await expect(
+    page.getByTestId("source-card-Pica:3").getByTestId("source-language-badge"),
+  ).toHaveText("已汉化");
+  await expect(
+    page.getByTestId("source-card-Pica:4").getByTestId("source-language-badge"),
+  ).toHaveText("未知");
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls
+        .filter(
+          (call) => call.command === "source_query" && call.kind === "detail",
+        )
+        .map((call) => [call.source, call.query]),
+    ),
+  ).toEqual([["Pica", "3"]]);
+  await page.getByTestId("source-tab-JM").click();
+  await expect(
+    page.getByTestId("source-card-JM:3").getByTestId("source-language-badge"),
+  ).toHaveText("未知");
+  await openAccounts(page);
+  await page.getByTestId("account-logout-Pica").click();
+  await page.getByTestId("account-connect-Pica").click();
+  await page.getByTestId("account-username").fill("synthetic-user");
+  await page.getByTestId("account-password").fill("fixture-only-password");
+  await page.getByTestId("account-login-submit").click();
+  await expect(page.getByTestId("account-Pica")).toContainText(
+    "合成验收账号 Pica 2",
+  );
+  await page.getByTestId("account-favorites-Pica").click();
+  await expect(
+    page.getByTestId("source-card-Pica:3").getByTestId("source-language-badge"),
+  ).toHaveText("未知");
+});
+
+test("cached source languages display immediately without reading details or guessing from a title", async ({
+  page,
+}) => {
+  const items: SourceWork[] = [[], ["中文"], ["日本語"]].map((tags, index) => ({
+    source: "JM",
+    workId: String(index + 1),
+    title: "[汉化] 日本語 合成旧收藏 " + (index + 1),
+    authors: ["合成作者"],
+    description: "合成汉化组说明，不属于语言标签",
+    tags,
+    favorite: true,
+    chapterCount: null,
+    pageCount: null,
+    coverAvailable: false,
+  }));
+  await installMock(page, {
+    collectionCount: items.length,
+    cacheSnapshot: {
+      items,
+      page: 1,
+      total: items.length,
+      pages: 1,
+      hasMore: false,
+      folders: [],
+      complete: true,
+      updatedAt: 1800000000000,
+      firstPageIds: items.map((work) => work.workId),
+    },
+  });
+  await openFavorites(page);
+  for (const [index, label] of ["未知", "已汉化", "生肉"].entries()) {
+    await expect(
+      page
+        .getByTestId("source-card-JM:" + (index + 1))
+        .getByTestId("source-language-badge"),
+    ).toHaveText(label);
+  }
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter(
+        (call) => call.command === "source_query" && call.kind !== "favorites",
+      ),
+    ),
+  ).toEqual([]);
+});
 
 test("favorites status filtering clears hidden selection and offers a direct full-read action", async ({
   page,

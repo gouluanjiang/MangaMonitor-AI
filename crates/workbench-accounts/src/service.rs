@@ -15,7 +15,7 @@ use std::{
 };
 use tokio::sync::{Mutex, OnceCell, Semaphore};
 use workbench_credentials::{CredentialKind, StoredCredential, Vault};
-use workbench_sources::FavoritePageRequest;
+use workbench_sources::{inherit_language_tags, FavoritePageRequest};
 use zeroize::Zeroizing;
 
 const MAX_QUERY_ITEMS: usize = 1000;
@@ -668,13 +668,21 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         }
         for work in &mut result.items {
             // Detail and lightweight list responses may omit their update
-            // field. Reuse only metadata already read for this exact ID in
+            // field or language labels. Reuse metadata for this exact ID in
             // the current authenticated source, without another request.
-            if work.source_updated_at.is_none() {
-                work.source_updated_at = slot
-                    .works
-                    .get(&work.work_id)
-                    .and_then(|known| known.source_updated_at.clone());
+            if let Some(known) = slot.works.get(&work.work_id) {
+                if work.source_updated_at.is_none() {
+                    work.source_updated_at = known.source_updated_at.clone();
+                }
+                let tags = inherit_language_tags(&work.tags, &known.tags);
+                if tags != work.tags {
+                    let original_tags = std::mem::replace(&mut work.tags, tags);
+                    if cache::validate_work(source, work).is_err() {
+                        // Optional language inheritance must not make a readable
+                        // source record exceed the unchanged metadata budget.
+                        work.tags = original_tags;
+                    }
+                }
             }
         }
         let sizes: Vec<_> = result

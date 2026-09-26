@@ -22,6 +22,7 @@ import {
 import type { InventoryFilter } from "./inventory-model.ts";
 import { sourceErrorMessage } from "./source-runtime.ts";
 import { SourceCover } from "./SourceWorkbench.tsx";
+import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { SourceIssues } from "./SourceIssues.tsx";
 
@@ -348,11 +349,16 @@ export function RankingPanel({
               >
                 <div className="source-card-cover">
                   <button
-                    className="source-cover-button"
+                    className="source-cover-button source-language-cover"
                     aria-label={"查看《" + work.title + "》详情"}
                     onClick={() => onOpen(work)}
                   >
                     <SourceCover adapter={adapter} scope={scope} work={work} />
+                    <SourceLanguageBadge
+                      tags={work.tags}
+                      work={work}
+                      scope={scope}
+                    />
                   </button>
                   <input
                     type="checkbox"

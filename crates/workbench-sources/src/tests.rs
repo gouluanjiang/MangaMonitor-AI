@@ -277,6 +277,124 @@ fn detail_value(source: Source, favorite: Option<bool>) -> Value {
     }
 }
 
+#[test]
+fn pica_categories_add_only_explicit_language_kinds_without_discarding_raw_tags() {
+    let raw_tags = (0..64).map(|i| format!("Tag {i}")).collect::<Vec<_>>();
+    let mut data = json!({
+        "_id": PICA_ID, "title": "日本語 title [中文]", "author": "漢化組",
+        "tags": raw_tags, "categories": ["日漫", "中文", "漢化", "生肉", "日文"]
+    });
+    let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
+    assert_eq!(&work.tags[..64], raw_tags);
+    assert_eq!(&work.tags[64..], ["中文", "生肉"]);
+    assert_eq!(work.tags.len(), 66);
+
+    data["tags"] = json!([" 日文 ", "Other"]);
+    let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
+    assert_eq!(work.tags, [" 日文 ", "Other", "中文"]);
+    data["tags"] = json!(vec!["Tag"; 65]);
+    assert_eq!(
+        protocol::work(Source::Pica, &data, false).unwrap_err().code,
+        "SOURCE_RESPONSE_INVALID"
+    );
+}
+
+#[test]
+fn optional_categories_never_guess_from_unrelated_fields_or_hide_malformed_parts() {
+    let mut data = json!({
+        "_id": PICA_ID, "title": "日本語 [中文]", "author": "中文",
+        "chineseTeam": "漢化組", "tags": ["Other"]
+    });
+    for categories in [
+        Value::Null,
+        json!("中文"),
+        json!({"title":"中文"}),
+        json!(["中文", false]),
+        json!(["中文", ""]),
+        json!(["中文", "x".repeat(2001)]),
+        json!(vec!["中文"; 65]),
+        json!(["日漫", "漢化組", "中文标题", "英語 ENG"]),
+    ] {
+        data["categories"] = categories;
+        let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
+        assert_eq!(work.tags, ["Other"]);
+    }
+    let jm = json!({
+        "id":"123", "name":"日本語 [中文]", "author":"中文", "tags":["Other"],
+        "category":{"title":"日漫"}, "category_sub":{"title":"中文"},
+        "categories":["中文", "生肉"]
+    });
+    assert_eq!(
+        protocol::work(Source::Jm, &jm, false).unwrap().0.tags,
+        ["Other"]
+    );
+}
+
+#[test]
+fn optional_language_categories_do_not_hide_a_work_at_the_ipc_byte_boundary() {
+    let mut raw_tags = vec!["t".repeat(2000); 32];
+    raw_tags.push("x".into());
+    let mut data = json!({"_id":PICA_ID,"title":"Boundary","tags":raw_tags});
+    let initial = protocol::work(Source::Pica, &data, false).unwrap().0;
+    let gap = protocol::MAX_WORK_JSON_BYTES - serde_json::to_vec(&initial).unwrap().len();
+    assert!(gap < 2000);
+    data["tags"][32] = json!("x".repeat(gap + 1));
+    let original = protocol::work(Source::Pica, &data, false).unwrap().0;
+    assert_eq!(
+        serde_json::to_vec(&original).unwrap().len(),
+        protocol::MAX_WORK_JSON_BYTES
+    );
+    data["categories"] = json!(["中文", "生肉"]);
+    let supplemented = protocol::work(Source::Pica, &data, false).unwrap().0;
+    assert_eq!(supplemented, original);
+
+    let mut conflict = original;
+    conflict.tags.push("中文".into());
+    let excess = serde_json::to_vec(&conflict).unwrap().len() - protocol::MAX_WORK_JSON_BYTES;
+    let length = conflict.tags[32].len() - excess;
+    conflict.tags[32].truncate(length);
+    data["tags"] = json!(conflict.tags);
+    data["categories"] = json!(["生肉"]);
+    let preserved = protocol::work(Source::Pica, &data, false).unwrap().0;
+    assert_eq!(retained_language_tags(&preserved.tags), ["中文", "生肉"]);
+    assert_eq!(preserved.title, conflict.title);
+    assert_eq!(preserved.authors, conflict.authors);
+    assert!(serde_json::to_vec(&preserved).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+}
+
+#[tokio::test]
+async fn language_evidence_flows_through_existing_pica_routes_without_more_requests() {
+    let record = json!({"_id":PICA_ID,"title":"Fixture","categories":["同人","中文","生肉"]});
+    let paged = json!({"comics":{"page":1,"pages":1,"limit":20,"total":1,"docs":[record.clone()]}});
+    let sources = scripted(vec![
+        Ok(paged.clone()),
+        Ok(paged),
+        Ok(json!({"comics":[record.clone()]})),
+        Ok(json!({"comic":record})),
+    ]);
+    let pica = session(Source::Pica);
+    let search = sources.search(&pica, "Author", 1).await.unwrap();
+    let favorites = sources
+        .favorites(
+            &pica,
+            FavoritePageRequest {
+                page: 1,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+        .unwrap();
+    let ranking = sources.ranking(&pica, None, "week").await.unwrap();
+    let detail = sources.detail(&pica, PICA_ID).await.unwrap();
+    for page in [search, favorites, ranking] {
+        assert_eq!(page.items[0].tags, ["中文", "生肉"]);
+    }
+    assert_eq!(detail.tags, ["中文", "生肉"]);
+    assert_eq!(sources.recorded.lock().unwrap().len(), 4);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
 fn jm_detail_with_blank_metadata() -> Value {
     json!({
         "id":"123",

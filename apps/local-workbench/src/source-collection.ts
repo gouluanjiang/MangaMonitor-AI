@@ -6,6 +6,10 @@ import type {
 } from "./source-types.ts";
 import { SourceError } from "./source-runtime.ts";
 import {
+  inheritLanguageTags,
+  retainedLanguageTags,
+} from "./source-language.ts";
+import {
   compactWork,
   catalogBytes,
   sameSourceWork,
@@ -136,6 +140,30 @@ export function firstPageMatches(snapshot: CatalogSnapshot, page: SourcePage) {
       (snapshot.issues ?? []).filter((issue) => issue.page === 1),
     ) === JSON.stringify(page.issues ?? [])
   );
+}
+
+function refreshHeadLanguage(snapshot: CatalogSnapshot, page: SourcePage) {
+  const incoming = new Map(
+    page.items.map((work) => [work.source + ":" + work.workId, work]),
+  );
+  let changed = false;
+  const items = snapshot.items.map((work) => {
+    const fresh = incoming.get(work.source + ":" + work.workId);
+    if (!fresh) return work;
+    const tags = retainedLanguageTags(
+      inheritLanguageTags(fresh.tags, work.tags),
+    );
+    if (
+      tags.length === work.tags.length &&
+      tags.every((tag, i) => tag === work.tags[i])
+    )
+      return work;
+    changed = true;
+    return { ...work, tags };
+  });
+  if (!changed) return snapshot;
+  const updated = { ...snapshot, items };
+  return catalogBytes(updated) <= SOURCE_MEMORY_BYTES ? updated : snapshot;
 }
 export type CollectionPhase =
   | "idle"
@@ -385,9 +413,13 @@ export class CollectionReader {
           cached &&
           firstPageMatches(cached, first) &&
           !(!cached.complete && cached.pageEnds === undefined)
-        )
+        ) {
+          // An unchanged ID boundary still may contain newly available labels.
+          // Refresh only that already-read head, without re-fetching the tail.
+          const enriched = refreshHeadLanguage(cached, first);
+          if (enriched !== cached) this.accept(enriched);
           this.publish({ freshness: "verified-cache" });
-        else this.accept(freshHead);
+        } else this.accept(freshHead);
         this.verified = true;
         await this.checkpoint();
       }

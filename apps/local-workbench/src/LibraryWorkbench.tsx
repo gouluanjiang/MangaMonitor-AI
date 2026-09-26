@@ -30,6 +30,7 @@ import { libraryItemStatus, readableLibraryItem } from "./inventory-model.ts";
 import type { SourceWork } from "./source-types.ts";
 import type { SourceGridHandle, GridAnchor } from "./VirtualSourceGrid.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
+import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import "./library-workbench.css";
 import {
   libraryFilterLabels,
@@ -397,6 +398,7 @@ function LibraryDetail({
             {item.authors.length ? item.authors.join("、") : "作者资料未取得"}
           </p>
           <div className="source-tags">
+            <SourceLanguageBadge tags={item.tags} localVersion inline />
             {item.tags.map((tag) => (
               <span key={tag}>{tag}</span>
             ))}
@@ -723,7 +725,7 @@ export function LibraryWorkbench({
                   >
                     <div className="source-card-cover">
                       <div
-                        className="library-cover-open"
+                        className="library-cover-open source-language-cover"
                         role="button"
                         tabIndex={0}
                         aria-label={"查看《" + item.title + "》电脑详情"}
@@ -741,6 +743,7 @@ export function LibraryWorkbench({
                           snapshot={library.snapshot}
                           item={item}
                         />
+                        <SourceLanguageBadge tags={item.tags} localVersion />
                       </div>
                     </div>
                     <h3>

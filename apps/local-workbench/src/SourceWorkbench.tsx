@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { SourceIssues } from "./SourceIssues.tsx";
+import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import {
   jmSearchScopeNote,
   readCompleteSearch,
@@ -45,6 +46,10 @@ import {
 } from "./source-types.ts";
 import { SourceError, sourceErrorMessage } from "./source-runtime.ts";
 import { CollectionReader } from "./source-collection.ts";
+import {
+  inheritLanguageTags,
+  retainedLanguageTags,
+} from "./source-language.ts";
 import type { CollectionState } from "./source-collection.ts";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
@@ -917,16 +922,28 @@ export function SourceWorkbench({
       const previous = itemsRef.current.find(
         (item) => sourceWorkKey(item) === sourceWorkKey(found!),
       );
+      if (previous) {
+        const tags = inheritLanguageTags(found.tags, previous.tags);
+        if (tags !== found.tags) found = { ...found, tags };
+      }
       if (found.sourceUpdatedAt == null && previous?.sourceUpdatedAt)
         found = { ...found, sourceUpdatedAt: previous.sourceUpdatedAt };
+      const languageTags = retainedLanguageTags(found.tags);
       if (
-        found.sourceUpdatedAt &&
-        previous?.sourceUpdatedAt !== found.sourceUpdatedAt
+        (found.sourceUpdatedAt &&
+          previous?.sourceUpdatedAt !== found.sourceUpdatedAt) ||
+        (previous &&
+          JSON.stringify(retainedLanguageTags(previous.tags)) !==
+            JSON.stringify(languageTags))
       ) {
         const dated = found;
         itemsRef.current = itemsRef.current.map((item) =>
           sourceWorkKey(item) === sourceWorkKey(dated)
-            ? { ...item, sourceUpdatedAt: dated.sourceUpdatedAt }
+            ? {
+                ...item,
+                tags: languageTags,
+                sourceUpdatedAt: dated.sourceUpdatedAt,
+              }
             : item,
         );
         setItems(itemsRef.current);
@@ -1334,7 +1351,7 @@ export function SourceWorkbench({
               <div className="source-card-cover">
                 <button
                   type="button"
-                  className="source-cover-button"
+                  className="source-cover-button source-language-cover"
                   data-testid={"source-open-" + key}
                   onClick={() => void openDetail(toWorkReference(work))}
                   aria-label={"查看《" + work.title + "》详情"}
@@ -1348,6 +1365,11 @@ export function SourceWorkbench({
                       resolveMissing={view === "following"}
                     />
                   )}
+                  <SourceLanguageBadge
+                    tags={work.tags}
+                    work={work}
+                    scope={scope}
+                  />
                 </button>
                 {selectionMode && !showingOtherAuthors && (
                   <input
@@ -1465,6 +1487,12 @@ export function SourceWorkbench({
               </div>
               {displayDetail && <AuthorCreditNote work={displayDetail} />}
               <div className="source-tags">
+                <SourceLanguageBadge
+                  tags={detail.tags}
+                  work={detail}
+                  scope={scope}
+                  inline
+                />
                 {detail.tags.map((tag) => (
                   <span key={tag}>{tag}</span>
                 ))}
@@ -2459,7 +2487,7 @@ export function SourceWorkGrid({
             >
               <button
                 type="button"
-                className="source-cover-button"
+                className="source-cover-button source-language-cover"
                 onClick={() => onOpenWork(toWorkReference(work))}
                 aria-label={"查看《" + work.title + "》来源详情"}
               >
@@ -2470,6 +2498,11 @@ export function SourceWorkGrid({
                     <span>连接来源后读取封面</span>
                   </div>
                 )}
+                <SourceLanguageBadge
+                  tags={work.tags}
+                  work={work}
+                  scope={scope}
+                />
               </button>
               <h3>
                 <button

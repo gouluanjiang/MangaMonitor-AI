@@ -32,6 +32,7 @@ type Options = {
   importedNames?: string[];
   usability?: boolean;
   workDates?: boolean;
+  languageTags?: string[][];
 };
 type Hooks = {
   copiedSummary?: string;
@@ -108,7 +109,7 @@ async function installMock(page: Page, options: Options = {}) {
         title: base,
         authors: ["合成作者"],
         description: null,
-        tags: [],
+        tags: options.languageTags?.[number - 1] ?? [],
         bytes: 4096,
         modifiedAt: 1800000000000,
         addedAt:
@@ -469,6 +470,59 @@ async function installMock(page: Page, options: Options = {}) {
   await page.goto("/");
   await expect(page.getByTestId("library-workbench")).toBeVisible();
 }
+
+test("library languages use saved version tags and leave linked historical versions unknown without source requests", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1672, height: 941 });
+  await installMock(page, {
+    pcCount: 4,
+    namespaceMarks: true,
+    languageTags: [[], ["日本語"], ["中文"], ["中文", "日本語"]],
+  });
+  for (const [index, label] of ["未知", "生肉", "已汉化", "未知"].entries()) {
+    const badge = page
+      .getByTestId("library-card-" + id(index + 1))
+      .getByTestId("source-language-badge");
+    await expect(badge).toHaveText(label);
+    await expect(badge).toHaveAttribute("data-language-context", "local");
+    await expect(badge).toHaveAttribute(
+      "aria-label",
+      new RegExp(`本地版本语言：${label}.*本地版本保存的标签`),
+    );
+  }
+  // A known remote identity is not evidence of the saved package's language.
+  expect(
+    await page.evaluate(() => window.libraryTest.pc.items[0].sourceRef),
+  ).toEqual({ source: "JM", workId: "123" });
+  await page.getByTestId("library-open-" + id(1)).click();
+  await expect(page.getByTestId("library-detail")).toBeVisible();
+  await page.getByTestId("library-detail-back").click();
+  await expect(
+    page
+      .getByTestId("library-card-" + id(1))
+      .getByTestId("source-language-badge"),
+  ).toHaveText("未知");
+  expect(
+    await page.evaluate(() =>
+      window.libraryTest.calls.filter((call) =>
+        /^(source_query|source_cover|source_matches_)/.test(call.command),
+      ),
+    ),
+  ).toEqual([]);
+  await page.getByTestId("library-card-" + id(1)).scrollIntoViewIfNeeded();
+  for (const number of [1, 2, 3, 4]) {
+    await expect(
+      page
+        .getByTestId("library-card-" + id(number))
+        .getByTestId("source-language-badge"),
+    ).toBeInViewport({ ratio: 1 });
+  }
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/language-local-versions.png",
+  });
+});
 
 test("library detail reveals only the selected item and retains missing-file feedback for retry", async ({
   page,

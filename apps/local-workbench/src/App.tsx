@@ -34,6 +34,10 @@ import type { DocumentSnapshot } from "./persistence.ts";
 import "./booklists.css";
 import { AccountSettings } from "./AccountSettings.tsx";
 import { SourceWorkbench } from "./SourceWorkbench.tsx";
+import {
+  SourceLanguageBadge,
+  SourceLanguageProvider,
+} from "./SourceLanguageBadge.tsx";
 import { CompletionPanel } from "./CompletionPanel.tsx";
 import {
   LibraryWorkbench,
@@ -67,7 +71,12 @@ import { useDownloadInventory } from "./download-inventory.ts";
 import { createInventoryMatcher } from "./inventory-model.ts";
 import { createSourceAdapter, sourceErrorMessage } from "./source-runtime.ts";
 import { boundSourceCache } from "./source-memory.ts";
-import { sources, sourceWorkKey, sourceLabel } from "./source-types.ts";
+import {
+  sources,
+  sourceWorkKey,
+  sourceLabel,
+  mergeSourceWorks,
+} from "./source-types.ts";
 import type {
   AccountSummary,
   Source,
@@ -284,8 +293,15 @@ export default function App() {
         const next = { ...previous };
         for (const work of incoming)
           if (work.source === scope.source) {
-            delete next[sourceWorkKey(work)];
-            next[sourceWorkKey(work)] = { scope, work };
+            const key = sourceWorkKey(work);
+            const known = previous[key];
+            const merged =
+              known?.scope.source === scope.source &&
+              known.scope.sessionId === scope.sessionId
+                ? mergeSourceWorks([known.work], [work])[0]
+                : work;
+            delete next[key];
+            next[key] = { scope, work: merged };
           }
         return boundSourceCache(next);
       });
@@ -1109,7 +1125,7 @@ export default function App() {
             >
               <div className="cover-wrap">
                 <button
-                  className="cover-button"
+                  className="cover-button source-language-cover"
                   onClick={() => openWork(work.id)}
                   data-testid={
                     gridId === "recent-grid"
@@ -1128,6 +1144,10 @@ export default function App() {
                   <span className="cover-open">
                     查看作品 <Icon name="arrow" size={15} />
                   </span>
+                  <SourceLanguageBadge
+                    tags={work.tags}
+                    localVersion={page === "library"}
+                  />
                 </button>
                 <span className="source-badge">{work.source}</span>
                 {selectionMode && gridId !== "recent-grid" && (
@@ -1563,6 +1583,11 @@ export default function App() {
               <Icon name="arrow" size={14} />
             </button>
             <div className="tags">
+              <SourceLanguageBadge
+                tags={work.tags}
+                localVersion={page === "library"}
+                inline
+              />
               {work.tags.map((tag) => (
                 <span key={tag}>{tag}</span>
               ))}
@@ -2138,7 +2163,7 @@ export default function App() {
       </p>
     );
   }
-  return (
+  const content = (
     <div
       className="app-shell"
       data-background-mode={appearance.backgroundMode}
@@ -2631,5 +2656,10 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+  return (
+    <SourceLanguageProvider cache={sourceCache}>
+      {content}
+    </SourceLanguageProvider>
   );
 }

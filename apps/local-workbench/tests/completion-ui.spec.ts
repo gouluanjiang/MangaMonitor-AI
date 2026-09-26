@@ -1159,6 +1159,108 @@ test("author update dates sort only loaded records, compose with ownership and p
   expect(await discoveryCalls(page, "discovery_start")).toBe(0);
 });
 
+for (const entry of ["saved updates", "author search"] as const) {
+  test(`${entry} shows the same language evidence without detail sweeps and enriches only an opened work`, async ({
+    page,
+  }) => {
+    await install(page);
+    await page.evaluate(() => {
+      const tags = [["中文"], ["日本語"], ["日漫", "合成汉化组"]];
+      window.authorTest.view.records.forEach((record, index) => {
+        record.work.tags = tags[index];
+      });
+      window.authorTest.searchRecords.forEach((work, index) => {
+        work.tags = tags[index];
+      });
+      window.authorTest.detailRecords[2].tags = ["中文"];
+    });
+    if (entry === "saved updates") {
+      await open(page);
+      expect(
+        await page.evaluate(() =>
+          window.authorTest.calls.filter((call) =>
+            /^(source_query|discovery_start|discovery_start_unfinished)$/.test(
+              call.command,
+            ),
+          ),
+        ),
+      ).toEqual([]);
+    } else {
+      await page.getByTestId("nav-author-search").click();
+      await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成作者");
+      await page.getByRole("button", { name: "搜索两站作品" }).click();
+      await expect(page.getByTestId("completion-counts")).toContainText(
+        "当前检查范围已读完",
+      );
+    }
+    await page.getByRole("button", { name: "全部 3", exact: true }).click();
+    for (const [key, label] of [
+      ["JM:123", "已汉化"],
+      ["JM:456", "生肉"],
+      ["Pica:0123456789abcdef01234567", "未知"],
+    ]) {
+      const badge = page
+        .getByTestId("author-update-" + key)
+        .getByTestId("source-language-badge");
+      await expect(badge).toHaveText(label);
+      await expect(badge).toHaveAttribute("data-language-context", "source");
+    }
+    expect(
+      await page.evaluate(() =>
+        window.authorTest.calls.filter(
+          (call) =>
+            call.command === "source_query" && call.args.kind === "detail",
+        ),
+      ),
+    ).toEqual([]);
+    await page.getByRole("button", { name: "多选", exact: true }).click();
+    const japanese = page.getByTestId("author-update-JM:456");
+    await japanese.getByRole("checkbox").check();
+    await expect(page.getByTestId("completion-selection-bar")).toContainText(
+      "已选 1 本",
+    );
+    await japanese.scrollIntoViewIfNeeded();
+    for (const key of ["JM:123", "JM:456", "Pica:0123456789abcdef01234567"]) {
+      await expect(
+        page
+          .getByTestId("author-update-" + key)
+          .getByTestId("source-language-badge"),
+      ).toBeInViewport({ ratio: 1 });
+    }
+    await expect(japanese.getByRole("checkbox")).toBeInViewport({ ratio: 1 });
+    await mkdir("visual-evidence", { recursive: true });
+    await page.screenshot({
+      path: `visual-evidence/language-${entry === "saved updates" ? "author-updates" : "author-search"}.png`,
+    });
+    await page.getByRole("button", { name: "退出多选", exact: true }).click();
+    const unknown = page.getByTestId(
+      "author-update-Pica:0123456789abcdef01234567",
+    );
+    await unknown.locator(".source-card-open").click();
+    await expect(
+      page.getByTestId("source-detail").getByTestId("source-language-badge"),
+    ).toHaveText("已汉化");
+    await page.getByTestId("source-detail-back").click();
+    await expect(unknown.getByTestId("source-language-badge")).toHaveText(
+      "已汉化",
+    );
+    await expect(japanese.getByTestId("source-language-badge")).toHaveText(
+      "生肉",
+    );
+    expect(
+      await page.evaluate(() =>
+        window.authorTest.calls
+          .filter(
+            (call) =>
+              call.command === "source_query" && call.args.kind === "detail",
+          )
+          .map((call) => [call.args.source, call.args.query]),
+      ),
+    ).toEqual([["Pica", "0123456789abcdef01234567"]]);
+    expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+  });
+}
+
 test("saved omissions remain visible, same-source receipts filter ownership, and entering the page never starts a check", async ({
   page,
 }) => {

@@ -195,7 +195,8 @@ impl DiscoveryWork {
                 .description
                 .as_ref()
                 .is_none_or(|text| bounded(text, 10_000))
-            && self.tags.len() <= 64
+            // Up to 64 original source tags plus two explicit language kinds.
+            && self.tags.len() <= 66
             && self
                 .tags
                 .iter()

@@ -34,6 +34,7 @@ import {
 } from "./inventory-model.ts";
 import type { InventoryFilter } from "./inventory-model.ts";
 import { SourceCover } from "./SourceWorkbench.tsx";
+import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { createAuthorSearchAdapter } from "./author-search.ts";
 import { partitionAuthorRecords } from "./author-evidence.ts";
@@ -953,11 +954,18 @@ export function CompletionPanel({
                       )
                     }
                   >
-                    <SourceCover
-                      adapter={sourceAdapter}
-                      scope={scope}
-                      work={work}
-                    />
+                    <div className="source-language-cover">
+                      <SourceCover
+                        adapter={sourceAdapter}
+                        scope={scope}
+                        work={work}
+                      />
+                      <SourceLanguageBadge
+                        tags={work.tags}
+                        work={work}
+                        scope={scope}
+                      />
+                    </div>
                     <strong>{work.title}</strong>
                     <span>{work.authors.join("、") || "作者信息未提供"}</span>
                     <AuthorCreditNote work={work} />

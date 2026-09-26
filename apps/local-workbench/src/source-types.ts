@@ -1,4 +1,5 @@
 import type { WorkReference } from "./booklists.ts";
+import { inheritLanguageTags } from "./source-language.ts";
 
 export type Source = "JM" | "Pica";
 export interface SourceScope {
@@ -174,10 +175,17 @@ export function mergeSourceWorks(
   for (const work of incoming) {
     const key = sourceWorkKey(work),
       previous = merged.get(key);
+    const tags = previous
+      ? inheritLanguageTags(work.tags, previous.tags)
+      : work.tags;
+    const sourceUpdatedAt =
+      work.sourceUpdatedAt == null && previous?.sourceUpdatedAt
+        ? previous.sourceUpdatedAt
+        : work.sourceUpdatedAt;
     merged.set(
       key,
-      work.sourceUpdatedAt == null && previous?.sourceUpdatedAt
-        ? { ...work, sourceUpdatedAt: previous.sourceUpdatedAt }
+      tags !== work.tags || sourceUpdatedAt !== work.sourceUpdatedAt
+        ? { ...work, tags, sourceUpdatedAt }
         : work,
     );
   }

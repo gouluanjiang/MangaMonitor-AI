@@ -34,13 +34,35 @@ A negative integer Pica `pagesCount` is unknown (`null`), not zero or its absolu
 Counts above JavaScript's maximum safe integer (9,007,199,254,740,991) are rejected.
 Each serialized work is limited to 64 KiB, including JSON escaping. Titles are
 limited to 2,000 UTF-16 code units, descriptions to 10,000, and each author/tag
-to 2,000 with at most 64 entries in each array. Folder names have a 2,000-unit
+to 2,000 with at most 64 original entries in each array. Folder names have a 2,000-unit
 limit. These string limits use the same units as JavaScript String.length.
 JM author/tag arrays may contain blank string placeholders. They are omitted
 only after checking the original array's 64-entry limit and every entry's string
 type and 2,000-unit limit. Nonblank entries retain their order and exact content.
 This compatibility rule does not apply to Pica or relax IDs, titles, favorite
 state, counts, the whole-work budget, or cover transport validation.
+
+Explicit language labels are preserved for work cards. Only exact language labels
+are matched after trimming; English `Chinese`/`Japanese` matching ignores ASCII
+case. Chinese/translation labels form one kind, Japanese labels and the source's
+literal `生肉` form the untranslated kind. `生肉` alone does not establish Japanese.
+Both kinds together remain conflicting evidence, not a chosen language. Titles,
+authors, translation-team names and ordinary categories such as `日漫` never infer
+a language.
+
+Pica favorites expose `categories`; its search, ranking and detail schemas also
+expose `tags`. Only explicit language labels from a bounded valid categories
+array can supplement tags, once per kind, for at most 66 normalized tags. Invalid
+optional categories do not hide an otherwise valid work. JM list schemas do not
+establish language tags; already available JM detail tags remain usable. The
+account layer can retain at most two previously read language labels for the
+exact work in the current source session when a response has no explicit label.
+Fresh labels, including conflicts, replace historical language evidence. These
+metadata operations add no source requests and do not expand the 64 KiB work
+budget. At its extreme boundary, category language evidence first replaces an
+optional description; non-language tags can then yield to preserve a conflict.
+If even both compact language labels cannot fit beside required metadata, the
+work remains unknown rather than falsely selecting one conflict side.
 
 JM and Pica search, favorite and ranking pages isolate malformed work records.
 `SourcePage.items` contains only validated works in their original relative order;

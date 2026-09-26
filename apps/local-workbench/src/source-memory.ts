@@ -1,4 +1,5 @@
 import type { CatalogSnapshot, SourceWork } from "./source-types.ts";
+import { retainedLanguageTags } from "./source-language.ts";
 export const SOURCE_MEMORY_BYTES = 32 * 1024 * 1024;
 const sizes = new WeakMap<object, number>();
 export function jsonBytes(value: object): number {
@@ -9,9 +10,12 @@ export function jsonBytes(value: object): number {
   return bytes;
 }
 export function compactWork(work: SourceWork): SourceWork {
-  return work.description === null && work.tags.length === 0
+  const tags = retainedLanguageTags(work.tags);
+  return work.description === null &&
+    work.tags.length === tags.length &&
+    work.tags.every((tag, i) => tag === tags[i])
     ? work
-    : { ...work, description: null, tags: [] };
+    : { ...work, description: null, tags };
 }
 export function catalogBytes(snapshot: CatalogSnapshot): number {
   return (

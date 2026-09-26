@@ -1,11 +1,15 @@
 //! Account and catalog operations only. No task authority, chapter/media routes,
 //! filesystem writes, automatic pagination, retries, or production-state access.
 mod cover;
+mod language;
 mod protocol;
 mod ranking;
 mod thumbnail;
 mod types;
 
+pub use language::{
+    inherit_language_tags, language_tag_kind, retained_language_tags, LanguageTagKind,
+};
 pub use protocol::parse_work_id;
 pub use types::*;
 

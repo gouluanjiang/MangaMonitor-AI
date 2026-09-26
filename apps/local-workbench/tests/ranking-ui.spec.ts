@@ -37,7 +37,7 @@ test.afterEach(async ({ page }) => {
     ),
   ).toEqual([]);
 });
-async function install(page: Page) {
+async function install(page: Page, languageTags?: string[][]) {
   const rootId = "a".repeat(64);
   const accounts = (["JM", "Pica"] as const).map((source) => ({
     source,
@@ -49,13 +49,16 @@ async function install(page: Page) {
     errorCode: null,
   }));
   const works: SourceWork[] = accounts.flatMap(({ source }) =>
-    [1, 2].map((i) => ({
+    Array.from({ length: languageTags?.length ?? 2 }, (_, index) => ({
       source,
-      workId: source === "JM" ? String(i) : String(i).padStart(24, "0"),
-      title: source + " 合成榜单作品 " + i,
+      workId:
+        source === "JM"
+          ? String(index + 1)
+          : String(index + 1).padStart(24, "0"),
+      title: source + " 合成榜单作品 " + (index + 1),
       authors: ["合成作者"],
       description: null,
-      tags: [],
+      tags: languageTags?.[index] ?? [],
       favorite: null,
       chapterCount: 1,
       pageCount: 20,
@@ -217,6 +220,66 @@ async function install(page: Page) {
   await page.goto("/");
   await page.getByTestId("nav-discovery").click();
 }
+
+test("both rankings show explicit languages while a manga category remains unknown and selection stays reachable", async ({
+  page,
+}) => {
+  await install(page, [["中文"], ["生肉"], ["日漫"], ["中文", "日本語"]]);
+  await page.getByTestId("discovery-JM").click();
+  await mkdir("visual-evidence", { recursive: true });
+  for (const source of ["JM", "Pica"] as const) {
+    if (source === "Pica")
+      await page
+        .getByTestId("ranking-panel")
+        .getByTestId("discovery-Pica")
+        .click();
+    for (const [index, label] of ["已汉化", "生肉", "未知", "未知"].entries()) {
+      const workId =
+        source === "JM"
+          ? String(index + 1)
+          : String(index + 1).padStart(24, "0");
+      const badge = page
+        .getByTestId(`rank-work-${source}:${workId}`)
+        .getByTestId("source-language-badge");
+      await expect(badge).toHaveText(label);
+      await expect(badge).toHaveAttribute("data-language-context", "source");
+    }
+    const selectedId = source === "JM" ? "2" : "2".padStart(24, "0");
+    await page
+      .getByTestId(`rank-work-${source}:${selectedId}`)
+      .getByRole("checkbox")
+      .check();
+    await expect(page.getByTestId("ranking-panel")).toContainText("已选 1 部");
+    await page
+      .getByTestId(`rank-work-${source}:${selectedId}`)
+      .scrollIntoViewIfNeeded();
+    for (const number of [1, 2, 3, 4]) {
+      const workId =
+        source === "JM" ? String(number) : String(number).padStart(24, "0");
+      await expect(
+        page
+          .getByTestId(`rank-work-${source}:${workId}`)
+          .getByTestId("source-language-badge"),
+      ).toBeInViewport({ ratio: 1 });
+    }
+    await expect(
+      page
+        .getByTestId(`rank-work-${source}:${selectedId}`)
+        .getByRole("checkbox"),
+    ).toBeInViewport({ ratio: 1 });
+    await page.screenshot({
+      path: `visual-evidence/language-ranking-${source.toLowerCase()}.png`,
+    });
+  }
+  expect(
+    await page.evaluate(() =>
+      window.rankingTest.calls.filter(
+        (call) =>
+          call.command === "source_query" && call.args.kind !== "ranking",
+      ),
+    ),
+  ).toEqual([]);
+});
 
 test("ranking retains good works and exposes isolated source positions as read-only diagnostics", async ({
   page,

@@ -333,6 +333,40 @@ test("changed cached head rebuilds page 1 while keeping the previous complete sn
   assert.equal(r.state.completeSnapshot.items.length, 40);
   assert.deepEqual(f.calls, [1]);
 });
+
+test("an unchanged cached head refreshes language labels without traversing the saved tail", async () => {
+  const f = fixture(40);
+  f.complete = f.saved = appendCatalog(
+    appendCatalog(null, f.makePage(1), 10),
+    f.makePage(2),
+    11,
+  );
+  const oldIds = f.saved.items.map((item) => item.workId);
+  f.override = (_page, value) => ({
+    ...value,
+    items: value.items.map((item, i) => ({
+      ...item,
+      tags: i === 0 ? ["中文", "日文"] : [],
+    })),
+  });
+  const r = reader(f);
+  await r.resume();
+  assert.deepEqual(f.calls, [1]);
+  assert.equal(r.state.phase, "complete");
+  assert.equal(r.state.freshness, "verified-cache");
+  assert.deepEqual(
+    r.state.snapshot.items.map((item) => item.workId),
+    oldIds,
+  );
+  assert.deepEqual(r.state.snapshot.items[0].tags, ["中文", "日文"]);
+  assert.deepEqual(f.saved.items[0].tags, ["中文", "日文"]);
+  assert.deepEqual(f.saved.items[20].tags, []);
+  f.override = null;
+  await r.revalidate();
+  assert.deepEqual(f.calls, [1, 1]);
+  assert.deepEqual(r.state.snapshot.items[0].tags, ["中文", "日文"]);
+  r.dispose();
+});
 test("refresh shows the first new page immediately and does not fetch all pages", async () => {
   const f = fixture(60),
     r = reader(f);

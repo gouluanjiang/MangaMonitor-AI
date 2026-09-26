@@ -13,6 +13,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use workbench_credentials::Vault;
+use workbench_sources::{inherit_language_tags, retained_language_tags};
 pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
     discovery_author_is_valid, discovery_record_matches_author, AuthorQueryDocument,
@@ -1835,7 +1836,12 @@ fn merged_record(
     existing: Option<&DiscoveryRecord>,
     mut incoming: DiscoveryRecord,
 ) -> DiscoveryRecord {
-    if let Some(existing) = existing {
+    if let Some(existing) = existing.filter(|existing| {
+        existing.work.source == incoming.work.source
+            && existing.work.work_id == incoming.work.work_id
+    }) {
+        let fresh_language_tags = retained_language_tags(&incoming.work.tags);
+        let tags = inherit_language_tags(&incoming.work.tags, &existing.work.tags);
         let source_updated_at = incoming
             .work
             .source_updated_at
@@ -1848,6 +1854,28 @@ fn merged_record(
             incoming.work = existing.work.clone();
         }
         incoming.work.source_updated_at = source_updated_at;
+        // Keep fresh language evidence even when the missing-author fallback
+        // reuses the older work. Do not inherit unrelated historical tags.
+        let original_tags = std::mem::replace(&mut incoming.work.tags, tags);
+        if !incoming.work.is_valid() {
+            if fresh_language_tags.is_empty() {
+                // Optional inheritance can yield to the existing work budget.
+                incoming.work.tags = original_tags;
+            } else {
+                // The missing-author fallback may carry a large old description.
+                // Keep fresh language evidence, including conflicts, rather than
+                // restoring an older single-language conclusion.
+                incoming.work.tags = fresh_language_tags;
+                if !incoming.work.is_valid() {
+                    incoming.work.description = None;
+                }
+                if !incoming.work.is_valid() {
+                    // Required metadata may leave no room even for two labels.
+                    // Unknown is safer than selecting an obsolete conflict side.
+                    incoming.work.tags.clear();
+                }
+            }
+        }
         for author in &existing.matched_authors {
             if !incoming.matched_authors.contains(author) {
                 incoming.matched_authors.push(author.clone());

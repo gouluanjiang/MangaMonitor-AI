@@ -422,6 +422,106 @@ fn discovery_keeps_source_dates_separate_from_observation_and_missing_list_field
     assert!(updated.author_verified);
 }
 
+#[test]
+fn discovery_language_merge_preserves_conflicts_and_fresh_tags_when_authors_are_missing() {
+    let mut source_work = work(Source::Jm, "123", &["Author A"]);
+    source_work.tags = vec!["Old tag".into(), "中文".into(), "生肉".into()];
+    let existing = DiscoveryRecord {
+        work: discovery_work_from_source(source_work),
+        matched_authors: vec!["Author A".into()],
+        author_verified: true,
+        observed_at: 100,
+        scan_id: "a".repeat(64),
+    };
+    let mut incoming = existing.clone();
+    incoming.work.tags = (0..64).map(|i| format!("Tag {i}")).collect();
+    let retained = merged_record(Some(&existing), incoming.clone());
+    assert_eq!(&retained.work.tags[..64], incoming.work.tags);
+    assert_eq!(&retained.work.tags[64..], ["中文", "生肉"]);
+    assert!(retained.work.is_valid());
+
+    for tags in [vec!["日文".into()], vec!["中文".into(), "生肉".into()]] {
+        incoming.work.authors.clear();
+        incoming.work.tags = tags.clone();
+        let updated = merged_record(Some(&existing), incoming.clone());
+        assert_eq!(updated.work.authors, ["Author A"]);
+        assert_eq!(updated.work.tags, tags);
+        assert!(updated.author_verified);
+    }
+    incoming.work.tags.clear();
+    incoming.work.work_id = "124".into();
+    assert!(merged_record(Some(&existing), incoming.clone())
+        .work
+        .tags
+        .is_empty());
+    incoming.work.work_id = "123".into();
+    incoming.work.source = workbench_storage::Source::Pica;
+    assert!(merged_record(Some(&existing), incoming)
+        .work
+        .tags
+        .is_empty());
+}
+
+#[test]
+fn discovery_language_inheritance_does_not_overflow_the_saved_work_byte_budget() {
+    let mut source_work = work(Source::Jm, "123", &["Author A"]);
+    source_work.tags = vec!["中文".into(), "生肉".into()];
+    let existing = DiscoveryRecord {
+        work: discovery_work_from_source(source_work),
+        matched_authors: vec!["Author A".into()],
+        author_verified: true,
+        observed_at: 100,
+        scan_id: "a".repeat(64),
+    };
+    let mut incoming = existing.clone();
+    incoming.work.tags = vec!["t".repeat(2000); 32];
+    incoming.work.tags.push("x".into());
+    let gap = 64 * 1024 - serde_json::to_vec(&incoming.work).unwrap().len();
+    assert!(gap < 2000);
+    incoming.work.tags[32] = "x".repeat(gap + 1);
+    assert!(incoming.work.is_valid());
+    assert_eq!(serde_json::to_vec(&incoming.work).unwrap().len(), 64 * 1024);
+    let merged = merged_record(Some(&existing), incoming.clone());
+    assert!(merged.work.is_valid());
+    assert_eq!(merged.work.tags, incoming.work.tags);
+}
+
+#[test]
+fn missing_authors_and_large_old_metadata_cannot_replace_a_fresh_language_conflict() {
+    let mut source_work = work(Source::Jm, "123", &["Author A"]);
+    source_work.tags = vec!["中文".into()];
+    source_work.description = Some("d".repeat(10_000));
+    source_work.authors.extend(vec!["a".repeat(2000); 27]);
+    source_work.authors.push("x".into());
+    let mut existing = DiscoveryRecord {
+        work: discovery_work_from_source(source_work),
+        matched_authors: vec!["Author A".into()],
+        author_verified: true,
+        observed_at: 100,
+        scan_id: "a".repeat(64),
+    };
+    let gap = 64 * 1024 - serde_json::to_vec(&existing.work).unwrap().len();
+    assert!(gap < 2000);
+    *existing.work.authors.last_mut().unwrap() = "x".repeat(gap + 1);
+    assert!(existing.work.is_valid());
+    assert_eq!(serde_json::to_vec(&existing.work).unwrap().len(), 64 * 1024);
+
+    let mut incoming = existing.clone();
+    incoming.observed_at = 200;
+    incoming.work.authors.clear();
+    incoming.work.description = None;
+    incoming.work.tags = vec!["t".repeat(2000); 3];
+    incoming.work.tags.extend(["中文".into(), "生肉".into()]);
+    assert!(incoming.work.is_valid());
+    let merged = merged_record(Some(&existing), incoming);
+    assert!(merged.work.is_valid());
+    assert_eq!(merged.work.tags, ["中文", "生肉"]);
+    assert_eq!(merged.work.authors, existing.work.authors);
+    assert_eq!(merged.work.description, None);
+    assert_eq!(merged.observed_at, 200);
+    assert!(merged.author_verified);
+}
+
 fn catalog(backend: &FakeBackend, ids: &[u64]) {
     for (index, chunk) in ids.chunks(20).enumerate() {
         backend.put(

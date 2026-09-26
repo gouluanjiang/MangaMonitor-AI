@@ -45,6 +45,7 @@ struct FakeState {
     restore_failure: Mutex<Option<&'static str>>,
     work_title: Mutex<Option<String>>,
     source_updated_at: Mutex<Option<String>>,
+    work_tags: Mutex<Vec<String>>,
     block_cover: AtomicBool,
     cover_started: Notify,
     cover_release: Notify,
@@ -163,6 +164,7 @@ impl SourceBackend for FakeBackend {
         }
         let mut result = page(session.source, self.0.favorite.load(Ordering::SeqCst));
         result.items[0].source_updated_at = self.0.source_updated_at.lock().unwrap().clone();
+        result.items[0].tags = self.0.work_tags.lock().unwrap().clone();
         if let Some(title) = self.0.work_title.lock().unwrap().clone() {
             result.items[0].title = title;
         }
@@ -201,6 +203,7 @@ impl SourceBackend for FakeBackend {
         }
         let mut item = work(session.source, self.0.favorite.load(Ordering::SeqCst));
         item.source_updated_at = self.0.source_updated_at.lock().unwrap().clone();
+        item.tags = self.0.work_tags.lock().unwrap().clone();
         item.work_id = id.into();
         Ok(item)
     }
@@ -359,6 +362,114 @@ async fn query_preserves_exact_source_dates_without_extra_requests_or_crossing_a
             .source_updated_at,
         None
     );
+}
+
+#[tokio::test]
+async fn query_retains_language_only_for_the_exact_current_session_work_without_extra_requests() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture-jm", false).await;
+    *backend.0.work_tags.lock().unwrap() = vec!["Old tag".into(), "中文".into()];
+    service
+        .query(Source::Jm, &session, QueryKind::Detail, "123", None, 1)
+        .await
+        .unwrap();
+
+    let raw_tags = (0..64).map(|i| format!("Tag {i}")).collect::<Vec<_>>();
+    *backend.0.work_tags.lock().unwrap() = raw_tags.clone();
+    let retained = query(&service, Source::Jm, &session).await.unwrap();
+    assert_eq!(&retained.page.items[0].tags[..64], raw_tags);
+    assert_eq!(&retained.page.items[0].tags[64..], ["中文"]);
+
+    *backend.0.work_tags.lock().unwrap() = vec!["New tag".into(), "日文".into()];
+    let fresh = service
+        .query(Source::Jm, &session, QueryKind::Search, "Author", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(fresh.page.items[0].tags, ["New tag", "日文"]);
+    backend.0.work_tags.lock().unwrap().clear();
+    assert_eq!(
+        query(&service, Source::Jm, &session)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .tags,
+        ["日文"]
+    );
+
+    *backend.0.work_tags.lock().unwrap() = vec!["中文".into(), "生肉".into()];
+    assert_eq!(
+        query(&service, Source::Jm, &session)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .tags,
+        ["中文", "生肉"]
+    );
+    *backend.0.work_tags.lock().unwrap() = vec!["Current tag".into()];
+    assert_eq!(
+        query(&service, Source::Jm, &session)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .tags,
+        ["Current tag", "中文", "生肉"]
+    );
+    let other = service
+        .query(Source::Jm, &session, QueryKind::Detail, "124", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(other.page.items[0].tags, ["Current tag"]);
+
+    let pica = login(&service, Source::Pica, "fixture-pica", false).await;
+    assert_eq!(
+        query(&service, Source::Pica, &pica)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .tags,
+        ["Current tag"]
+    );
+    let changed = login(&service, Source::Jm, "different-account", false).await;
+    assert_eq!(
+        query(&service, Source::Jm, &changed)
+            .await
+            .unwrap()
+            .page
+            .items[0]
+            .tags,
+        ["Current tag"]
+    );
+    assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 7);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn language_inheritance_yields_to_the_existing_work_byte_budget() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture-jm", false).await;
+    *backend.0.work_tags.lock().unwrap() = vec!["中文".into(), "生肉".into()];
+    query(&service, Source::Jm, &session).await.unwrap();
+
+    let mut boundary = work(Source::Jm, false);
+    boundary.tags = vec!["t".repeat(2000); 32];
+    boundary.tags.push("x".into());
+    let gap = 64 * 1024 - serde_json::to_vec(&boundary).unwrap().len();
+    assert!(gap < 2000);
+    boundary.tags[32] = "x".repeat(gap + 1);
+    assert_eq!(serde_json::to_vec(&boundary).unwrap().len(), 64 * 1024);
+    *backend.0.work_tags.lock().unwrap() = boundary.tags.clone();
+    let response = query(&service, Source::Jm, &session).await.unwrap();
+    assert_eq!(response.page.items[0], boundary);
+    assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

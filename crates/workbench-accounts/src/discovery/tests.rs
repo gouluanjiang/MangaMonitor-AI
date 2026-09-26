@@ -62,6 +62,338 @@ fn work(source: Source, id: &str, authors: &[&str]) -> SourceWork {
         cover_available: true,
     }
 }
+
+fn historical_record(id: &str, authors: &[&str]) -> DiscoveryRecord {
+    DiscoveryRecord {
+        work: discovery_work_from_source(work(Source::Jm, id, authors)),
+        matched_authors: vec!["Author A".into()],
+        author_verified: authors == ["Author A"],
+        observed_at: 1,
+        scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
+    }
+}
+
+#[test]
+fn first_discovery_identity_survives_metadata_refresh_and_legacy_baselines() {
+    let mut incoming = historical_record("100", &["Author A"]);
+    incoming.scan_id = "b".repeat(64);
+    incoming.observed_at = 99;
+    incoming.first_discovered_run_id = Some(incoming.scan_id.clone());
+    let legacy = historical_record("100", &["Other Author"]);
+    let merged = merged_record(Some(&legacy), incoming.clone());
+    assert!(merged.first_discovered_run_id.is_none());
+    assert_eq!(merged.scan_id, incoming.scan_id);
+    let mut existing = legacy;
+    existing.first_discovered_run_id = Some("c".repeat(64));
+    assert_eq!(
+        merged_record(Some(&existing), incoming.clone()).first_discovered_run_id,
+        existing.first_discovered_run_id
+    );
+    assert_eq!(
+        merged_record(None, incoming.clone()).first_discovered_run_id,
+        incoming.first_discovered_run_id
+    );
+    existing.work.work_id = "101".into();
+    assert_eq!(
+        merged_record(Some(&existing), incoming.clone()).first_discovered_run_id,
+        incoming.first_discovered_run_id
+    );
+}
+
+#[tokio::test]
+async fn check_summary_distinguishes_partial_first_catalog_and_unfinished_retry() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    follow(&service, &scopes[1], "Author B", true).await;
+    for author in ["Author A", "Author B"] {
+        backend.put(
+            Source::Jm,
+            author,
+            1,
+            page(
+                1,
+                1,
+                vec![work(Source::Jm, "100", &["Author A", "Author B"])],
+            ),
+        );
+    }
+    backend.0.pages.lock().unwrap().insert(
+        key(Source::Pica, "Author A", 1),
+        Err(AccountError::new("SOURCE_RESPONSE_INVALID")),
+    );
+    let first = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let accepted = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(
+        accepted.value.accounts[0].last_check.as_ref().unwrap().id,
+        first.run_id
+    );
+    let partial = finish(&service, &scopes).await;
+    let summary = partial.last_check.as_ref().unwrap();
+    assert_eq!(summary.phase, DiscoveryCheckPhase::Partial);
+    assert!(summary.first_catalog && summary.all_followed && !summary.only_unfinished);
+    assert_eq!(
+        (
+            summary.author_count,
+            summary.total_scopes,
+            summary.attempted_scopes,
+            summary.complete_scopes
+        ),
+        (2, 4, 4, 3)
+    );
+    assert_eq!(partial.records.len(), 1);
+    assert_eq!(
+        partial.records[0].first_discovered_run_id.as_deref(),
+        Some(first.run_id.as_str())
+    );
+    assert_eq!(partial.records[0].matched_authors.len(), 2);
+    let id = "123456789012345678901234";
+    backend.put(
+        Source::Pica,
+        "Author A",
+        1,
+        page(1, 1, vec![work(Source::Pica, id, &["Author A"])]),
+    );
+    let calls = backend.0.calls.lock().unwrap().len();
+    let retry = service
+        .discovery_start_unfinished(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    assert_ne!(retry.run_id, first.run_id);
+    let done = finish(&service, &scopes).await;
+    let summary = done.last_check.as_ref().unwrap();
+    assert_eq!(summary.phase, DiscoveryCheckPhase::Complete);
+    assert!(summary.only_unfinished && summary.all_followed && !summary.first_catalog);
+    assert_eq!(
+        (
+            summary.author_count,
+            summary.total_scopes,
+            summary.attempted_scopes,
+            summary.complete_scopes
+        ),
+        (1, 1, 1, 1)
+    );
+    assert_eq!(backend.0.calls.lock().unwrap().len(), calls + 1);
+    assert_eq!(
+        done.records
+            .iter()
+            .filter(
+                |record| record.first_discovered_run_id.as_deref() == Some(retry.run_id.as_str())
+            )
+            .count(),
+        1
+    );
+    assert_eq!(
+        service
+            .discovery_start_unfinished(scopes.clone(), vec![])
+            .await
+            .unwrap_err()
+            .code,
+        "DISCOVERY_NO_UNFINISHED"
+    );
+    assert_eq!(
+        service.discovery_read(scopes).await.unwrap().last_check,
+        done.last_check
+    );
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn existing_raw_ids_and_legacy_records_are_not_rediscovered_after_credit_changes() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    let context = service.discovery_context(scopes.clone()).await.unwrap();
+    let legacy = DiscoveryDocument {
+        version: 1,
+        accounts: vec![DiscoveryAccount {
+            account_key: context.account_key,
+            authors: vec![],
+            records: vec![historical_record("100", &["Other Author"])],
+            last_check: None,
+        }],
+    };
+    WorkbenchStore::open(root.path())
+        .unwrap()
+        .write_discovery(0, legacy)
+        .unwrap();
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(
+            1,
+            3,
+            vec![
+                work(Source::Jm, "100", &["Author A"]),
+                work(Source::Jm, "101", &["Author A"]),
+                work(Source::Jm, "102", &["Other Author"]),
+            ],
+        ),
+    );
+    let first = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let read = finish(&service, &scopes).await;
+    assert!(!read.last_check.as_ref().unwrap().first_catalog);
+    assert!(read
+        .records
+        .iter()
+        .find(|record| record.work.work_id == "100")
+        .unwrap()
+        .first_discovered_run_id
+        .is_none());
+    let visible = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
+    assert_eq!(visible.records.len(), 2);
+    assert_eq!(
+        visible
+            .records
+            .iter()
+            .filter(
+                |record| record.first_discovered_run_id.as_deref() == Some(first.run_id.as_str())
+            )
+            .count(),
+        1
+    );
+    // A raw keyword ID becoming attributed on a later run is still an old ID.
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(
+            1,
+            3,
+            vec![
+                work(Source::Jm, "100", &["Author A"]),
+                work(Source::Jm, "101", &["Author A"]),
+                work(Source::Jm, "102", &["Author A"]),
+            ],
+        ),
+    );
+    let second = service
+        .discovery_start_with_mode(scopes.clone(), vec![], DiscoveryMode::Full)
+        .await
+        .unwrap();
+    let read = finish(&service, &scopes).await;
+    assert!(read
+        .records
+        .iter()
+        .all(|record| record.first_discovered_run_id.as_deref() != Some(second.run_id.as_str())));
+    assert_eq!(
+        service
+            .discovery_read_view(scopes, false)
+            .await
+            .unwrap()
+            .records
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn cancelled_summary_retains_committed_new_records_and_cold_reads_are_interrupted() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(1, 2, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
+    backend.put(
+        Source::Jm,
+        "Author A",
+        2,
+        page(2, 2, vec![work(Source::Jm, "101", &["Author A"])]),
+    );
+    backend.0.block_call.store(2, Ordering::SeqCst);
+    let started = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    backend.0.started.notified().await;
+    assert_eq!(
+        service
+            .discovery_start(scopes.clone(), vec![])
+            .await
+            .unwrap_err()
+            .code,
+        "DISCOVERY_BUSY"
+    );
+    let live = service.discovery_progress(scopes.clone()).await.unwrap();
+    assert_eq!(live.last_check.as_ref().unwrap().id, started.run_id);
+    assert_eq!(live.last_check.as_ref().unwrap().attempted_scopes, 1);
+    service.discovery_cancel(&started.run_id).unwrap();
+    backend.0.release.notify_one();
+    let cancelled = finish(&service, &scopes).await;
+    assert_eq!(
+        cancelled.last_check.as_ref().unwrap().phase,
+        DiscoveryCheckPhase::Cancelled
+    );
+    assert_eq!(cancelled.records.len(), 1);
+    let document = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(
+        document.value.accounts[0]
+            .last_check
+            .as_ref()
+            .unwrap()
+            .phase,
+        DiscoveryCheckPhase::Checking
+    );
+    let context = service.discovery_context(scopes).await.unwrap();
+    let cold = project_view(&context, &document, false);
+    assert_eq!(
+        cold.last_check.as_ref().unwrap().phase,
+        DiscoveryCheckPhase::Interrupted
+    );
+    assert!(cold.last_check.as_ref().unwrap().finished_at.is_none());
+    assert_eq!(
+        cold.records[0].first_discovered_run_id.as_deref(),
+        Some(started.run_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn late_stop_after_check_completion_is_idempotent_for_run_and_summary() {
+    let (root, _backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    let started = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
+    let complete = finish(&service, &scopes).await;
+    let persisted = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    for _ in 0..2 {
+        let stopped = service.discovery_cancel(&started.run_id).unwrap();
+        assert_eq!(stopped.phase, DiscoveryPhase::Complete);
+        let after = service.discovery_read(scopes.clone()).await.unwrap();
+        assert_eq!(after.last_check, complete.last_check);
+        assert_eq!(after.run.unwrap().phase, DiscoveryPhase::Complete);
+        assert!(!service.discovery.memory.lock().unwrap().cancelled);
+    }
+    assert_eq!(
+        WorkbenchStore::open(root.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap(),
+        persisted
+    );
+}
 fn page(number: u64, total: u64, items: Vec<SourceWork>) -> SourcePage {
     SourcePage {
         page: number,
@@ -399,6 +731,7 @@ fn discovery_keeps_source_dates_separate_from_observation_and_missing_list_field
         author_verified: true,
         observed_at: 100,
         scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     };
     let mut incoming = existing.clone();
     incoming.work.source_updated_at = None;
@@ -432,6 +765,7 @@ fn discovery_language_merge_preserves_conflicts_and_fresh_tags_when_authors_are_
         author_verified: true,
         observed_at: 100,
         scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     };
     let mut incoming = existing.clone();
     incoming.work.tags = (0..64).map(|i| format!("Tag {i}")).collect();
@@ -472,6 +806,7 @@ fn discovery_language_inheritance_does_not_overflow_the_saved_work_byte_budget()
         author_verified: true,
         observed_at: 100,
         scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     };
     let mut incoming = existing.clone();
     incoming.work.tags = vec!["t".repeat(2000); 32];
@@ -499,6 +834,7 @@ fn missing_authors_and_large_old_metadata_cannot_replace_a_fresh_language_confli
         author_verified: true,
         observed_at: 100,
         scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     };
     let gap = 64 * 1024 - serde_json::to_vec(&existing.work).unwrap().len();
     assert!(gap < 2000);
@@ -880,6 +1216,7 @@ async fn blocked_legacy_results_are_hidden_without_deleting_shared_or_stored_rec
         author_verified: true,
         observed_at: 10,
         scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     };
     let store = WorkbenchStore::open(root.path()).unwrap();
     store
@@ -888,6 +1225,7 @@ async fn blocked_legacy_results_are_hidden_without_deleting_shared_or_stored_rec
             DiscoveryDocument {
                 version: 1,
                 accounts: vec![DiscoveryAccount {
+                    last_check: None,
                     account_key: context.account_key,
                     authors: vec![saved_range],
                     records: vec![record("100", &["N/A"]), record("101", &["P", "Author A"])],
@@ -1428,6 +1766,15 @@ async fn restart_reads_old_records_without_requests_and_account_pair_isolation_i
     let snapshot = fresh.discovery_read(restored.clone()).await.unwrap();
     assert_eq!(snapshot.records.len(), 1);
     assert!(snapshot.run.is_none());
+    assert_eq!(
+        snapshot.last_check.as_ref().unwrap().phase,
+        DiscoveryCheckPhase::Complete
+    );
+    assert_eq!(snapshot.last_check.as_ref().unwrap().complete_scopes, 2);
+    assert_eq!(
+        snapshot.records[0].first_discovered_run_id.as_deref(),
+        Some(snapshot.last_check.as_ref().unwrap().id.as_str())
+    );
     assert_eq!(backend.0.calls.lock().unwrap().len(), requests);
     let different = fresh
         .login(
@@ -1439,12 +1786,9 @@ async fn restart_reads_old_records_without_requests_and_account_pair_isolation_i
         .await
         .unwrap();
     restored[1].session_id = different.session_id.unwrap();
-    assert!(fresh
-        .discovery_read(restored)
-        .await
-        .unwrap()
-        .records
-        .is_empty());
+    let different = fresh.discovery_read(restored).await.unwrap();
+    assert!(different.records.is_empty());
+    assert!(different.last_check.is_none());
 }
 
 #[tokio::test]
@@ -1940,6 +2284,7 @@ async fn legacy_complete_rows_without_checkpoints_must_build_a_new_full_baseline
             saved.revision,
             following_revision,
             DiscoveryPagePatch {
+                last_check: None,
                 account_key: account.account_key,
                 authors: account.authors,
                 records: vec![],

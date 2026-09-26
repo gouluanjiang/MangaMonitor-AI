@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .count();
     let account = before.value.accounts.first().ok_or("empty catalog")?;
     let patch = DiscoveryPagePatch {
+        last_check: None,
         account_key: account.account_key.clone(),
         authors: vec![],
         records: account.records.iter().take(20).cloned().collect(),

@@ -51,6 +51,141 @@ const defaultAuthorPolicy = async (scope, author) => ({
   queryFingerprint: "a".repeat(64),
 });
 
+const changeSummary = (overrides = {}) => ({
+  id: "a".repeat(64),
+  startedAt: 1000,
+  finishedAt: 2000,
+  phase: "complete",
+  mode: "incremental",
+  onlyUnfinished: false,
+  firstCatalog: false,
+  allFollowed: true,
+  authorCount: 1,
+  totalScopes: 2,
+  attemptedScopes: 2,
+  completeScopes: 2,
+  ...overrides,
+});
+
+test("discovery summaries preserve legacy history and explicit first-discovery identities through a cold read", () => {
+  const record = {
+    work: work("JM", 1),
+    matchedAuthors: ["Writer"],
+    authorVerified: true,
+    observedAt: 2000,
+    scanId: "a".repeat(64),
+  };
+  const legacy = validateDiscoverySnapshot(
+    { ...empty(), records: [record] },
+    scopes,
+  );
+  assert.equal(legacy.lastCheck, null);
+  assert.equal(legacy.records[0].firstDiscoveredRunId, undefined);
+  const saved = {
+    ...empty(),
+    lastCheck: changeSummary(),
+    records: [
+      record,
+      { ...record, work: work("JM", 2), firstDiscoveredRunId: "a".repeat(64) },
+    ],
+  };
+  const restored = validateDiscoverySnapshot(
+    JSON.parse(JSON.stringify(saved)),
+    scopes,
+  );
+  assert.deepEqual(restored.lastCheck, saved.lastCheck);
+  assert.equal(
+    restored.records[0].firstDiscoveredRunId,
+    undefined,
+    "a fresh observation of historical metadata is not first discovery",
+  );
+  assert.equal(restored.records[1].firstDiscoveredRunId, saved.lastCheck.id);
+  assert.equal(
+    restored.run,
+    null,
+    "saved summaries survive without a live run",
+  );
+});
+
+test("summary progress stays catalog-free and accepts explicit partial or interrupted coverage", () => {
+  for (const phase of [
+    "checking",
+    "partial",
+    "cancelled",
+    "error",
+    "interrupted",
+  ]) {
+    const summary = changeSummary({
+      phase,
+      finishedAt: null,
+      completeScopes: 0,
+      attemptedScopes: 1,
+      onlyUnfinished: true,
+    });
+    const input = { ...empty(), recordCount: 400000, lastCheck: summary };
+    Object.defineProperty(input, "records", {
+      get() {
+        throw Error("progress must not read the catalog");
+      },
+    });
+    const parsed = validateDiscoveryProgress(input, scopes);
+    assert.deepEqual(parsed.lastCheck, summary);
+    assert.equal("records" in parsed, false);
+  }
+});
+
+test("invalid change summary claims or first-discovery identifiers cannot replace current results", () => {
+  for (const patch of [
+    { id: "not-a-run" },
+    { startedAt: -1 },
+    { finishedAt: 999 },
+    { mode: "automatic" },
+    { phase: "idle" },
+    { firstCatalog: "true" },
+    { onlyUnfinished: 1 },
+    { allFollowed: null },
+    { authorCount: 0 },
+    { authorCount: 2001 },
+    { authorCount: 3 },
+    { totalScopes: 3 },
+    { totalScopes: 0 },
+    { attemptedScopes: 3 },
+    { completeScopes: 3 },
+    { completeScopes: 1 },
+    { finishedAt: null },
+    { phase: "checking" },
+  ]) {
+    assert.throws(
+      () =>
+        validateDiscoverySnapshot(
+          { ...empty(), lastCheck: changeSummary(patch) },
+          scopes,
+        ),
+      (e) => e.code === "DISCOVERY_INVALID",
+    );
+  }
+  const record = {
+    work: work("JM", 1),
+    matchedAuthors: ["Writer"],
+    authorVerified: true,
+    observedAt: 2000,
+    scanId: "a".repeat(64),
+  };
+  for (const marker of ["", "a".repeat(65), "A".repeat(64), 123]) {
+    assert.throws(
+      () =>
+        validateDiscoverySnapshot(
+          {
+            ...empty(),
+            records: [{ ...record, firstDiscoveredRunId: marker }],
+          },
+          scopes,
+        ),
+      (e) => e.code === "DISCOVERY_INVALID",
+    );
+  }
+});
+
 test("catalog coverage follows current query baselines without deleting historical dates", async () => {
   const policy = {
     ...(await defaultAuthorPolicy(scopes[0], "Writer")),

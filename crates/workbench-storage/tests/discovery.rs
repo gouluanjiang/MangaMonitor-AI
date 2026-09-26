@@ -1,9 +1,10 @@
 use std::fs;
 use tempfile::TempDir;
 use workbench_storage::{
-    AccountFollowing, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline, DiscoveryDocument,
-    DiscoveryMode, DiscoveryPagePatch, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork,
-    FollowedAccount, Source, WorkbenchStore, MAX_DISCOVERY_RECORDS, PRIVATE_DIRECTORY,
+    AccountFollowing, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline,
+    DiscoveryCheckPhase, DiscoveryCheckSummary, DiscoveryDocument, DiscoveryMode,
+    DiscoveryPagePatch, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, FollowedAccount,
+    Source, WorkbenchStore, MAX_DISCOVERY_RECORDS, PRIVATE_DIRECTORY,
 };
 
 fn record(source: Source, id: &str) -> DiscoveryRecord {
@@ -25,7 +26,138 @@ fn record(source: Source, id: &str) -> DiscoveryRecord {
         author_verified: true,
         observed_at: 10,
         scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     }
+}
+
+fn check_summary() -> DiscoveryCheckSummary {
+    DiscoveryCheckSummary {
+        id: "c".repeat(64),
+        started_at: 20,
+        finished_at: None,
+        phase: DiscoveryCheckPhase::Checking,
+        mode: DiscoveryMode::Incremental,
+        only_unfinished: false,
+        first_catalog: false,
+        all_followed: true,
+        author_count: 1,
+        total_scopes: 2,
+        attempted_scopes: 0,
+        complete_scopes: 0,
+    }
+}
+
+#[test]
+fn legacy_catalog_and_page_have_no_invented_first_discovery_or_summary() {
+    let encoded = serde_json::to_value(document()).unwrap();
+    let account = &encoded["accounts"][0];
+    assert!(account.get("lastCheck").is_none());
+    assert!(account["records"][0].get("firstDiscoveredRunId").is_none());
+    let read: DiscoveryDocument = serde_json::from_value(encoded).unwrap();
+    assert_eq!(read, document());
+    let encoded = serde_json::to_value(patch(vec![record(Source::Jm, "123")])).unwrap();
+    assert!(encoded.get("lastCheck").is_none());
+    assert!(serde_json::from_value::<DiscoveryPagePatch>(encoded)
+        .unwrap()
+        .last_check
+        .is_none());
+}
+
+#[test]
+fn summary_and_first_discovery_share_page_commit_and_checkpoint() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    store.write_discovery(0, document()).unwrap();
+    let mut summary = check_summary();
+    summary.attempted_scopes = 1;
+    let mut found = record(Source::Jm, "124");
+    found.first_discovered_run_id = Some(summary.id.clone());
+    let mut incoming = patch(vec![found.clone()]);
+    incoming.last_check = Some(summary.clone());
+    store
+        .apply_discovery_patch_for_following(1, 0, incoming)
+        .unwrap();
+    let saved = store.read_discovery().unwrap();
+    assert_eq!(saved.value.accounts[0].last_check, Some(summary.clone()));
+    assert_eq!(saved.value.accounts[0].records[1], found);
+    assert!(saved.value.accounts[0].records[0]
+        .first_discovered_run_id
+        .is_none());
+    // A legacy metadata upsert cannot erase the last summary.
+    store
+        .apply_discovery_patch_for_following(2, 0, patch(vec![found]))
+        .unwrap();
+    summary.phase = DiscoveryCheckPhase::Complete;
+    summary.finished_at = Some(30);
+    summary.attempted_scopes = 2;
+    summary.complete_scopes = 2;
+    let mut terminal = patch(vec![]);
+    terminal.last_check = Some(summary.clone());
+    store
+        .apply_discovery_patch_for_following(3, 0, terminal)
+        .unwrap();
+    store.checkpoint_discovery_for_following(4, 0).unwrap();
+    let reopened = WorkbenchStore::open(directory.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(reopened.revision, 4);
+    assert_eq!(reopened.value.accounts[0].last_check, Some(summary));
+    assert_eq!(
+        reopened.value.accounts[0].records,
+        saved.value.accounts[0].records
+    );
+}
+
+#[test]
+fn invalid_summary_or_discovery_marker_cannot_advance_the_manifest() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut initial = patch(vec![record(Source::Jm, "123")]);
+    initial.last_check = Some(check_summary());
+    store
+        .apply_discovery_patch_for_following(0, 0, initial)
+        .unwrap();
+    let before = store.read_discovery().unwrap();
+    let manifest_before = manifest(&directory);
+    let mutations: [fn(&mut DiscoveryCheckSummary); 9] = [
+        |value| value.id = "bad".into(),
+        |value| value.author_count = 0,
+        |value| value.total_scopes = 3,
+        |value| {
+            value.author_count = 2;
+            value.total_scopes = 1;
+        },
+        |value| value.attempted_scopes = 3,
+        |value| value.complete_scopes = 1,
+        |value| value.finished_at = Some(19),
+        |value| value.finished_at = Some(20),
+        |value| value.phase = DiscoveryCheckPhase::Complete,
+    ];
+    for mutate in mutations {
+        let mut incoming = patch(vec![record(Source::Jm, "124")]);
+        let mut summary = check_summary();
+        mutate(&mut summary);
+        incoming.last_check = Some(summary);
+        assert_eq!(
+            store
+                .apply_discovery_patch_for_following(1, 0, incoming)
+                .unwrap_err()
+                .code,
+            "VALIDATION_FAILED"
+        );
+    }
+    let mut invalid = record(Source::Jm, "124");
+    invalid.first_discovered_run_id = Some("invalid".into());
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(1, 0, patch(vec![invalid]))
+            .unwrap_err()
+            .code,
+        "VALIDATION_FAILED"
+    );
+    assert_eq!(store.read_discovery().unwrap(), before);
+    assert_eq!(manifest(&directory), manifest_before);
 }
 
 #[test]
@@ -48,6 +180,7 @@ fn document() -> DiscoveryDocument {
     DiscoveryDocument {
         version: 1,
         accounts: vec![DiscoveryAccount {
+            last_check: None,
             account_key: "b".repeat(64),
             authors: vec![DiscoveryAuthorRange {
                 author: "作者".into(),
@@ -441,6 +574,7 @@ fn discovery_rejects_symlink_without_touching_external_target() {
 
 fn patch(records: Vec<DiscoveryRecord>) -> DiscoveryPagePatch {
     DiscoveryPagePatch {
+        last_check: None,
         account_key: "b".repeat(64),
         authors: vec![],
         records,

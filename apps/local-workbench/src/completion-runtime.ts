@@ -9,6 +9,7 @@ import type { AuthorQueryPolicy, Source, SourceScope } from "./source-types.ts";
 import type {
   CompletionAdapter,
   DiscoveryBaseline,
+  DiscoveryCheckSummary,
   DiscoveryProgress,
   DiscoveryRun,
   DiscoverySnapshot,
@@ -39,6 +40,52 @@ const source = (v: unknown): Source => choice(v, ["JM", "Pica"]);
 const phase = (v: unknown) =>
   choice(v, ["checking", "complete", "partial", "cancelled", "error"]);
 const discoveryMode = (v: unknown) => choice(v, ["incremental", "full"]);
+const runIdentifier = (v: unknown): string => {
+  const value = str(v, 64);
+  return /^[a-f0-9]{64}$/.test(value) ? value : invalid();
+};
+const boolean = (v: unknown): boolean =>
+  typeof v === "boolean" ? v : invalid();
+
+function checkSummaryValue(v: unknown): DiscoveryCheckSummary {
+  const r = object(v);
+  const summary: DiscoveryCheckSummary = {
+    id: runIdentifier(r.id),
+    startedAt: integer(r.startedAt),
+    finishedAt: nullable(r.finishedAt, integer),
+    phase: choice(r.phase, [
+      "checking",
+      "complete",
+      "partial",
+      "cancelled",
+      "error",
+      "interrupted",
+    ]),
+    mode: discoveryMode(r.mode),
+    onlyUnfinished: boolean(r.onlyUnfinished),
+    firstCatalog: boolean(r.firstCatalog),
+    allFollowed: boolean(r.allFollowed),
+    authorCount: integer(r.authorCount),
+    totalScopes: integer(r.totalScopes),
+    attemptedScopes: integer(r.attemptedScopes),
+    completeScopes: integer(r.completeScopes),
+  };
+  if (
+    !summary.authorCount ||
+    summary.authorCount > 2000 ||
+    summary.totalScopes < summary.authorCount ||
+    summary.totalScopes > 2 * summary.authorCount ||
+    summary.completeScopes > summary.attemptedScopes ||
+    summary.attemptedScopes > summary.totalScopes ||
+    (summary.finishedAt !== null && summary.finishedAt < summary.startedAt) ||
+    (summary.phase === "checking" && summary.finishedAt !== null) ||
+    (summary.phase === "complete" &&
+      (summary.completeScopes !== summary.totalScopes ||
+        summary.finishedAt === null))
+  )
+    return invalid();
+  return summary;
+}
 const code = (v: unknown) =>
   nullable(v, (x) =>
     /^[A-Z_0-9]{1,100}$/.test(str(x, 100)) ? (x as string) : invalid(),
@@ -125,6 +172,9 @@ export function validateDiscoverySnapshot(
         authorVerified: q.authorVerified,
         observedAt: integer(q.observedAt),
         scanId: str(q.scanId, 128),
+        ...(q.firstDiscoveredRunId == null
+          ? {}
+          : { firstDiscoveredRunId: runIdentifier(q.firstDiscoveredRunId) }),
       };
     },
     discoveryRecordLimit,
@@ -174,6 +224,7 @@ export function validateDiscoveryProgress(
     authorPolicies,
     revision: integer(r.revision),
     run: nullable(r.run, runValue),
+    lastCheck: r.lastCheck == null ? null : checkSummaryValue(r.lastCheck),
     recordCount: integer(r.recordCount),
     otherRecordCount:
       r.otherRecordCount === undefined ? 0 : integer(r.otherRecordCount),

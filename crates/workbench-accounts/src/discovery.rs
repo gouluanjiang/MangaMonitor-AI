@@ -18,10 +18,11 @@ pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
     discovery_author_is_valid, discovery_record_matches_author, AuthorQueryDocument,
     AuthorQueryPolicy, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline,
-    DiscoveryDocument, DiscoveryItemIssue, DiscoveryItemIssueCode, DiscoveryPagePatch,
-    DiscoveryQueryBaseline, DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, Document,
-    WorkbenchStore, MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_ISSUE_SAMPLES,
-    MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RAW_RECORDS, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
+    DiscoveryCheckPhase, DiscoveryCheckSummary, DiscoveryDocument, DiscoveryItemIssue,
+    DiscoveryItemIssueCode, DiscoveryPagePatch, DiscoveryQueryBaseline, DiscoveryRangeState,
+    DiscoveryRecord, DiscoveryWork, Document, WorkbenchStore, MAX_DISCOVERY_AUTHORS,
+    MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_ISSUE_SAMPLES, MAX_DISCOVERY_PAGES,
+    MAX_DISCOVERY_RAW_RECORDS, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
 };
 
 const DISCOVERY_QUERY_VERSION: u32 = 1;
@@ -77,6 +78,16 @@ pub enum DiscoveryPhase {
     Error,
 }
 
+fn check_phase(phase: DiscoveryPhase) -> DiscoveryCheckPhase {
+    match phase {
+        DiscoveryPhase::Checking => DiscoveryCheckPhase::Checking,
+        DiscoveryPhase::Complete => DiscoveryCheckPhase::Complete,
+        DiscoveryPhase::Partial => DiscoveryCheckPhase::Partial,
+        DiscoveryPhase::Cancelled => DiscoveryCheckPhase::Cancelled,
+        DiscoveryPhase::Error => DiscoveryCheckPhase::Error,
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoveryRun {
@@ -102,6 +113,7 @@ pub struct DiscoverySnapshot {
     pub scopes: Vec<DiscoveryScope>,
     pub revision: u64,
     pub run: Option<DiscoveryRun>,
+    pub last_check: Option<DiscoveryCheckSummary>,
     pub authors: Vec<DiscoveryAuthorRange>,
     pub author_policies: Vec<AuthorQueryPolicy>,
     pub records: Vec<DiscoveryRecord>,
@@ -116,6 +128,7 @@ pub struct DiscoveryProgress {
     pub scopes: Vec<DiscoveryScope>,
     pub revision: u64,
     pub run: Option<DiscoveryRun>,
+    pub last_check: Option<DiscoveryCheckSummary>,
     pub authors: Vec<DiscoveryAuthorRange>,
     pub author_policies: Vec<AuthorQueryPolicy>,
     pub record_count: usize,
@@ -128,6 +141,7 @@ impl From<&DiscoverySnapshot> for DiscoveryProgress {
             scopes: snapshot.scopes.clone(),
             revision: snapshot.revision,
             run: snapshot.run.clone(),
+            last_check: snapshot.last_check.clone(),
             authors: snapshot.authors.clone(),
             author_policies: snapshot.author_policies.clone(),
             record_count: snapshot.records.len()
@@ -338,6 +352,7 @@ struct DiscoveryCommitState {
     record_count: usize,
     other_record_count: usize,
     confirmed_count: usize,
+    summary: DiscoveryCheckSummary,
 }
 
 fn unavailable() -> AccountError {
@@ -467,6 +482,15 @@ fn project_view(
         scopes: context.scopes(),
         revision: document.revision,
         run: None,
+        last_check: account
+            .and_then(|account| account.last_check.clone())
+            .map(|mut summary| {
+                // Opening the saved catalog does not resume an interrupted check.
+                if summary.phase == DiscoveryCheckPhase::Checking {
+                    summary.phase = DiscoveryCheckPhase::Interrupted;
+                }
+                summary
+            }),
         authors,
         author_policies: context.author_policies(),
         records: account
@@ -689,6 +713,9 @@ impl DiscoveryControl {
         snapshot.revision = next_revision;
         snapshot.record_count = record_count;
         snapshot.other_record_count = other_record_count;
+        if let Some(summary) = patch.last_check {
+            snapshot.last_check = Some(summary);
+        }
         for changed in patch.authors {
             if let Some(range) = snapshot
                 .authors
@@ -774,6 +801,18 @@ impl DiscoveryControl {
                     };
                     run.phase = phase;
                     run.error_code = code.clone();
+                    if let Some(summary) = snapshot
+                        .last_check
+                        .as_mut()
+                        .filter(|summary| summary.id == run_id)
+                    {
+                        summary.phase = check_phase(phase);
+                        if phase != DiscoveryPhase::Checking {
+                            summary.finished_at = summary
+                                .finished_at
+                                .or_else(|| now().ok().map(|time| time.max(summary.started_at)));
+                        }
+                    }
                     for range in &mut snapshot.authors {
                         if range.state == DiscoveryRangeState::Checking {
                             range.state = if cancelled {
@@ -926,7 +965,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 && cached.account_key == context.account_key
                 && cached.policy_revision == context.policy_revision
         }) {
-            if let Some(current) = &memory.snapshot {
+            let same_check = memory.snapshot.as_ref().is_some_and(|current| {
+                current.last_check.as_ref().map(|summary| &summary.id)
+                    == snapshot.last_check.as_ref().map(|summary| &summary.id)
+            });
+            if memory.active && !same_check {
+                return Err(AccountError::new("BUSY"));
+            }
+            if let Some(current) = memory.snapshot.as_ref().filter(|_| same_check) {
                 // A final commit may finish while the catalog is being read.
                 // Never publish a terminal run alongside an older record set.
                 if current.revision > snapshot.revision
@@ -938,6 +984,16 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     return Err(AccountError::new("BUSY"));
                 }
                 snapshot.run = current.run.clone();
+                // Never pair a newer summary with an older catalog page set.
+                if current.revision == snapshot.revision {
+                    snapshot.last_check = current.last_check.clone();
+                } else if memory.active {
+                    if let Some(summary) = snapshot.last_check.as_mut() {
+                        if summary.phase == DiscoveryCheckPhase::Interrupted {
+                            summary.phase = DiscoveryCheckPhase::Checking;
+                        }
+                    }
+                }
                 if current.revision == snapshot.revision
                     && memory.context.as_ref().is_some_and(|cached| {
                         cached.following_revision == context.following_revision
@@ -975,6 +1031,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     run.error_code = Some("DISCOVERY_POLICY_CHANGED".into());
                     run
                 });
+            if let Some(summary) = snapshot.last_check.as_mut() {
+                summary.phase = DiscoveryCheckPhase::Error;
+                summary.finished_at = now().ok().map(|time| time.max(summary.started_at));
+            }
         }
         if !memory.active {
             memory.context = Some(context);
@@ -1067,6 +1127,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         only_unfinished: bool,
     ) -> Result<DiscoveryStart> {
         let scopes = canonical_scopes(scopes)?;
+        // Reject a second start without waiting behind the active source request.
+        // The second check below still closes the race across asynchronous reads.
+        if self
+            .discovery
+            .memory
+            .lock()
+            .map_err(|_| unavailable())?
+            .active
+        {
+            return Err(AccountError::new("DISCOVERY_BUSY"));
+        }
         let context = self.discovery_context(scopes).await?;
         let authors = if authors.is_empty() {
             context.authors.clone()
@@ -1089,7 +1160,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             return Err(AccountError::new("DISCOVERY_AUTHORS_REQUIRED"));
         }
         let root = context.root.clone();
-        let document = tokio::task::spawn_blocking(move || {
+        let mut document = tokio::task::spawn_blocking(move || {
             discovery_store_io(|| WorkbenchStore::open(&root)?.read_discovery())
         })
         .await
@@ -1097,6 +1168,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         .map_err(store_error)?;
         self.discovery_validate_context(&context)?;
         let mut snapshot = project_view(&context, &document, false);
+        let all_followed = authors.len() == context.authors.len();
         let ranges: Vec<_> = authors
             .into_iter()
             .flat_map(|author| [Source::Jm, Source::Pica].map(|source| (author.clone(), source)))
@@ -1118,6 +1190,31 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
+        let account = document
+            .value
+            .accounts
+            .iter()
+            .find(|account| account.account_key == context.account_key);
+        let summary = DiscoveryCheckSummary {
+            id: run_id.clone(),
+            started_at: now()?,
+            finished_at: None,
+            phase: DiscoveryCheckPhase::Checking,
+            mode,
+            only_unfinished,
+            first_catalog: account
+                .is_none_or(|account| account.last_check.is_none() && account.records.is_empty()),
+            all_followed,
+            author_count: ranges
+                .iter()
+                .map(|(author, _)| author)
+                .collect::<HashSet<_>>()
+                .len(),
+            total_scopes: ranges.len(),
+            attempted_scopes: 0,
+            complete_scopes: 0,
+        };
+        snapshot.last_check = Some(summary.clone());
         snapshot.run = Some(DiscoveryRun {
             id: run_id.clone(),
             mode,
@@ -1134,16 +1231,73 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             error_code: None,
             storage_warning_code: None,
         });
-        {
+        let store = Arc::new(WorkbenchStore::open(&context.root).map_err(store_error)?);
+        let previous_memory = {
             let mut memory = self.discovery.memory.lock().map_err(|_| unavailable())?;
             if memory.active {
                 return Err(AccountError::new("DISCOVERY_BUSY"));
             }
-            memory.context = Some(context.clone());
-            memory.snapshot = Some(DiscoveryProgress::from(&snapshot));
-            memory.active = true;
-            memory.cancelled = false;
-            memory.invalidated = None;
+            std::mem::replace(
+                &mut *memory,
+                DiscoveryMemory {
+                    context: Some(context.clone()),
+                    snapshot: Some(DiscoveryProgress::from(&snapshot)),
+                    active: true,
+                    cancelled: false,
+                    invalidated: None,
+                },
+            )
+        };
+        // Accept the check durably before issuing any source request. A rejected
+        // start leaves the previous summary available, including a no-op retry.
+        let accepted = self
+            .discovery_commit(
+                &context,
+                &run_id,
+                store,
+                document.revision,
+                DiscoveryPagePatch {
+                    account_key: context.account_key.clone(),
+                    authors: vec![],
+                    records: vec![],
+                    retain_authors: None,
+                    last_check: Some(summary.clone()),
+                },
+                snapshot.records.len() + snapshot.other_record_count,
+                snapshot.other_record_count,
+            )
+            .await;
+        let revision = match accepted {
+            Ok(revision) => revision,
+            Err(error) => {
+                let mut memory = self.discovery.memory.lock().map_err(|_| unavailable())?;
+                if memory
+                    .snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.run.as_ref())
+                    .is_some_and(|run| run.id == run_id)
+                {
+                    *memory = previous_memory;
+                }
+                return Err(error);
+            }
+        };
+        document.revision = revision;
+        snapshot.revision = revision;
+        if let Some(account) = document
+            .value
+            .accounts
+            .iter_mut()
+            .find(|account| account.account_key == context.account_key)
+        {
+            account.last_check = Some(summary);
+        } else {
+            document.value.accounts.push(DiscoveryAccount {
+                account_key: context.account_key.clone(),
+                authors: vec![],
+                records: vec![],
+                last_check: Some(summary),
+            });
         }
         let service = Arc::clone(self);
         let id = run_id.clone();
@@ -1168,17 +1322,26 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .as_mut()
             .filter(|run| run.id == run_id)
             .ok_or(AccountError::new("DISCOVERY_RUN_CHANGED"))?;
-        if run.phase == DiscoveryPhase::Checking {
-            run.phase = DiscoveryPhase::Cancelled;
-            run.error_code = Some("DISCOVERY_CANCELLED".into());
-            for range in &mut snapshot.authors {
-                if range.state == DiscoveryRangeState::Checking {
-                    range.state = DiscoveryRangeState::Cancelled;
-                    range.error_code = Some("DISCOVERY_CANCELLED".into());
-                }
+        if run.phase != DiscoveryPhase::Checking {
+            return Ok(run.clone());
+        }
+        run.phase = DiscoveryPhase::Cancelled;
+        run.error_code = Some("DISCOVERY_CANCELLED".into());
+        for range in &mut snapshot.authors {
+            if range.state == DiscoveryRangeState::Checking {
+                range.state = DiscoveryRangeState::Cancelled;
+                range.error_code = Some("DISCOVERY_CANCELLED".into());
             }
         }
         let result = run.clone();
+        if let Some(summary) = snapshot
+            .last_check
+            .as_mut()
+            .filter(|summary| summary.id == run_id)
+        {
+            summary.phase = DiscoveryCheckPhase::Cancelled;
+            summary.finished_at = now().ok().map(|time| time.max(summary.started_at));
+        }
         memory.cancelled = true;
         Ok(result)
     }
@@ -1269,6 +1432,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             authors: vec![document.value.accounts[account_index].authors[range_index].clone()],
             records,
             retain_authors: state.retain_authors.clone(),
+            last_check: Some(state.summary.clone()),
         };
         document.revision = self
             .discovery_commit(
@@ -1282,6 +1446,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             )
             .await?;
         state.retain_authors = None;
+        document.value.accounts[account_index].last_check = Some(state.summary.clone());
         Ok(())
     }
     async fn discovery_scan(
@@ -1296,6 +1461,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let outcome = self
             .discovery_scan_inner(context, run_id, ranges, mode, document, Arc::clone(&store))
             .await;
+        let outcome = if self.discovery_guard(context, run_id).await.is_ok() {
+            match self
+                .discovery_save_terminal(context, run_id, Arc::clone(&store), &outcome)
+                .await
+            {
+                Ok(()) => outcome,
+                Err(error) => Err(error),
+            }
+        } else {
+            outcome
+        };
         // Layout maintenance does not change the safety or truth of the saved
         // source results. Cancellation and changed identities skip maintenance.
         if self.discovery_guard(context, run_id).await.is_ok() {
@@ -1317,6 +1493,50 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
         }
         outcome
+    }
+
+    async fn discovery_save_terminal(
+        &self,
+        context: &DiscoveryContext,
+        run_id: &str,
+        store: Arc<WorkbenchStore>,
+        outcome: &Result<bool>,
+    ) -> Result<()> {
+        let progress = self
+            .discovery
+            .memory
+            .lock()
+            .map_err(|_| unavailable())?
+            .snapshot
+            .clone()
+            .ok_or_else(unavailable)?;
+        let mut summary = progress.last_check.ok_or_else(unavailable)?;
+        if summary.id != run_id {
+            return Err(AccountError::new("DISCOVERY_RUN_CHANGED"));
+        }
+        summary.phase = match outcome {
+            Ok(false) => DiscoveryCheckPhase::Complete,
+            Ok(true) => DiscoveryCheckPhase::Partial,
+            Err(_) => DiscoveryCheckPhase::Error,
+        };
+        summary.finished_at = Some(now()?.max(summary.started_at));
+        self.discovery_commit(
+            context,
+            run_id,
+            store,
+            progress.revision,
+            DiscoveryPagePatch {
+                account_key: context.account_key.clone(),
+                authors: vec![],
+                records: vec![],
+                retain_authors: None,
+                last_check: Some(summary),
+            },
+            progress.record_count,
+            progress.other_record_count,
+        )
+        .await?;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1341,6 +1561,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     account_key: context.account_key.clone(),
                     authors: vec![],
                     records: vec![],
+                    last_check: None,
                 });
                 document.value.accounts.len() - 1
             }
@@ -1363,6 +1584,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .fold((0, 0), |sum, count| (sum.0 + count.0, sum.1 + count.1));
         let mut state = DiscoveryCommitState {
             store,
+            summary: document.value.accounts[index]
+                .last_check
+                .clone()
+                .ok_or_else(unavailable)?,
             retain_authors: Some(context.authors.clone()),
             record_count,
             other_record_count,
@@ -1392,6 +1617,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             let source = *source;
             self.discovery_guard(context, run_id).await?;
             self.discovery.progress(run_id, author, source, 0, false)?;
+            state.summary.attempted_scopes += 1;
             let account = &mut document.value.accounts[index];
             let range_index = account
                 .authors
@@ -1595,6 +1821,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                             author_verified: verified,
                             observed_at: now()?,
                             scan_id: run_id.into(),
+                            first_discovered_run_id: Some(run_id.into()),
                         };
                         let existing = record_index
                             .get(&(incoming.work.source, incoming.work.work_id.clone()))
@@ -1757,6 +1984,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             } else {
                 range.state = DiscoveryRangeState::Complete;
                 range.error_code = None;
+                state.summary.complete_scopes += 1;
             }
             self.discovery_save_page(
                 context,
@@ -1840,6 +2068,8 @@ fn merged_record(
         existing.work.source == incoming.work.source
             && existing.work.work_id == incoming.work.work_id
     }) {
+        // None is meaningful: pre-feature records stay in the historical baseline.
+        incoming.first_discovered_run_id = existing.first_discovered_run_id.clone();
         let fresh_language_tags = retained_language_tags(&incoming.work.tags);
         let tags = inherit_language_tags(&incoming.work.tags, &existing.work.tags);
         let source_updated_at = incoming

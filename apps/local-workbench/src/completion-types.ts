@@ -31,10 +31,26 @@ export interface DiscoveryRun {
   currentQueryIndex?: number | null;
   currentQueryCount?: number | null;
 }
+/** Latest accepted manual check; discovered does not mean newly published. */
+export interface DiscoveryCheckSummary {
+  id: string;
+  startedAt: number;
+  finishedAt: number | null;
+  phase: ScanPhase | "interrupted";
+  mode: DiscoveryMode;
+  onlyUnfinished: boolean;
+  firstCatalog: boolean;
+  allFollowed: boolean;
+  authorCount: number;
+  totalScopes: number;
+  attemptedScopes: number;
+  completeScopes: number;
+}
 export interface DiscoverySnapshot {
   scopes: SourceScope[];
   revision: number;
   run: DiscoveryRun | null;
+  lastCheck?: DiscoveryCheckSummary | null;
   otherRecordCount?: number;
   includesOther?: boolean;
   authorPolicies?: AuthorQueryPolicy[];
@@ -63,6 +79,8 @@ export interface DiscoverySnapshot {
     authorVerified: boolean;
     observedAt: number;
     scanId: string;
+    /** Absent legacy values are historical, never inferred from observedAt. */
+    firstDiscoveredRunId?: string;
   }[];
 }
 export interface CompletionAdapter {

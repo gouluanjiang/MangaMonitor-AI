@@ -43,6 +43,55 @@ pub struct DiscoveryRecord {
     pub author_verified: bool,
     pub observed_at: u64,
     pub scan_id: String,
+    /// Absent legacy records are the historical baseline, never dated retroactively.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_discovered_run_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiscoveryCheckPhase {
+    Checking,
+    Complete,
+    Partial,
+    Cancelled,
+    Error,
+    Interrupted,
+}
+
+/// The most recent explicit check; discovering a source ID is not publication.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiscoveryCheckSummary {
+    pub id: String,
+    pub started_at: u64,
+    pub finished_at: Option<u64>,
+    pub phase: DiscoveryCheckPhase,
+    pub mode: DiscoveryMode,
+    pub only_unfinished: bool,
+    pub first_catalog: bool,
+    pub all_followed: bool,
+    pub author_count: usize,
+    pub total_scopes: usize,
+    pub attempted_scopes: usize,
+    pub complete_scopes: usize,
+}
+
+impl DiscoveryCheckSummary {
+    pub fn is_valid(&self) -> bool {
+        library_hash_is_valid(&self.id)
+            && self.started_at <= MAX_SAFE_INTEGER
+            && self
+                .finished_at
+                .is_none_or(|time| time >= self.started_at && time <= MAX_SAFE_INTEGER)
+            && (1..=MAX_DISCOVERY_AUTHORS).contains(&self.author_count)
+            && (self.author_count..=self.author_count * 2).contains(&self.total_scopes)
+            && self.attempted_scopes <= self.total_scopes
+            && self.complete_scopes <= self.attempted_scopes
+            && (self.phase != DiscoveryCheckPhase::Checking || self.finished_at.is_none())
+            && (self.phase != DiscoveryCheckPhase::Complete
+                || (self.complete_scopes == self.total_scopes && self.finished_at.is_some()))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -149,6 +198,8 @@ pub struct DiscoveryAccount {
     pub account_key: String,
     pub authors: Vec<DiscoveryAuthorRange>,
     pub records: Vec<DiscoveryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<DiscoveryCheckSummary>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -246,6 +297,10 @@ impl ValidatedDocument for DiscoveryDocument {
                 || !account_keys.insert(&account.account_key)
                 || account.authors.len() > MAX_DISCOVERY_AUTHORS * 2
                 || record_count > MAX_DISCOVERY_RAW_RECORDS
+                || account
+                    .last_check
+                    .as_ref()
+                    .is_some_and(|summary| !summary.is_valid())
             {
                 return Err(invalid());
             }
@@ -360,6 +415,10 @@ impl ValidatedDocument for DiscoveryDocument {
                     || !keys.insert((record.work.source, &record.work.work_id))
                     || record.observed_at > MAX_SAFE_INTEGER
                     || !library_hash_is_valid(&record.scan_id)
+                    || record
+                        .first_discovered_run_id
+                        .as_ref()
+                        .is_some_and(|id| !library_hash_is_valid(id))
                     || record.matched_authors.is_empty()
                     || record.matched_authors.len() > MAX_DISCOVERY_AUTHORS
                     || record.matched_authors.iter().any(|author| {

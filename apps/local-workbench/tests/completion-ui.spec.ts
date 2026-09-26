@@ -157,6 +157,13 @@ async function install(page: Page) {
         cancelFailure: null,
         inventoryFailure: false,
       } as Window["authorTest"]);
+      // Opt-in saved IPC state for reload coverage, never a real account store.
+      const savedSummary = sessionStorage.getItem("synthetic-author-summary");
+      if (savedSummary) {
+        const saved = JSON.parse(savedSummary);
+        hooks.view = saved.view;
+        hooks.inventory = saved.inventory;
+      }
       const clone = (value: unknown) => structuredClone(value);
       Object.defineProperty(window, "__TAURI_INTERNALS__", {
         configurable: true,
@@ -371,6 +378,305 @@ const finishSyntheticCheck = (page: Page) =>
     }
     view.revision++;
   });
+
+const seedChangeSummary = (page: Page) =>
+  page.evaluate(() => {
+    const h = window.authorTest;
+    const id = "a".repeat(64);
+    const at = 1800000001000;
+    h.view.lastCheck = {
+      id,
+      startedAt: at,
+      finishedAt: at + 1000,
+      phase: "complete",
+      mode: "incremental",
+      onlyUnfinished: false,
+      firstCatalog: false,
+      allFollowed: true,
+      authorCount: 2,
+      totalScopes: 3,
+      attemptedScopes: 3,
+      completeScopes: 3,
+    };
+    // Re-reading an old work in this run does not make it newly discovered.
+    for (const record of h.view.records) {
+      record.scanId = id;
+      record.observedAt = at;
+    }
+    const add = (
+      workId: string,
+      title: string,
+      author = "合成作者",
+      source: "JM" | "Pica" = "JM",
+    ) => {
+      const record = structuredClone(h.view.records[1]);
+      record.work = {
+        ...record.work,
+        source,
+        workId,
+        title,
+        authors: [author],
+      };
+      record.matchedAuthors = [author];
+      record.firstDiscoveredRunId = id;
+      h.view.records.push(record);
+      return record;
+    };
+    add("789", "合成作者 · 本次首次发现未入库作品");
+    add("890", "合成作者 · 本次首次发现已入库作品");
+    add(
+      "1123456789abcdef01234567",
+      "合成作者 · 本次首次发现待核实作品",
+      "合成作者",
+      "Pica",
+    );
+    const other = add("901", "无关关键词结果", "其他署名");
+    other.matchedAuthors = ["合成作者"];
+    other.authorVerified = false;
+    add("902", "另一作者 · 本次首次发现作品", "另一作者");
+    h.view.authors.push({ ...h.view.authors[0], author: "另一作者" });
+    for (const range of h.view.authors) {
+      range.state = "complete";
+      range.errorCode = null;
+      range.lastCompleteAt = at + 1000;
+    }
+    h.inventory.items.push(
+      {
+        source: "JM",
+        workId: "890",
+        libraryEntryId: "b".repeat(64),
+        localFiles: "present",
+      },
+      {
+        source: "Pica",
+        workId: "1123456789abcdef01234567",
+        libraryEntryId: "c".repeat(64),
+        localFiles: "unavailable",
+      },
+    );
+    h.view.revision++;
+  });
+
+test("change summary uses first discovery identities, keeps historical omissions and follows current file registration", async ({
+  page,
+}) => {
+  await install(page);
+  await seedChangeSummary(page);
+  await page.getByTestId("nav-completion").click();
+  const summary = page.getByTestId("completion-change-summary");
+  const counts = page.getByTestId("completion-change-counts");
+  await expect(counts).toContainText("本次首次发现 4 条");
+  await expect(counts).toContainText(
+    "未入库 2 条 · 已入库 1 条 · 状态待核实 1 条",
+  );
+  await expect(counts).toContainText("历史保留未入库 2 条");
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await expect(page.getByTestId("author-update-JM:901")).toHaveCount(0);
+  await summary.scrollIntoViewIfNeeded();
+  await expect(summary).toBeInViewport();
+  await expect(page.getByTestId("author-update-JM:789")).toBeInViewport();
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/author-change-summary-complete.png",
+  });
+  await page.getByTestId("completion-new-only").click();
+  await expect(page.getByTestId("completion-new-only")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("author-update-JM:789")).toBeVisible();
+  await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
+  await page.evaluate(() => {
+    const h = window.authorTest;
+    h.inventory.items.push({
+      source: "JM",
+      workId: "789",
+      libraryEntryId: "d".repeat(64),
+      localFiles: "present",
+    });
+    h.inventory.revision++;
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(counts).toContainText("本次首次发现 4 条");
+  await expect(counts).toContainText(
+    "未入库 1 条 · 已入库 2 条 · 状态待核实 1 条",
+  );
+  await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
+  await page.getByTestId("completion-new-only").click();
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+  expect(await discoveryCalls(page, "discovery_start_unfinished")).toBe(0);
+});
+
+test("change summary filters compose with author and source scopes, clear selections and exclude other keyword hits", async ({
+  page,
+}) => {
+  await install(page);
+  await seedChangeSummary(page);
+  await page.getByTestId("nav-completion").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await page.getByTestId("completion-select-all").click();
+  await expect(page.getByTestId("completion-selection-bar")).toContainText(
+    "已选 4 本",
+  );
+  await page.getByTestId("completion-new-only").click();
+  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
+  await page.getByTestId("completion-select-all").click();
+  await expect(page.getByTestId("completion-selection-bar")).toContainText(
+    "已选 2 本",
+  );
+  await page.getByLabel("检查作者", { exact: true }).selectOption("合成作者");
+  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "本次首次发现 3 条",
+  );
+  await page.getByLabel("更新来源").selectOption("JM");
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "本次首次发现 2 条",
+  );
+  await expect(page.getByTestId("author-update-JM:902")).toHaveCount(0);
+  await page.getByLabel("筛选作者更新").fill("未入库作品");
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "本次首次发现 1 条",
+  );
+  await page.getByLabel("筛选作者更新").fill("");
+  await page.getByRole("button", { name: "查看其他关键词结果" }).click();
+  await expect(page.getByTestId("completion-change-summary")).toHaveCount(0);
+  await expect(page.getByTestId("author-update-JM:901")).toBeVisible();
+  await expect(page.getByTestId("completion-select-all")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "查看下载计划", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "返回作者作品" }).click();
+  await expect(page.getByTestId("completion-new-only")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+});
+
+test("running summaries withhold final counts and partial or interrupted checks report only their read scope", async ({
+  page,
+}) => {
+  await installWithPausedClock(page);
+  await seedChangeSummary(page);
+  await page.evaluate(() => {
+    const view = window.authorTest.view;
+    const summary = view.lastCheck!;
+    summary.phase = "checking";
+    summary.finishedAt = null;
+    summary.completeScopes = 1;
+    summary.attemptedScopes = 2;
+    view.run = {
+      id: summary.id,
+      phase: "checking",
+      currentAuthor: "合成作者",
+      currentSource: "Pica",
+      currentPage: 2,
+      requestsUsed: 2,
+      completedScopes: 1,
+      totalScopes: 3,
+      errorCode: null,
+      mode: "incremental",
+      currentStrategy: "incremental",
+    };
+  });
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-change-summary")).toContainText(
+    "正在检查，结束后汇总本次新发现",
+  );
+  await expect(page.getByTestId("completion-change-counts")).toHaveCount(0);
+  await expect(page.getByTestId("completion-new-only")).toBeDisabled();
+  await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
+  await page.evaluate(() => {
+    const view = window.authorTest.view;
+    view.run!.phase = "partial";
+    view.run!.completedScopes = 2;
+    view.lastCheck!.phase = "partial";
+    view.lastCheck!.finishedAt = 1800000003000;
+    view.lastCheck!.attemptedScopes = 3;
+    view.lastCheck!.completeScopes = 2;
+    view.authors[1].state = "partial";
+    view.authors[1].errorCode = "SOURCE_UNAVAILABLE";
+    view.revision++;
+  });
+  await page.clock.runFor(1500);
+  const summary = page.getByTestId("completion-change-summary");
+  await expect(summary).toContainText(
+    "仅统计本批已读取范围，未完成范围仍需补查",
+  );
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "本次首次发现 4 条",
+  );
+  await expect(page.getByTestId("completion-new-only")).toBeEnabled();
+  await summary.scrollIntoViewIfNeeded();
+  await expect(summary).toBeInViewport();
+  await expect(page.getByTestId("author-update-JM:789")).toBeInViewport();
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/author-change-summary-partial.png",
+  });
+  await page.evaluate(() => {
+    window.authorTest.view.run = null;
+    window.authorTest.view.lastCheck!.phase = "interrupted";
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(summary).toContainText(
+    "仅统计本批已读取范围，未完成范围仍需补查",
+  );
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "本次首次发现 4 条",
+  );
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+});
+
+test("legacy catalogs get no invented summary, first collection is explicit and saved summaries survive reload outside author search", async ({
+  page,
+}) => {
+  await install(page);
+  await open(page);
+  await expect(page.getByTestId("completion-change-summary")).toContainText(
+    "下一次检查后生成变化摘要",
+  );
+  await expect(page.getByTestId("completion-change-counts")).toHaveCount(0);
+  await expect(page.getByTestId("completion-new-only")).toBeDisabled();
+  await seedChangeSummary(page);
+  await page.evaluate(() => {
+    const view = window.authorTest.view;
+    view.lastCheck!.firstCatalog = true;
+    for (const record of view.records)
+      record.firstDiscoveredRunId = view.lastCheck!.id;
+  });
+  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await expect(page.getByTestId("completion-change-summary")).toContainText(
+    "首次收录不代表网站新发布",
+  );
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "本次首次发现 7 条",
+  );
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "历史保留未入库 0 条",
+  );
+  await page.evaluate(() => {
+    const { view, inventory } = window.authorTest;
+    sessionStorage.setItem(
+      "synthetic-author-summary",
+      JSON.stringify({ view, inventory }),
+    );
+  });
+  await page.reload();
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-change-summary")).toContainText(
+    "首次收录不代表网站新发布",
+  );
+  await expect(page.getByTestId("completion-change-counts")).toContainText(
+    "本次首次发现 7 条",
+  );
+  expect(await discoveryCalls(page, "discovery_start")).toBe(0);
+  await page.getByTestId("nav-author-search").click();
+  await expect(page.getByTestId("completion-change-summary")).toHaveCount(0);
+  await expect(page.getByTestId("completion-new-only")).toHaveCount(0);
+});
 
 test("active polling transports progress only and refreshes saved catalog once after completion", async ({
   page,

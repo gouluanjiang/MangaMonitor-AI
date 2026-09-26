@@ -197,6 +197,7 @@ mod tests {
             author_verified: true,
             observed_at: 1,
             scan_id: "a".repeat(64),
+            first_discovered_run_id: None,
         };
         assert!(!discovery_record_matches_author(&record));
         record.work.authors = vec!["Circle (Writer)".into()];

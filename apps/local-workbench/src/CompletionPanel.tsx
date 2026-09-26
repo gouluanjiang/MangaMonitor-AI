@@ -38,6 +38,10 @@ import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { createAuthorSearchAdapter } from "./author-search.ts";
 import { partitionAuthorRecords } from "./author-evidence.ts";
+import {
+  summarizeDiscoveryChanges,
+  uniqueDiscoveryRecords,
+} from "./discovery-summary.ts";
 import { AuthorCreditNote } from "./AuthorCreditNote.tsx";
 import { jmSearchScopeNote } from "./source-search.ts";
 import {
@@ -126,6 +130,7 @@ export function CompletionPanel({
   const [result, setResult] = useState<{
     key: string;
     value: DiscoverySnapshot;
+    catalogCheckId: string | null;
   } | null>(null);
   const view = result?.key === scopeKey ? result.value : null;
   const [busy, setBusy] = useState(false),
@@ -146,28 +151,45 @@ export function CompletionPanel({
     setSort(readSortPreference(sortPage, updatedSorts, "updated-desc"));
   }, [sortPage]);
   const [showOther, setShowOther] = useState(false);
+  const [newOnly, setNewOnly] = useState(false);
+  const checkSummary = view?.lastCheck;
   otherView.current = showOther;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   useEffect(() => {
     setSelection([]);
-  }, [scopeKey, author, source, filter, query, mode, showOther]);
+  }, [
+    scopeKey,
+    author,
+    source,
+    filter,
+    query,
+    mode,
+    showOther,
+    newOnly,
+    checkSummary?.id,
+  ]);
+  useEffect(() => {
+    setNewOnly(false);
+  }, [scopeKey, mode, checkSummary?.id]);
   const connected = scopes.length === 2;
   const running = view?.run?.phase === "checking";
   const inventory = useMemo(
     () => createInventoryMatcher(library, inventorySnapshot, inventoryReady),
     [library, inventorySnapshot, inventoryReady],
   );
-  const authorResults = useMemo(
-    () =>
-      partitionAuthorRecords(
-        view?.records ?? emptyRecords,
-        author,
-        source,
-        view?.authorPolicies,
-      ),
-    [view?.records, view?.authorPolicies, author, source],
-  );
+  const authorResults = useMemo(() => {
+    const partition = partitionAuthorRecords(
+      view?.records ?? emptyRecords,
+      author,
+      source,
+      view?.authorPolicies,
+    );
+    return {
+      confirmed: uniqueDiscoveryRecords(partition.confirmed),
+      other: uniqueDiscoveryRecords(partition.other),
+    };
+  }, [view?.records, view?.authorPolicies, author, source]);
   const load = useCallback(
     async (
       resetRetries = false,
@@ -198,6 +220,10 @@ export function CompletionPanel({
             if (progress.run?.phase === "checking") {
               setResult((previous) => ({
                 key: captured.key,
+                catalogCheckId:
+                  previous?.key === captured.key
+                    ? previous.catalogCheckId
+                    : null,
                 value: {
                   ...progress,
                   records:
@@ -221,7 +247,11 @@ export function CompletionPanel({
           const next = await adapter.read(captured.scopes, read.includeOther);
           if (valid()) {
             readFailures.current = 0;
-            setResult({ key: captured.key, value: next });
+            setResult({
+              key: captured.key,
+              value: next,
+              catalogCheckId: next.lastCheck?.id ?? null,
+            });
             setReadFailure(null);
             if (read.includeOther) setShowOther(true);
           }
@@ -306,7 +336,11 @@ export function CompletionPanel({
       if (valid()) {
         if (next) {
           readFailures.current = 0;
-          setResult({ key: captured.key, value: next });
+          setResult({
+            key: captured.key,
+            value: next,
+            catalogCheckId: next.lastCheck?.id ?? null,
+          });
           setReadFailure(null);
         } else await load(true);
       }
@@ -327,6 +361,7 @@ export function CompletionPanel({
     unfinishedOnly = false,
   ) {
     setShowOther(false);
+    setNewOnly(false);
     if (mode === "updates") setFilter("missing");
     const captured = current.current;
     const selected =
@@ -387,7 +422,7 @@ export function CompletionPanel({
   const scopedRecords = showOther
     ? authorResults.other
     : authorResults.confirmed;
-  const records = useMemo(
+  const matchingRecords = useMemo(
     () =>
       scopedRecords.filter(
         (record) =>
@@ -399,6 +434,31 @@ export function CompletionPanel({
             .includes(terms),
       ),
     [scopedRecords, terms],
+  );
+  const summaryReady =
+    mode === "updates" &&
+    !showOther &&
+    !!checkSummary &&
+    checkSummary.phase !== "checking" &&
+    !running &&
+    !readFailure &&
+    result?.catalogCheckId === checkSummary.id;
+  const changeCounts = useMemo(
+    () =>
+      summaryReady && checkSummary
+        ? summarizeDiscoveryChanges(matchingRecords, checkSummary.id, inventory)
+        : null,
+    [summaryReady, checkSummary?.id, matchingRecords, inventory],
+  );
+  const onlyNewVisible = newOnly && summaryReady;
+  const records = useMemo(
+    () =>
+      onlyNewVisible
+        ? matchingRecords.filter(
+            (record) => record.firstDiscoveredRunId === checkSummary?.id,
+          )
+        : matchingRecords,
+    [matchingRecords, onlyNewVisible, checkSummary?.id],
   );
   const { counts, visible, selectable } = useMemo(() => {
     const counts: Record<InventoryFilter, number> = {
@@ -690,6 +750,96 @@ export function CompletionPanel({
               </select>
             </label>
           </div>
+          {mode === "updates" && !showOther && (
+            <section
+              className="completion-change-summary"
+              aria-label="本次检查变化"
+              data-testid="completion-change-summary"
+            >
+              <div className="completion-change-heading">
+                <strong>本次检查变化</strong>
+                <button
+                  data-testid="completion-new-only"
+                  aria-pressed={onlyNewVisible}
+                  disabled={!summaryReady}
+                  onClick={() => {
+                    setNewOnly(!onlyNewVisible);
+                    setSelection([]);
+                  }}
+                >
+                  仅看本次新发现
+                </button>
+              </div>
+              {!checkSummary ? (
+                <p className="source-muted">
+                  下一次检查后生成变化摘要，已有目录按历史记录保留。
+                </p>
+              ) : (
+                <>
+                  <p
+                    className="source-muted"
+                    data-testid="completion-change-range"
+                  >
+                    {readFailure
+                      ? "上次读取的检查记录（当前状态待刷新）"
+                      : {
+                          checking: "本次检查进行中",
+                          complete: "本次检查已完成",
+                          partial: "本次检查部分完成",
+                          cancelled: "本次检查已停止",
+                          error: "本次检查未完成",
+                          interrupted: "上次检查被中断",
+                        }[checkSummary.phase]}
+                    {" · "}
+                    {checkSummary.allFollowed ? "全部关注作者" : "所选作者"}
+                    {checkSummary.onlyUnfinished
+                      ? " · 仅补查未完成"
+                      : checkSummary.mode === "full"
+                        ? " · 完整复核"
+                        : " · 增量检查"}
+                    {" · 实际 "}
+                    {checkSummary.authorCount} 位作者 /{" "}
+                    {checkSummary.totalScopes} 个来源范围
+                    {" · 已尝试 "}
+                    {checkSummary.attemptedScopes} 个，完成{" "}
+                    {checkSummary.completeScopes} 个{" · "}
+                    {new Date(
+                      checkSummary.finishedAt ?? checkSummary.startedAt,
+                    ).toLocaleString()}
+                  </p>
+                  {running || checkSummary.phase === "checking" ? (
+                    <p data-testid="completion-change-pending">
+                      正在检查，结束后汇总本次新发现。列表仍保留最近读取结果。
+                    </p>
+                  ) : changeCounts ? (
+                    <>
+                      <p data-testid="completion-change-counts">
+                        本次首次发现 {changeCounts.newTotal} 条 · 未入库{" "}
+                        {changeCounts.newMissing} 条 · 已入库{" "}
+                        {changeCounts.newOwned} 条 · 状态待核实{" "}
+                        {changeCounts.newUnknown} 条；历史保留未入库{" "}
+                        {changeCounts.historicalMissing} 条
+                      </p>
+                      <p className="source-muted">
+                        统计按当前作者、来源和关键词范围；JM
+                        与哔咔分别计数。历史未入库作品继续保留。
+                        {checkSummary.firstCatalog
+                          ? " 本批包含首次建立的目录，首次收录不代表网站新发布。"
+                          : " 首次发现不代表网站新发布。"}
+                        {checkSummary.phase !== "complete"
+                          ? " 仅统计本批已读取范围，未完成范围仍需补查。"
+                          : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <p data-testid="completion-change-pending">
+                      本次结果尚未读取完成，刷新结果后汇总；当前不显示最终新增数量。
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
+          )}
           {(showOther || otherCount === null || otherCount > 0) && (
             <div
               className="source-notice"
@@ -707,6 +857,7 @@ export function CompletionPanel({
                 aria-pressed={showOther}
                 disabled={reading}
                 onClick={() => {
+                  setNewOnly(false);
                   setSelectionMode(false);
                   setSelection([]);
                   setFilter("all");
@@ -733,6 +884,7 @@ export function CompletionPanel({
             )}
           </div>
           <p data-testid="completion-counts">
+            {onlyNewVisible ? "仅看本次新发现 · " : ""}
             {showOther ? "其他关键词结果（未确认作者归属） · " : ""}
             {readFailure
               ? "显示上次读取结果，当前进度待刷新"
@@ -856,19 +1008,21 @@ export function CompletionPanel({
             <p className="source-empty">
               {readFailure && !view
                 ? "尚未读取到检查结果，请刷新重试。"
-                : scopedRecords.length > 0
-                  ? "当前筛选没有结果。"
-                  : showOther
-                    ? "当前范围没有其他关键词结果。"
-                    : !showOther && (otherCount === null || otherCount > 0)
-                      ? "尚未确认该作者的作品，可查看其他关键词结果。"
-                      : fullRangeChecked
-                        ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
-                        : complete
-                          ? "当前保存目录没有作者作品，可通过完整复核再次检查。"
-                          : mode === "search"
-                            ? "输入作者名，点击“搜索两站作品”读取结果。"
-                            : "点击“一键检查全部关注作者”读取关注作者的作品。"}
+                : onlyNewVisible
+                  ? "本批已读取范围内，没有符合当前筛选的首次发现作品。历史未入库作品仍保留，可关闭“仅看本次新发现”查看。"
+                  : scopedRecords.length > 0
+                    ? "当前筛选没有结果。"
+                    : showOther
+                      ? "当前范围没有其他关键词结果。"
+                      : !showOther && (otherCount === null || otherCount > 0)
+                        ? "尚未确认该作者的作品，可查看其他关键词结果。"
+                        : fullRangeChecked
+                          ? "本次完整查询没有返回作品。请核对作者名称或切换来源查看。"
+                          : complete
+                            ? "当前保存目录没有作者作品，可通过完整复核再次检查。"
+                            : mode === "search"
+                              ? "输入作者名，点击“搜索两站作品”读取结果。"
+                              : "点击“一键检查全部关注作者”读取关注作者的作品。"}
             </p>
           )}
           {visible.length > 0 && !showOther && (
@@ -908,7 +1062,16 @@ export function CompletionPanel({
             items={sortedVisible}
             density={density}
             itemKey={(record) => sourceWorkKey(record.work)}
-            key={scopeKey + author + source + filter + query + showOther + sort}
+            key={
+              scopeKey +
+              author +
+              source +
+              filter +
+              query +
+              showOther +
+              sort +
+              onlyNewVisible
+            }
             renderItem={(record) => {
               const work = record.work,
                 scope = scopes.find((value) => value.source === work.source)!;

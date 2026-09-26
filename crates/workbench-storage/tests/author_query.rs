@@ -315,6 +315,7 @@ fn policies_are_bounded_revisioned_and_do_not_rewrite_unrelated_documents() {
     assert_eq!(store.read_library().unwrap().revision, 0);
     assert_eq!(store.read_downloads().unwrap().revision, 0);
     let patch = DiscoveryPagePatch {
+        last_check: None,
         account_key: "b".repeat(64),
         authors: vec![],
         records: vec![],

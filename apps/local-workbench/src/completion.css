@@ -75,6 +75,27 @@
 .completion-status {
   color: #c7b3ff;
 }
+.completion-change-summary {
+  margin: 1rem 0;
+  padding: 0.9rem 0;
+  border-top: 1px solid #37313e;
+  border-bottom: 1px solid #37313e;
+}
+.completion-change-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+}
+.completion-change-summary p {
+  margin: 0.45rem 0 0;
+  line-height: 1.55;
+}
+.completion-change-summary button[aria-pressed="true"] {
+  border-color: #8560f2;
+  background: #372566;
+}
 
 .completion-panel .source-card-open {
   display: flex;

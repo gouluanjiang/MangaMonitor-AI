@@ -10,9 +10,10 @@ use crate::{
     store::{
         check_directory_tree, check_optional_regular, read_regular_bounded, MAX_FOLLOWING_BYTES,
     },
-    AccountFollowing, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryDocument, DiscoveryRecord,
-    Document, Result, Source, StoreError, WorkbenchStore, MAX_DISCOVERY_AUTHORS,
-    MAX_DISCOVERY_BYTES, MAX_DISCOVERY_RAW_BYTES, MAX_DISCOVERY_RAW_RECORDS, MAX_SAFE_INTEGER,
+    AccountFollowing, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryCheckSummary,
+    DiscoveryDocument, DiscoveryRecord, Document, Result, Source, StoreError, WorkbenchStore,
+    MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_BYTES, MAX_DISCOVERY_RAW_BYTES, MAX_DISCOVERY_RAW_RECORDS,
+    MAX_SAFE_INTEGER,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -40,6 +41,9 @@ pub struct DiscoveryPagePatch {
     pub authors: Vec<DiscoveryAuthorRange>,
     pub records: Vec<DiscoveryRecord>,
     pub retain_authors: Option<Vec<String>>,
+    /// None leaves a previous summary untouched, including legacy page patches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<DiscoveryCheckSummary>,
 }
 
 impl DiscoveryPagePatch {
@@ -69,6 +73,7 @@ impl DiscoveryPagePatch {
                 account_key: self.account_key.clone(),
                 authors: self.authors.clone(),
                 records: self.records.clone(),
+                last_check: self.last_check.clone(),
             }],
         }
         .validate()
@@ -170,6 +175,7 @@ struct BaseStamp {
 struct AccountIndex {
     records: HashMap<(Source, String), usize>,
     ranges: HashMap<(Source, String), usize>,
+    summary_bytes: usize,
 }
 
 #[derive(Default)]
@@ -192,6 +198,7 @@ struct PreparedPatch {
     encoded_bytes: usize,
     record_sizes: Vec<usize>,
     range_sizes: Vec<usize>,
+    summary_bytes: Option<usize>,
 }
 
 type RecordPositions = HashMap<String, HashMap<(Source, String), usize>>;
@@ -241,6 +248,10 @@ impl RawIndex {
                     .insert((range.source, range.author.clone()), bytes);
                 index.encoded_bytes += bytes;
             }
+            if let Some(summary) = &account.last_check {
+                entries.summary_bytes = encoded_size(summary)?;
+                index.encoded_bytes += entries.summary_bytes;
+            }
             index.accounts.insert(account.account_key.clone(), entries);
         }
         if index.record_count > MAX_DISCOVERY_RAW_RECORDS
@@ -285,6 +296,11 @@ impl RawIndex {
             return Err(StoreError::new("VALIDATION_FAILED"));
         }
         encoded_bytes += ranges.values().sum::<usize>();
+        let summary_bytes = patch.last_check.as_ref().map(encoded_size).transpose()?;
+        if let Some(bytes) = summary_bytes {
+            encoded_bytes =
+                encoded_bytes - account.map_or(0, |account| account.summary_bytes) + bytes;
+        }
         let mut record_count = self.record_count;
         let mut record_sizes = Vec::with_capacity(patch.records.len());
         for record in &patch.records {
@@ -306,11 +322,15 @@ impl RawIndex {
             encoded_bytes,
             record_sizes,
             range_sizes,
+            summary_bytes,
         })
     }
 
     fn apply(&mut self, patch: &DiscoveryPagePatch, prepared: PreparedPatch) {
         let account = self.accounts.entry(patch.account_key.clone()).or_default();
+        if let Some(bytes) = prepared.summary_bytes {
+            account.summary_bytes = bytes;
+        }
         if let Some(retained) = &patch.retain_authors {
             let names: HashSet<_> = retained.iter().map(String::as_str).collect();
             account
@@ -637,6 +657,7 @@ impl WorkbenchStore {
             .unwrap_or(0);
         if prepared.record_sizes.iter().sum::<usize>()
             + prepared.range_sizes.iter().sum::<usize>()
+            + prepared.summary_bytes.unwrap_or(0)
             + retained_bytes
             + CATALOG_ENVELOPE_ALLOWANCE
             > MAX_PATCH_BYTES
@@ -841,10 +862,14 @@ fn apply_to_document(
                 account_key: patch.account_key.clone(),
                 authors: vec![],
                 records: vec![],
+                last_check: None,
             });
             value.accounts.len() - 1
         });
     let account = &mut value.accounts[account_position];
+    if let Some(summary) = patch.last_check {
+        account.last_check = Some(summary);
+    }
     if let Some(retained) = patch.retain_authors {
         let names: HashSet<_> = retained.into_iter().collect();
         account
@@ -871,5 +896,82 @@ fn apply_to_document(
             records.insert(key, account.records.len());
             account.records.push(record);
         }
+    }
+}
+
+#[cfg(test)]
+mod summary_size_tests {
+    use super::*;
+    use crate::{DiscoveryCheckPhase, DiscoveryMode};
+
+    #[test]
+    fn summary_replacements_count_only_current_bytes_and_enforce_the_catalog_budget() {
+        let summary = DiscoveryCheckSummary {
+            id: "a".repeat(64),
+            started_at: 10,
+            finished_at: None,
+            phase: DiscoveryCheckPhase::Checking,
+            mode: DiscoveryMode::Incremental,
+            only_unfinished: false,
+            first_catalog: true,
+            all_followed: true,
+            author_count: 1,
+            total_scopes: 2,
+            attempted_scopes: 0,
+            complete_scopes: 0,
+        };
+        let value = DiscoveryDocument {
+            version: 1,
+            accounts: vec![DiscoveryAccount {
+                account_key: "b".repeat(64),
+                authors: vec![],
+                records: vec![],
+                last_check: None,
+            }],
+        };
+        let mut index = RawIndex::from_document(&value).unwrap();
+        let mut patch = DiscoveryPagePatch {
+            account_key: "b".repeat(64),
+            authors: vec![],
+            records: vec![],
+            retain_authors: None,
+            last_check: Some(summary.clone()),
+        };
+        let prepared = index.prepare(&patch).unwrap();
+        assert_eq!(
+            prepared.encoded_bytes,
+            CATALOG_ENVELOPE_ALLOWANCE + encoded_size(&summary).unwrap()
+        );
+        index.apply(&patch, prepared);
+        let mut terminal = summary;
+        terminal.phase = DiscoveryCheckPhase::Complete;
+        terminal.finished_at = Some(20);
+        terminal.attempted_scopes = 2;
+        terminal.complete_scopes = 2;
+        patch.last_check = Some(terminal.clone());
+        let prepared = index.prepare(&patch).unwrap();
+        assert_eq!(
+            prepared.encoded_bytes,
+            CATALOG_ENVELOPE_ALLOWANCE + encoded_size(&terminal).unwrap()
+        );
+        index.apply(&patch, prepared);
+        let mut value = value;
+        value.accounts[0].last_check = Some(terminal);
+        assert_eq!(
+            index.encoded_bytes,
+            RawIndex::from_document(&value).unwrap().encoded_bytes
+        );
+        // Updating at the limit must subtract the previous summary, not leak size.
+        index.encoded_bytes = MAX_DISCOVERY_RAW_BYTES;
+        assert!(index.prepare(&patch).is_ok());
+        index
+            .accounts
+            .get_mut(&patch.account_key)
+            .unwrap()
+            .summary_bytes = 0;
+        assert_eq!(
+            index.prepare(&patch).err().unwrap().code,
+            "DOCUMENT_TOO_LARGE"
+        );
     }
 }

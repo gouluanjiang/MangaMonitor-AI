@@ -240,15 +240,17 @@ export function RecentUpdatesPanel({
             刷新最近更新
           </button>
         </div>
-        <input
-          aria-label="筛选已读取最近更新"
-          placeholder="筛选已读取作品或作者…"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            clearSelection();
-          }}
-        />
+        <div className="source-search source-search-host">
+          <input
+            aria-label="筛选已读取最近更新"
+            placeholder="筛选已读取作品或作者…"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              clearSelection();
+            }}
+          />
+        </div>
       </div>
       <p className="source-muted" data-testid="recent-order-note">
         按来源最新顺序浏览，日期以网站提供为准；不保证每次章节更新都会排到前面。筛选仅覆盖已读取范围。

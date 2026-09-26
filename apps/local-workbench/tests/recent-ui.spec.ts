@@ -243,6 +243,56 @@ const recentCard = (page: Page, source: Source, id: number) =>
     `recent-work-${source}:${source === "JM" ? String(id) : String(id).padStart(24, "0")}`,
   );
 
+async function captureRecentAnchor(page: Page) {
+  const anchor = await page.getByTestId("recent-grid").evaluate((grid) => {
+    const main = grid.closest("main")!.getBoundingClientRect();
+    const cards = Array.from(grid.querySelectorAll("article[data-testid]"));
+    const visible =
+      cards.find((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.top >= main.top && rect.bottom <= main.bottom;
+      }) ??
+      cards.find((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.top < main.bottom && rect.bottom > main.top;
+      });
+    return visible
+      ? {
+          key: visible.getAttribute("data-testid")!,
+          y: visible.getBoundingClientRect().top - main.top,
+        }
+      : null;
+  });
+  expect(
+    anchor,
+    "The current viewport must contain an existing recent card",
+  ).not.toBeNull();
+  return anchor!;
+}
+
+async function expectRecentAnchor(
+  page: Page,
+  anchor: { key: string; y: number },
+) {
+  const card = page.getByTestId(anchor.key);
+  await expect(card).toBeInViewport();
+  await expect
+    .poll(
+      async () => {
+        const y = await card.evaluate(
+          (element) =>
+            element.getBoundingClientRect().top -
+            element.closest("main")!.getBoundingClientRect().top,
+        );
+        return Math.abs(y - anchor.y);
+      },
+      {
+        message: `Appending a page must preserve the visible position of ${anchor.key}`,
+      },
+    )
+    .toBeLessThanOrEqual(4);
+}
+
 test("both recent feeds preserve source order, language and unknown dates and reuse ownership, detail and explicit download confirmation", async ({
   page,
 }) => {
@@ -495,9 +545,11 @@ test("downward input at an already reached edge loads one page, ignores other di
     .toBe(600);
   await page.clock.runFor(300);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+  const oldVisibleCard = await captureRecentAnchor(page);
   await page.evaluate(() => window.recentTest.release!());
   await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
   await page.clock.runFor(3000);
+  await expectRecentAnchor(page, oldVisibleCard);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
   await main.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -569,6 +621,49 @@ test("a continuous drag may take longer than the old intent timeout and still lo
   await page.evaluate(() => window.recentTest.release!());
   await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
   await page.clock.runFor(3000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+});
+
+test("a delayed continuation preserves the user's newer reading position rather than returning to the request position", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await install(page);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  const main = page.getByRole("main");
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.clock.runFor(150);
+  await page.evaluate(() => {
+    window.recentTest.holdPage = 2;
+  });
+  await main.hover();
+  await page.mouse.wheel(0, 100);
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.recentTest.release)))
+    .toBe(true);
+  const requestAnchor = await captureRecentAnchor(page);
+  await page.mouse.wheel(0, -500);
+  // Wait for actual native-wheel displacement, not just a simulated clock tick.
+  await expect
+    .poll(() =>
+      page
+        .getByTestId(requestAnchor.key)
+        .evaluate(
+          (element) =>
+            element.getBoundingClientRect().top -
+            element.closest("main")!.getBoundingClientRect().top,
+        ),
+    )
+    .toBeGreaterThan(requestAnchor.y + 200);
+  await page.clock.runFor(150);
+  const newerAnchor = await captureRecentAnchor(page);
+  expect(newerAnchor.key).not.toBe(requestAnchor.key);
+  await page.evaluate(() => window.recentTest.release!());
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await page.clock.runFor(3000);
+  await expectRecentAnchor(page, newerAnchor);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
 });
 
@@ -740,6 +835,18 @@ nativeScrollbarTest(
             "A native scrollbar drag near the end should request its next page",
         })
         .toBe(true);
+      const oldVisibleCard = await captureRecentAnchor(page);
+      // The real scrollbar is still held stationary while the new page arrives.
+      // Its changed thumb size must not move the user's previously visible card.
+      await page.evaluate(() => window.recentTest.release!());
+      await expect(page.getByTestId("recent-counts")).toContainText(
+        "已读取 39 部",
+      );
+      await page.clock.runFor(3000);
+      await expectRecentAnchor(page, oldVisibleCard);
+      expect((await recentCalls(page)).map((args) => args.page)).toEqual([
+        1, 2,
+      ]);
     } catch (error) {
       await testInfo.attach("native-scrollbar-input.json", {
         body: JSON.stringify(
@@ -755,7 +862,6 @@ nativeScrollbarTest(
       await gestureTrace.dispose();
     }
     expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
-    await page.evaluate(() => window.recentTest.release!());
     await expect(page.getByTestId("recent-counts")).toContainText(
       "已读取 39 部",
     );

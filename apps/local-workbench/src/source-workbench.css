@@ -219,6 +219,11 @@
 .source-virtual-grid {
   overflow-anchor: none;
 }
+.recent-updates {
+  /* The virtual cards are excluded above. Do not let the footer become the
+     browser anchor and pull the viewport down when another page is appended. */
+  overflow-anchor: none;
+}
 .source-virtual-row > div {
   min-width: 0;
 }

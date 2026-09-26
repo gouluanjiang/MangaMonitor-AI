@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   AccountSummary,
@@ -22,6 +22,7 @@ import { sourceErrorMessage } from "./source-runtime.ts";
 import { SourceCover } from "./SourceWorkbench.tsx";
 import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
+import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
 import { SourceIssues } from "./SourceIssues.tsx";
 import { formatWorkDate } from "./work-dates.ts";
 import { RecentUpdatesReader } from "./recent-updates.ts";
@@ -79,6 +80,12 @@ export function RecentUpdatesPanel({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const sentinel = useRef<HTMLDivElement>(null);
+  const grid = useRef<SourceGridHandle>(null);
+  const currentView = useRef({ active, scopeKey });
+  currentView.current = { active, scopeKey };
+  useLayoutEffect(() => {
+    grid.current?.restore(null);
+  }, [active, scopeKey, query, filter]);
   useEffect(() => {
     setSelection([]);
     setSelectionMode(false);
@@ -89,9 +96,29 @@ export function RecentUpdatesPanel({
     // Create inside the effect: StrictMode cleanup must not permanently dispose
     // the memoized reader reused by its second setup.
     const next = new RecentUpdatesReader(adapter, scope);
-    const unsubscribe = next.subscribe((state) =>
-      setObserved({ key: scopeKey, adapter, reader: next, state }),
-    );
+    let previous: RecentUpdatesState["snapshot"] = null;
+    const unsubscribe = next.subscribe((state) => {
+      const snapshot = state.snapshot;
+      if (
+        currentView.current.active &&
+        currentView.current.scopeKey === scopeKey &&
+        snapshot &&
+        previous &&
+        snapshot.page > previous.page &&
+        snapshot.items.length >= previous.items.length &&
+        previous.items.every(
+          (work, index) =>
+            sourceWorkKey(work) === sourceWorkKey(snapshot.items[index]),
+        )
+      ) {
+        // Capture when the response arrives, not when it was requested: the
+        // reader may have moved elsewhere while waiting. The grid restores
+        // this card after commit and yields to any new scroll input.
+        grid.current?.restore(grid.current.capture());
+      }
+      previous = snapshot;
+      setObserved({ key: scopeKey, adapter, reader: next, state });
+    });
     return () => {
       unsubscribe();
       next.dispose();
@@ -145,7 +172,8 @@ export function RecentUpdatesPanel({
   return (
     <section
       className={
-        "source-workbench" + (selected.length ? " has-source-selection" : "")
+        "source-workbench recent-updates" +
+        (selected.length ? " has-source-selection" : "")
       }
       data-testid="recent-panel"
       hidden={!active}
@@ -288,6 +316,7 @@ export function RecentUpdatesPanel({
             </div>
           )}
           <VirtualSourceGrid<SourceWork>
+            ref={grid}
             items={visible}
             density={density}
             itemKey={sourceWorkKey}

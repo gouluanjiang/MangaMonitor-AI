@@ -187,6 +187,9 @@ function Grid<T>(
       )
         cancelRestore();
     };
+    const cancelForPointerMove = (event: PointerEvent) => {
+      if (event.buttons & 1) cancelRestore();
+    };
     // Every DOM measurement is coalesced into a frame, never a synchronous layout-effect loop.
     measure.current = schedule;
     const observer = new ResizeObserver(schedule);
@@ -202,11 +205,19 @@ function Grid<T>(
       passive: true,
       capture: true,
     });
+    main.addEventListener("touchmove", cancelRestore, {
+      passive: true,
+      capture: true,
+    });
     main.addEventListener("pointerdown", cancelRestore, {
       passive: true,
       capture: true,
     });
     main.addEventListener("keydown", cancelForScrollKey, true);
+    window.addEventListener("pointermove", cancelForPointerMove, {
+      passive: true,
+      capture: true,
+    });
     schedule();
     return () => {
       cancelAnimationFrame(frame);
@@ -216,8 +227,10 @@ function Grid<T>(
       main.removeEventListener("scroll", schedule);
       main.removeEventListener("wheel", cancelRestore, true);
       main.removeEventListener("touchstart", cancelRestore, true);
+      main.removeEventListener("touchmove", cancelRestore, true);
       main.removeEventListener("pointerdown", cancelRestore, true);
       main.removeEventListener("keydown", cancelForScrollKey, true);
+      window.removeEventListener("pointermove", cancelForPointerMove, true);
     };
   }, [density]);
   useLayoutEffect(() => {

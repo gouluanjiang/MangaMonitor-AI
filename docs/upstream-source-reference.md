@@ -53,12 +53,34 @@ Do **not** dynamically trust domains discovered from remote pages without a sepa
 
 ### Safety differences deliberately preserved
 
+- The 2026-09-18 Pica format repair rechecked `get_img_data_and_format` and image saving at the same pinned revision. Upstream detects encoding with `image::guess_format` and chooses a matching suffix. The workbench now also detects Pica content instead of trusting its URL/MIME, while retaining bounded full decode, immutable descriptor identity, actual-suffix checkpoint/manifest paths and original bytes. JM's explicit transforms remain strict. No request, host, retry or authority changes are included; see `PICA_MEDIA_FORMAT_FIX_2026-09-18.md`.
+
+- The 2026-09-12 desktop Pica acceptance repair adds a bounded same-origin redirect loop after a task-specific header check showed 301 then 200 JPEG. Automatic redirects remain disabled; every initial/redirect GET must receive a fresh authorization from the staging coordinator, at most two redirects are allowed, and original descriptor/checkpoint identity remains unchanged. See `PICA_DOWNLOAD_REDIRECT_FIX_2026-09-12.md`. This is not arbitrary-domain trust or retry/failover authority; JM and the legacy exact-transfer entry remain unchanged.
+
 - Upstream GUI code is optimized for interactive downloading; MangaMonitor-AI requires complete pagination evidence and rejects missing/intermediate pages instead of silently aggregating partial results.
 - MangaMonitor-AI does not interpret ordinary HTTP/auth/network failures as proof that a work is unavailable.
-- API credentials never enter the media-byte client; media URLs are host/path constrained and redirects are disabled.
+- API credentials never enter the media-byte client; media URLs remain host/path constrained. Automatic redirects are disabled; only the explicitly reviewed desktop Pica redirect path above may follow its bounded, reauthorized same-origin hops.
 - No upstream filesystem/download completion semantics may bypass command staging, generation checks, inventory gates, task revision checks, or `production_enabled=false`.
 
 ## Scaling implications
+
+### Desktop source-latest browsing (2026-09-26)
+
+At the unchanged JMComic-Crawler-Python pin, `src/jmcomic/jm_client_impl.py:713-740` implements `JmApiClient.categories_filter`; `jm_config.py:82,101` defines latest order `mr` and all-category `0`; `jm_toolkit.py:735-768` adapts the response `content` and `total`. The desktop recent-list query therefore uses one explicit `GET /categories/filter?page=N&order=&c=0&o=mr` page. It does not send an author query or traverse the site.
+
+At the unchanged Pica downloader pin, `src-tauri/src/pica_client.rs:184-224` implements paged `POST comics/advanced-search`, `types/search_sort.rs:15` maps `TimeNewest` to `dd`, and `src/panes/SearchPane.vue:20,24-26,56-70` permits empty keyword/category browsing in that order. The recent-list query uses `{"keyword":"","sort":"dd","categories":[]}` with an explicit page. Existing session headers, bounded parsers, source ordering, item-isolation warnings and cover-address retention remain in use.
+
+These references establish source-provided newest listing order, not a guarantee that every newly added chapter moves an old work to the top. Do not relabel a creation timestamp as an update timestamp or promise identical results under arbitrary website category/language preferences. Missing explicit update fields stay unknown. Live equivalence and user experience acceptance remain separate from protocol and synthetic CI evidence. Source pins, credential destinations, trusted hosts and media/download authority are unchanged. See [the recent-updates contract](WEBSITE_RECENT_UPDATES_2026-09-26.md).
+
+### Desktop weekly recommendations and rankings (2026-09-14)
+
+The read-only desktop ranking routes were checked against the existing local source snapshots at the pinned lanyeeee revisions above. `jmcomic-downloader/src-tauri/src/jm_client.rs` provides `get_weekly_info` (`GET /week`, `categories` and `type`) and `get_weekly` (`GET /week/filter?id=…&type=…`, `total` and ordered `list`). `picacomic-downloader/src-tauri/src/pica_client.rs` provides `GET comics/leaderboard?tt=H24|D7|D30&ct=VC`, with ordered `comics` records. Neither upstream method offers pagination for this endpoint. JM count mismatches remain visibly partial; the application does not invent additional rank pages.
+
+The desktop code reuses existing authenticated source clients, response parsers and runtime-only cover descriptors. No new host, credential destination, download transform or media-transfer behavior is introduced. Synthetic tests cover endpoint selection, ordering, short lists, malformed options, sessions and renderer boundaries. Live source acceptance of these new routes remains a separate user step.
+
+The 2026-09-14 acceptance diagnostic found 174 blank `categories[].title` values among 256 issues, including the latest issue. At the same pinned revision, `jmcomic-downloader/src/panes/WeeklyPane.vue:15-19` uses `category.time` as the issue label, and line 32 selects the final type (`manga` in the observed response). The workbench now accepts blank optional issue labels, falls back to date or a literal issue identifier, and prefers the advertised `manga` type. Type labels, identifiers, duplicate IDs and text limits retain validation. Four anonymous public GETs established options and both an empty `hanman` list and a 20/20 `manga` list; no account, images or private library were used. See [the scoped diagnostic and repair](JM_WEEKLY_FIX_2026-09-14.md); this is not blanket live acceptance of all periods or account workflows.
+
+The 2026-09-12 batch queue review reopened all three pinned download implementations. Their bounded scheduling and all-image completion requirements remain references; desktop cross-work scheduling now wraps the existing verified single-work path and waits through PC registration before dispatching the next explicitly confirmed work. No source pins, media transport, retry policy, output layout or production flags change. See `BATCH_QUEUE_AND_MATCHING_2026-09-12.md`.
 
 The live six-author JM+Pica validation established that real source traffic is substantial. For hundreds of authors, retain these upstream-inspired principles:
 
@@ -68,20 +90,12 @@ The live six-author JM+Pica validation established that real source traffic is s
 4. source-specific error evidence, never inferred deletion;
 5. pinned protocol/domain trust, with upstream updates reviewed before changing constants.
 
-## Mandatory download-executor thaw reminder
+## Download review entry point
 
-Real local download execution is currently frozen. Before any future work enables or materially changes real JM/Pica download execution, staging-to-library promotion, replacement, completion mutation, or physical deletion, the current development session **must** read `AGENTS.md` and `docs/DOWNLOAD_EXECUTOR_THAW_GATE.md`, then re-open these three upstream repositories and compare the pinned download-related source again.
-
-This requirement is intentionally duplicated across project-level files so a long time gap or a new conversation cannot safely proceed by relying on remembered protocol/download behavior alone.
-
-The future re-review must cover at minimum JM scramble/image reconstruction, JM/Pica pagination, authentication/token handling, image path construction, retry/backoff, concurrency, temporary staging/finalization, partial-failure behavior, and each upstream project's definition of completion. Those upstream completion definitions remain references only; MangaMonitor-AI's stricter approval, task-revision, source identity, staging, manifest, filesystem verification, inventory, promotion, replacement, deletion, and production gates remain authoritative.
+Use [DOWNLOAD_EXECUTOR_THAW_GATE.md](DOWNLOAD_EXECUTOR_THAW_GATE.md) for review triggers, reusable evidence and authority boundaries. This reference records protocol findings; it does not independently require a full upstream re-audit on every session or grant live execution authority.
 
 ## Update policy
 
-When one of the three upstream repositories changes protocol constants, auth headers, endpoints, pagination, image transforms, domain lists, or download/completion behavior:
+When adopting an upstream change to protocol constants, auth, endpoints, pagination, image transforms, trusted domains or completion behavior, compare the affected source at its exact revision, update the pin and findings, and add appropriate regressions. An upstream release alone does not require updating this project's pin.
 
-1. record the new upstream commit here;
-2. compare the exact source change;
-3. add regression tests before updating adapter constants;
-4. run workspace CI plus a live JM/Pica canary;
-5. never loosen existing safety gates merely to match permissive upstream behavior.
+Run affected validation and required CI under `AGENTS.md`. Use a live canary when required to validate changed source behavior and separately authorized; otherwise record that live validation remains pending. Preserve all existing safety gates and do not repeat unchanged-source checks merely because another adapter changed.

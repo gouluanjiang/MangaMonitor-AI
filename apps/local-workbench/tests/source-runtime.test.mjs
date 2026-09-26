@@ -1,0 +1,825 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  createSourceAdapter,
+  SourceError,
+  sourceErrorMessage,
+  validateSourceWork,
+  validateCatalogSnapshot,
+  validateSourcePage,
+} from "../src/source-runtime.ts";
+import {
+  mergeSourceWorks,
+  sourceWorkKey,
+  toWorkReference,
+} from "../src/source-types.ts";
+
+const scope = { source: "JM", sessionId: "synthetic-session" };
+
+test("author policy IPC preserves original query spellings and validates the exact source and author", async () => {
+  const calls = [];
+  const policy = {
+    ...scope,
+    revision: 3,
+    author: "Displayed Writer",
+    queries: ["Writer～ Name", "Writer Name"],
+    verifiedAliases: ["WriterName"],
+    exactCredits: ["WriterName & Collaborator"],
+    workCredits: [
+      {
+        workId: "123",
+        expectedAuthors: ["Wrong Writer"],
+        expectedAuthorVariants: [
+          ["Listing credit"],
+          ["Joined credit", "Guest"],
+        ],
+        correctedAuthors: ["WriterName"],
+      },
+    ],
+    queryFingerprint: "a".repeat(64),
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return structuredClone(policy);
+    },
+  });
+  const result = await adapter.authorPolicy(scope, policy.author);
+  assert.deepEqual(calls, [
+    {
+      command: "source_author_policy",
+      args: { ...scope, author: policy.author },
+    },
+  ]);
+  assert.deepEqual(result.queries, policy.queries);
+  assert.deepEqual(result.verifiedAliases, policy.verifiedAliases);
+  assert.deepEqual(result.exactCredits, policy.exactCredits);
+  assert.deepEqual(result.workCredits, policy.workCredits);
+  assert.notEqual(result.workCredits, policy.workCredits);
+  assert.notEqual(
+    result.workCredits[0].expectedAuthorVariants[0],
+    policy.workCredits[0].expectedAuthorVariants[0],
+  );
+  assert.notEqual(
+    result.workCredits[0].correctedAuthors,
+    policy.workCredits[0].correctedAuthors,
+  );
+  for (const broken of [
+    { source: "Pica" },
+    { sessionId: "replaced-session" },
+    { author: "Another Writer" },
+    { revision: -1 },
+    { queryFingerprint: "not-a-sha256" },
+    { queries: [] },
+    { queries: [" "] },
+    { queries: ["Writer\nInjected"] },
+    { queries: ["One", "Two", "Three", "Four", "Five"] },
+    { queries: ["Writer", "Writer"] },
+    { verifiedAliases: Array.from({ length: 17 }, (_, i) => "Alias " + i) },
+    { workCredits: [null] },
+    ...[
+      null,
+      "credit",
+      [[]],
+      [[" "]],
+      [["Wrong Writer"]],
+      [["A", "Ａ"]],
+      [["A\nB"]],
+      [["x".repeat(2001)]],
+      [["One"], ["One"]],
+      Array.from({ length: 5 }, (_, i) => [String(i)]),
+    ].map((expectedAuthorVariants) => ({
+      workCredits: [{ ...policy.workCredits[0], expectedAuthorVariants }],
+    })),
+    {
+      workCredits: [
+        { ...policy.workCredits[0], expectedAuthors: ["字".repeat(2001)] },
+      ],
+    },
+    {
+      workCredits: [
+        { ...policy.workCredits[0], correctedAuthors: ["字".repeat(2001)] },
+      ],
+    },
+    { workCredits: [{ ...policy.workCredits[0], workId: "0" }] },
+    { workCredits: [{ ...policy.workCredits[0], workId: "not-jm-id" }] },
+    { workCredits: [{ ...policy.workCredits[0], workId: "../123" }] },
+    { workCredits: [{ ...policy.workCredits[0], expectedAuthors: [] }] },
+    { workCredits: [{ ...policy.workCredits[0], correctedAuthors: [" "] }] },
+    {
+      workCredits: [
+        { ...policy.workCredits[0], correctedAuthors: ["A", "Ａ"] },
+      ],
+    },
+    { workCredits: [{ ...policy.workCredits[0], expectedAuthors: ["A\nB"] }] },
+    {
+      workCredits: [
+        {
+          ...policy.workCredits[0],
+          expectedAuthors: Array.from({ length: 65 }, (_, i) => "Credit " + i),
+        },
+      ],
+    },
+    { workCredits: [policy.workCredits[0], policy.workCredits[0]] },
+    {
+      workCredits: Array.from({ length: 501 }, (_, i) => ({
+        ...policy.workCredits[0],
+        workId: String(i + 1),
+      })),
+    },
+  ]) {
+    const invalid = createSourceAdapter({
+      native: true,
+      invoke: async () => ({ ...policy, ...broken }),
+    });
+    await assert.rejects(invalid.authorPolicy(scope, policy.author));
+  }
+});
+
+test("source DTOs never trust an incoming display-only author review flag", () => {
+  const raw = work();
+  const parsed = validateSourceWork({
+    ...raw,
+    authorCreditReview: { originalAuthors: ["Injected author"] },
+  });
+  assert.deepEqual(parsed, raw);
+  assert.equal(parsed.authorCreditReview, undefined);
+});
+
+test("reviewed credit rule IDs use the source-specific contract and do not affect query identity", async () => {
+  const picaScope = { source: "Pica", sessionId: "pica-session" };
+  const base = {
+    ...picaScope,
+    revision: 1,
+    author: "Writer",
+    queries: ["Writer"],
+    verifiedAliases: [],
+    queryFingerprint: "b".repeat(64),
+  };
+  const rule = {
+    workId: "0123456789abcdef01234567",
+    expectedAuthors: ["Wrong"],
+    correctedAuthors: ["Writer"],
+  };
+  const read = (workId) =>
+    createSourceAdapter({
+      native: true,
+      invoke: async () => ({ ...base, workCredits: [{ ...rule, workId }] }),
+    }).authorPolicy(picaScope, "Writer");
+  assert.equal(
+    (await read(rule.workId)).queryFingerprint,
+    base.queryFingerprint,
+  );
+  const unicode = createSourceAdapter({
+    native: true,
+    invoke: async () => ({
+      ...base,
+      workCredits: [{ ...rule, correctedAuthors: ["🍊".repeat(2000)] }],
+    }),
+  });
+  assert.equal(
+    (await unicode.authorPolicy(picaScope, "Writer")).workCredits[0]
+      .correctedAuthors[0],
+    "🍊".repeat(2000),
+  );
+  for (const invalid of [
+    "123",
+    "0123456789ABCDEF01234567",
+    "0123456789abcdef0123456g",
+  ])
+    await assert.rejects(read(invalid), SourceError);
+});
+
+test("catalog IPC preserves scope/reverse and rejects malformed terminal snapshots", async () => {
+  const snapshot = {
+    items: [work()],
+    page: 1,
+    total: 1,
+    pages: 1,
+    hasMore: false,
+    folders: [],
+    complete: true,
+    updatedAt: 10,
+    firstPageIds: ["123"],
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      assert.equal(command, "source_catalog");
+      assert.equal(args.reverse, true);
+      assert.equal(args.sessionId, scope.sessionId);
+      return { ...scope, snapshot, completeSnapshot: snapshot };
+    },
+  });
+  assert.equal(
+    (
+      await adapter.catalog(scope, {
+        action: "read",
+        folderId: null,
+        reverse: true,
+      })
+    ).snapshot.items.length,
+    1,
+  );
+  for (const invalid of [
+    { ...snapshot, complete: false },
+    { ...snapshot, total: null, pages: null, hasMore: null },
+    { ...snapshot, items: [], total: null, firstPageIds: [] },
+    { ...snapshot, pages: 2 },
+    { ...snapshot, firstPageIds: [] },
+  ])
+    assert.throws(() => validateCatalogSnapshot(invalid, scope), SourceError);
+});
+const work = (source = "JM", id = "123") => ({
+  source,
+  workId: id,
+  title: "合成验收作品",
+  authors: [],
+  description: null,
+  tags: [],
+  favorite: null,
+  chapterCount: null,
+  pageCount: null,
+  coverAvailable: false,
+});
+const account = (source = "JM") => ({
+  source,
+  sessionId: "synthetic-session",
+  accountId: "synthetic-account",
+  displayName: "合成验收账号",
+  state: "connected",
+  remembered: false,
+  errorCode: null,
+});
+const page = (overrides = {}) => ({
+  ...scope,
+  items: [work()],
+  page: 1,
+  total: null,
+  pages: null,
+  hasMore: null,
+  folders: [],
+  ...overrides,
+});
+const query = { kind: "favorites", query: "", folderId: null, page: 1 };
+
+test("isolated source issues retain bounded positions and never relax IPC work validation", () => {
+  const issue = {
+    page: 1,
+    index: 2,
+    workId: "456",
+    code: "SOURCE_ITEM_INVALID",
+  };
+  const result = validateSourcePage(
+    page({ items: [work()], issues: [issue], total: 2 }),
+    scope,
+  );
+  assert.deepEqual(result.issues, [
+    { page: 1, index: 2, workId: "456", code: "SOURCE_ITEM_INVALID" },
+  ]);
+  for (const broken of [
+    { ...issue, page: 2 },
+    { ...issue, index: 0 },
+    { ...issue, index: 3 },
+    { ...issue, workId: "123" },
+    { ...issue, workId: "../bad" },
+    { ...issue, code: "UNKNOWN" },
+    { ...issue, raw: "must not cross IPC" },
+    { ...issue, workId: "abc" },
+  ])
+    assert.throws(() => validateSourcePage(page({ issues: [broken] }), scope));
+  assert.throws(() =>
+    validateSourcePage(page({ issues: [issue, issue] }), scope),
+  );
+  assert.throws(() =>
+    validateSourcePage(
+      page({ items: [{ ...work(), title: "" }], issues: [issue] }),
+      scope,
+    ),
+  );
+  assert.equal(
+    validateSourcePage(
+      page({ items: [], issues: [{ ...issue, index: 1, workId: null }] }),
+      scope,
+    ).items.length,
+    0,
+  );
+});
+
+test("ranking choices are scoped metadata and ranking requests use a single source list", async () => {
+  const calls = [];
+  const choices = {
+    categories: [{ id: "42", label: "Week 42", ignored: "secret" }],
+    periods: [{ id: "1", label: "Popular" }],
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return command === "source_rank_options"
+        ? { ...scope, options: choices }
+        : page({ total: 20, items: [work()] });
+    },
+  });
+  assert.deepEqual(await adapter.rankingOptions(scope), {
+    categories: [{ id: "42", label: "Week 42" }],
+    periods: [{ id: "1", label: "Popular" }],
+  });
+  const request = { kind: "ranking", page: 1, query: "1", folderId: "42" };
+  const partial = await adapter.query(scope, request);
+  assert.equal(partial.hasMore, null);
+  assert.equal(partial.total, 20);
+  assert.equal(calls[1].args.kind, "ranking");
+  for (const invalid of [
+    { ...request, page: 2 },
+    { ...request, reverse: true },
+  ])
+    await assert.rejects(adapter.query(scope, invalid), {
+      code: "INVALID_INPUT",
+    });
+  assert.equal(calls.length, 2);
+});
+
+test("recent queries have no keyword or reverse order and reject stale account responses without extra source calls", async () => {
+  const calls = [];
+  const request = { kind: "recent", query: "", folderId: null, page: 2 };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return page({ page: 2, pages: 4, total: 80, hasMore: true });
+    },
+  });
+  assert.equal((await adapter.query(scope, request)).page, 2);
+  assert.deepEqual(calls, [
+    { command: "source_query", args: { ...scope, ...request } },
+  ]);
+  for (const invalid of [
+    { ...request, query: "author" },
+    { ...request, folderId: "folder" },
+    { ...request, reverse: true },
+    { ...request, reverse: false },
+    { ...request, page: 0 },
+    { ...request, page: 1001 },
+  ])
+    await assert.rejects(adapter.query(scope, invalid), {
+      code: "INVALID_INPUT",
+    });
+  assert.equal(calls.length, 1);
+  const stale = createSourceAdapter({
+    native: true,
+    invoke: async () => page({ sessionId: "replaced-session", page: 2 }),
+  });
+  await assert.rejects(stale.query(scope, request), { code: "STALE_SESSION" });
+});
+
+test("ranking choices reject stale scope, malformed options and untrusted IDs", async () => {
+  const choices = { categories: [], periods: [{ id: "week", label: "Week" }] };
+  for (const response of [
+    { source: "Pica", sessionId: scope.sessionId, options: choices },
+    { ...scope, sessionId: "stale", options: choices },
+    { ...scope, options: { ...choices, periods: [null] } },
+    {
+      ...scope,
+      options: { ...choices, periods: [{ id: "x&url=evil", label: "X" }] },
+    },
+    {
+      ...scope,
+      options: {
+        ...choices,
+        periods: [choices.periods[0], choices.periods[0]],
+      },
+    },
+  ]) {
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => response,
+    });
+    await assert.rejects(adapter.rankingOptions(scope), SourceError);
+  }
+});
+
+test("browser sources are unavailable and never invoke a native or synthetic login", async () => {
+  let invoked = 0;
+  const adapter = createSourceAdapter({
+    native: false,
+    invoke: async () => {
+      invoked++;
+    },
+  });
+  assert.equal(adapter.mode, "unavailable");
+  assert.equal(adapter.available, false);
+  assert.deepEqual(
+    (await adapter.accounts()).map((item) => [item.state, item.errorCode]),
+    [
+      ["unavailable", "DESKTOP_REQUIRED"],
+      ["unavailable", "DESKTOP_REQUIRED"],
+    ],
+  );
+  await assert.rejects(adapter.query(scope, query), {
+    code: "DESKTOP_REQUIRED",
+  });
+  await assert.rejects(
+    adapter.login({
+      source: "JM",
+      username: "synthetic",
+      password: "fixture-only",
+      remember: false,
+    }),
+    { code: "DESKTOP_REQUIRED" },
+  );
+  assert.equal(invoked, 0);
+});
+
+test("unknown source metadata remains null and unexpected native fields are not forwarded", () => {
+  const result = validateSourceWork({
+    ...work(),
+    coverUrl: "https://private.invalid/cover",
+    password: "not-a-real-secret",
+  });
+  assert.equal(result.pageCount, null);
+  assert.equal(result.chapterCount, null);
+  assert.equal(result.favorite, null);
+  assert.deepEqual(result.authors, []);
+  assert.equal("coverUrl" in result, false);
+  assert.equal("password" in result, false);
+});
+
+test("page validation retains incomplete pagination and rejects duplicate identities", async () => {
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async () => page({ items: [work()] }),
+  });
+  const result = await adapter.query(scope, query);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.total, null);
+  assert.equal(result.pages, null);
+  assert.equal(result.hasMore, null);
+  assert.equal(result.items[0].pageCount, null);
+  const duplicate = createSourceAdapter({
+    native: true,
+    invoke: async () => page({ items: [work(), work()] }),
+  });
+  await assert.rejects(duplicate.query(scope, query), {
+    code: "CATALOG_CHANGED",
+  });
+});
+
+test("query results from another source, session or page are rejected", async () => {
+  for (const response of [
+    page({ source: "Pica" }),
+    page({ sessionId: "previous-session" }),
+    page({ items: [work("Pica")] }),
+    page({ page: 2 }),
+  ]) {
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => response,
+    });
+    await assert.rejects(adapter.query(scope, query), SourceError);
+  }
+});
+
+test("all account-bound requests preserve source and opaque session while Pica rejects folder operations", async () => {
+  const calls = [];
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      if (command === "source_accounts")
+        return [account("JM"), account("Pica")];
+      if (command === "source_query") return page();
+      if (command === "source_cover")
+        return { ...scope, workId: "123", dataUrl: null };
+      if (command === "source_following")
+        return { ...scope, revision: 0, works: [], authors: [] };
+      throw new Error("unexpected synthetic command");
+    },
+  });
+  await adapter.accounts(true);
+  assert.deepEqual(calls[0], {
+    command: "source_accounts",
+    args: { refresh: true },
+  });
+  await adapter.query(scope, query);
+  await adapter.cover(scope, "123");
+  await adapter.following(scope);
+  for (const call of calls.slice(1)) {
+    assert.equal(call.args.source, scope.source);
+    assert.equal(call.args.sessionId, scope.sessionId);
+  }
+  await assert.rejects(
+    adapter.query(
+      { source: "Pica", sessionId: "pica-session" },
+      { ...query, folderId: "folder" },
+    ),
+    { code: "INVALID_INPUT" },
+  );
+  assert.equal(calls.length, 4);
+});
+
+test("favorite writes require matching identity and read-back confirmation of the desired state", async () => {
+  const correct = {
+    ...scope,
+    workId: "123",
+    favorite: true,
+    changed: false,
+    verified: true,
+  };
+  for (const result of [
+    { ...correct, verified: false },
+    { ...correct, favorite: false },
+    { ...correct, workId: "456" },
+    { ...correct, sessionId: "old" },
+  ]) {
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => result,
+    });
+    await assert.rejects(adapter.favorite(scope, "123", true), SourceError);
+  }
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      assert.equal(command, "source_favorite");
+      assert.deepEqual(args, { ...scope, workId: "123", desired: true });
+      return correct;
+    },
+  });
+  assert.equal((await adapter.favorite(scope, "123", true)).verified, true);
+});
+
+test("only data images or null leave the native cover adapter", async () => {
+  for (const dataUrl of [
+    "https://private.invalid/cover",
+    "file:///private.png",
+    "data:image/svg+xml;base64,PHN2Zz4=",
+  ]) {
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => ({ ...scope, workId: "123", dataUrl }),
+    });
+    await assert.rejects(adapter.cover(scope, "123"), {
+      code: "INVALID_RESPONSE",
+    });
+  }
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async () => ({
+      ...scope,
+      workId: "123",
+      dataUrl: "data:image/png;base64,aGVsbG8=",
+    }),
+  });
+  assert.match(await adapter.cover(scope, "123"), /^data:image\/png/);
+});
+
+test("same work IDs from two sources stay separate when merged and passed to booklists", () => {
+  const merged = mergeSourceWorks(
+    [work("JM")],
+    [work("Pica"), { ...work("JM"), title: "合成更新" }],
+  );
+  assert.equal(merged.length, 2);
+  assert.deepEqual(merged.map(sourceWorkKey), ["JM:123", "Pica:123"]);
+  assert.deepEqual(merged.map(toWorkReference), [
+    { source: "JM", workId: "123" },
+    { source: "Pica", workId: "123" },
+  ]);
+  assert.equal(merged[0].title, "合成更新");
+});
+
+test("following writes carry the reviewed revision and do not silently retry conflicts", async () => {
+  let attempts = 0;
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      attempts++;
+      assert.equal(command, "source_follow");
+      assert.deepEqual(args, {
+        ...scope,
+        kind: "work",
+        value: "123",
+        desired: true,
+        expectedRevision: 4,
+      });
+      throw {
+        code: "REVISION_CONFLICT",
+        message: "private details must be discarded",
+      };
+    },
+  });
+  await assert.rejects(
+    adapter.follow(scope, {
+      kind: "work",
+      value: "123",
+      desired: true,
+      expectedRevision: 4,
+    }),
+    { code: "REVISION_CONFLICT" },
+  );
+  assert.equal(attempts, 1);
+});
+
+test("login only accepts its requested source and errors never retain raw credential-bearing text", async () => {
+  const input = {
+    source: "JM",
+    username: "synthetic-user",
+    password: "fixture-only",
+    remember: true,
+  };
+  const wrong = createSourceAdapter({
+    native: true,
+    invoke: async () => account("Pica"),
+  });
+  await assert.rejects(wrong.login(input), { code: "INVALID_RESPONSE" });
+  const failing = createSourceAdapter({
+    native: true,
+    invoke: async () => {
+      throw {
+        code: "LOGIN_REJECTED",
+        message: "synthetic-user fixture-only https://private.invalid",
+      };
+    },
+  });
+  await assert.rejects(failing.login(input), (error) => {
+    assert.equal(error.message, "LOGIN_REJECTED");
+    assert.doesNotMatch(
+      sourceErrorMessage(error),
+      /synthetic-user|fixture-only|private/,
+    );
+    return true;
+  });
+  assert.match(
+    sourceErrorMessage(new SourceError("FAVORITE_OUTCOME_UNKNOWN")),
+    /先重新读取/,
+  );
+  assert.match(
+    sourceErrorMessage(new SourceError("SOURCE_ACCESS_DENIED")),
+    /会话未被清除/,
+  );
+});
+
+test("remembered invalid sessions can be forgotten without inventing a usable session ID", async () => {
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      assert.equal(command, "source_logout");
+      assert.deepEqual(args, { source: "JM", sessionId: null });
+      return {
+        ...account(),
+        sessionId: null,
+        accountId: null,
+        displayName: null,
+        state: "disconnected",
+        remembered: false,
+      };
+    },
+  });
+  const result = await adapter.logout({ source: "JM", sessionId: null });
+  assert.equal(result.state, "disconnected");
+  assert.equal(result.remembered, false);
+  await assert.rejects(
+    adapter.query({ source: "JM", sessionId: null }, query),
+    { code: "LOGIN_REQUIRED" },
+  );
+});
+
+test("Pica favorite duplicate entries survive IPC and catalog restore; search and conflicting metadata reject", async () => {
+  const picaScope = { source: "Pica", sessionId: "synthetic-pica-entries" };
+  const item = work("Pica", "0123456789abcdef01234567");
+  const page = {
+    ...picaScope,
+    items: [item, { ...item }],
+    page: 1,
+    total: 2,
+    pages: 1,
+    hasMore: false,
+    folders: [],
+  };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async () => page,
+  });
+  const query = {
+    kind: "favorites",
+    query: "",
+    folderId: null,
+    page: 1,
+    reverse: false,
+  };
+  assert.equal((await adapter.query(picaScope, query)).items.length, 2);
+  await assert.rejects(
+    adapter.query(picaScope, { ...query, kind: "search", query: "T" }),
+    SourceError,
+  );
+  const snapshot = {
+    ...page,
+    complete: true,
+    updatedAt: 1,
+    firstPageIds: [item.workId, item.workId],
+    pageEnds: [2],
+  };
+  assert.equal(validateCatalogSnapshot(snapshot, picaScope).items.length, 2);
+  page.items[1] = { ...item, title: "Different" };
+  await assert.rejects(adapter.query(picaScope, query), SourceError);
+  assert.throws(
+    () =>
+      validateCatalogSnapshot({ ...snapshot, items: page.items }, picaScope),
+    SourceError,
+  );
+});
+
+test("catalog page boundaries reject cross-page duplicates and malformed provenance at IPC restore", async () => {
+  const picaScope = { source: "Pica", sessionId: "synthetic-page-ends" };
+  const a = work("Pica", "a");
+  const b = work("Pica", "b");
+  const c = work("Pica", "c");
+  const valid = {
+    items: [a, { ...a }, b, c],
+    page: 2,
+    total: 4,
+    pages: 2,
+    hasMore: false,
+    folders: [],
+    complete: true,
+    updatedAt: 1,
+    firstPageIds: ["a", "a"],
+    pageEnds: [2, 4],
+  };
+  assert.deepEqual(validateCatalogSnapshot(valid, picaScope).pageEnds, [2, 4]);
+  const crossPage = {
+    ...valid,
+    items: [a, b, { ...a }, c],
+    firstPageIds: ["a", "b"],
+  };
+  for (const value of [
+    crossPage,
+    { ...crossPage, pageEnds: undefined },
+    { ...valid, pageEnds: undefined },
+    { ...valid, pageEnds: null },
+    ...[
+      [],
+      [4],
+      [2, 3],
+      [2, 2],
+      [3, 4],
+      [0, 4],
+      [2, 4, 4],
+      [2, 4.5],
+      [2, "4"],
+    ].map((pageEnds) => ({ ...valid, pageEnds })),
+  ]) {
+    assert.throws(() => validateCatalogSnapshot(value, picaScope), SourceError);
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => ({
+        ...picaScope,
+        snapshot: value,
+        completeSnapshot: value,
+      }),
+    });
+    await assert.rejects(
+      adapter.catalog(picaScope, {
+        action: "read",
+        folderId: null,
+        reverse: false,
+      }),
+      SourceError,
+    );
+  }
+  const legacy = {
+    ...valid,
+    items: [a, b, c, work("Pica", "d")],
+    firstPageIds: ["a", "b"],
+  };
+  delete legacy.pageEnds;
+  assert.equal(validateCatalogSnapshot(legacy, picaScope).pageEnds, undefined);
+  const oversizedPage = {
+    ...legacy,
+    items: Array.from({ length: 1003 }, (_, index) =>
+      work("Pica", String(index)),
+    ),
+    firstPageIds: ["0", "1"],
+    total: 1003,
+    pageEnds: [2, 1003],
+  };
+  assert.throws(
+    () => validateCatalogSnapshot(oversizedPage, picaScope),
+    SourceError,
+  );
+  const empty = {
+    ...valid,
+    items: [],
+    page: 1,
+    total: 0,
+    pages: 0,
+    firstPageIds: [],
+    pageEnds: [0],
+  };
+  assert.deepEqual(validateCatalogSnapshot(empty, picaScope).pageEnds, [0]);
+  assert.throws(
+    () => validateCatalogSnapshot({ ...empty, pageEnds: [0, 0] }, picaScope),
+    SourceError,
+  );
+});

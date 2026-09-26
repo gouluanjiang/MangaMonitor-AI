@@ -1,6 +1,6 @@
-# Mandatory download-executor thaw gate
+# Download behavior and authority review
 
-The real local manga download executor is currently frozen. This document exists so future work does not depend on conversational memory when the project eventually resumes real download execution.
+Use `DEVELOPMENT_HANDOFF.md` and its linked gates for current authority. The initial 2026-09-08 staging review and later desktop reviews cover different scopes; this document grants no execution permission.
 
 ## Trigger
 
@@ -13,22 +13,19 @@ This gate applies before any change that can make the system do one or more of t
 - mark a pending task completed based on download execution;
 - physically delete files.
 
-## Required reading before thawing
+## Review scope and reusable evidence
 
-The developer or assistant must first read and re-validate:
+Read the affected contract, implementation/tests and `upstream-source-reference.md` sections. Use `V1_ADD_ONLY_DOWNLOAD_THAW_2026-09-08.md` for the initial staging review or the handoff's applicable desktop review.
 
-1. `AGENTS.md`.
-2. `docs/upstream-source-reference.md`.
-3. The current A6 executor/staging/completion result documents and the actual current source implementing those contracts.
-4. The three upstream repositories at the pinned revisions recorded in `docs/upstream-source-reference.md`, with special attention to their download managers, source enumeration, pagination, image transforms, retries, concurrency, temporary-directory behavior, and completion conditions.
+Reuse evidence while its pins, contracts, behavior and authorized scope apply. Reopen affected upstream source for changed pins/protocols, newly adopted behavior or defects that undermine the review. A new session or unrelated documentation/UI edit does not trigger all three upstream reviews.
 
-The three upstream projects are implementation references, not authority for MangaMonitor-AI state transitions.
+Authority expansion requires an explicit decision and review of the affected gates in that session. Code review and upstream completion semantics grant no live execution or state-transition authority.
 
-## Upstream knowledge that must be reconsidered at thaw time
+## Upstream topics to check when affected
 
 ### JM
 
-Re-check at least:
+For affected JM behavior, check:
 
 - API-domain and retry behavior;
 - `/chapter`, `/chapter_view_template`, scramble ID, and block-number/image unscrambling rules;
@@ -39,7 +36,7 @@ Re-check at least:
 
 ### Pica
 
-Re-check at least:
+For affected Pica behavior, check:
 
 - authentication/token lifetime and refresh behavior;
 - signed API request constants/headers;
@@ -72,17 +69,10 @@ Even when upstream implementation code is reused, the following remain independe
 - source/network/auth failures do not prove a work unavailable;
 - `production_enabled=false` remains closed until explicit acceptance is complete.
 
-## Required engineering sequence after a future thaw decision
+## Verification and acceptance
 
-1. Record the explicit decision that real download execution is no longer frozen.
-2. Refresh the upstream review and update pinned revisions/documentation if necessary.
-3. Add/refresh protocol and completion regression tests before changing execution code.
-4. Implement the smallest source-specific bridge compatible with current safety contracts.
-5. Validate offline/unit tests first.
-6. Run guarded live source tests without library mutation.
-7. Validate staging-only execution and proof-chain behavior.
-8. Perform human acceptance of real downloads into isolated staging.
-9. Only then consider separate inventory/promotion/replacement gates.
-10. Keep production disabled until the project's final production acceptance criteria pass.
+Implement within the reviewed scope, updating meaningful regressions for changed behavior. Run affected checks and required CI under `AGENTS.md`; do not repeat unchanged validation stages.
 
-If any prerequisite is ambiguous or stale, fail closed and re-audit instead of assuming old upstream behavior is still valid.
+Live checks require applicable authorization and local execution. Preserve each gate's staging/proof and human-acceptance prerequisites; synthetic tests do not satisfy them. Inventory, promotion, replacement and deletion remain separately gated; production requires explicit final acceptance.
+
+Missing approval or integrity evidence blocks the affected real action. Identify the gap and continue independent authorized work.

@@ -1,0 +1,62 @@
+//! Bounded, revisioned storage for the desktop preview's private UI documents.
+//!
+//! Library root paths are stored only as private metadata selected by the native picker.
+mod author_evidence;
+mod author_query;
+mod background;
+mod cache;
+mod discovery;
+mod discovery_journal;
+mod downloads;
+mod library;
+mod model;
+mod phone;
+mod reader;
+mod store;
+mod work_date;
+
+pub use author_evidence::{author_credit_matches, discovery_record_matches_author};
+pub use author_query::*;
+pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
+pub use cache::{AccountCache, CacheEntry};
+pub use discovery::*;
+pub use discovery_journal::DiscoveryPagePatch;
+pub use downloads::*;
+pub use library::*;
+pub use model::{
+    AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,
+    FollowedWork, ResourcePreferences, ResourceProfile, Source, WorkIdentity, WorkbenchPreferences,
+    MAX_FOLLOWED_ACCOUNTS, MAX_FOLLOWED_AUTHORS_PER_ACCOUNT, MAX_FOLLOWED_WORKS_PER_ACCOUNT,
+    MAX_FOLLOWING_NAME_CHARACTERS, MAX_SAFE_INTEGER,
+};
+pub use phone::{
+    phone_library_from_path, phone_library_mark, phone_library_read, phone_library_unmark,
+    PhoneLibraryDocument, PhoneLibraryEntry, PhoneLibrarySnapshot,
+};
+pub use reader::ReaderPosition;
+pub use store::{Document, WorkbenchStore, PRIVATE_DIRECTORY};
+pub use work_date::{normalize_work_date, work_date_is_valid};
+
+use serde::Serialize;
+
+/// IPC errors contain only a stable code; filesystem paths and OS messages stay private.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct StoreError {
+    pub code: &'static str,
+}
+
+impl StoreError {
+    pub(crate) const fn new(code: &'static str) -> Self {
+        Self { code }
+    }
+}
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.code)
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+pub(crate) type Result<T> = std::result::Result<T, StoreError>;

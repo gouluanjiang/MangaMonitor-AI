@@ -1,0 +1,120 @@
+.completion-panel {
+  padding: 0 0 5rem;
+}
+.completion-panel.has-completion-selection {
+  padding-bottom: 220px;
+}
+.completion-select {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+.completion-panel .source-card.is-selected {
+  outline: 2px solid #8560f2;
+  border-radius: 8px;
+}
+.completion-panel h1 {
+  font-size: clamp(2rem, 4vw, 4rem);
+  margin-bottom: 0.6rem;
+}
+.completion-panel header {
+  margin-bottom: 2rem;
+  display: block;
+}
+.completion-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin: 1.2rem 0;
+}
+.completion-controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.completion-panel select,
+.completion-panel input:not([type="checkbox"]) {
+  background: var(--surface, #1e1b24);
+  color: inherit;
+  border: 1px solid #48414f;
+  border-radius: 6px;
+  padding: 0.65rem;
+  max-width: 100%;
+}
+.completion-panel button:not(.source-cover-button) {
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid #48414f;
+  border-radius: 6px;
+  padding: 0.5rem 0.8rem;
+  background: var(--surface, #1e1b24);
+}
+.completion-panel button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.completion-panel .primary-button {
+  background: #6942dc !important;
+}
+.completion-progress {
+  padding: 1rem;
+  background: #282130;
+  border-radius: 8px;
+}
+.completion-ranges {
+  max-height: 18rem;
+  overflow: auto;
+}
+.completion-card-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+.completion-status {
+  color: #c7b3ff;
+}
+.completion-change-summary {
+  margin: 1rem 0;
+  padding: 0.9rem 0;
+  border-top: 1px solid #37313e;
+  border-bottom: 1px solid #37313e;
+}
+.completion-change-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+}
+.completion-change-summary p {
+  margin: 0.45rem 0 0;
+  line-height: 1.55;
+}
+.completion-change-summary button[aria-pressed="true"] {
+  border-color: #8560f2;
+  background: #372566;
+}
+
+.completion-panel .source-card-open {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+.completion-panel .source-card-open strong,
+.completion-panel .source-card-open span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.completion-panel .source-tabs button[aria-pressed="true"] {
+  border-color: #8560f2;
+  background: #372566;
+}

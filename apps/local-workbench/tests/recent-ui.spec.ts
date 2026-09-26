@@ -18,11 +18,17 @@ declare global {
       holdPage: number | null;
       release?: () => void;
       total: number;
+      observedWheelDelta?: number;
     };
   }
 }
 
 test.use({ storageState: { cookies: [], origins: [] } });
+const nativeScrollbarTest = test.extend({
+  // Headless Chromium otherwise hides the native scrollbar but retains the
+  // reserved gutter, so a mouse drag selects content instead of moving a thumb.
+  launchOptions: { ignoreDefaultArgs: ["--hide-scrollbars"] },
+});
 const errors = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
   const captured: string[] = [];
@@ -470,7 +476,23 @@ test("downward input at an already reached edge loads one page, ignores other di
   expect(
     Math.abs((await main.evaluate((element) => element.scrollTop)) - edge),
   ).toBeLessThanOrEqual(2);
+  await main.evaluate((element) => {
+    window.recentTest.observedWheelDelta = 0;
+    element.addEventListener(
+      "wheel",
+      (event) => {
+        window.recentTest.observedWheelDelta! += (event as WheelEvent).deltaY;
+      },
+      { passive: true },
+    );
+  });
   for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 200);
+  // mouse.wheel does not wait for browser delivery; advancing the JavaScript
+  // clock also does not drain Chromium's native input queue. Keep page 2 held
+  // until all three wheel deltas were actually delivered during the request.
+  await expect
+    .poll(() => page.evaluate(() => window.recentTest.observedWheelDelta))
+    .toBe(600);
   await page.clock.runFor(300);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
   await page.evaluate(() => window.recentTest.release!());
@@ -639,60 +661,105 @@ test("download-dialog scrolling and focused-input keys cannot continue the backg
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
 });
 
-test("dragging the actual Chromium scrollbar after a long hold continues one page without synthetic scroll events", async ({
-  page,
-}) => {
-  await page.clock.install();
-  await install(page);
-  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
-  const main = page.getByRole("main");
-  await main.evaluate((element) => {
-    element.scrollTop = 0;
-  });
-  await page.clock.runFor(100);
-  const scrollbar = await main.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    const trackHeight = element.clientHeight;
-    const thumbHeight = Math.max(
-      24,
-      (trackHeight * trackHeight) / element.scrollHeight,
+nativeScrollbarTest(
+  "dragging the actual Chromium scrollbar after a long hold continues one page without synthetic scroll events",
+  async ({ page }, testInfo) => {
+    await page.clock.install();
+    await install(page);
+    await expect(page.getByTestId("recent-counts")).toContainText(
+      "已读取 20 部",
     );
-    return {
-      width: element.offsetWidth - element.clientWidth,
-      x:
-        rect.right -
-        Math.max(3, (element.offsetWidth - element.clientWidth) / 2),
-      startY: rect.top + element.clientTop + thumbHeight / 2,
-      endY: rect.top + element.clientTop + trackHeight - thumbHeight / 2 - 2,
-    };
-  });
-  expect(scrollbar.width).toBeGreaterThan(0);
-  expect(scrollbar.endY).toBeGreaterThan(scrollbar.startY);
-  await page.evaluate(() => {
-    window.recentTest.holdPage = 2;
-  });
-  await page.mouse.move(scrollbar.x, scrollbar.startY);
-  await page.mouse.down();
-  try {
-    await page.clock.runFor(2200);
-    expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
-    await page.mouse.move(scrollbar.x, scrollbar.endY, { steps: 16 });
-    await page.clock.runFor(300);
-    await expect
-      .poll(() => main.evaluate((element) => element.scrollTop))
-      .toBeGreaterThan(0);
-    await expect
-      .poll(() => page.evaluate(() => Boolean(window.recentTest.release)), {
-        message:
-          "A native scrollbar drag near the end should request its next page",
-      })
-      .toBe(true);
-  } finally {
-    await page.mouse.up();
-  }
-  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
-  await page.evaluate(() => window.recentTest.release!());
-  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
-  await page.clock.runFor(3000);
-  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
-});
+    const main = page.getByRole("main");
+    await main.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await page.clock.runFor(100);
+    const scrollbar = await main.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const trackHeight = element.clientHeight;
+      const thumbHeight = Math.max(
+        24,
+        (trackHeight * trackHeight) / element.scrollHeight,
+      );
+      return {
+        width: element.offsetWidth - element.clientWidth,
+        x:
+          rect.right -
+          Math.max(3, (element.offsetWidth - element.clientWidth) / 2),
+        startY: rect.top + element.clientTop + thumbHeight / 2,
+        endY: rect.top + element.clientTop + trackHeight - thumbHeight / 2 - 2,
+      };
+    });
+    expect(scrollbar.width).toBeGreaterThan(0);
+    expect(scrollbar.endY).toBeGreaterThan(scrollbar.startY);
+    await page.evaluate(() => {
+      window.recentTest.holdPage = 2;
+    });
+    const gestureTrace = await main.evaluateHandle((element) => {
+      const events: Record<string, string | number | boolean>[] = [];
+      for (const type of [
+        "pointerdown",
+        "mousedown",
+        "pointermove",
+        "scroll",
+      ]) {
+        window.addEventListener(
+          type,
+          (event) => {
+            if (events.length >= 40) return;
+            const target = event.target;
+            events.push({
+              type: event.type,
+              target: target instanceof Element ? target.tagName : "window",
+              onMain: target === element,
+              trusted: event.isTrusted,
+              x: event instanceof MouseEvent ? event.clientX : -1,
+              y: event instanceof MouseEvent ? event.clientY : -1,
+              buttons: event instanceof MouseEvent ? event.buttons : 0,
+              scrollTop: element.scrollTop,
+            });
+          },
+          { capture: true, passive: true },
+        );
+      }
+      return events;
+    });
+    await page.mouse.move(scrollbar.x, scrollbar.startY);
+    await page.mouse.down();
+    try {
+      await page.clock.runFor(2200);
+      expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+      await page.mouse.move(scrollbar.x, scrollbar.endY, { steps: 16 });
+      await page.clock.runFor(300);
+      await expect
+        .poll(() => main.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(0);
+      await expect
+        .poll(() => page.evaluate(() => Boolean(window.recentTest.release)), {
+          message:
+            "A native scrollbar drag near the end should request its next page",
+        })
+        .toBe(true);
+    } catch (error) {
+      await testInfo.attach("native-scrollbar-input.json", {
+        body: JSON.stringify(
+          { scrollbar, events: await gestureTrace.jsonValue() },
+          null,
+          2,
+        ),
+        contentType: "application/json",
+      });
+      throw error;
+    } finally {
+      await page.mouse.up();
+      await gestureTrace.dispose();
+    }
+    expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+    await page.evaluate(() => window.recentTest.release!());
+    await expect(page.getByTestId("recent-counts")).toContainText(
+      "已读取 39 部",
+    );
+    await page.clock.runFor(3000);
+    expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+  },
+);

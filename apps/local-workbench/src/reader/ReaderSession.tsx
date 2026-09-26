@@ -77,6 +77,7 @@ export function ReaderSession({
     lastY: number;
   } | null>(null);
   const fullscreenBusy = useRef(false);
+  const fullscreenRef = useRef(false);
   const count = chapterCount?.id === chapterId ? chapterCount.count : 0;
   const chapterIndex = book.chapters.findIndex(
     (chapter) => chapter.id === chapterId,
@@ -349,8 +350,10 @@ export function ReaderSession({
     if (fullscreenBusy.current) return;
     fullscreenBusy.current = true;
     try {
-      await adapter.fullscreen(!fullscreen);
-      setFullscreen(!fullscreen);
+      const next = !fullscreenRef.current;
+      await adapter.fullscreen(next);
+      fullscreenRef.current = next;
+      setFullscreen(next);
     } catch {
       setNotice("暂时无法切换全屏，请重试。");
     } finally {
@@ -378,7 +381,7 @@ export function ReaderSession({
       if (event.key === "Escape") {
         if (target instanceof HTMLSelectElement) return;
         event.preventDefault();
-        if (fullscreen) void toggleFullscreen();
+        if (fullscreenRef.current) void toggleFullscreen();
         else onClose();
         return;
       }

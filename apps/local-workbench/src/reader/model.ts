@@ -87,7 +87,10 @@ export function pageAtOffset(layout: PageLayout, offset: number): number {
     hi = layout.tops.length - 1;
   while (lo < hi) {
     const middle = Math.ceil((lo + hi) / 2);
-    if (layout.tops[middle] <= offset) lo = middle;
+    // Browser scroll positions round fractional CSS pixels. A requested page
+    // top can therefore come back just below that top after band translation.
+    // Ignore at most one CSS pixel; the rest of the 12px gap stays on its page.
+    if (layout.tops[middle] <= offset + 1) lo = middle;
     else hi = middle - 1;
   }
   return lo;

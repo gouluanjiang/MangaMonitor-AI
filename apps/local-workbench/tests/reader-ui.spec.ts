@@ -329,6 +329,13 @@ test("single-page clicks and arrows advance, ordinary wheel only scrolls, zoom d
     .toEqual({ fullscreen: false });
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.readerTest.calls
+        .filter(({ command }) => command === "reader_fullscreen")
+        .map(({ args }) => args),
+    ),
+  ).toEqual([{ fullscreen: true }, { fullscreen: false }]);
 });
 
 test("chapter changes discard delayed images, retry stays page-specific, and chapter end waits for an explicit choice", async ({
@@ -400,9 +407,21 @@ test("chapter changes discard delayed images, retry stays page-specific, and cha
     .getByRole("toolbar")
     .getByRole("button", { name: "返回", exact: true })
     .click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
   expect(await page.evaluate(() => window.readerTest.saved?.chapterId)).toBe(
     "two",
   );
+  const finalCommands = await page.evaluate(() => window.readerTest.calls);
+  const lastSave = finalCommands.findLastIndex(
+    ({ command }) => command === "reader_save_position",
+  );
+  expect(lastSave).toBeGreaterThanOrEqual(0);
+  expect(finalCommands[lastSave].args.position).toMatchObject({
+    chapterId: "two",
+  });
+  expect(
+    finalCommands.findLastIndex(({ command }) => command === "reader_close"),
+  ).toBeGreaterThan(lastSave);
 });
 
 test("fifty-thousand-page chapters cross scroll bands while dragging and reach their last page through the real slider", async ({

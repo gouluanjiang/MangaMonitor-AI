@@ -85,6 +85,22 @@ test("long chapter bands preserve logical anchors within bounded browser coordin
     const rebasedPhysical = logical - shifted.start;
     assert.equal(shifted.start + rebasedPhysical, logical);
   }
+  const fractional = pageLayout(50000, 1280 * 1.13, new Map());
+  for (const index of [1, 5000, 25000, 49999]) {
+    const band = pageSegment(fractional, index);
+    const physical = fractional.tops[index] - band.start;
+    const rounded = Math.floor(physical * 64) / 64;
+    assert.equal(pageAtOffset(fractional, band.start + rounded), index);
+    assert.equal(pageAtOffset(fractional, fractional.tops[index] - 0.5), index);
+    assert.equal(
+      pageAtOffset(fractional, fractional.tops[index] - 1.01),
+      index - 1,
+    );
+    assert.equal(
+      pageAtOffset(fractional, fractional.tops[index] - 6),
+      index - 1,
+    );
+  }
 });
 
 test("page cache prioritizes current pages, caps concurrent reads and discards stale chapter work on disposal", async () => {

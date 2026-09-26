@@ -52,6 +52,13 @@ pub trait SourceBackend: Send + Sync + 'static {
         session: &Self::Session,
         input: &str,
     ) -> impl Future<Output = Result<SourceWork>> + Send;
+    fn recent(
+        &self,
+        _session: &Self::Session,
+        _page: u64,
+    ) -> impl Future<Output = Result<SourcePage>> + Send {
+        std::future::ready(Err(AccountError::new("SOURCE_RECENT_UNSUPPORTED")))
+    }
     fn ranking_options(
         &self,
         _session: &Self::Session,
@@ -83,6 +90,11 @@ impl SourceBackend for WorkbenchSources {
     type Session = SourceSession;
     fn has_cover_metadata(&self, session: &Self::Session, work_id: &str) -> bool {
         session.has_cover_metadata(work_id)
+    }
+    async fn recent(&self, session: &Self::Session, page: u64) -> Result<SourcePage> {
+        WorkbenchSources::recent(self, session, page)
+            .await
+            .map_err(|error| AccountError::new(error.code))
     }
     async fn ranking_options(
         &self,

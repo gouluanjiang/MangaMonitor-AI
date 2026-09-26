@@ -36,6 +36,10 @@ export function sourceErrorMessage(error: unknown): string {
     return "收藏范围在读取期间发生变化，已读内容保留。请重新读取完整收藏。";
   if (code === "CATALOG_LIMIT")
     return "当前收藏索引达到 20000 部、1000 页或 32 MiB 内存上限，已读内容保留。";
+  if (code === "RECENT_PAGE_STALLED")
+    return "来源分页没有返回新的记录，已停止继续读取。已读内容保留，可以刷新最近更新后重试。";
+  if (code === "RECENT_LIMIT")
+    return "最近更新达到 20000 条、1000 页或 32 MiB 浏览上限，已读内容保留。可以刷新最近更新重新浏览。";
   if (code === "DESKTOP_REQUIRED")
     return "请在桌面应用中连接来源账号。浏览器预览不会连接真实账号。";
   if (
@@ -656,7 +660,9 @@ export function createSourceAdapter(
     async query(scope, query) {
       checkScope(scope);
       if (
-        !["favorites", "search", "detail", "ranking"].includes(query.kind) ||
+        !["favorites", "search", "detail", "ranking", "recent"].includes(
+          query.kind,
+        ) ||
         !text(query.query, 4096) ||
         !integer(query.page) ||
         query.page < 1 ||
@@ -664,6 +670,11 @@ export function createSourceAdapter(
         (scope.source === "Pica" && query.folderId !== null) ||
         (query.kind === "ranking" &&
           (query.page !== 1 || query.reverse === true)) ||
+        (query.kind === "recent" &&
+          (query.query !== "" ||
+            query.folderId !== null ||
+            query.reverse !== undefined ||
+            query.page > 1000)) ||
         (query.reverse !== undefined && typeof query.reverse !== "boolean")
       )
         throw new SourceError("INVALID_INPUT");
@@ -671,7 +682,9 @@ export function createSourceAdapter(
         await call("source_query", {
           ...scope,
           ...query,
-          reverse: query.reverse ?? false,
+          ...(query.kind === "recent"
+            ? {}
+            : { reverse: query.reverse ?? false }),
         }),
         scope,
         query.kind === "favorites",

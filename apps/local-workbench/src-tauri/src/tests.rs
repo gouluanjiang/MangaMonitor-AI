@@ -532,6 +532,10 @@ fn account_commands() -> Vec<(&'static str, Value)> {
         ),
         (
             "source_query",
+            json!({"source":"JM","sessionId":"stale","kind":"recent","query":"","folderId":null,"page":2}),
+        ),
+        (
+            "source_query",
             json!({"source":"JM","sessionId":"stale","kind":"favorites","query":"","folderId":null,"page":1}),
         ),
         (
@@ -897,6 +901,10 @@ fn account_inputs_reject_unknown_sources_kinds_and_unsafe_boundaries() {
     for body in [
         json!({"source":"JM","sessionId":"stale","kind":"search","query":"query","folderId":null,"page":0}),
         json!({"source":"JM","sessionId":"stale","kind":"search","query":"query\n","folderId":null,"page":1}),
+        json!({"source":"JM","sessionId":"stale","kind":"recent","query":"keyword","folderId":null,"page":1}),
+        json!({"source":"Pica","sessionId":"stale","kind":"recent","query":"","folderId":"0","page":1}),
+        json!({"source":"Pica","sessionId":"stale","kind":"recent","query":"","folderId":null,"page":1001}),
+        json!({"source":"Pica","sessionId":"stale","kind":"recent","query":"","folderId":null,"page":1,"reverse":true}),
     ] {
         assert_eq!(
             invoke(&main, "source_query", body).unwrap_err(),

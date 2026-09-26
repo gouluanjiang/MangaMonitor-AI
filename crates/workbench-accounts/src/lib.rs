@@ -58,6 +58,7 @@ pub enum QueryKind {
     Favorites,
     Search,
     Ranking,
+    Recent,
     Detail,
 }
 

@@ -101,7 +101,7 @@ export interface AccountSummary {
   errorCode: string | null;
 }
 export interface SourceQuery {
-  kind: "favorites" | "search" | "detail" | "ranking";
+  kind: "favorites" | "search" | "detail" | "ranking" | "recent";
   query: string;
   folderId: string | null;
   page: number;

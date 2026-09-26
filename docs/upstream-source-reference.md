@@ -64,6 +64,14 @@ Do **not** dynamically trust domains discovered from remote pages without a sepa
 
 ## Scaling implications
 
+### Desktop source-latest browsing (2026-09-26)
+
+At the unchanged JMComic-Crawler-Python pin, `src/jmcomic/jm_client_impl.py:713-740` implements `JmApiClient.categories_filter`; `jm_config.py:82,101` defines latest order `mr` and all-category `0`; `jm_toolkit.py:735-768` adapts the response `content` and `total`. The desktop recent-list query therefore uses one explicit `GET /categories/filter?page=N&order=&c=0&o=mr` page. It does not send an author query or traverse the site.
+
+At the unchanged Pica downloader pin, `src-tauri/src/pica_client.rs:184-224` implements paged `POST comics/advanced-search`, `types/search_sort.rs:15` maps `TimeNewest` to `dd`, and `src/panes/SearchPane.vue:20,24-26,56-70` permits empty keyword/category browsing in that order. The recent-list query uses `{"keyword":"","sort":"dd","categories":[]}` with an explicit page. Existing session headers, bounded parsers, source ordering, item-isolation warnings and cover-address retention remain in use.
+
+These references establish source-provided newest listing order, not a guarantee that every newly added chapter moves an old work to the top. Do not relabel a creation timestamp as an update timestamp or promise identical results under arbitrary website category/language preferences. Missing explicit update fields stay unknown. Live equivalence and user experience acceptance remain separate from protocol and synthetic CI evidence. Source pins, credential destinations, trusted hosts and media/download authority are unchanged. See [the recent-updates contract](WEBSITE_RECENT_UPDATES_2026-09-26.md).
+
 ### Desktop weekly recommendations and rankings (2026-09-14)
 
 The read-only desktop ranking routes were checked against the existing local source snapshots at the pinned lanyeeee revisions above. `jmcomic-downloader/src-tauri/src/jm_client.rs` provides `get_weekly_info` (`GET /week`, `categories` and `type`) and `get_weekly` (`GET /week/filter?id=…&type=…`, `total` and ordered `list`). `picacomic-downloader/src-tauri/src/pica_client.rs` provides `GET comics/leaderboard?tt=H24|D7|D30&ct=VC`, with ordered `comics` records. Neither upstream method offers pagination for this endpoint. JM count mismatches remain visibly partial; the application does not invent additional rank pages.

@@ -66,6 +66,125 @@ async fn large_current_session_catalog_reuses_early_addresses_without_detail_req
 const PICA_ID: &str = "0123456789abcdef01234567";
 
 #[tokio::test]
+async fn recent_lists_fetch_one_requested_page_and_preserve_source_order_metadata_and_issues() {
+    let sources = scripted(vec![
+        Ok(json!({"total":1_000_000,"content":[
+            {"id":"456","name":"Older timestamp first","author":"Author","update_at":1750000000},
+            {"id":"789","name":" "},
+            {"id":"123","name":"Newer timestamp second","tags":["中文"],"update_at":1760000000}
+        ]})),
+        Ok(
+            json!({"comics":{"total":3,"page":2,"pages":2,"limit":2,"docs":[
+                {"_id":PICA_ID,"title":"Last page","author":"Pica Author","updated_at":"2026-09-25T06:00:00Z",
+                 "categories":["生肉"],"thumb":{"fileServer":"https://storage1.picacomic.com","path":"cover/recent.jpg"}}
+            ]}}),
+        ),
+    ]);
+    let jm = session(Source::Jm);
+    let page = sources.recent(&jm, 1).await.unwrap();
+    assert_eq!(page.page, 1);
+    // The site total may exceed the UI's browsing budget. It is not a request
+    // to fetch those pages, and must not make a small current page unreadable.
+    assert_eq!(page.total, Some(1_000_000));
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|item| item.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["456", "123"]
+    );
+    assert_eq!(page.items[1].tags, ["中文"]);
+    assert!(page
+        .items
+        .iter()
+        .all(|item| item.source_updated_at.is_some()));
+    assert_eq!(page.issues.len(), 1);
+    assert_eq!((page.issues[0].page, page.issues[0].index), (1, 2));
+    assert_eq!(page.issues[0].code, SourceItemIssueCode::MetadataMissing);
+    assert!(jm.has_cover_metadata("456"));
+    assert!(!jm.has_cover_metadata("789"));
+    let pica = session(Source::Pica);
+    let page = sources.recent(&pica, 2).await.unwrap();
+    assert_eq!(
+        (page.page, page.pages, page.has_more),
+        (2, Some(2), Some(false))
+    );
+    assert_eq!(page.items[0].tags, ["生肉"]);
+    assert_eq!(
+        page.items[0].source_updated_at.as_deref(),
+        Some("2026-09-25T06:00:00.000Z")
+    );
+    assert!(pica.has_cover_metadata(PICA_ID));
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        [
+            (
+                Source::Jm,
+                Method::GET,
+                "/categories/filter?page=1&order=&c=0&o=mr".into()
+            ),
+            (
+                Source::Pica,
+                Method::POST,
+                "comics/advanced-search?page=2".into()
+            )
+        ]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn recent_lists_keep_empty_unknown_dates_and_failures_distinct() {
+    let sources = scripted(vec![
+        Ok(json!({"total":0,"content":[]})),
+        Ok(
+            json!({"comics":{"total":1,"page":1,"pages":1,"limit":20,"docs":[
+                {"_id":PICA_ID,"title":"Creation date only","created_at":"2026-09-25T00:00:00Z"}
+            ]}}),
+        ),
+        Err(protocol::error("SESSION_EXPIRED")),
+        Err(protocol::error("SOURCE_UNAVAILABLE")),
+        Ok(json!({"comics":{"total":1,"page":1,"pages":1,"limit":20,"docs":[]}})),
+    ]);
+    let jm = session(Source::Jm);
+    let pica = session(Source::Pica);
+    let empty = sources.recent(&jm, 1).await.unwrap();
+    assert_eq!((empty.total, empty.has_more), (Some(0), Some(false)));
+    assert!(empty.items.is_empty());
+    let unknown_date = sources.recent(&pica, 1).await.unwrap();
+    assert_eq!(unknown_date.items[0].source_updated_at, None);
+    assert_eq!(
+        sources.recent(&jm, 1).await.unwrap_err().code,
+        "SESSION_EXPIRED"
+    );
+    assert_eq!(
+        sources.recent(&pica, 1).await.unwrap_err().code,
+        "SOURCE_UNAVAILABLE"
+    );
+    assert_eq!(
+        sources.recent(&pica, 1).await.unwrap_err().code,
+        "SOURCE_PAGINATION_INVALID"
+    );
+    assert_eq!(sources.recorded.lock().unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn recent_invalid_pages_never_request_or_grant_cover_metadata() {
+    let sources = scripted(vec![]);
+    for source in [Source::Jm, Source::Pica] {
+        let session = session(source);
+        for page in [0, 100_001, u64::MAX] {
+            assert_eq!(
+                sources.recent(&session, page).await.unwrap_err().code,
+                "SOURCE_PAGE_INVALID"
+            );
+        }
+        assert!(session.covers.lock().unwrap().known.is_empty());
+    }
+    assert!(sources.recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn weekly_and_leaderboard_routes_preserve_source_order_and_cover_descriptors() {
     let sources = scripted(vec![
         Ok(

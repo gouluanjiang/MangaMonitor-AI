@@ -27,6 +27,7 @@ import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { SourceIssues } from "./SourceIssues.tsx";
 
 export function RankingPanel({
+  active = true,
   source,
   accounts,
   adapter,
@@ -40,6 +41,7 @@ export function RankingPanel({
   onDownloadMany,
   onAccounts,
 }: {
+  active?: boolean;
   source: Source;
   accounts: AccountSummary[];
   adapter: SourceAdapter;
@@ -61,6 +63,8 @@ export function RankingPanel({
     currentScope = useRef(scopeKey);
   currentScope.current = scopeKey;
   const [options, setOptions] = useState<RankOptions | null>(null);
+  const optionsContext = useRef("");
+  const resultContext = useRef("");
   const [category, setCategory] = useState<string | null>(null),
     [period, setPeriod] = useState("");
   const [result, setResult] = useState<{
@@ -76,8 +80,15 @@ export function RankingPanel({
     [query, setQuery] = useState("");
   const [selection, setSelection] = useState<string[]>([]);
   const key = scopeKey + JSON.stringify([category, period]);
+  const optionsKey = scopeKey + ":" + optionsRetry;
   const data = result?.key === key ? result : null;
   useEffect(() => {
+    if (!active) {
+      setBusy(false);
+      setSelection([]);
+      return;
+    }
+    if (options && optionsContext.current === optionsKey) return;
     const request = ++epoch.current;
     setOptions(null);
     setResult(null);
@@ -95,6 +106,7 @@ export function RankingPanel({
       .then((next) => {
         if (request !== epoch.current || currentScope.current !== scopeKey)
           return;
+        optionsContext.current = optionsKey;
         setOptions(next);
         setCategory(next.categories[0]?.id ?? null);
         setPeriod(
@@ -114,8 +126,14 @@ export function RankingPanel({
     return () => {
       epoch.current++;
     };
-  }, [adapter, scopeKey, optionsRetry]);
+  }, [adapter, scopeKey, optionsRetry, active]);
   useEffect(() => {
+    if (!active) {
+      setBusy(false);
+      return;
+    }
+    if (resultContext.current === key + ":" + reload && data) return;
+    if (optionsContext.current !== optionsKey) return;
     if (!scope || !options || !period || (source === "JM" && !category)) return;
     const request = ++epoch.current;
     setBusy(true);
@@ -129,8 +147,10 @@ export function RankingPanel({
         page: 1,
       })
       .then((page) => {
-        if (request === epoch.current && currentScope.current === scopeKey)
+        if (request === epoch.current && currentScope.current === scopeKey) {
+          resultContext.current = key + ":" + reload;
           setResult({ key, page, time: Date.now() });
+        }
       })
       .catch((cause) => {
         if (request === epoch.current) setError(sourceErrorMessage(cause));
@@ -141,7 +161,7 @@ export function RankingPanel({
     return () => {
       epoch.current++;
     };
-  }, [adapter, key, options, reload]);
+  }, [adapter, key, options, reload, active]);
   const inventory = useMemo(
     () => createInventoryMatcher(library, inventorySnapshot, inventoryReady),
     [library, inventorySnapshot, inventoryReady],

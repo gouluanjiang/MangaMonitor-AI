@@ -1,4 +1,5 @@
 import { RankingPanel } from "./RankingPanel.tsx";
+import { RecentUpdatesPanel } from "./RecentUpdatesPanel.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { works, activeFixture } from "./catalog.ts";
@@ -337,9 +338,25 @@ export default function App() {
         previous.includes(page) ? previous : [...previous, page],
       );
   }, [page]);
-  const [discoveryPane, setDiscoveryPane] = useState<"search" | Source>(
-    "search",
+  const [discoveryPane, setDiscoveryPane] = useState<
+    "search" | "recent" | Source
+  >("search");
+  const [discoveryPanels, setDiscoveryPanels] = useState<("recent" | Source)[]>(
+    [],
   );
+  useEffect(() => {
+    if (page === "discovery" && discoveryPane !== "search")
+      setDiscoveryPanels((previous) =>
+        previous.includes(discoveryPane)
+          ? previous
+          : discoveryPane === "recent"
+            ? [...previous, discoveryPane]
+            : [
+                ...previous.filter((panel) => panel === "recent"),
+                discoveryPane,
+              ],
+      );
+  }, [page, discoveryPane]);
   const [embeddedSourceDetail, setEmbeddedSourceDetail] = useState(false);
   const embeddedScroll = useRef(0);
   const downloadLibrary = useDownloadInventory(
@@ -472,6 +489,7 @@ export default function App() {
           ["search", "来源搜索"],
           ["JM", "JM 每周必看"],
           ["Pica", "哔咔排行榜"],
+          ["recent", "最近更新"],
         ] as const
       ).map(([value, label]) => (
         <button
@@ -2454,34 +2472,81 @@ export default function App() {
               </div>
             ))}
           {persistence.native &&
-            page === "discovery" &&
-            discoveryPane !== "search" && (
-              <div hidden={embeddedSourceDetail}>
-                <RankingPanel
-                  key={discoveryPane}
-                  source={discoveryPane}
-                  accounts={accounts}
-                  adapter={sourceAdapter}
-                  library={library.snapshot}
-                  inventorySnapshot={downloadLibrary.snapshot}
-                  inventoryReady={
-                    downloadLibrary.ready &&
-                    !downloadLibrary.error &&
-                    !library.error
-                  }
-                  density={appearance.density}
-                  navigation={discoveryNavigation}
-                  onOpen={openEmbeddedWork}
-                  onDownload={(work) => void beginDownload(work.workId, work)}
-                  onDownloadMany={(works) => void beginDownloadMany(works)}
-                  onAccounts={() => openSettings("accounts")}
-                />
+            discoveryPanels.map((panel) => (
+              <div
+                key={panel}
+                hidden={
+                  embeddedSourceDetail ||
+                  page !== "discovery" ||
+                  discoveryPane !== panel
+                }
+              >
+                {panel === "recent" ? (
+                  <RecentUpdatesPanel
+                    active={
+                      !embeddedSourceDetail &&
+                      page === "discovery" &&
+                      discoveryPane === panel
+                    }
+                    accounts={accounts}
+                    adapter={sourceAdapter}
+                    library={library.snapshot}
+                    inventorySnapshot={downloadLibrary.snapshot}
+                    inventoryReady={
+                      downloadLibrary.ready &&
+                      !downloadLibrary.error &&
+                      !library.error
+                    }
+                    density={appearance.density}
+                    navigation={
+                      page === "discovery" && discoveryPane === panel
+                        ? discoveryNavigation
+                        : null
+                    }
+                    onOpen={openEmbeddedWork}
+                    onDownload={(work) => void beginDownload(work.workId, work)}
+                    onDownloadMany={(works) => void beginDownloadMany(works)}
+                    onAccounts={() => openSettings("accounts")}
+                  />
+                ) : (
+                  <RankingPanel
+                    active={
+                      !embeddedSourceDetail &&
+                      page === "discovery" &&
+                      discoveryPane === panel
+                    }
+                    source={panel}
+                    accounts={accounts}
+                    adapter={sourceAdapter}
+                    library={library.snapshot}
+                    inventorySnapshot={downloadLibrary.snapshot}
+                    inventoryReady={
+                      downloadLibrary.ready &&
+                      !downloadLibrary.error &&
+                      !library.error
+                    }
+                    density={appearance.density}
+                    navigation={
+                      page === "discovery" && discoveryPane === panel
+                        ? discoveryNavigation
+                        : null
+                    }
+                    onOpen={openEmbeddedWork}
+                    onDownload={(work) => void beginDownload(work.workId, work)}
+                    onDownloadMany={(works) => void beginDownloadMany(works)}
+                    onAccounts={() => openSettings("accounts")}
+                  />
+                )}
               </div>
-            )}
+            ))}
           {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
-              discoveryNavigation={discoveryNavigation}
+              discoveryNavigation={
+                sourceActive && page === "discovery"
+                  ? discoveryNavigation
+                  : null
+              }
               onDetailBack={
                 embeddedSourceDetail ? returnFromEmbeddedDetail : undefined
               }

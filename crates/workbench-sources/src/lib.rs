@@ -4,6 +4,7 @@ mod cover;
 mod language;
 mod protocol;
 mod ranking;
+mod recent;
 mod thumbnail;
 mod types;
 

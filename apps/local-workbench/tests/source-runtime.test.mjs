@@ -341,6 +341,39 @@ test("ranking choices are scoped metadata and ranking requests use a single sour
   assert.equal(calls.length, 2);
 });
 
+test("recent queries have no keyword or reverse order and reject stale account responses without extra source calls", async () => {
+  const calls = [];
+  const request = { kind: "recent", query: "", folderId: null, page: 2 };
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return page({ page: 2, pages: 4, total: 80, hasMore: true });
+    },
+  });
+  assert.equal((await adapter.query(scope, request)).page, 2);
+  assert.deepEqual(calls, [
+    { command: "source_query", args: { ...scope, ...request } },
+  ]);
+  for (const invalid of [
+    { ...request, query: "author" },
+    { ...request, folderId: "folder" },
+    { ...request, reverse: true },
+    { ...request, reverse: false },
+    { ...request, page: 0 },
+    { ...request, page: 1001 },
+  ])
+    await assert.rejects(adapter.query(scope, invalid), {
+      code: "INVALID_INPUT",
+    });
+  assert.equal(calls.length, 1);
+  const stale = createSourceAdapter({
+    native: true,
+    invoke: async () => page({ sessionId: "replaced-session", page: 2 }),
+  });
+  await assert.rejects(stale.query(scope, request), { code: "STALE_SESSION" });
+});
+
 test("ranking choices reject stale scope, malformed options and untrusted IDs", async () => {
   const choices = { categories: [], periods: [{ id: "week", label: "Week" }] };
   for (const response of [

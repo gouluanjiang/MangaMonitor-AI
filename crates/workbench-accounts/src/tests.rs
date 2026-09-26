@@ -38,6 +38,7 @@ impl Vault for SharedVault {
 struct FakeState {
     restore_calls: AtomicUsize,
     query_calls: AtomicUsize,
+    recent_calls: AtomicUsize,
     favorite_calls: AtomicUsize,
     favorite: AtomicBool,
     unknown_write: AtomicBool,
@@ -195,6 +196,18 @@ impl SourceBackend for FakeBackend {
         )
         .await
     }
+    async fn recent(&self, session: &Self::Session, page: u64) -> Result<SourcePage> {
+        self.0.recent_calls.fetch_add(1, Ordering::SeqCst);
+        self.favorites(
+            session,
+            FavoritePageRequest {
+                page,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+    }
     async fn detail(&self, session: &Self::Session, id: &str) -> Result<SourceWork> {
         self.0.detail_calls.fetch_add(1, Ordering::SeqCst);
         if self.0.block_detail.load(Ordering::SeqCst) {
@@ -280,6 +293,92 @@ async fn query(
     service
         .query(source, session, QueryKind::Favorites, "", None, 1)
         .await
+}
+
+#[tokio::test]
+async fn recent_query_is_bounded_session_scoped_and_does_not_mutate_follows_or_favorites() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    assert_eq!(
+        error(
+            service
+                .query(Source::Jm, "missing", QueryKind::Recent, "", None, 1)
+                .await
+        ),
+        "SESSION_CHANGED"
+    );
+    let session = login(&service, Source::Jm, "fixture-recent", false).await;
+    backend.0.query_batch_size.store(2, Ordering::SeqCst);
+    let before = service.following(Source::Jm, &session).await.unwrap();
+    let response = service
+        .query(Source::Jm, &session, QueryKind::Recent, "", None, 2)
+        .await
+        .unwrap();
+    assert_eq!(response.source, Source::Jm);
+    assert_eq!(response.session_id, session);
+    assert_eq!(
+        (response.page.page, response.page.has_more),
+        (2, Some(true))
+    );
+    assert_eq!(
+        backend.0.last_request.lock().unwrap().clone(),
+        Some((2, None, false))
+    );
+    assert_eq!(backend.0.recent_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+    let after = service.following(Source::Jm, &session).await.unwrap();
+    assert_eq!(after.revision, before.revision);
+    assert_eq!(after.authors, before.authors);
+    assert!(after.works.is_empty());
+
+    for (query, folder, page, reverse) in [
+        ("keyword", None, 1, false),
+        (" ", None, 1, false),
+        ("", Some("0".to_owned()), 1, false),
+        ("", None, 0, false),
+        ("", None, 1001, false),
+        ("", None, 1, true),
+    ] {
+        assert_eq!(
+            error(
+                service
+                    .query_ordered(
+                        Source::Jm,
+                        &session,
+                        QueryKind::Recent,
+                        query,
+                        folder,
+                        page,
+                        reverse
+                    )
+                    .await
+            ),
+            "QUERY_INVALID"
+        );
+    }
+    assert_eq!(backend.0.recent_calls.load(Ordering::SeqCst), 1);
+    let replacement = login(&service, Source::Jm, "fixture-replacement", false).await;
+    assert_ne!(replacement, session);
+    assert_eq!(
+        error(
+            service
+                .query(Source::Jm, &session, QueryKind::Recent, "", None, 1)
+                .await
+        ),
+        "SESSION_CHANGED"
+    );
+    assert_eq!(backend.0.recent_calls.load(Ordering::SeqCst), 1);
+    *backend.0.query_failure.lock().unwrap() = Some("SESSION_EXPIRED");
+    assert_eq!(
+        error(
+            service
+                .query(Source::Jm, &replacement, QueryKind::Recent, "", None, 1)
+                .await
+        ),
+        "SESSION_EXPIRED"
+    );
 }
 
 #[tokio::test]

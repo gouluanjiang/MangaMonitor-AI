@@ -587,6 +587,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if reverse && !matches!(kind, QueryKind::Favorites) {
             return Err(AccountError::new("QUERY_INVALID"));
         }
+        if matches!(kind, QueryKind::Recent) && (!query.is_empty() || folder_id.is_some()) {
+            return Err(AccountError::new("QUERY_INVALID"));
+        }
         if !(1..=1000).contains(&page)
             || query.len() > 2048
             || query.chars().any(char::is_control)
@@ -616,6 +619,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     .await
             }
             QueryKind::Search => self.backend.search(session, query.trim(), page).await,
+            QueryKind::Recent => self.backend.recent(session, page).await,
             QueryKind::Ranking => {
                 if page != 1 {
                     return Err(AccountError::new("QUERY_INVALID"));

@@ -149,10 +149,6 @@ jobs:
           path: ${{ steps.current-installer.outputs.installer }}
           retention-days: 7
           if-no-files-found: error
-      - name: Profile synthetic cover processing phases
-        # An ignored diagnostic runs once here using the already-built release dependencies.
-        # It uses generated images only and does not repeat the ordinary test suite.
-        run: cargo +1.98.1 test --manifest-path apps/local-workbench/src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --release -p workbench-sources --lib --locked cover_pipeline_profile -- --ignored --nocapture --test-threads=1
       - name: Save verified native build before WebView smoke
         if: steps.native-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

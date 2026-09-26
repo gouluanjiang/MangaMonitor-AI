@@ -502,6 +502,62 @@ export const isDownloadPresent = (task: DownloadTask) =>
 export const downloadNeedsAttention = (task: DownloadTask) =>
   task.phase === "error" ||
   (task.phase === "downloaded" && !isDownloadPresent(task));
+export const downloadQueueFilters = ["active", "error", "downloaded"] as const;
+export type DownloadQueueFilter = (typeof downloadQueueFilters)[number];
+export function downloadQueueSummary(tasks: DownloadTask[]) {
+  return {
+    processing: tasks.filter((task) =>
+      ["downloading", "verifying", "saving"].includes(task.phase),
+    ).length,
+    waiting: tasks.filter((task) => task.phase === "queued").length,
+    paused: tasks.filter((task) => task.phase === "paused").length,
+    attention: tasks.filter(downloadNeedsAttention).length,
+    downloaded: tasks.filter(isDownloadPresent).length,
+  };
+}
+export function downloadCompletedAt(task: DownloadTask): string | null {
+  // Downloaded.updatedAt is written only after registration succeeds. File
+  // presence checks and relocated-path projection never rewrite that record.
+  if (task.phase !== "downloaded" || task.updatedAt <= 0) return null;
+  const date = new Date(task.updatedAt);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+export function downloadAttentionReason(task: DownloadTask): string {
+  if (task.phase !== "error") return downloadTaskLabel(task);
+  const code = task.errorCode ?? "";
+  if (/SESSION|AUTH|ACCOUNT|CREDENTIAL|TOKEN|SOURCE_MISMATCH/.test(code))
+    return "需要连接来源账号";
+  if (/INDEX_/.test(code)) return "保存成功，入库登记未完成";
+  if (/VERIFY|MANIFEST|PROOF|INCOMPLETE/.test(code)) return "完整校验未通过";
+  if (/ROOT|DIRECTORY|DESTINATION|LIBRARY/.test(code))
+    return "漫画库目录需要处理";
+  if (
+    task.filesTotal !== null &&
+    task.filesTotal > 0 &&
+    task.filesDone === task.filesTotal
+  )
+    return "图片已齐，保存或入库未完成";
+  return "下载未完成";
+}
+export interface RecentDownloadBatch {
+  taskIds: string[];
+  completedTaskIds: string[];
+}
+export function downloadBatchProgress(
+  tasks: DownloadTask[],
+  batch: RecentDownloadBatch,
+) {
+  const ids = new Set(batch.taskIds);
+  const members = tasks.filter((task) => ids.has(task.id));
+  const completed = new Set(batch.completedTaskIds);
+  for (const task of members)
+    if (task.phase === "downloaded") completed.add(task.id);
+  return {
+    total: ids.size,
+    completed: [...completed].filter((id) => ids.has(id)).length,
+    attention: members.filter(downloadNeedsAttention).length,
+  };
+}
 export const downloadTaskLabel = (task: DownloadTask) =>
   task.phase === "downloaded" && !isDownloadPresent(task)
     ? ({
@@ -530,20 +586,27 @@ export const filterDownloadTasks = (
   query = "",
   source: DownloadSource | "all" = "all",
 ) =>
-  tasks.filter(
-    (task) =>
-      (source === "all" || task.source === source) &&
-      [task.title, task.workId, sourceLabelForSearch(task.source)]
-        .join(" ")
-        .normalize("NFKC")
-        .toLocaleLowerCase()
-        .includes(query.trim().normalize("NFKC").toLocaleLowerCase()) &&
-      (filter === "all" ||
-        (filter === "history" && task.phase === "downloaded") ||
-        (filter === "downloaded" && isDownloadPresent(task)) ||
-        (filter === "error" && downloadNeedsAttention(task)) ||
-        (filter === "active" && !["error", "downloaded"].includes(task.phase))),
-  );
+  tasks
+    .filter(
+      (task) =>
+        (source === "all" || task.source === source) &&
+        [task.title, task.workId, sourceLabelForSearch(task.source)]
+          .join(" ")
+          .normalize("NFKC")
+          .toLocaleLowerCase()
+          .includes(query.trim().normalize("NFKC").toLocaleLowerCase()) &&
+        (filter === "all" ||
+          (filter === "history" && task.phase === "downloaded") ||
+          (filter === "downloaded" && isDownloadPresent(task)) ||
+          (filter === "error" && downloadNeedsAttention(task)) ||
+          (filter === "active" &&
+            !["error", "downloaded"].includes(task.phase))),
+    )
+    .sort((left, right) =>
+      filter === "downloaded"
+        ? right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)
+        : 0,
+    );
 const sourceLabelForSearch = (source: DownloadSource) =>
   source === "Pica" ? "Pica 哔咔" : "JM";
 const activeTask = (task: DownloadTask) =>
@@ -566,6 +629,7 @@ export interface DownloadState {
   plan: DownloadPlan | null;
   batchPlan: DownloadSelectionPlan | null;
   preparation: { done: number; total: number } | null;
+  recentBatch: RecentDownloadBatch | null;
 }
 /** Read polling is single-flight and never starts or resumes persisted work. */
 export class DownloadController {
@@ -579,6 +643,7 @@ export class DownloadController {
     plan: null,
     batchPlan: null,
     preparation: null,
+    recentBatch: null,
   };
   private listeners = new Set<(state: DownloadState) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -609,7 +674,32 @@ export class DownloadController {
   private accept(snapshot: DownloadSnapshot) {
     if (snapshot.revision < this.state.snapshot.revision)
       throw new DownloadError("DOWNLOAD_REVISION_STALE");
-    this.publish({ snapshot, ready: true, error: "" });
+    const batch = this.state.recentBatch;
+    const completed = new Set(batch?.completedTaskIds ?? []);
+    if (batch)
+      for (const task of snapshot.tasks)
+        if (batch.taskIds.includes(task.id) && task.phase === "downloaded")
+          completed.add(task.id);
+    this.publish({
+      snapshot,
+      ready: true,
+      error: "",
+      recentBatch: batch
+        ? { ...batch, completedTaskIds: [...completed] }
+        : null,
+    });
+  }
+  private rememberBatch(taskIds: string[]) {
+    this.publish({
+      recentBatch: {
+        taskIds,
+        completedTaskIds: this.state.snapshot.tasks
+          .filter(
+            (task) => taskIds.includes(task.id) && task.phase === "downloaded",
+          )
+          .map((task) => task.id),
+      },
+    });
   }
   private schedule() {
     clearTimeout(this.timer);
@@ -867,6 +957,7 @@ export class DownloadController {
       )
         return invalid();
       this.accept(next);
+      this.rememberBatch(batch.plans.map((plan) => plan.planId));
       this.cancelPlan();
       return true;
     } catch (cause) {
@@ -971,6 +1062,7 @@ export class DownloadController {
       )
         return invalid();
       this.accept(next);
+      this.rememberBatch([plan.planId]);
       this.cancelPlan();
       return true;
     } catch (cause) {

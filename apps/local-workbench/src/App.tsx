@@ -362,7 +362,9 @@ export default function App() {
   const [libraryTab, setLibraryTab] = useState("all");
   const [toolbarStuck, setToolbarStuck] = useState(false);
   const [confirmation, setConfirmation] = useState<string[] | null>(null);
-  const [queueFilter, setQueueFilter] = useState("all");
+  const [queueFilter, setQueueFilter] = useState<"active" | "error" | "done">(
+    "active",
+  );
   const [notice, setNotice] = useState("");
   const [storageFailed, setStorageFailed] = useState(false);
   const [preferences, setPreferences] = useState(initialPreferences);
@@ -1076,14 +1078,14 @@ export default function App() {
   const selectedWorks = selection.map(lookup).filter(Boolean);
   const chosen = selectedWorks.filter(canSelect);
   const currentWork = detail ? lookup(detail) : null;
-  const queueTasks = state.tasks.filter(
-    (task) =>
-      queueFilter === "all" ||
-      (queueFilter === "active" && localStages.includes(task.stage)) ||
-      (queueFilter === "error" && task.stage === "error") ||
-      (queueFilter === "done" &&
-        ["sync_pending", "completed"].includes(task.stage)),
-  );
+  const queueGroups = {
+    active: state.tasks.filter((task) => localStages.includes(task.stage)),
+    error: state.tasks.filter((task) =>
+      ["error", "sync_pending"].includes(task.stage),
+    ),
+    done: state.tasks.filter((task) => task.stage === "completed"),
+  };
+  const queueTasks = queueGroups[queueFilter];
 
   function renderGrid(items: Work[], gridId: string) {
     return (
@@ -1809,23 +1811,22 @@ export default function App() {
         <div className="queue-layout">
           <section className="queue-main">
             <div className="tabs queue-tabs">
-              {[
-                ["all", "全部任务"],
-                ["active", "进行中"],
-                ["error", "需要处理"],
-                ["done", "已入库"],
-              ].map(([value, text]) => (
+              {(
+                [
+                  ["active", "下载中"],
+                  ["error", "下载失败／需要处理"],
+                  ["done", "已下载"],
+                ] as const
+              ).map(([value, text]) => (
                 <button
                   key={value}
+                  data-testid={`demo-queue-tab-${value}`}
                   className={queueFilter === value ? "active" : ""}
                   aria-pressed={queueFilter === value}
                   onClick={() => setQueueFilter(value)}
                 >
                   {text}
-                  {value === "error" &&
-                    state.tasks.some((task) => task.stage === "error") && (
-                      <span className="tab-dot" />
-                    )}
+                  <span className="quiet">（{queueGroups[value].length}）</span>
                 </button>
               ))}
             </div>
@@ -1833,9 +1834,13 @@ export default function App() {
               {queueTasks.map((task) => {
                 const work = lookup(task.workId);
                 const status = displayStage(task);
+                const completed = task.stage === "completed";
+                const needsAttention = ["error", "sync_pending"].includes(
+                  task.stage,
+                );
                 return (
                   <article
-                    className={`task-card ${task.stage === "error" ? "task-error" : ""}`}
+                    className={`task-card ${completed ? "task-complete" : needsAttention ? "task-error" : ""}`}
                     key={task.id}
                     data-testid={`task-${work.id}`}
                   >
@@ -1855,31 +1860,38 @@ export default function App() {
                           </span>
                         </div>
                         <span
-                          className={`status ${task.stage === "error" ? "warning" : ["completed", "sync_pending"].includes(task.stage) ? "success" : "muted"}`}
+                          className={`status ${needsAttention ? "warning" : completed ? "success" : "muted"}`}
                         >
                           {status}
                         </span>
                       </div>
-                      <div
-                        className={`progress-track ${task.stage === "error" ? "error" : ""}`}
-                        role="progressbar"
-                        aria-label={`${work.title} 当前阶段进度`}
-                        aria-valuenow={task.progress}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                      >
-                        <span style={{ width: `${task.progress}%` }} />
-                      </div>
+                      {!completed && (
+                        <div
+                          className={`progress-track ${task.stage === "error" ? "error" : ""}`}
+                          role="progressbar"
+                          aria-label={`${work.title} 当前阶段进度`}
+                          aria-valuenow={task.progress}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                        >
+                          <span style={{ width: `${task.progress}%` }} />
+                        </div>
+                      )}
                       <div className="task-bottom">
-                        <span>
-                          {task.stage === "error"
-                            ? task.error
-                            : task.stage === "sync_pending"
-                              ? "文件已在示例库中，恢复联网后只同步状态"
-                              : task.stage === "completed"
-                                ? `漫画库／${work.title}.zip · 已同步`
+                        {completed ? (
+                          <details className="download-completion-details">
+                            <summary>查看保存信息</summary>
+                            <p>示例路径：漫画库／{work.title}.zip · 已同步</p>
+                          </details>
+                        ) : (
+                          <span>
+                            {task.stage === "error"
+                              ? task.error
+                              : task.stage === "sync_pending"
+                                ? "文件已在示例库中，恢复联网后只同步状态"
                                 : `${status} · 当前阶段 ${task.progress}%`}
-                        </span>
+                          </span>
+                        )}
                         {task.stage === "error" ? (
                           <button
                             className="text-button"
@@ -1907,13 +1919,15 @@ export default function App() {
                               size={16}
                             />
                           </button>
+                        ) : completed ? (
+                          <button
+                            className="text-button"
+                            onClick={() => openWork(work.id)}
+                          >
+                            查看详情
+                          </button>
                         ) : (
-                          <Icon
-                            name={
-                              task.stage === "sync_pending" ? "cloud" : "check"
-                            }
-                            size={16}
-                          />
+                          <Icon name="cloud" size={16} />
                         )}
                       </div>
                     </div>

@@ -18,6 +18,12 @@ import {
   isDownloadPresent,
   getDownloadScope,
   canControlDownload,
+  downloadQueueFilters,
+  downloadQueueSummary,
+  downloadCompletedAt,
+  downloadAttentionReason,
+  downloadBatchProgress,
+  type DownloadQueueFilter,
 } from "./download-runtime.ts";
 import { sourceLabel } from "./source-types.ts";
 import type { AccountSummary } from "./source-types.ts";
@@ -76,9 +82,10 @@ export function downloadStatusText(
 ) {
   if (!downloads.ready) return "下载队列尚未读取";
   if (downloads.error) return "下载状态待确认";
-  const running = downloads.snapshot.tasks.find((task) =>
-    ["queued", "downloading", "verifying", "saving"].includes(task.phase),
-  );
+  const running =
+    downloads.snapshot.tasks.find((task) =>
+      ["downloading", "verifying", "saving"].includes(task.phase),
+    ) ?? downloads.snapshot.tasks.find((task) => task.phase === "queued");
   if (running) return `${downloadPhaseLabel(running.phase)} · ${running.title}`;
   return downloads.snapshot.tasks.some((task) => task.phase === "paused")
     ? "下载已暂停"
@@ -228,7 +235,7 @@ function BatchDownloadConfirmation({
       {batch.plans.length > remaining && (
         <p role="alert" className="source-notice">
           队列还能加入 {remaining} 本，本次可下载 {batch.plans.length}{" "}
-          本。请返回减少选择，或先整理完成历史；本次没有加入任何任务。
+          本。请返回减少选择，或在「已下载」中整理历史记录；本次没有加入任何任务。
         </p>
       )}
       <div className="download-batch-preview">
@@ -485,7 +492,7 @@ export function NativeDownloads({
   showFeedback: boolean;
   inventoryHint?(plan: DownloadPlan): string | null;
 }) {
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState<DownloadQueueFilter>("active");
   const [query, setQuery] = useState("");
   const [queueSource, setQueueSource] = useState<DownloadSource | "all">("all");
   const [historySelection, setHistorySelection] = useState<
@@ -505,6 +512,22 @@ export function NativeDownloads({
       filterDownloadTasks(downloads.snapshot.tasks, filter, query, queueSource),
     [downloads.snapshot, filter, query, queueSource],
   );
+  const counts = Object.fromEntries(
+    downloadQueueFilters.map((value) => [
+      value,
+      filterDownloadTasks(downloads.snapshot.tasks, value, query, queueSource)
+        .length,
+    ]),
+  );
+  const summary = downloadQueueSummary(downloads.snapshot.tasks);
+  const batch = downloads.recentBatch
+    ? downloadBatchProgress(downloads.snapshot.tasks, downloads.recentBatch)
+    : null;
+  const labels = {
+    active: "下载中",
+    error: "下载失败／需要处理",
+    downloaded: "已下载",
+  };
   return (
     <>
       {downloads.batchPlan && (
@@ -694,14 +717,28 @@ export function NativeDownloads({
             {downloads.error}
           </p>
         )}
+        {downloads.ready && (
+          <div className="download-queue-summary">
+            <p className="quiet" data-testid="download-summary">
+              当前队列：处理中 {summary.processing} · 等待 {summary.waiting} ·
+              暂停 {summary.paused} · 需处理 {summary.attention} · 已下载{" "}
+              {summary.downloaded}（不受下方筛选影响）
+            </p>
+            {batch && (
+              <p className="quiet" data-testid="download-batch-progress">
+                最近加入的批次：已完成 {batch.completed} / {batch.total} 本 ·
+                需处理 {batch.attention} 本
+                <span>
+                  {" "}
+                  ·
+                  本次打开期间最近一次确认加入的作品，完成数包含已整理的历史记录
+                </span>
+              </p>
+            )}
+          </div>
+        )}
         <div className="tabs queue-tabs">
-          {[
-            ["all", "全部任务"],
-            ["active", "进行中"],
-            ["error", "需要处理"],
-            ["downloaded", "已下载"],
-            ["history", "完成历史"],
-          ].map(([value, label]) => (
+          {downloadQueueFilters.map((value) => (
             <button
               key={value}
               aria-pressed={filter === value}
@@ -709,7 +746,8 @@ export function NativeDownloads({
               className={filter === value ? "active" : ""}
               onClick={() => setFilter(value)}
             >
-              {label}
+              {labels[value]}{" "}
+              <span className="download-tab-count">{counts[value]}</span>
             </button>
           ))}
         </div>
@@ -733,7 +771,7 @@ export function NativeDownloads({
             <option value="JM">JM</option>
             <option value="Pica">哔咔</option>
           </select>
-          {filter === "history" && (
+          {filter === "downloaded" && (
             <button
               className="text-button"
               data-testid="download-history-clear"
@@ -744,12 +782,19 @@ export function NativeDownloads({
             </button>
           )}
         </div>
+        {downloads.ready && (
+          <p className="quiet" data-testid="download-filter-summary">
+            当前筛选：下载中 {counts.active} · 需处理 {counts.error} · 已下载{" "}
+            {counts.downloaded} · 当前显示 {tasks.length} 条
+          </p>
+        )}
         <div className="task-list">
           {tasks.map((task) => (
             <article
               className={
                 "task-card" +
-                (downloadNeedsAttention(task) ? " task-error" : "")
+                (downloadNeedsAttention(task) ? " task-error" : "") +
+                (isDownloadPresent(task) ? " task-complete" : "")
               }
               key={task.id}
               data-testid={"download-task-" + task.id}
@@ -775,67 +820,24 @@ export function NativeDownloads({
                     {downloadTaskLabel(task)}
                   </span>
                 </div>
-                <div
-                  className={
-                    "progress-track" + (task.phase === "error" ? " error" : "")
-                  }
-                  role="progressbar"
-                  aria-label={
-                    task.title +
-                    (task.phase === "downloaded"
-                      ? " 历史完成进度"
-                      : " 下载图片")
-                  }
-                  aria-valuenow={
-                    task.filesTotal === null ? undefined : task.filesDone
-                  }
-                  aria-valuemin={0}
-                  aria-valuemax={task.filesTotal ?? undefined}
-                >
-                  <span
-                    style={{
-                      width: task.filesTotal
-                        ? `${(task.filesDone / task.filesTotal) * 100}%`
-                        : "0%",
-                    }}
-                  />
-                </div>
-                <div className="task-bottom">
-                  <span>
-                    {task.phase === "downloaded" && "历史完成："}
-                    {task.filesDone} / {task.filesTotal ?? "未知"} 张 ·{" "}
-                    {task.bytesDone.toLocaleString()} 字节
-                  </span>
-                  <div className="source-actions">
-                    {task.allowedActions.map((action) => (
-                      <button
-                        key={action}
-                        className="text-button"
-                        disabled={
-                          downloads.busy ||
-                          !canControlDownload(
-                            task,
-                            action,
-                            getDownloadScope(accounts, task.source),
-                          )
-                        }
-                        data-testid={`download-${action}-${task.id}`}
-                        onClick={() => {
-                          void downloads.controller.control(
-                            getDownloadScope(accounts, task.source),
-                            task,
-                            action,
-                          );
-                        }}
-                      >
-                        {action === "pause"
-                          ? "暂停"
-                          : action === "resume"
-                            ? "继续"
-                            : "重试"}
-                      </button>
-                    ))}
-                    {isDownloadPresent(task) && (
+                {isDownloadPresent(task) ? (
+                  <>
+                    <div className="task-bottom download-completion-meta">
+                      <span>
+                        完成时间：
+                        {downloadCompletedAt(task) ? (
+                          <time
+                            data-testid={"download-completed-at-" + task.id}
+                            dateTime={downloadCompletedAt(task)!}
+                          >
+                            {new Date(
+                              downloadCompletedAt(task)!,
+                            ).toLocaleString("zh-CN", { hour12: false })}
+                          </time>
+                        ) : (
+                          "未知"
+                        )}
+                      </span>
                       <button
                         className="text-button"
                         data-testid={"download-open-" + task.id}
@@ -843,89 +845,213 @@ export function NativeDownloads({
                       >
                         查看电脑文件
                       </button>
-                    )}
-                    {task.phase === "downloaded" && (
+                    </div>
+                    <details
+                      className="download-completion-details"
+                      data-testid={"download-details-" + task.id}
+                    >
+                      <summary>查看详情</summary>
+                      <p className="quiet">
+                        {task.filesDone} / {task.filesTotal ?? "未知"} 张 ·{" "}
+                        {task.bytesDone.toLocaleString()} 字节
+                      </p>
+                      <p className="download-destination quiet">
+                        {task.destinationDisplay}
+                      </p>
+                      <p className="quiet">电脑文件已保存并登记到漫画库。</p>
                       <button
                         className="text-button"
-                        data-testid={`download-history-remove-${task.id}`}
+                        data-testid={"download-history-remove-" + task.id}
                         disabled={downloads.busy}
                         onClick={() => setHistorySelection([task])}
                       >
                         移除历史记录
                       </button>
+                    </details>
+                  </>
+                ) : (
+                  <>
+                    <div
+                      className={
+                        "progress-track" +
+                        (task.phase === "error" ? " error" : "")
+                      }
+                      role="progressbar"
+                      aria-label={
+                        task.title +
+                        (task.phase === "downloaded"
+                          ? " 历史完成进度"
+                          : " 下载图片")
+                      }
+                      aria-valuenow={
+                        task.filesTotal === null ? undefined : task.filesDone
+                      }
+                      aria-valuemin={0}
+                      aria-valuemax={task.filesTotal ?? undefined}
+                    >
+                      <span
+                        style={{
+                          width: task.filesTotal
+                            ? `${(task.filesDone / task.filesTotal) * 100}%`
+                            : "0%",
+                        }}
+                      />
+                    </div>
+                    <div className="task-bottom">
+                      <span>
+                        {task.phase === "downloaded" && "历史完成："}
+                        {task.filesDone} / {task.filesTotal ?? "未知"} 张 ·{" "}
+                        {task.bytesDone.toLocaleString()} 字节
+                      </span>
+                      <div className="source-actions">
+                        {task.allowedActions.map((action) => (
+                          <button
+                            key={action}
+                            className="text-button"
+                            disabled={
+                              downloads.busy ||
+                              !canControlDownload(
+                                task,
+                                action,
+                                getDownloadScope(accounts, task.source),
+                              )
+                            }
+                            data-testid={`download-${action}-${task.id}`}
+                            onClick={() => {
+                              void downloads.controller.control(
+                                getDownloadScope(accounts, task.source),
+                                task,
+                                action,
+                              );
+                            }}
+                          >
+                            {action === "pause"
+                              ? "暂停"
+                              : action === "resume"
+                                ? "继续"
+                                : "重试"}
+                          </button>
+                        ))}
+                        {downloadNeedsAttention(task) && (
+                          <button
+                            className="text-button"
+                            data-testid={"download-recheck-" + task.id}
+                            disabled={downloads.busy || downloads.reading}
+                            onClick={() => void downloads.controller.read(true)}
+                          >
+                            {task.phase === "downloaded"
+                              ? "重新核对文件"
+                              : "刷新任务状态"}
+                          </button>
+                        )}
+                        {task.phase === "downloaded" && (
+                          <button
+                            className="text-button"
+                            data-testid={`download-history-remove-${task.id}`}
+                            disabled={downloads.busy}
+                            onClick={() => setHistorySelection([task])}
+                          >
+                            移除历史记录
+                          </button>
+                        )}
+                        {task.phase === "downloaded" &&
+                          task.localFiles === "missing" && (
+                            <button
+                              className="text-button"
+                              disabled={downloads.busy || !downloads.ready}
+                              data-testid={"download-reprepare-" + task.id}
+                              onClick={() => onReprepare(task)}
+                            >
+                              重新准备下载
+                            </button>
+                          )}
+                      </div>
+                    </div>
+                    {task.phase !== "downloaded" &&
+                      task.filesTotal !== null &&
+                      task.filesDone === task.filesTotal && (
+                        <p
+                          className="source-notice"
+                          data-testid="download-finalization-pending"
+                        >
+                          图片已下载齐，保存或入库尚未完成。继续或重试时会先校验并复用已有进度。
+                        </p>
+                      )}
+                    {task.errorCode && (
+                      <p className="source-notice">
+                        <strong>{downloadAttentionReason(task)}。 </strong>
+                        {downloadErrorMessage(task.errorCode)}
+                      </p>
+                    )}
+                    {((!getDownloadScope(accounts, task.source) &&
+                      task.allowedActions.some(
+                        (action) => action !== "pause",
+                      )) ||
+                      /SESSION|AUTH|ACCOUNT|CREDENTIAL|TOKEN|SOURCE_MISMATCH/.test(
+                        task.errorCode ?? "",
+                      )) && (
+                      <p className="quiet">
+                        请连接{sourceLabel(task.source)}账号后继续或重试。
+                        <button
+                          className="text-button"
+                          data-testid={"download-accounts-" + task.id}
+                          onClick={onOpenAccounts}
+                        >
+                          打开账号设置
+                        </button>
+                      </p>
+                    )}
+                    {task.phase === "error" &&
+                      /ROOT|DIRECTORY|DESTINATION|LIBRARY|INDEX_/.test(
+                        task.errorCode ?? "",
+                      ) && (
+                        <p className="quiet">
+                          <button
+                            className="text-button"
+                            data-testid={"download-select-directory-" + task.id}
+                            onClick={onChooseLibrary}
+                          >
+                            查看漫画库设置
+                          </button>
+                        </p>
+                      )}
+                    <p className="download-destination quiet">
+                      {task.destinationDisplay}
+                    </p>
+                    {task.phase === "paused" && (
+                      <p className="quiet">
+                        {task.allowedActions.includes("resume")
+                          ? "进度已保留，点击继续后执行。"
+                          : "正在暂停，当前图片处理结束后可继续。"}
+                      </p>
                     )}
                     {task.phase === "downloaded" &&
                       task.localFiles === "missing" && (
-                        <button
-                          className="text-button"
-                          disabled={downloads.busy || !downloads.ready}
-                          data-testid={"download-reprepare-" + task.id}
-                          onClick={() => onReprepare(task)}
-                        >
-                          重新准备下载
-                        </button>
+                        <p className="quiet">
+                          原保存位置的作品文件已移除，保留历史完成记录。重新下载需要再次确认。
+                        </p>
                       )}
-                  </div>
-                </div>
-                {task.phase !== "downloaded" &&
-                  task.filesTotal !== null &&
-                  task.filesDone === task.filesTotal && (
-                    <p
-                      className="source-notice"
-                      data-testid="download-finalization-pending"
-                    >
-                      图片已下载齐，保存或入库尚未完成。继续或重试时会先校验并复用已有进度。
-                    </p>
-                  )}
-                {task.errorCode && (
-                  <p className="source-notice">
-                    {downloadErrorMessage(task.errorCode)}
-                  </p>
+                    {task.phase === "downloaded" &&
+                      task.localFiles === "incomplete" && (
+                        <p className="quiet">
+                          原目录或文件与这条完成记录不匹配，请核对电脑文件。历史完成记录保留。
+                        </p>
+                      )}
+                    {task.phase === "downloaded" &&
+                      task.localFiles === "unavailable" && (
+                        <p className="quiet">
+                          保存目录当前不可用，尚不能确认文件状态。请重新选择可访问的保存目录。
+                          <button
+                            className="text-button"
+                            data-testid={"download-select-directory-" + task.id}
+                            onClick={onChooseLibrary}
+                          >
+                            选择电脑目录
+                          </button>
+                        </p>
+                      )}
+                  </>
                 )}
-                {!getDownloadScope(accounts, task.source) &&
-                  task.allowedActions.some((action) => action !== "pause") && (
-                    <p className="quiet">
-                      请连接{sourceLabel(task.source)}账号后继续或重试。
-                    </p>
-                  )}
-                <p className="download-destination quiet">
-                  {task.destinationDisplay}
-                </p>
-                {task.phase === "paused" && (
-                  <p className="quiet">
-                    {task.allowedActions.includes("resume")
-                      ? "进度已保留，点击继续后执行。"
-                      : "正在暂停，当前图片处理结束后可继续。"}
-                  </p>
-                )}
-                {isDownloadPresent(task) && (
-                  <p className="quiet">电脑文件已保存并登记到漫画库。</p>
-                )}
-                {task.phase === "downloaded" &&
-                  task.localFiles === "missing" && (
-                    <p className="quiet">
-                      原保存位置的作品文件已移除，保留历史完成记录。重新下载需要再次确认。
-                    </p>
-                  )}
-                {task.phase === "downloaded" &&
-                  task.localFiles === "incomplete" && (
-                    <p className="quiet">
-                      原目录或文件与这条完成记录不匹配，请核对电脑文件。历史完成记录保留。
-                    </p>
-                  )}
-                {task.phase === "downloaded" &&
-                  task.localFiles === "unavailable" && (
-                    <p className="quiet">
-                      保存目录当前不可用，尚不能确认文件状态。请重新选择可访问的保存目录。
-                      <button
-                        className="text-button"
-                        data-testid={"download-select-directory-" + task.id}
-                        onClick={onChooseLibrary}
-                      >
-                        选择电脑目录
-                      </button>
-                    </p>
-                  )}
               </div>
             </article>
           ))}
@@ -933,8 +1059,24 @@ export function NativeDownloads({
         {downloads.ready && tasks.length === 0 && (
           <div className="empty-state" data-testid="download-empty">
             <Icon name="download" size={32} />
-            <h2>这里暂时没有任务</h2>
-            <p>选择来源后输入作品编号，或在来源详情中选择下载到电脑。</p>
+            <h2>
+              {query.trim() || queueSource !== "all"
+                ? "当前筛选没有结果"
+                : filter === "active"
+                  ? "当前没有下载中的任务"
+                  : filter === "error"
+                    ? "没有需要处理的任务"
+                    : "暂无已下载记录"}
+            </h2>
+            <p>
+              {query.trim() || queueSource !== "all"
+                ? "可以清空搜索或切换来源，查看其他任务。"
+                : filter === "active"
+                  ? "正常完成的任务可在「已下载」查看；也可以在上方添加新下载。"
+                  : filter === "error"
+                    ? "下载失败或文件状态异常的任务会显示在这里。"
+                    : "完成保存和入库且文件正常的作品会显示在这里。"}
+            </p>
           </div>
         )}
       </div>

@@ -66,11 +66,28 @@ async function confirmPair(page: Page) {
 }
 
 async function expectPairOnce(page: Page) {
-  // Keep the three existing demo tasks as well as the two newly approved works.
-  for (const workId of ["sea", "moon", "train", "rain", "flight"]) {
-    await expect(page.getByTestId(`task-${workId}`)).toHaveCount(1);
+  // Check all three mutually exclusive groups while demo ticks are paused.
+  // Restore the user's existing queue pause choice after inspecting each group.
+  const pause = page.getByTestId("pause-queue");
+  const resumeAfter = (await pause.textContent())?.includes("暂停队列");
+  if (resumeAfter) await pause.click();
+  const renderedIds: string[] = [];
+  for (const group of ["active", "error", "done"]) {
+    const tab = page.getByTestId(`demo-queue-tab-${group}`);
+    await tab.click();
+    const ids = await page
+      .locator('[data-testid^="task-"]')
+      .evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute("data-testid")!),
+      );
+    await expect(tab).toContainText(`（${ids.length}）`);
+    renderedIds.push(...ids);
   }
-  await expect(page.locator('[data-testid^="task-"]')).toHaveCount(5);
+  expect(renderedIds.sort()).toEqual(
+    ["sea", "moon", "train", "rain", "flight"].map((id) => `task-${id}`).sort(),
+  );
+  await page.getByTestId("demo-queue-tab-active").click();
+  if (resumeAfter) await pause.click();
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
@@ -130,6 +147,137 @@ test("the queue detail author opens source-scoped works including remote titles"
   await expect(page.getByLabel("来源筛选")).toHaveValue("Pica");
   await expect(page.locator('[data-testid^="card-"]')).toHaveCount(1);
   await expect(page.getByTestId("queue-page")).toBeHidden();
+});
+
+test("demo queue groups paused, unfinished, attention and completed rows without overlap", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  await page.evaluate(() => {
+    const key = "mangamonitor.workbench.demo.v1";
+    const state = JSON.parse(localStorage.getItem(key)!);
+    state.paused = true;
+    state.online = false;
+    state.tasks[0].stage = "downloading";
+    state.tasks[0].progress = 35;
+    state.tasks[0].paused = true;
+    state.tasks[1].stage = "sync_pending";
+    state.tasks.push(
+      {
+        id: "demo-rain",
+        workId: "rain",
+        stage: "completed",
+        progress: 100,
+        paused: false,
+        error: null,
+      },
+      {
+        id: "demo-flight",
+        workId: "flight",
+        stage: "queued",
+        progress: 0,
+        paused: false,
+        error: null,
+      },
+      {
+        id: "demo-bookshop",
+        workId: "bookshop",
+        stage: "importing",
+        progress: 100,
+        paused: false,
+        error: null,
+      },
+    );
+    localStorage.setItem(key, JSON.stringify(state));
+  });
+  await page.reload();
+  await page.getByTestId("nav-queue").click();
+  const queue = page.getByTestId("queue-page");
+  const active = page.getByTestId("demo-queue-tab-active");
+  const attention = page.getByTestId("demo-queue-tab-error");
+  const done = page.getByTestId("demo-queue-tab-done");
+  await expect(queue.locator(".queue-tabs button")).toHaveCount(3);
+  await expect(active).toHaveText("下载中（3）");
+  await expect(active).toHaveAttribute("aria-pressed", "true");
+  await expect(attention).toHaveText("下载失败／需要处理（2）");
+  await expect(done).toHaveText("已下载（1）");
+  await expect(queue.locator('[data-testid^="task-"]')).toHaveCount(3);
+  await expect(page.getByTestId("task-sea")).toContainText("已暂停");
+  await expect(page.getByTestId("task-flight")).toBeVisible();
+  await expect(
+    page.getByTestId("task-bookshop").getByRole("progressbar"),
+  ).toHaveAttribute("aria-valuenow", "100");
+  await attention.click();
+  await expect(queue.locator('[data-testid^="task-"]')).toHaveCount(2);
+  await expect(page.getByTestId("task-moon")).toContainText("已入库，等待同步");
+  await expect(page.getByTestId("task-moon")).toContainText(
+    "恢复联网后只同步状态",
+  );
+  await expect(page.getByTestId("task-train")).toContainText("模拟连接中断");
+  await expect(
+    page.getByTestId("task-train").getByRole("button", { name: "重试" }),
+  ).toBeVisible();
+  await done.click();
+  await expect(queue.locator('[data-testid^="task-"]')).toHaveCount(1);
+  const completed = page.getByTestId("task-rain");
+  await expect(completed).toContainText("已完成");
+  await expect(completed.getByRole("progressbar")).toHaveCount(0);
+  await expect(
+    completed.getByText("示例路径：", { exact: false }),
+  ).toBeHidden();
+  await completed.getByText("查看保存信息", { exact: true }).click();
+  await expect(
+    completed.getByText("示例路径：", { exact: false }),
+  ).toContainText("漫画库／雨停之前.zip · 已同步");
+  await completed
+    .getByRole("button", { name: "查看详情", exact: true })
+    .click();
+  await expect(page.getByTestId("detail-page")).toContainText("雨停之前");
+});
+
+test("demo completion and retries move rows without forcing a queue tab change", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-09-26T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-09-26T00:00:01Z"));
+  await page.evaluate(() => {
+    const key = "mangamonitor.workbench.demo.v1";
+    const state = JSON.parse(localStorage.getItem(key)!);
+    state.tasks[0].stage = "importing";
+    state.tasks[0].progress = 100;
+    state.tasks[1].stage = "sync_pending";
+    localStorage.setItem(key, JSON.stringify(state));
+  });
+  await page.reload();
+  await page.getByTestId("nav-queue").click();
+  const active = page.getByTestId("demo-queue-tab-active");
+  const attention = page.getByTestId("demo-queue-tab-error");
+  const done = page.getByTestId("demo-queue-tab-done");
+  await expect(active).toHaveText("下载中（1）");
+  await expect(page.getByTestId("task-sea")).toContainText("校验 ZIP 并入库");
+  await page.clock.runFor(1800);
+  await expect(active).toHaveAttribute("aria-pressed", "true");
+  await expect(active).toHaveText("下载中（0）");
+  await expect(attention).toHaveText("下载失败／需要处理（2）");
+  await expect(done).toHaveText("已下载（1）");
+  await attention.click();
+  await expect(page.getByTestId("task-sea")).toContainText("已入库，等待同步");
+  await page.clock.runFor(1800);
+  await expect(attention).toHaveAttribute("aria-pressed", "true");
+  await expect(attention).toHaveText("下载失败／需要处理（1）");
+  await expect(done).toHaveText("已下载（2）");
+  await page
+    .getByTestId("task-train")
+    .getByRole("button", { name: "重试" })
+    .click();
+  await expect(attention).toHaveAttribute("aria-pressed", "true");
+  await expect(attention).toHaveText("下载失败／需要处理（0）");
+  await expect(active).toHaveText("下载中（1）");
+  await active.click();
+  await expect(
+    page.getByTestId("task-train").getByRole("progressbar"),
+  ).toHaveAttribute("aria-valuenow", "27");
 });
 
 test("one batch confirmation queues two works and prevents duplicate selection", async ({

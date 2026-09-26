@@ -71,6 +71,39 @@
   background: rgba(100, 72, 151, 0.15);
   color: #b79bfa;
 }
+.native-downloads .task-complete {
+  padding: 16px 20px;
+}
+.native-downloads .task-complete .download-task-icon {
+  flex-basis: 48px;
+  min-height: 48px;
+}
+.download-completion-meta {
+  margin-top: 10px;
+}
+.download-completion-details {
+  margin-top: 10px;
+  font-size: 13px;
+}
+.download-completion-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  width: fit-content;
+}
+.download-completion-details p {
+  margin: 8px 0;
+}
+.download-queue-summary {
+  margin: 16px 0;
+  line-height: 1.7;
+}
+.download-tab-count {
+  font-size: 0.8em;
+  margin-left: 4px;
+}
+.native-downloads .queue-tabs {
+  flex-wrap: wrap;
+}
 .download-destination {
   overflow-wrap: anywhere;
   white-space: pre-wrap;

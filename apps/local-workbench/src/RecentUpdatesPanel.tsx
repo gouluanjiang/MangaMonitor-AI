@@ -26,6 +26,7 @@ import { SourceIssues } from "./SourceIssues.tsx";
 import { formatWorkDate } from "./work-dates.ts";
 import { RecentUpdatesReader } from "./recent-updates.ts";
 import type { RecentUpdatesState } from "./recent-updates.ts";
+import { bindRecentUpdatesScroll } from "./recent-scroll.ts";
 
 export function RecentUpdatesPanel({
   active,
@@ -132,64 +133,10 @@ export function RecentUpdatesPanel({
   useEffect(() => {
     const target = sentinel.current;
     const main = target?.closest("main");
-    if (
-      !active ||
-      !reader ||
-      !target ||
-      !main ||
-      state?.phase !== "ready" ||
-      data?.hasMore !== true ||
-      terms ||
-      filter !== "all"
-    )
+    if (!active || !reader || !target || !main || terms || filter !== "all")
       return;
-    let lastScroll = main.scrollTop;
-    let intentUntil = 0;
-    let frame = 0;
-    const intent = () => {
-      intentUntil = Date.now() + 1500;
-    };
-    const keyIntent = (event: KeyboardEvent) => {
-      if (
-        ["ArrowDown", "PageDown", "End", " "].includes(event.key) &&
-        !(event.target instanceof HTMLInputElement) &&
-        !(event.target instanceof HTMLSelectElement)
-      )
-        intent();
-    };
-    const scroll = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        const previous = lastScroll;
-        lastScroll = main.scrollTop;
-        if (
-          lastScroll <= previous ||
-          Date.now() > intentUntil ||
-          target.getBoundingClientRect().top >
-            main.getBoundingClientRect().bottom + 200
-        )
-          return;
-        // A completed request never supplies another scroll credit. Even a short
-        // or filtered page therefore cannot initiate an unbounded site scan.
-        intentUntil = 0;
-        void reader.loadNext();
-      });
-    };
-    main.addEventListener("wheel", intent, { passive: true });
-    main.addEventListener("touchstart", intent, { passive: true });
-    main.addEventListener("pointerdown", intent, { passive: true });
-    main.addEventListener("keydown", keyIntent);
-    main.addEventListener("scroll", scroll, { passive: true });
-    return () => {
-      cancelAnimationFrame(frame);
-      main.removeEventListener("wheel", intent);
-      main.removeEventListener("touchstart", intent);
-      main.removeEventListener("pointerdown", intent);
-      main.removeEventListener("keydown", keyIntent);
-      main.removeEventListener("scroll", scroll);
-    };
-  }, [active, reader, state?.phase, data?.page, data?.hasMore, terms, filter]);
+    return bindRecentUpdatesScroll(main, target, reader);
+  }, [active, reader, terms, filter]);
   const clearSelection = () => {
     setSelection([]);
     setSelectionMode(false);

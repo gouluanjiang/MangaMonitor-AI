@@ -323,6 +323,10 @@ test("a downward browse reads only the next page, keeps good cards on failure, a
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
   await expect(recentCard(page, "Pica", 20)).toBeVisible();
   await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await main.hover();
+  await page.mouse.wheel(0, 800);
+  await page.clock.runFor(500);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
   await page.evaluate(() => {
     window.recentTest.failPage = null;
   });
@@ -429,4 +433,266 @@ test("late pages cannot enter another source or replacement session, and switchi
   await page.getByRole("button", { name: "最近更新", exact: true }).click();
   await expect(recentCard(page, "JM", 1)).toContainText("replacement-JM");
   expect(await recentCalls(page)).toEqual(beforeRanks);
+});
+
+test("downward input at an already reached edge loads one page, ignores other directions and stays single flight without chaining", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await install(page);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  const main = page.getByRole("main");
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.clock.runFor(100);
+  await main.hover();
+  await page.mouse.wheel(300, 0);
+  await page.keyboard.down("Shift");
+  await page.mouse.wheel(0, 200);
+  await page.keyboard.up("Shift");
+  await page.mouse.wheel(0, -80);
+  await page.clock.runFor(100);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.clock.runFor(100);
+  const edge = await main.evaluate((element) => element.scrollTop);
+  await page.evaluate(() => {
+    window.recentTest.holdPage = 2;
+  });
+  await page.mouse.wheel(0, 100);
+  await page.clock.runFor(100);
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.recentTest.release)))
+    .toBe(true);
+  expect(
+    Math.abs((await main.evaluate((element) => element.scrollTop)) - edge),
+  ).toBeLessThanOrEqual(2);
+  for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 200);
+  await page.clock.runFor(300);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+  await page.evaluate(() => window.recentTest.release!());
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await page.clock.runFor(3000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.clock.runFor(100);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+  await page.mouse.wheel(0, 100);
+  await page.clock.runFor(100);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 40 部");
+  await expect(page.getByTestId("recent-progress")).toContainText("分页已读完");
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.mouse.wheel(0, 500);
+  await page.clock.runFor(2000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2, 3]);
+});
+
+test("a continuous drag may take longer than the old intent timeout and still loads only its next near-edge page", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await install(page);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  const main = page.getByRole("main");
+  await page.evaluate(() => {
+    window.recentTest.holdPage = 2;
+  });
+  const bounds = await main.boundingBox();
+  expect(bounds).not.toBeNull();
+  const pointerX = bounds!.x + bounds!.width - 2;
+  const pointerStartY = bounds!.y + 100;
+  const pointerEndY = bounds!.y + bounds!.height - 100;
+  // Browser pointer events model a held scrollbar/thumb without relying on
+  // operating-system scrollbar width or theme-dependent native coordinates.
+  await main.dispatchEvent("pointerdown", {
+    pointerId: 7,
+    pointerType: "mouse",
+    button: 0,
+    buttons: 1,
+    clientX: pointerX,
+    clientY: pointerStartY,
+    bubbles: true,
+  });
+  await main.evaluate((element) => {
+    element.scrollTop = 80;
+  });
+  await page.clock.runFor(2200);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  // The held pointer's later scrollbar displacement must still count as input,
+  // without another pointerdown or fresh wheel event renewing the old timeout.
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.clock.runFor(100);
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.recentTest.release)))
+    .toBe(true);
+  await main.dispatchEvent("pointerup", {
+    pointerId: 7,
+    pointerType: "mouse",
+    button: 0,
+    buttons: 0,
+    clientX: pointerX,
+    clientY: pointerEndY,
+    bubbles: true,
+  });
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+  await page.evaluate(() => window.recentTest.release!());
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await page.clock.runFor(3000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+});
+
+test("programmatic position changes, resizing, detail return and hidden or filtered feeds never supply browse intent", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await install(page);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  const main = page.getByRole("main");
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.clock.runFor(2000);
+  await page.setViewportSize({ width: 1672, height: 950 });
+  await page.clock.runFor(100);
+  await page.setViewportSize({ width: 1672, height: 1020 });
+  await page.clock.runFor(100);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  await recentCard(page, "Pica", 20)
+    .getByRole("button", { name: /查看.*详情/ })
+    .click();
+  await expect(page.getByTestId("source-detail-back")).toBeVisible();
+  await page.getByTestId("source-detail-back").click();
+  await expect(recentCard(page, "Pica", 20)).toBeVisible();
+  await page.clock.runFor(2000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  await page
+    .getByLabel("最近更新入库筛选")
+    .getByRole("button", { name: "已入库 0", exact: true })
+    .click();
+  await main.hover();
+  await page.mouse.wheel(0, 10000);
+  await page.clock.runFor(500);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  await page
+    .getByLabel("最近更新入库筛选")
+    .getByRole("button", { name: "全部 20", exact: true })
+    .click();
+  await page.getByRole("button", { name: "JM 每周必看", exact: true }).click();
+  await expect(page.getByTestId("rank-work-JM:901")).toBeVisible();
+  await main.hover();
+  await page.mouse.wheel(0, 10000);
+  await page.clock.runFor(1000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  await page.getByRole("button", { name: "最近更新", exact: true }).click();
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await page.clock.runFor(1000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+});
+
+test("download-dialog scrolling and focused-input keys cannot continue the background recent feed", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await install(page);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  const main = page.locator("main");
+  const search = page.getByLabel("筛选已读取最近更新");
+  await search.focus();
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await search.press("PageDown");
+  await search.press("End");
+  await search.dispatchEvent("wheel", { deltaY: 500, bubbles: true });
+  await page.clock.runFor(1500);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  await recentCard(page, "Pica", 20)
+    .getByRole("button", { name: "下载到漫画库", exact: true })
+    .click();
+  const dialog = page.getByTestId("download-confirmation");
+  await expect(dialog).toBeVisible();
+  // Keep the background exactly at its next-page threshold while interacting
+  // with the real application dialog, not an artificial modal fixture.
+  await main.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await dialog.hover();
+  await page.mouse.wheel(0, 600);
+  await dialog.focus();
+  await page.keyboard.press("PageDown");
+  await page.keyboard.press("End");
+  await page.clock.runFor(1500);
+  await expect(dialog).toBeVisible();
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  await page.getByTestId("download-cancel").click();
+  await expect(dialog).toHaveCount(0);
+  await page.clock.runFor(1500);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+});
+
+test("dragging the actual Chromium scrollbar after a long hold continues one page without synthetic scroll events", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await install(page);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  const main = page.getByRole("main");
+  await main.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.clock.runFor(100);
+  const scrollbar = await main.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const trackHeight = element.clientHeight;
+    const thumbHeight = Math.max(
+      24,
+      (trackHeight * trackHeight) / element.scrollHeight,
+    );
+    return {
+      width: element.offsetWidth - element.clientWidth,
+      x:
+        rect.right -
+        Math.max(3, (element.offsetWidth - element.clientWidth) / 2),
+      startY: rect.top + element.clientTop + thumbHeight / 2,
+      endY: rect.top + element.clientTop + trackHeight - thumbHeight / 2 - 2,
+    };
+  });
+  expect(scrollbar.width).toBeGreaterThan(0);
+  expect(scrollbar.endY).toBeGreaterThan(scrollbar.startY);
+  await page.evaluate(() => {
+    window.recentTest.holdPage = 2;
+  });
+  await page.mouse.move(scrollbar.x, scrollbar.startY);
+  await page.mouse.down();
+  try {
+    await page.clock.runFor(2200);
+    expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+    await page.mouse.move(scrollbar.x, scrollbar.endY, { steps: 16 });
+    await page.clock.runFor(300);
+    await expect
+      .poll(() => main.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    await expect
+      .poll(() => page.evaluate(() => Boolean(window.recentTest.release)), {
+        message:
+          "A native scrollbar drag near the end should request its next page",
+      })
+      .toBe(true);
+  } finally {
+    await page.mouse.up();
+  }
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
+  await page.evaluate(() => window.recentTest.release!());
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await page.clock.runFor(3000);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
 });

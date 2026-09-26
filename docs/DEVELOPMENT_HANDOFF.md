@@ -2,11 +2,23 @@
 
 Updated 2026-09-26. This file is the current continuation record. The previous handoff, including its six final local evidence edits, is preserved in [the historical handoff](DEVELOPMENT_HANDOFF_ARCHIVE_2026-09-15.md). Historical pending/current statements do not override this file or the latest user instruction.
 
-## Current batch: website recent updates
+## Current correction: recent-feed bottom continuation
 
-The user explicitly deferred A6 all-author acceptance and authorized the next batch. Implement [website recent updates](WEBSITE_RECENT_UPDATES_2026-09-26.md) within Discover: JM/Pica source-provided latest order, one page initially and intentional incremental continuation, existing ownership/language/date presentation, details and manual download confirmation. Preserve rankings and runtime list state; do not crawl the entire site or resume the deferred author scan. Development and targeted synthetic regression work are in progress; CI, visual review and Dev delivery are not yet complete.
+The user reported that Pica recent updates would only load after scrolling upward and back down. The previous listener required an increase in scrollTop, so downward wheel input at the clamped bottom could not trigger it; its 1.5-second intent deadline also missed slow scrollbar drags. The user authorized this repair on 2026-09-26.
 
-Current order: website recent updates → built-in reader → overall UI/interaction → formal release. A6 all-author acceptance is deferred, not passed or a blocker for this explicitly authorized batch. No source traffic or private profile changes are needed during implementation. The existing code version and delivered executable remain unchanged until a verified replacement is available.
+Replace phase/page-bound listeners with a stable input binding that reads the reader's current readiness. Downward input checks the near-end region directly, including when scrollTop is unchanged; a held scrollbar gesture is not governed by a short deadline. Consume the input before a single request and never auto-continue from completion, layout, resize or detail restoration. Modal/editor input, opposite directions, hidden/filtered feeds and error/complete states do not authorize continuation. The source queries, data format, inventory and download executor stay unchanged. Targeted Chromium regressions include a real browser mouse drag as well as the synthetic held-pointer scenario. Implementation and review are in progress; final CI and delivery remain pending. A6 full-author acceptance is still deferred.
+
+## Initial delivery: website recent updates
+
+Implementation, independent static review, CI, visual review and verified Dev delivery are complete. A6 all-author acceptance remains deferred at the user's request; recent-updates real-source and user experience acceptance remain pending. Formal suites/builds ran only in CI. No real source query, author scan, manga download, profile/library/history edit, or user app start/stop ran in this batch.
+
+Final head `20269015d1c067db0249697475d5c4a05737e6da`, test merge `2c6e2306ce4bb1d1d4f309ea2dec4a1c029d74f8`. [UI CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36242003395) passed formatting, type-check/build, 212 logic and 182 Chromium tests. [Baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36242003411) and [Windows desktop CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36242003393) passed source/account/storage/library/download checks, 39 native IPC tests, Clippy, the EXE build and actual isolated WebView startup/restart. Two affected running synthetic UI captures were reviewed against the accepted layout. The first revision's CI exposed an omitted Playwright test registration when the test counts were audited; the second revision ran all four new browser cases successfully. Screenshot review then caught an unstyled field. Both were corrected, and the final revision passed all required checks.
+
+Dev delivery: `Documents/Codex/MangaMonitor-Dev-20260926-2026901/mangamonitor-workbench-preview.exe`, SHA-256 `06b3c2cd3ac7adb011ef268dced0dcba40ec297c99978c835b5e2128c6fc4885`. Artifact digest, CRC, x64 PE and embedded revision passed. Both existing shortcuts point to this version; previous links and executable remain. Exit the current app and reopen Dev to use the new build. Private report and receipts: `Documents/Codex/MangaMonitor-recent-updates-20260926`.
+
+The new view is Discover → 最近更新. It defaults to Pica, supports JM, and reuses loaded-scope inventory/language/date/details/download controls. Source-provided latest order is preserved; it does not guarantee that every new chapter of an old work moves it to the top, and missing source dates remain unknown. No new persistent document is introduced. Dev remains 0.3.4, PR #19 draft/unmerged, production disabled, no installer/formal release. Final evidence-only notes remain local until the next necessary push.
+
+Current order: website recent updates user acceptance → built-in reader → overall UI/interaction → formal release. Deferred A6 full-author acceptance is not a blocker for the explicitly authorized next batch.
 
 ## Agent multi-run single-author acceptance, 2026-09-26
 
@@ -18,7 +30,7 @@ Read-only saved-evidence audits passed for all ten runs: only the selected autho
 
 Coverage limits: these samples yielded no positive count of newly discovered, correctly attributed author works; that positive-result path remains covered by the existing synthetic tests, not by a new real positive sample in this supplement. This supplement did not restart the user's app. All-followed-author acceptance remains not started. Private report and evidence: `Documents/Codex/MangaMonitor-discovery-summary-20260926/real-acceptance/多批次单作者验收报告.md`. Author identities and source records stay outside Git. No new release or acceptance claim for untested scope follows from this supplement.
 
-## Current batch: A6 author-check change summary
+## Previous batch: A6 author-check change summary (all-author acceptance deferred)
 
 The user accepted source-language badges and authorized the next scheduled batch on 2026-09-26. Implement the compact change summary inside Author Updates, with a temporary “仅看本次新发现” view. The product and persistence contract is in [DISCOVERY_CHANGE_SUMMARY_2026-09-26.md](DISCOVERY_CHANGE_SUMMARY_2026-09-26.md). Old records form the historical baseline; only a genuinely new source/work ID receives its first-discovery run marker. A check summary is persisted across refresh/restart, including attempted versus successfully completed scopes. Initial catalogs, partial/cancelled/interrupted runs and counts awaiting the terminal full catalog are explicitly distinguished. Inventory counts use the current actual inventory state. Historical missing works remain available.
 

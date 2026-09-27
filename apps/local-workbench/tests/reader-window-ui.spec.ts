@@ -71,6 +71,22 @@ async function jump(page: Page, number: number, count: number) {
     page.getByRole("img", { name: `第 ${number} 页`, exact: true }),
   ).toBeVisible();
 }
+function expectPageStart(
+  position: unknown,
+  chapterId: string,
+  pageIndex: number,
+) {
+  expect(position).toEqual({
+    chapterId,
+    pageIndex,
+    offset: expect.any(Number),
+  });
+  // Projecting fractional CSS geometry into a page ratio can leave a tiny
+  // nonzero remainder; chapter/page identity and all object keys stay exact.
+  const offset = (position as { offset: number }).offset;
+  expect(offset).toBeGreaterThanOrEqual(0);
+  expect(offset).toBeCloseTo(0, 10);
+}
 
 test("three cover choices preserve details and cancellation; independent small readers leave the main application usable", async ({
   page,
@@ -223,11 +239,7 @@ test("pin failure remains visibly off, windows keep independent positions and na
     ({ command }) => command === "reader_window_close",
   );
   expect(firstSave).toBeGreaterThanOrEqual(0);
-  expect(firstClose[firstSave].args.position).toEqual({
-    chapterId: "one",
-    pageIndex: 3,
-    offset: 0,
-  });
+  expectPageStart(firstClose[firstSave].args.position, "one", 3);
   expect(firstReaderClose).toBeGreaterThan(firstSave);
   expect(firstWindowClose).toBeGreaterThan(firstReaderClose);
   await expect(second.getByLabel("当前页码")).toHaveText("2 / 3");
@@ -245,14 +257,12 @@ test("pin failure remains visibly off, windows keep independent positions and na
   ).toHaveAttribute("aria-pressed", "false");
   await harness.emit("reader-window-2", "reader-window-close-requested");
   await expect.poll(() => harness.closed.has("reader-window-2")).toBe(true);
-  expect(harness.saved.get("JM:102")).toEqual({
-    chapterId: "two",
-    pageIndex: 1,
-    offset: 0,
-  });
-  expect(
+  expectPageStart(harness.saved.get("JM:102"), "two", 1);
+  expectPageStart(
     harness.saved.get(harness.key(harness.requests.get("reader-window-3")!)),
-  ).toEqual({ chapterId: "one", pageIndex: 3, offset: 0 });
+    "one",
+    3,
+  );
 });
 
 test("small-window controls remain usable; a main-close request does not end readers and download handoff only opens main confirmation", async ({

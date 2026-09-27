@@ -1,19 +1,26 @@
-import { StrictMode, lazy, Suspense } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./workbench.css";
 
-const App = lazy(() => import("./App.tsx"));
-const ReaderWindow = lazy(() =>
-  import("./reader/ReaderWindow.tsx").then((module) => ({
-    default: module.ReaderWindow,
-  })),
-);
+const root = createRoot(document.getElementById("root")!);
+root.render(<div role="status">正在打开…</div>);
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <Suspense fallback={<div role="status">正在打开…</div>}>
-      {window.location.hash === "#reader-window" ? <ReaderWindow /> : <App />}
-    </Suspense>
-  </StrictMode>,
-);
+async function openApplication() {
+  // Load only this window's entry before its first mount. A root Suspense
+  // retry can otherwise leave a ready entry behind its fallback when the
+  // browser clock is paused or timers are suspended.
+  const Application =
+    window.location.hash === "#reader-window"
+      ? (await import("./reader/ReaderWindow.tsx")).ReaderWindow
+      : (await import("./App.tsx")).default;
+  root.render(
+    <StrictMode>
+      <Application />
+    </StrictMode>,
+  );
+}
+
+void openApplication().catch(() => {
+  root.render(<div role="alert">界面暂时无法打开，请重新打开程序。</div>);
+});

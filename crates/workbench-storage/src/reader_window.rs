@@ -20,7 +20,7 @@ impl ReaderWindowSize {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReaderWindowPreferences {
     version: u32,

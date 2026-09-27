@@ -4,6 +4,13 @@ import { installWorkflow } from "./workflow-fixture.ts";
 
 type Call = { label: string; command: string; args: Record<string, unknown> };
 type Session = { label: string; request: ReaderRequest; closed: boolean };
+type EventTarget =
+  | { kind: "Any" | "App" }
+  | {
+      kind: "AnyLabel" | "Window" | "Webview" | "WebviewWindow";
+      label: string;
+    };
+type EventDelivery = { event: string; target: EventTarget };
 type Bridge = {
   invoke(command: string, args?: Record<string, unknown>): Promise<unknown>;
   transformCallback?: (
@@ -22,8 +29,9 @@ declare global {
     ): Promise<unknown>;
     readerWindowHarness: {
       attach(bridge: unknown): void;
-      emit(event: string, payload: unknown): void;
+      emit(targetLabel: string, event: string, payload: unknown): void;
       events(): string[];
+      eventDeliveries(): EventDelivery[];
       holdQueueRead: boolean;
       waitingQueueRead: boolean;
       releaseQueueRead(): void;
@@ -75,7 +83,15 @@ export async function installReaderWindows(
     await page.addInitScript(
       ({ label }) => {
         const callbacks = new Map<number, (event: unknown) => void>();
-        const listeners = new Map<number, { event: string; handler: number }>();
+        const listeners = new Map<
+          number,
+          {
+            event: string;
+            handler: number;
+            target: EventTarget;
+          }
+        >();
+        const deliveries: EventDelivery[] = [];
         const wrapped = new WeakSet<object>();
         let sequence = 0;
         let releaseQueueRead: (() => void) | undefined;
@@ -122,6 +138,7 @@ export async function installReaderWindows(
                   listeners.set(id, {
                     event: String(args.event),
                     handler: Number(args.handler),
+                    target: (args.target ?? { kind: "Any" }) as EventTarget,
                   });
                   return id;
                 }
@@ -142,14 +159,26 @@ export async function installReaderWindows(
                 return original(command, args);
               };
             },
-            emit(event: string, payload: unknown) {
+            emit(targetLabel: string, event: string, payload: unknown) {
               for (const [id, listener] of [...listeners]) {
-                if (listener.event === event)
+                // Tauri emit_to(label) matches Any listeners in every webview,
+                // as well as listeners explicitly bound to this native label.
+                const matches =
+                  listener.target.kind === "Any" ||
+                  ("label" in listener.target &&
+                    listener.target.label === targetLabel);
+                if (listener.event === event && matches) {
+                  deliveries.push({
+                    event,
+                    target: structuredClone(listener.target),
+                  });
                   callbacks.get(listener.handler)?.({ event, id, payload });
+                }
               }
             },
             events: () =>
               [...listeners.values()].map((listener) => listener.event),
+            eventDeliveries: () => structuredClone(deliveries),
           });
         const testWindow = window as unknown as {
           __TAURI_INTERNALS__?: Bridge;
@@ -178,9 +207,21 @@ export async function installReaderWindows(
     await expect
       .poll(() => page.evaluate(() => window.readerWindowHarness.events()))
       .toContain(event);
-    await page.evaluate(
-      ({ event, payload }) => window.readerWindowHarness.emit(event, payload),
-      { event, payload },
+    // Do not route directly to one browser Page: that hid global Any listeners
+    // which receive native targeted events and used to close all reader windows.
+    await Promise.all(
+      [...pages]
+        .filter(
+          ([pageLabel, candidate]) =>
+            !candidate.isClosed() && !closed.has(pageLabel),
+        )
+        .map(([, candidate]) =>
+          candidate.evaluate(
+            ({ label, event, payload }) =>
+              window.readerWindowHarness.emit(label, event, payload),
+            { label, event, payload },
+          ),
+        ),
     );
   };
   function sessionFor(label: string, readerId: unknown) {

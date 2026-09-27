@@ -7,6 +7,7 @@ import {
 } from "../src/reader/model.ts";
 import {
   createReaderWindowAdapter,
+  listenReaderEvent,
   parseReaderWindowContext,
 } from "../src/reader/window-runtime.ts";
 import { readerErrorMessage } from "../src/reader/runtime.ts";
@@ -18,6 +19,101 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
+
+test("reader event subscriptions use the current native window label and directed events cannot close another window", async () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const callbacks = new Map();
+  const subscriptions = new Map();
+  const calls = [];
+  const delivered = [];
+  let sequence = 0;
+  const bridge = {
+    metadata: {
+      currentWindow: { label: "reader-window-A" },
+      currentWebview: { label: "reader-window-A" },
+    },
+    transformCallback(callback) {
+      const id = ++sequence;
+      callbacks.set(id, callback);
+      return id;
+    },
+    async invoke(command, args) {
+      calls.push({ command, args });
+      if (command === "plugin:event|listen") {
+        const id = ++sequence;
+        subscriptions.set(id, args);
+        return id;
+      }
+      if (command === "plugin:event|unlisten") {
+        subscriptions.delete(args.eventId);
+        return null;
+      }
+      throw new Error(`Unexpected window command: ${command}`);
+    },
+  };
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      __TAURI_INTERNALS__: bridge,
+      __TAURI_EVENT_PLUGIN_INTERNALS__: {
+        unregisterListener(_event, eventId) {
+          subscriptions.delete(eventId);
+        },
+      },
+    },
+  });
+  // Match Tauri's Any-or-label dispatch rather than delivering only to the
+  // browser page named by a test. An unscoped listener must fail this test.
+  const emitTo = (label, event, payload) => {
+    for (const [id, subscription] of subscriptions) {
+      if (
+        subscription.event === event &&
+        (subscription.target.kind === "Any" ||
+          subscription.target.label === label)
+      )
+        callbacks.get(subscription.handler)({ event, id, payload });
+    }
+  };
+  try {
+    const stopA = await listenReaderEvent("reader-window-close-requested", () =>
+      delivered.push("A"),
+    );
+    bridge.metadata.currentWindow.label = "reader-window-B";
+    const stopB = await listenReaderEvent("reader-window-close-requested", () =>
+      delivered.push("B"),
+    );
+    bridge.metadata.currentWindow.label = "main";
+    const stopMain = await listenReaderEvent(
+      "reader-window-download",
+      (reference) => delivered.push(reference),
+    );
+    assert.deepEqual(
+      calls.map(({ args }) => args.target),
+      [
+        { kind: "Window", label: "reader-window-A" },
+        { kind: "Window", label: "reader-window-B" },
+        { kind: "Window", label: "main" },
+      ],
+    );
+    emitTo("reader-window-A", "reader-window-close-requested", null);
+    assert.deepEqual(delivered, ["A"]);
+    emitTo("reader-window-B", "reader-window-close-requested", null);
+    assert.deepEqual(delivered, ["A", "B"]);
+    const reference = { source: "JM", workId: "102" };
+    emitTo("main", "reader-window-download", reference);
+    assert.deepEqual(delivered, ["A", "B", reference]);
+    await stopA();
+    emitTo("reader-window-A", "reader-window-close-requested", null);
+    assert.deepEqual(delivered, ["A", "B", reference]);
+    await stopB();
+    await stopMain();
+    assert.equal(subscriptions.size, 0);
+  } finally {
+    if (previousWindow)
+      Object.defineProperty(globalThis, "window", previousWindow);
+    else delete globalThis.window;
+  }
+});
 
 test("window context comes only from the native envelope and keeps distinct source/library request identities", async () => {
   assert.match(readerErrorMessage({ code: "READER_WINDOW_LIMIT" }), /阅读小窗/);

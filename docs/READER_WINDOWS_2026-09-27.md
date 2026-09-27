@@ -29,4 +29,6 @@ CI iteration note: the first run found a missing `Clone` document bound and a ro
 
 Dev stays 0.3.4, PR #19 stays draft/unmerged and production stays disabled. No installer or formal release is part of this batch. The user's running app and manga files are not modified during development.
 
+The next Windows run at `c6a07a0` passed 49 native tests, Clippy and the EXE build, then exposed a real multiwindow defect: closing reader A also closed B. The default frontend event subscription used Tauri's `Any` target, which receives directed events for other windows. The listener now uses the official current-window subscription, and the synthetic event bridge models the same Any-or-target dispatch as Tauri. The actual Windows assertion requiring B to survive A's WM_CLOSE remains unchanged. Final CI and delivery are still pending.
+
 Roadmap: independent reader-window acceptance → overall UI/interaction refinement → formal release preparation. A6 all-author acceptance remains deferred.

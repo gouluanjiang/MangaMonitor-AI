@@ -73,8 +73,10 @@ export async function listenReaderEvent<T>(
   // Existing browser previews only expose invoke; they do not have a native
   // event bus. This does not bypass native caller-window authorization.
   if (!supportsReaderWindowEvents()) return () => undefined;
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<T>(name, (event) => handler(event.payload));
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  // An Any listener receives even emit_to events aimed at other windows.
+  // The official current-window API binds the listener to its native label.
+  return getCurrentWindow().listen<T>(name, (event) => handler(event.payload));
 }
 
 export function createReaderWindowAdapter(

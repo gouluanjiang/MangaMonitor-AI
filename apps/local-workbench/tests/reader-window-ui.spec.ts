@@ -176,6 +176,27 @@ test("pin failure remains visibly off, windows keep independent positions and na
   await openOnlineWindow(page);
   const second = await harness.child(2);
   await toolbar(first);
+  // Non-actioning global probes establish the real Tauri routing semantics:
+  // emit_to(A) reaches Any listeners in main/B but must not close B's reader.
+  for (const probe of [page, second])
+    await probe.evaluate(async () => {
+      const bridge = (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            transformCallback(callback: () => void): number;
+            invoke(
+              command: string,
+              args: Record<string, unknown>,
+            ): Promise<unknown>;
+          };
+        }
+      ).__TAURI_INTERNALS__;
+      await bridge.invoke("plugin:event|listen", {
+        event: "reader-window-close-requested",
+        target: { kind: "Any" },
+        handler: bridge.transformCallback(() => undefined),
+      });
+    });
   const firstPin = first.getByRole("button", {
     name: "阅读窗口置顶",
     exact: true,
@@ -211,6 +232,28 @@ test("pin failure remains visibly off, windows keep independent positions and na
     .poll(() => harness.pendingSave.has("reader-window-1"))
     .toBe(true);
   await harness.emit("reader-window-1", "reader-window-close-requested");
+  for (const probe of [page, second])
+    expect(
+      await probe.evaluate(() =>
+        window.readerWindowHarness
+          .eventDeliveries()
+          .filter(({ event }) => event === "reader-window-close-requested"),
+      ),
+    ).toEqual([
+      { event: "reader-window-close-requested", target: { kind: "Any" } },
+    ]);
+  expect(
+    await first.evaluate(() =>
+      window.readerWindowHarness
+        .eventDeliveries()
+        .filter(({ event }) => event === "reader-window-close-requested"),
+    ),
+  ).toEqual([
+    {
+      event: "reader-window-close-requested",
+      target: { kind: "Window", label: "reader-window-1" },
+    },
+  ]);
   await first.evaluate(
     () =>
       new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
@@ -244,6 +287,15 @@ test("pin failure remains visibly off, windows keep independent positions and na
   expect(firstWindowClose).toBeGreaterThan(firstReaderClose);
   await expect(second.getByLabel("当前页码")).toHaveText("2 / 3");
   expect(harness.closed.has("reader-window-2")).toBe(false);
+  expect(
+    harness.calls
+      .slice(firstCloseStart)
+      .filter(
+        ({ label, command }) =>
+          label === "reader-window-2" &&
+          (command === "reader_close" || command === "reader_window_close"),
+      ),
+  ).toEqual([]);
   await first.close();
   await openLocalWindow(page);
   const reopened = await harness.child(3, "4 / 6");

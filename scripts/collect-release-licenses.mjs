@@ -13,6 +13,7 @@ const DEFAULT_OUTPUT =
   "apps/local-workbench/src-tauri/release-resources/licenses";
 const NPM_ROOT = "apps/local-workbench";
 const NATIVE_MANIFEST = "apps/local-workbench/src-tauri/Cargo.toml";
+const SUPPLEMENT_ROOT = "third-party/dependency-licenses";
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const ordered = (values) =>
   [...values].sort((a, b) => a.localeCompare(b, "en"));
@@ -264,6 +265,118 @@ function readLicenseFiles(component, privateRoots) {
   return files;
 }
 
+function supplementalIndex(repositoryRoot) {
+  const filename = path.join(repositoryRoot, SUPPLEMENT_ROOT, "manifest.json");
+  if (!fs.existsSync(filename)) return new Map();
+  const manifest = JSON.parse(fs.readFileSync(filename, "utf8"));
+  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.components))
+    throw failure("SUPPLEMENT_MANIFEST_INVALID");
+  const entries = new Map();
+  for (const entry of manifest.components) {
+    const id = `cargo:${entry.name}@${entry.version}`;
+    if (
+      !packageName.test(entry.name) ||
+      !packageVersion.test(entry.version) ||
+      !declaration(entry.declaredLicense) ||
+      !/^[a-f0-9]{64}$/.test(entry.crateSha256) ||
+      !(
+        entry.upstreamCommit === null ||
+        /^[a-f0-9]{40}$/.test(entry.upstreamCommit)
+      ) ||
+      !Array.isArray(entry.files) ||
+      !entry.files.length ||
+      entries.has(id)
+    )
+      throw failure("SUPPLEMENT_MANIFEST_INVALID");
+    entries.set(id, entry);
+  }
+  return entries;
+}
+
+function publicSupplementSource(value) {
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      return false;
+    if (url.hostname === "raw.githubusercontent.com")
+      return /^\/[^/]+\/[^/]+\/[a-f0-9]{40}\//.test(url.pathname);
+    if (url.hostname === "www.mozilla.org")
+      return url.pathname === "/media/MPL/2.0/index.txt";
+    if (url.hostname === "www.apache.org")
+      return url.pathname === "/licenses/LICENSE-2.0.txt";
+    return ["docs.rs", "static.crates.io"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function readSupplement(component, entry, repositoryRoot, privateRoots) {
+  if (entry.declaredLicense !== component.declaredLicense)
+    throw failure("SUPPLEMENT_LICENSE_MISMATCH");
+  // Bind an exception to the exact registry archive, not just a same-named package.
+  const checksum = JSON.parse(
+    fs.readFileSync(path.join(component.root, ".cargo-checksum.json"), "utf8"),
+  );
+  if (checksum.package !== entry.crateSha256)
+    throw failure("SUPPLEMENT_CRATE_CHECKSUM_MISMATCH");
+  if (entry.upstreamCommit !== null) {
+    const vcs = JSON.parse(
+      fs.readFileSync(
+        path.join(component.root, ".cargo_vcs_info.json"),
+        "utf8",
+      ),
+    );
+    if (vcs.git?.sha1 !== entry.upstreamCommit)
+      throw failure("SUPPLEMENT_COMMIT_MISMATCH");
+  }
+  const root = path.join(repositoryRoot, SUPPLEMENT_ROOT);
+  return entry.files.map((file) => {
+    if (
+      typeof file.path !== "string" ||
+      path.isAbsolute(file.path) ||
+      !["license", "notice"].includes(file.kind) ||
+      ![
+        "upstream-file",
+        "published-header",
+        "published-file",
+        "standard-license",
+      ].includes(file.provenance) ||
+      !/^[a-f0-9]{64}$/.test(file.sha256) ||
+      !publicSupplementSource(file.source)
+    )
+      throw failure("SUPPLEMENT_FILE_INVALID");
+    const filename = path.resolve(root, file.path);
+    if (!inside(root, filename) || !inside(root, fs.realpathSync(filename)))
+      throw failure("SUPPLEMENT_PATH_OUTSIDE_ROOT");
+    const bytes = fs.readFileSync(filename);
+    if (sha256(bytes) !== file.sha256)
+      throw failure("SUPPLEMENT_TEXT_HASH_MISMATCH");
+    if (!bytes.length || bytes.length > 2 * 1024 * 1024 || bytes.includes(0))
+      throw failure("LICENSE_TEXT_INVALID");
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (hasMachinePath(text, privateRoots))
+      throw failure("LICENSE_CONTAINS_MACHINE_PATH");
+    return {
+      name: `supplemental/${file.path}`,
+      kind: file.kind,
+      sha256: file.sha256,
+      source: file.source,
+      provenance: file.provenance,
+      crateSha256: entry.crateSha256,
+      sourceArchive: `https://static.crates.io/crates/${component.name}/${component.name}-${component.version}.crate`,
+      upstreamCommit: entry.upstreamCommit,
+      selectedLicense: entry.selectedLicense ?? null,
+      text,
+    };
+  });
+}
+
 export function buildLicenseReport({
   repositoryRoot,
   cargoMetadata,
@@ -279,6 +392,7 @@ export function buildLicenseReport({
   const skipped = [];
   const reportError = (component, code) => errors.push({ component, code });
   const roots = [repositoryRoot, ...privateRoots];
+  const supplements = supplementalIndex(repositoryRoot);
   const candidates = collectNpmPackages(npmManifest, reportError, skipped);
   for (const pkg of selectCargoPackages(cargoMetadata)) {
     if (!packageName.test(pkg.name) || !packageVersion.test(pkg.version)) {
@@ -327,10 +441,28 @@ export function buildLicenseReport({
     if (!candidate.declaredLicense)
       reportError(id, "LICENSE_DECLARATION_MISSING");
     let files = [];
+    let readFailed = false;
     try {
       files = readLicenseFiles(candidate, roots);
     } catch (error) {
+      readFailed = true;
       reportError(id, errorCode(error));
+    }
+    if (
+      !readFailed &&
+      !files.some((file) => file.kind === "license") &&
+      supplements.has(id)
+    ) {
+      try {
+        files.push(
+          ...readSupplement(candidate, supplements.get(id), repositoryRoot, [
+            ...roots,
+            candidate.root,
+          ]),
+        );
+      } catch (error) {
+        reportError(id, errorCode(error));
+      }
     }
     if (!files.some((file) => file.kind === "license"))
       reportError(id, "LICENSE_TEXT_MISSING");
@@ -381,11 +513,15 @@ export function buildLicenseReport({
     excludedOptionalDependencies: skipped,
     errors,
   };
-  let text = `MangaMonitor dependency license texts\nTarget: ${TARGET}\n${inventory.scope}\n\nManual upstream reuse is covered by the separate THIRD_PARTY_NOTICES.md.\n\n`;
+  let text = `MangaMonitor dependency license texts\nTarget: ${TARGET}\n${inventory.scope}\n\nManual upstream reuse is covered by the separate THIRD_PARTY_NOTICES.md.\nExplicit archive-bound supplements are identified with their public sources below.\n\n`;
   for (const component of sorted) {
     text += `${"=".repeat(72)}\n${component.ecosystem}: ${component.name} ${component.version}\nSource: ${component.source}\nDeclared license: ${component.declaredLicense ?? "MISSING"}\nDependency kinds: ${component.dependencyKinds.join(", ")}\n`;
-    for (const file of component.files)
-      text += `\n--- ${file.name} (${file.kind}; SHA-256 ${file.sha256}) ---\n${file.text}\n`;
+    for (const file of component.files) {
+      text += `\n--- ${file.name} (${file.kind}; SHA-256 ${file.sha256}) ---\n`;
+      if (file.source)
+        text += `Text source: ${file.source}\nProvenance: ${file.provenance}\nPublished source archive: ${file.sourceArchive}\nRegistry archive SHA-256: ${file.crateSha256}\nUpstream release commit: ${file.upstreamCommit ?? "unknown; exact published registry archive is pinned"}\n${file.selectedLicense ? `Selected declared license option: ${file.selectedLicense}\n` : ""}`;
+      text += `${file.text}\n`;
+    }
     text += "\n";
   }
   if (errors.length)

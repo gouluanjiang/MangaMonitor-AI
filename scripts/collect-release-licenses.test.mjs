@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import {
   buildLicenseReport,
   selectCargoPackages,
@@ -245,5 +246,174 @@ test("declared license files cannot escape a dependency package", (t) => {
   assert.equal(
     (JSON.stringify(report.inventory) + report.text).includes(f.root),
     false,
+  );
+});
+
+function supplement(f) {
+  const hash = createHash("sha256").update(MIT).digest("hex");
+  const row = {
+    name: "runtime",
+    version: "1.0.0",
+    declaredLicense: "MIT",
+    crateSha256: "b".repeat(64),
+    upstreamCommit: "a".repeat(40),
+    files: [
+      {
+        path: "runtime/LICENSE",
+        kind: "license",
+        provenance: "upstream-file",
+        sha256: hash,
+        source: `https://raw.githubusercontent.com/example/runtime/${"a".repeat(40)}/LICENSE`,
+      },
+    ],
+  };
+  fs.unlinkSync(path.join(f.root, "registry/runtime/LICENSE"));
+  f.write("registry/runtime/.cargo-checksum.json", {
+    package: row.crateSha256,
+  });
+  f.write("registry/runtime/.cargo_vcs_info.json", {
+    git: { sha1: row.upstreamCommit },
+  });
+  f.write("third-party/dependency-licenses/runtime/LICENSE", MIT);
+  const save = () =>
+    f.write("third-party/dependency-licenses/manifest.json", {
+      schemaVersion: 1,
+      components: [row],
+    });
+  save();
+  return { row, save };
+}
+
+test("an explicit exact-archive supplement restores omitted text and publishes its provenance", (t) => {
+  const f = fixture(t);
+  supplement(f);
+  const report = f.run();
+  assert.deepEqual(report.inventory.errors, []);
+  const runtime = report.inventory.components.find(
+    (entry) => entry.name === "runtime",
+  );
+  assert.equal(runtime.licenseFiles[0].provenance, "upstream-file");
+  assert.equal(runtime.licenseFiles[0].crateSha256, "b".repeat(64));
+  assert.match(
+    report.text,
+    /Text source: https:\/\/raw\.githubusercontent\.com/,
+  );
+});
+
+test("supplements never excuse version, SPDX, archive, commit or text drift", async (t) => {
+  const cases = [
+    [
+      "version",
+      "LICENSE_TEXT_MISSING",
+      (f) => {
+        f.cargoMetadata.packages.find(
+          (entry) => entry.name === "runtime",
+        ).version = "1.0.1";
+      },
+    ],
+    [
+      "license",
+      "SUPPLEMENT_LICENSE_MISMATCH",
+      (f) => {
+        f.cargoMetadata.packages.find(
+          (entry) => entry.name === "runtime",
+        ).license = "Apache-2.0";
+      },
+    ],
+    [
+      "archive",
+      "SUPPLEMENT_CRATE_CHECKSUM_MISMATCH",
+      (f) =>
+        f.write("registry/runtime/.cargo-checksum.json", {
+          package: "c".repeat(64),
+        }),
+    ],
+    [
+      "commit",
+      "SUPPLEMENT_COMMIT_MISMATCH",
+      (f) =>
+        f.write("registry/runtime/.cargo_vcs_info.json", {
+          git: { sha1: "c".repeat(40) },
+        }),
+    ],
+    [
+      "text",
+      "SUPPLEMENT_TEXT_HASH_MISMATCH",
+      (f) =>
+        f.write(
+          "third-party/dependency-licenses/runtime/LICENSE",
+          MIT + "altered\n",
+        ),
+    ],
+  ];
+  for (const [name, code, change] of cases) {
+    await t.test(name, (child) => {
+      const f = fixture(child);
+      supplement(f);
+      change(f);
+      const report = f.run();
+      assert.ok(report.inventory.errors.some((entry) => entry.code === code));
+      assert.match(report.text, /COLLECTION INCOMPLETE/);
+    });
+  }
+});
+
+test("an unrelated missing package license still fails when a known supplement succeeds", (t) => {
+  const f = fixture(t);
+  supplement(f);
+  fs.unlinkSync(path.join(f.root, "registry/build-helper/LICENSE"));
+  const report = f.run();
+  assert.deepEqual(report.inventory.errors, [
+    { component: "cargo:build-helper@1.0.0", code: "LICENSE_TEXT_MISSING" },
+  ]);
+});
+
+test("a reviewed legacy archive can use an explicitly identified standard license without inventing a commit", (t) => {
+  const f = fixture(t);
+  const pinned = supplement(f);
+  const declaration = "MIT OR Apache-2.0";
+  f.cargoMetadata.packages.find((entry) => entry.name === "runtime").license =
+    declaration;
+  pinned.row.declaredLicense = declaration;
+  pinned.row.upstreamCommit = null;
+  pinned.row.selectedLicense = "Apache-2.0";
+  const standardText = "Apache License\nVersion 2.0\nSynthetic test text.\n";
+  f.write("third-party/dependency-licenses/runtime/LICENSE", standardText);
+  pinned.row.files[0].sha256 = createHash("sha256")
+    .update(standardText)
+    .digest("hex");
+  pinned.row.files[0].provenance = "standard-license";
+  pinned.row.files[0].source =
+    "https://www.apache.org/licenses/LICENSE-2.0.txt";
+  const publishedManifest =
+    '[package]\nname = "runtime"\nlicense = "MIT OR Apache-2.0"\n';
+  f.write(
+    "third-party/dependency-licenses/runtime/PUBLISHED-Cargo.toml",
+    publishedManifest,
+  );
+  pinned.row.files.push({
+    path: "runtime/PUBLISHED-Cargo.toml",
+    kind: "notice",
+    provenance: "published-file",
+    source: "https://static.crates.io/crates/runtime/runtime-1.0.0.crate",
+    sha256: createHash("sha256").update(publishedManifest).digest("hex"),
+  });
+  pinned.save();
+  fs.unlinkSync(path.join(f.root, "registry/runtime/.cargo_vcs_info.json"));
+  const report = f.run();
+  assert.deepEqual(report.inventory.errors, []);
+  assert.match(
+    report.text,
+    /Upstream release commit: unknown; exact published registry archive is pinned/,
+  );
+  assert.equal(
+    report.inventory.components.find((entry) => entry.name === "runtime")
+      .licenseFiles[0].upstreamCommit,
+    null,
+  );
+  assert.equal(
+    report.inventory.components.find((entry) => entry.name === "runtime")
+      .licenseFiles[1].provenance,
+    "published-file",
   );
 });

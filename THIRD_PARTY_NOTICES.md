@@ -15,6 +15,13 @@ WebView2 or development tools, nor a claim that every listed build dependency is
 embedded in the executable. Missing declarations or license text fail collection.
 Only CI generates these files; no registry trees or machine paths are distributed.
 
+Some exact published crates omit license text. Their reviewed archive-bound
+supplements, original text sources and selected license options are documented in
+`third-party/dependency-licenses/README.md` and `manifest.json`. The collector
+verifies exact versions, declarations, archive and text hashes; it never fills
+an arbitrary missing license from an SPDX name. The generated resources preserve
+each supplement's provenance and versioned source archive link.
+
 ## Pinned manual reuse and references
 
 - **lanyeeee/jmcomic-downloader**, commit

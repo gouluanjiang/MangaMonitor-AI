@@ -1,0 +1,2 @@
+# Preserve pinned upstream license bytes, including their original line endings.
+third-party/dependency-licenses/** -text

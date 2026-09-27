@@ -20,10 +20,12 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'LICENSE'
+      - '.gitattributes'
       - 'THIRD_PARTY_NOTICES.md'
       - 'docs/USER_GUIDE.md'
       - 'docs/RELEASE_NOTES_*.md'
       - 'scripts/collect-release-licenses*'
+      - 'third-party/dependency-licenses/**'
       - '.github/workflows/local-workbench-desktop.yml'
   pull_request:
     branches: [main]
@@ -44,10 +46,12 @@ on:
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'LICENSE'
+      - '.gitattributes'
       - 'THIRD_PARTY_NOTICES.md'
       - 'docs/USER_GUIDE.md'
       - 'docs/RELEASE_NOTES_*.md'
       - 'scripts/collect-release-licenses*'
+      - 'third-party/dependency-licenses/**'
       - '.github/workflows/local-workbench-desktop.yml'
   workflow_dispatch:
     inputs:

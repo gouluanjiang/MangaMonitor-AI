@@ -63,7 +63,7 @@ export function DiagnosticsPanel({
       </p>
       <p className="settings-help" data-testid="diagnostics-version">
         {info
-          ? `MangaMonitor Dev ${info.version} · ${info.revision?.slice(0, 7) ?? "本地构建"}`
+          ? `MangaMonitor ${info.version} · ${info.revision?.slice(0, 7) ?? "本地构建"}`
           : infoFailed
             ? "版本信息暂时无法读取。"
             : "正在读取版本…"}

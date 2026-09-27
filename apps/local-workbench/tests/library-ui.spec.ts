@@ -33,6 +33,7 @@ type Options = {
   usability?: boolean;
   workDates?: boolean;
   languageTags?: string[][];
+  workbenchVersion?: string;
 };
 type Hooks = {
   copiedSummary?: string;
@@ -220,7 +221,7 @@ async function installMock(page: Page, options: Options = {}) {
             throw { code: "STORAGE_UNAVAILABLE" };
           if (command === "workbench_info")
             return {
-              version: "0.3.4",
+              version: options.workbenchVersion ?? "0.3.4",
               revision: "b".repeat(40),
               platform: "windows",
             };
@@ -563,13 +564,19 @@ test("native diagnostics show real snapshot states, omit private data and link t
   page,
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
-  await installMock(page, { pcCount: 4, usability: true });
+  await installMock(page, {
+    pcCount: 4,
+    usability: true,
+    workbenchVersion: "1.0.0-rc.1",
+  });
+  await expect(page.getByTestId("demo-label")).toContainText("桌面应用");
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-network").click();
-  await expect(page.getByTestId("diagnostics-version")).toContainText(
-    "0.3.4 · bbbbbbb",
+  await expect(page.getByTestId("diagnostics-version")).toHaveText(
+    "MangaMonitor 1.0.0-rc.1 · bbbbbbb",
   );
   const report = await page.getByTestId("diagnostic-summary").inputValue();
+  expect(report).toContain("版本：1.0.0-rc.1 · bbbbbbb · windows");
   expect(report).toContain("目录记录：4 · 文件待核对：1");
   expect(report).toContain("JM 会话：未连接");
   expect(report).not.toMatch(

@@ -14,7 +14,10 @@ export function validateWorkbenchInfo(value: unknown): WorkbenchInfo {
   if (
     !v ||
     typeof v.version !== "string" ||
-    !/^\d+\.\d+\.\d+$/.test(v.version) ||
+    v.version.trim() !== v.version ||
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc\.(0|[1-9]\d*))?$/.test(
+      v.version,
+    ) ||
     !(
       v.revision === null ||
       (typeof v.revision === "string" && /^[a-f0-9]{40}$/i.test(v.revision))

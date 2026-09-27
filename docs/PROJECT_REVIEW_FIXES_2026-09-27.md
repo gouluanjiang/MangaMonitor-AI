@@ -76,8 +76,32 @@ drift with exact-count coincidence, unknown baselines, retry and independent
 aliases; and short final pages, narrow windows, zoom, reopen and long-chapter
 segments. Existing source, queue, reader and native lifecycle checks stay enabled.
 
-Formal checks/builds run only in the existing CI. Local work consists of editing,
-formatter edits and independent code review. CI execution, built-artifact visual
-review and verified Dev delivery are pending. No user acceptance is claimed for
-the corrections until the delivered build is checked by the user. No installer,
-merge or formal release is part of this batch.
+Formal checks/builds ran only in the existing CI. Local work consisted of editing,
+formatter edits, independent review and verifying the CI artifacts. Final head
+`2493fb51e89641daaa132cb81bde1712d99949e9` (test merge
+`d4d99a57eb889aa64d03683c0e10720bfeda9fa4`) passed:
+
+- [Frontend CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36323489129):
+  formatting, type-check/build, 238 logic tests and 213 Chromium cases.
+- [Baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36323489127):
+  Linux workspace tests/Clippy and Windows local-executor contracts.
+- [Desktop CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36323489124):
+  offline suites, all 12 new receipt/destination cases, isolated credentials,
+  49 native tests, Clippy, executable build and isolated actual WebView
+  startup/restart/multiple-reader lifecycle verification.
+
+The two new synthetic reader screenshots and native window evidence were reviewed.
+Native close coverage uses owned-window WM_CLOSE plus the frontend handshake and
+final toolbar close; it is not a physical titlebar-button click or a real manga
+read. No source requests or real private-data operations occurred.
+
+The separate Dev executable is `MangaMonitor-Dev-20260927-2493fb5`, SHA-256
+`e6d2d7c54022d6d95a48a34b761f7ba2a1161401fe7adead1ebff459091b6442`.
+Artifact digest, ZIP CRC, x64 PE and embedded head were checked; both existing
+Dev links were backed up and updated without restarting the user's application.
+Private evidence and acceptance instructions are in
+`Documents/Codex/MangaMonitor-review-fixes-20260927`. The user must fully exit all
+main/reader windows and reopen Dev. The user subsequently accepted the corrections
+and authorized release-candidate preparation. No installer,
+merge or formal release was performed. Final evidence notes are retained locally
+for the next necessary push, avoiding a documentation-only duplicate CI run.

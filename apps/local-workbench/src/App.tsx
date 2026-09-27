@@ -2388,10 +2388,10 @@ export default function App() {
             <span />
             {persistence.native
               ? sourceActive
-                ? "桌面开发版 · 真实来源"
+                ? "桌面应用 · 真实来源"
                 : page === "library"
-                  ? "桌面开发版 · 电脑漫画库"
-                  : "桌面开发版 · 本机任务"
+                  ? "桌面应用 · 电脑漫画库"
+                  : "桌面应用 · 本机任务"
               : "交互样例 · 模拟数据"}
             {activeFixture && " · 100 条验收数据"}
           </div>

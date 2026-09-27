@@ -17,8 +17,16 @@ if (
     "Native WebView smoke is restricted to disposable Windows CI.",
   );
 const executable = path.resolve(
-  "src-tauri/target/x86_64-pc-windows-msvc/release/mangamonitor-workbench-preview.exe",
+  process.env.MANGAMONITOR_SMOKE_EXECUTABLE ??
+    "src-tauri/target/x86_64-pc-windows-msvc/release/mangamonitor-workbench-preview.exe",
 );
+if (process.env.MANGAMONITOR_SMOKE_EXECUTABLE) {
+  const relative = path.relative(process.env.RUNNER_TEMP, executable);
+  assert.ok(
+    relative && !relative.startsWith("..") && !path.isAbsolute(relative),
+    "Installed smoke executable must be inside RUNNER_TEMP.",
+  );
+}
 const documents = path.join(
   process.env.APPDATA,
   "com.mangamonitor.workbench.preview",
@@ -146,7 +154,7 @@ async function launch() {
       throw new Error(
         "The bundled workbench page did not open in the native WebView.",
       );
-    await expect(page.getByTestId("demo-label")).toContainText("桌面开发版", {
+    await expect(page.getByTestId("demo-label")).toContainText("桌面应用", {
       timeout: 20_000,
     });
     await expect(
@@ -206,6 +214,18 @@ try {
   policyPrepared = true;
   running = await launch();
   const page = running.page;
+  const appConfig = JSON.parse(
+    await readFile("src-tauri/tauri.conf.json", "utf8"),
+  );
+  const info = await page.evaluate(() =>
+    window.__TAURI_INTERNALS__.invoke("workbench_info"),
+  );
+  assert.equal(info.version, appConfig.version);
+  assert.equal(info.revision, process.env.MANGAMONITOR_BUILD_REVISION);
+  await writeFile(
+    path.join(output, "runtime-info.json"),
+    JSON.stringify(info, null, 2),
+  );
   // Real queue IPC is read-only at startup; an empty queue must not turn into
   // browser demonstration work, and opening its page cannot start a download.
   await page.getByTestId("nav-queue").click();

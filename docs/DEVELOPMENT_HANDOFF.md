@@ -2,9 +2,19 @@
 
 Updated 2026-09-27. This file is the current continuation record. The previous handoff, including its six final local evidence edits, is preserved in [the historical handoff](DEVELOPMENT_HANDOFF_ARCHIVE_2026-09-15.md). Historical pending/current statements do not override this file or the latest user instruction.
 
-## Active batch: four project-review corrections
+## Active batch: V1 release-candidate preparation
 
-The user explicitly authorized fixing all four review findings. Implementation and targeted synthetic regressions are complete and independently reviewed; see [the correction contract and download-gate review](PROJECT_REVIEW_FIXES_2026-09-27.md). Preserve the accepted UI and all existing source/file authority. Formal checks and builds run only in CI. No live source scan, download, private library/account mutation, installer or release is authorized by this implementation batch. CI, artifact review, Dev delivery and user acceptance of the corrections remain pending.
+The user accepted the four project-review corrections and authorized the next step. Reader/UI work and the correction batch are accepted. Proceed with `1.0.0-rc.1` candidate preparation: current documentation, version/diagnostic identity, bundled licenses, CI-only installer lifecycle verification and a reviewable delivery. See [the candidate contract](RELEASE_CANDIDATE_2026-09-27.md). Preserve current installation/data/credential identifiers; keep `MangaMonitor Dev` as the NSIS product name for install-registration continuity. Public release, tag, PR merge, production enablement and running an installer on the user's computer remain separate final actions. No real source scan, download, library rewrite or all-author replay is included.
+
+## Accepted delivery: four project-review corrections
+
+The user explicitly authorized fixing all four review findings. Implementation, independent review, CI, artifact review and verified Dev delivery are complete; see [the correction contract and download-gate review](PROJECT_REVIEW_FIXES_2026-09-27.md). Preserve the accepted UI and all existing source/file authority. No live source scan, download, private library/account mutation or user-app restart occurred. The user has now explicitly accepted the corrections.
+
+Final head `2493fb51e89641daaa132cb81bde1712d99949e9`, test merge `d4d99a57eb889aa64d03683c0e10720bfeda9fa4`. [Frontend CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36323489129) passed formatting, type-check/build, 238 logic tests and 213 Chromium cases. [Baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36323489127) passed both jobs. [Windows CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36323489124) passed offline suites including all 12 new download/receipt regressions, isolated credentials, 49 native tests, Clippy, executable build and actual isolated WebView startup/restart/reader-window lifecycle checks. Formal suites/builds ran only in CI; no rerun or corrective follow-up commit was needed. The new short-final-page and 20-short-page minimum-zoom screenshots were reviewed, alongside native lifecycle evidence.
+
+Dev delivery: `Documents/Codex/MangaMonitor-Dev-20260927-2493fb5/mangamonitor-workbench-preview.exe`, SHA-256 `e6d2d7c54022d6d95a48a34b761f7ba2a1161401fe7adead1ebff459091b6442`. Artifact digest, ZIP CRC, x64 PE and embedded head verified. Both existing Dev shortcuts were backed up and updated; no app was started or stopped. Exit all main/reader windows and reopen Dev for acceptance. Private report, acceptance guide, CI evidence and receipts: `Documents/Codex/MangaMonitor-review-fixes-20260927`. Dev remains 0.3.4, PR #19 draft/unmerged and production disabled. No installer/formal release. Final evidence-only documentation stays local until the next necessary push.
+
+Current position: accepted integrated UI → project review → corrections accepted → release-candidate preparation. A6 all-author acceptance remains deferred. Legacy compact receipts without original identity stay unknown unless independently verified; storing the new identity field does not promise compatibility with older strict binaries. Native file identity is not a full-archive in-place rewrite audit.
 
 ## Completed task: project review after UI acceptance
 

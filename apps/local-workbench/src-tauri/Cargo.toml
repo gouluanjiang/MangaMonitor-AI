@@ -1,7 +1,7 @@
 [package]
 name = "mangamonitor-workbench-preview"
-version = "0.3.4"
-description = "MangaMonitor development workbench with source accounts, favorites and local following"
+version = "1.0.0-rc.1"
+description = "MangaMonitor desktop release candidate for browsing, reading and local ZIP downloads"
 edition = "2021"
 rust-version = "1.98.1"
 license = "MIT"

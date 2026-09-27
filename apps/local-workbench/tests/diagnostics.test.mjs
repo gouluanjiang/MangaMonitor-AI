@@ -83,6 +83,49 @@ test("diagnostics report only allowed statuses and counts, even with private DTO
   );
 });
 
+test("diagnostics accept stable and numbered release candidates while rejecting malformed or unsupported version labels", () => {
+  for (const version of [
+    "0.3.4",
+    "0.0.0",
+    "1.0.0",
+    "1.0.0-rc.1",
+    "1.20.300-rc.12",
+    "1.0.0-rc.0",
+  ]) {
+    const expected = { version, revision: "b".repeat(40), platform: "windows" };
+    assert.deepEqual(validateWorkbenchInfo(expected), expected);
+  }
+  for (const version of [
+    "",
+    "1.0",
+    "v1.0.0",
+    "01.0.0",
+    "1.00.0",
+    "1.0.00",
+    "1.0.0-rc",
+    "1.0.0-rc.",
+    "1.0.0-rc.01",
+    "1.0.0-rc.-1",
+    "1.0.0-rc.1.2",
+    "1.0.0-RC.1",
+    "1.0.0-beta.1",
+    "1.0.0-rc.1+local",
+    "1.0.0/path",
+    "1.0.0\n",
+    "1.0.0-rc.1\r\n",
+    " 1.0.0",
+    "1.0.0 ",
+    null,
+    1,
+  ]) {
+    assert.throws(
+      () =>
+        validateWorkbenchInfo({ version, revision: null, platform: "windows" }),
+      /VERSION_UNAVAILABLE/,
+    );
+  }
+});
+
 test("settings search finds actual controls through common words and normalized input", () => {
   assert.deepEqual(
     matchingSettingsPages("壁纸").map((x) => x.id),

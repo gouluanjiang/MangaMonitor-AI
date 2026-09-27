@@ -1325,7 +1325,7 @@ test("JM and Pica source details prepare only their own source without creating 
   await page.getByTestId("source-open-JM:123").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await page.getByTestId("source-download").click();
   await expect(page.getByTestId("download-confirmation")).toBeVisible();
@@ -1338,7 +1338,7 @@ test("JM and Pica source details prepare only their own source without creating 
   await page.getByTestId("source-open-Pica:0123456789abcdef01234567").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-download")).toBeEnabled();
   await page.getByTestId("source-download").click();

@@ -3,6 +3,7 @@ mod discovery;
 mod downloads;
 mod library;
 mod reader;
+mod reader_windows;
 
 use accounts::DesktopAccounts;
 use std::{
@@ -174,7 +175,8 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder
         .manage(Arc::new(library::DesktopLibrary::default()))
         .manage(Arc::new(downloads::DesktopDownloads::default()))
-        .manage(Arc::new(reader::DesktopReader::default()))
+        .manage(Arc::new(reader_windows::ReaderWindows::default()))
+        .on_window_event(reader_windows::window_event)
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_preferences,
@@ -190,6 +192,14 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             reader::reader_save_position,
             reader::reader_close,
             reader::reader_fullscreen,
+            reader_windows::reader_window_open,
+            reader_windows::reader_window_context,
+            reader_windows::reader_window_pin,
+            reader_windows::reader_window_show_main,
+            reader_windows::reader_window_download,
+            reader_windows::reader_window_close,
+            reader_windows::reader_main_ready,
+            reader_windows::reader_main_close,
             discovery::discovery_read,
             discovery::discovery_progress,
             discovery::discovery_start,

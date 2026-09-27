@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "reader-workbench",
+  "description": "Registered small reader windows: native-bound read-only books, position saves and window controls.",
+  "local": true,
+  "windows": ["reader-window-*"],
+  "permissions": [
+    "workbench-reader",
+    "workbench-reader-child",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

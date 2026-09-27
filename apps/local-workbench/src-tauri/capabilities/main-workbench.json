@@ -9,6 +9,9 @@
     "workbench-accounts",
     "workbench-library",
     "workbench-reader",
+    "workbench-reader-host",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "workbench-downloads"
   ]
 }

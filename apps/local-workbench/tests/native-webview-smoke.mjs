@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { readFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { verifyReaderWindows } from "./reader-window-native-smoke.mjs";
 
 if (
   process.platform !== "win32" ||
@@ -157,7 +158,7 @@ async function launch() {
     // Native startup restores private inventory without scanning media or
     // presenting browser fixture covers as a real local library.
     await expect(page.getByTestId("library-grid")).toHaveCount(0);
-    return { page, stop };
+    return { page, browser, child, stop };
   } catch (error) {
     await startupDiagnostics(child, debuggingPort, lastConnectionError).catch(
       (diagnosticError) =>
@@ -306,8 +307,9 @@ try {
     ),
     prefs,
   );
+  await verifyReaderWindows({ ...running, output });
   console.log(
-    "NATIVE_WEBVIEW_SMOKE_PASSED: Windows WebView startup/restart, account/cache rejection/secret clearing, PC-only library and persisted appearance; cancelled phone/booklist UI absent.",
+    "NATIVE_WEBVIEW_SMOKE_PASSED: Windows WebView startup/restart, account/cache rejection/secret clearing, PC-only library and persisted appearance; cancelled phone/booklist UI absent; native reader windows, pin isolation, main hide/restore and final-window process exit.",
   );
 } catch (error) {
   await writeFile(

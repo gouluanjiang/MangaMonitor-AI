@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "capabilities": ["main-workbench"],
+      "capabilities": ["main-workbench", "reader-workbench"],
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'; form-action 'none'",
       "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:4173 ws://127.0.0.1:4173; object-src 'none'; base-uri 'self'; frame-src 'none'; form-action 'none'"
     }

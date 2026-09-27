@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: "./tests",
   testMatch: [
     "**/reader-ui.spec.ts",
+    "**/reader-window-ui.spec.ts",
     "**/ui.spec.ts",
     "**/booklists-ui.spec.ts",
     "**/source-ui.spec.ts",

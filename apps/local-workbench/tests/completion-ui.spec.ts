@@ -1545,7 +1545,7 @@ for (const entry of ["saved updates", "author search"] as const) {
     await unknown.locator(".source-card-open").click();
     await page
       .getByTestId("reader-cover-actions")
-      .getByRole("button", { name: "作品详情", exact: true })
+      .getByRole("button", { name: "漫画详细", exact: true })
       .click();
     await expect(
       page.getByTestId("source-detail").getByTestId("source-language-badge"),
@@ -2060,7 +2060,7 @@ for (const mode of ["updates", "search"] as const) {
     await correct.locator(".source-card-open").click();
     await page
       .getByTestId("reader-cover-actions")
-      .getByRole("button", { name: "作品详情", exact: true })
+      .getByRole("button", { name: "漫画详细", exact: true })
       .click();
     const detail = page.getByTestId("source-detail");
     await expect(detail.getByTestId("author-credit-reviewed")).toHaveAttribute(
@@ -2402,7 +2402,7 @@ test("a new author is searched across every page of both sources without requiri
     .getByRole("button")
     .first()
     .click();
-  await page.getByRole("button", { name: "作品详情", exact: true }).click();
+  await page.getByRole("button", { name: "漫画详细", exact: true }).click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(

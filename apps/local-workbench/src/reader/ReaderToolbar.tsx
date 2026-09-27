@@ -1,4 +1,4 @@
-import type { ReaderChapter } from "./types.ts";
+import type { ReaderChapter, ReaderWindowControls } from "./types.ts";
 
 export type ReaderToolbarProps = {
   title: string;
@@ -22,6 +22,7 @@ export type ReaderToolbarProps = {
   onResetZoom(): void;
   onDownload?: () => void;
   onFullscreen(): void;
+  windowControls?: ReaderWindowControls;
 };
 
 /** Controls only. The reader owns chapter, position, fullscreen and persistence. */
@@ -94,6 +95,28 @@ export function ReaderToolbar(props: ReaderToolbarProps) {
           <button onClick={props.onFullscreen}>
             {props.fullscreen ? "退出全屏" : "全屏"}
           </button>
+          {props.windowControls && (
+            <>
+              <button
+                aria-label="阅读窗口置顶"
+                aria-pressed={props.windowControls.pinned}
+                disabled={props.windowControls.pinBusy || props.closing}
+                onClick={() =>
+                  props.windowControls!.onPinnedChange(
+                    !props.windowControls!.pinned,
+                  )
+                }
+              >
+                {props.windowControls.pinned ? "取消置顶" : "置顶"}
+              </button>
+              <button
+                aria-label="显示主界面"
+                onClick={props.windowControls.onShowMain}
+              >
+                主界面
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

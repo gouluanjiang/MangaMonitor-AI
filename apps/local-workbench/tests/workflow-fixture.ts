@@ -32,9 +32,12 @@ declare global {
 // A shared synthetic service model for cross-page integration. Completion writes
 // distinct ZIP entries and same-source receipts, independently of rendering.
 // No filesystem, credentials, source HTTP requests or real media are involved.
-export async function installWorkflow(page: Page) {
+export async function installWorkflow(
+  page: Page,
+  { enhanceBridge = false }: { enhanceBridge?: boolean } = {},
+) {
   await page.addInitScript(
-    ({ preferences }) => {
+    ({ preferences, enhanceBridge }) => {
       const clone = <T>(value: T): T => structuredClone(value);
       const rootId = "a".repeat(64);
       const id = (n: number) => n.toString(16).padStart(64, "0");
@@ -466,8 +469,15 @@ export async function installWorkflow(page: Page) {
           },
         },
       });
+      if (enhanceBridge) {
+        const testWindow = window as unknown as {
+          __TAURI_INTERNALS__: unknown;
+          readerWindowHarness?: { attach(bridge: unknown): void };
+        };
+        testWindow.readerWindowHarness?.attach(testWindow.__TAURI_INTERNALS__);
+      }
     },
-    { preferences: initialPreferences() },
+    { preferences: initialPreferences(), enhanceBridge },
   );
   await page.goto("/");
 }

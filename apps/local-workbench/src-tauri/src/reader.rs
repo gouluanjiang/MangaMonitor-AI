@@ -3,7 +3,8 @@
 mod state;
 use crate::{
     accounts::{self, DesktopAccounts},
-    require_main, DesktopStore,
+    reader_windows::ReaderWindows,
+    DesktopStore,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use state::{error, Backend, Chapter, ChapterResult, PageResult, ReaderBook, Result, Session};
@@ -19,18 +20,18 @@ use workbench_storage::{LibraryReference, ReaderPosition, Source};
 #[tauri::command]
 pub(crate) async fn reader_open<R: Runtime>(
     window: WebviewWindow<R>,
-    reader: State<'_, Arc<DesktopReader>>,
+    reader: State<'_, Arc<ReaderWindows>>,
     store: State<'_, Arc<DesktopStore>>,
     accounts: State<'_, Arc<DesktopAccounts>>,
     request: ReaderRequest,
     request_id: String,
 ) -> Result<ReaderBook> {
-    require_main(window.label())?;
-    let ticket = reader.begin(&request_id)?;
+    let reader = reader.scope(window.label())?;
+    let ticket = reader.begin_for(&request_id, &request)?;
     let generation = ticket.generation;
     let result = ticket
         .run(open(
-            Arc::clone(reader.inner()),
+            Arc::clone(&reader),
             Arc::clone(store.inner()),
             Arc::clone(accounts.inner()),
             request,
@@ -53,7 +54,7 @@ async fn open(
     request_id: String,
     generation: u64,
 ) -> Result<ReaderBook> {
-    let id = format!("reader-{generation}");
+    let id = reader.session_id(generation);
     let (backend, title, origin, source_ref, progress_key, chapters) = match request {
         ReaderRequest::Library {
             root_id,
@@ -271,12 +272,12 @@ async fn chapter_info(
 #[tauri::command]
 pub(crate) async fn reader_chapter<R: Runtime>(
     window: WebviewWindow<R>,
-    reader: State<'_, Arc<DesktopReader>>,
+    reader: State<'_, Arc<ReaderWindows>>,
     store: State<'_, Arc<DesktopStore>>,
     reader_id: String,
     chapter_id: String,
 ) -> Result<ChapterResult> {
-    require_main(window.label())?;
+    let reader = reader.scope(window.label())?;
     let session = reader.session(&reader_id)?;
     let page_count = chapter_info(session, Arc::clone(store.inner()), chapter_id.clone()).await?;
     Ok(ChapterResult {
@@ -289,13 +290,13 @@ pub(crate) async fn reader_chapter<R: Runtime>(
 #[tauri::command]
 pub(crate) async fn reader_page<R: Runtime>(
     window: WebviewWindow<R>,
-    reader: State<'_, Arc<DesktopReader>>,
+    reader: State<'_, Arc<ReaderWindows>>,
     store: State<'_, Arc<DesktopStore>>,
     reader_id: String,
     chapter_id: String,
     page_index: u64,
 ) -> Result<PageResult> {
-    require_main(window.label())?;
+    let reader = reader.scope(window.label())?;
     let session = reader.session(&reader_id)?;
     if session
         .page_count(&chapter_id)?
@@ -367,12 +368,12 @@ pub(crate) async fn reader_page<R: Runtime>(
 #[tauri::command]
 pub(crate) async fn reader_save_position<R: Runtime>(
     window: WebviewWindow<R>,
-    reader: State<'_, Arc<DesktopReader>>,
+    reader: State<'_, Arc<ReaderWindows>>,
     store: State<'_, Arc<DesktopStore>>,
     reader_id: String,
     position: ReaderPosition,
 ) -> Result<()> {
-    require_main(window.label())?;
+    let reader = reader.scope(window.label())?;
     let session = reader.session(&reader_id)?;
     if !position.is_valid()
         || session
@@ -436,10 +437,10 @@ fn restore_fullscreen_if_idle<R: Runtime>(
 #[tauri::command]
 pub(crate) fn reader_cancel_open<R: Runtime>(
     window: WebviewWindow<R>,
-    reader: State<'_, Arc<DesktopReader>>,
+    reader: State<'_, Arc<ReaderWindows>>,
     request_id: String,
 ) -> Result<()> {
-    require_main(window.label())?;
+    let reader = reader.scope(window.label())?;
     if reader.cancel_open(&request_id)? {
         restore_fullscreen_if_idle(&window, &reader)?;
     }
@@ -449,10 +450,10 @@ pub(crate) fn reader_cancel_open<R: Runtime>(
 #[tauri::command]
 pub(crate) fn reader_close<R: Runtime>(
     window: WebviewWindow<R>,
-    reader: State<'_, Arc<DesktopReader>>,
+    reader: State<'_, Arc<ReaderWindows>>,
     reader_id: String,
 ) -> Result<()> {
-    require_main(window.label())?;
+    let reader = reader.scope(window.label())?;
     if reader.close(&reader_id)? {
         restore_fullscreen_if_idle(&window, &reader)?;
     }
@@ -462,10 +463,10 @@ pub(crate) fn reader_close<R: Runtime>(
 #[tauri::command]
 pub(crate) fn reader_fullscreen<R: Runtime>(
     window: WebviewWindow<R>,
-    reader: State<'_, Arc<DesktopReader>>,
+    reader: State<'_, Arc<ReaderWindows>>,
     fullscreen: bool,
 ) -> Result<()> {
-    require_main(window.label())?;
+    let reader = reader.scope(window.label())?;
     if !fullscreen {
         return restore_fullscreen(&window, &reader);
     }

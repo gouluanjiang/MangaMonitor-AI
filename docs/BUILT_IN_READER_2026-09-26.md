@@ -1,5 +1,7 @@
 # Built-in reader: accepted scope and implementation
 
+Acceptance update 2026-09-27: the user accepted steps 1–5. Step 6 (real failed-page/retry behavior) remains untested because no failure was encountered. The original reader stays available while the separately approved [independent reader-window addition](READER_WINDOWS_2026-09-27.md) is implemented. Earlier delivery statements below describe the state at that delivery.
+
 The user completed the reader Q&A and authorized development on 2026-09-26. Local ZIP and JM/Pica online reading belong to the same batch. The recent-feed continuation/position correction was accepted before this batch. Reader engineering verification and user acceptance are separate milestones; the validation receipt below must be completed before claiming delivery.
 
 ## Reading contract
@@ -41,6 +43,18 @@ Formal logic, browser, Rust, native IPC, Clippy and desktop builds run in existi
 
 Before delivery, inspect the running synthetic reader screenshots at desktop and narrow widths. No real library or manga samples belong in CI. No new full-author scan, automatic downloading, reader disk-image cache, installer, merge, production enablement or formal release is part of this batch. Existing Dev builds and rollback artifacts remain.
 
-Status: implementation and review in progress; CI, artifact inspection and user acceptance have not yet completed.
+Status: engineering verification, visual inspection and Dev delivery complete; real user acceptance remains pending.
 
 Current roadmap: reader implementation/acceptance → overall UI and interaction refinement → formal release preparation. A6 complete-author acceptance remains deferred by the user.
+
+## Final engineering and delivery evidence
+
+Implementation, independent review, CI, running synthetic visual review and verified Dev delivery are complete. User acceptance of local and real online reading remains pending. See [the accepted reader contract](BUILT_IN_READER_2026-09-26.md). Covers offer reading or details; local ZIP and JM/Pica online sessions share vertical/single-page modes, Ctrl-wheel zoom, panning, half-page/keyboard navigation, chapter selection, a slider, fullscreen and saved position. Returning preserves browsing state. Verified source IDs prefer the actual local file; no new identity inference is introduced. Page images remain in bounded runtime memory, with no full extraction or persistent page-image cache. Online download uses existing preparation and confirmation.
+
+Final head `ea855c10a6218c09cfd5040c0dd5305462bc8067`, test merge `73f1e0586952d112b883b93f29f62e70f9c5896e`. [Frontend CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36256236384) passed formatting, type-check/build, 219 logic and 195 Chromium tests. [Baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36256236396) and [Windows CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36256236437) passed, including 43 native IPC tests, Clippy, the EXE and isolated Windows WebView startup/restart. All formal checks/builds ran only in CI. Earlier runs exposed long-chapter browser coordinate limits and fractional page-boundary behavior, an immediate fullscreen-exit race, native visibility lint errors, and asynchronous test setup/cleanup timing. Bounded scroll segments, a one-CSS-pixel boundary tolerance and synchronous fullscreen references fixed the product issues. Tests now await exact native wheel delivery and cleanup tokens without relaxing behavior assertions. The reported passing results apply to this final revision.
+
+Three synthetic running reader screenshots were inspected: vertical, single-page and narrow toolbar. These establish synthetic interaction/layout evidence, not a real JM/Pica reading acceptance. No user account query, author scan, manga download, app start/stop or library/inventory/history edit ran during development. The small MIT Komga adaptation and existing source/ZIP/image reuse are documented with notices.
+
+Dev delivery: `Documents/Codex/MangaMonitor-Dev-20260926-ea855c1/mangamonitor-workbench-preview.exe`, SHA-256 `81db795b1bdc81951d5f58d4383e204d4a440c10369243412c94489e65d91bb7`. Artifact digest, ZIP CRC, x64 PE, embedded revision and both existing Dev shortcuts verified. Prior executables/shortcuts remain; the running app was not closed. Exit and reopen Dev to accept the reader. Private report and receipts: `Documents/Codex/MangaMonitor-reader-development-20260926`. Dev remains 0.3.4, PR #19 draft/unmerged and production disabled; no installer installation or formal release. Evidence-only notes remain local until the next necessary push.
+
+Current roadmap: reader user acceptance → overall UI/interaction refinement → formal release preparation. A6 all-author acceptance stays deferred. The preceding recent-feed position correction is user-accepted.

@@ -6,6 +6,146 @@ use std::{
 };
 
 #[test]
+fn native_registered_reader_windows_bind_requests_isolate_pages_and_keep_mutations_main_only() {
+    let (private, app) = fixture();
+    let main = window(&app, "main");
+    let media = tempfile::tempdir().unwrap();
+    let mut encoded = Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(8, 8)
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .unwrap();
+    for name in ["synthetic-a.zip", "synthetic-b.zip"] {
+        let mut zip = zip::ZipWriter::new(fs::File::create(media.path().join(name)).unwrap());
+        zip.start_file("1.png", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(encoded.get_ref()).unwrap();
+        zip.finish().unwrap();
+    }
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let mut service = workbench_library::LibraryService::new();
+    let mut snapshot = service.choose(&store, media.path()).unwrap();
+    while snapshot.phase == workbench_library::LibraryPhase::Reading {
+        snapshot = service
+            .scan(
+                &store,
+                snapshot.root_id.as_deref().unwrap(),
+                snapshot.generation,
+                workbench_library::ScanAction::Next,
+            )
+            .unwrap();
+    }
+    let request = |index: usize| json!({"kind":"library","rootId":snapshot.root_id,"generation":snapshot.generation,"entryId":snapshot.items[index].id});
+    let readers = app.state::<Arc<crate::reader_windows::ReaderWindows>>();
+    let reserved_a = readers
+        .reserve(serde_json::from_value(request(0)).unwrap())
+        .unwrap();
+    let reserved_b = readers
+        .reserve(serde_json::from_value(request(1)).unwrap())
+        .unwrap();
+    let a = window(&app, &reserved_a.label);
+    let b = window(&app, &reserved_b.label);
+    let forged = window(&app, "reader-window-forged");
+    assert_eq!(
+        invoke(&a, "reader_window_context", json!({})).unwrap()["request"],
+        request(0)
+    );
+    assert_eq!(
+        invoke(&forged, "reader_window_context", json!({})).unwrap_err(),
+        json!({"code":"FORBIDDEN"})
+    );
+    assert!(invoke(
+        &a,
+        "reader_open",
+        json!({"requestId":"wrong-book","request":request(1)})
+    )
+    .is_err());
+    assert!(invoke_from(
+        &a,
+        "https://example.invalid",
+        "reader_window_context",
+        json!({})
+    )
+    .is_err());
+    let book_a = invoke(
+        &a,
+        "reader_open",
+        json!({"requestId":"shared-token","request":request(0)}),
+    )
+    .unwrap();
+    let book_b = invoke(
+        &b,
+        "reader_open",
+        json!({"requestId":"shared-token","request":request(1)}),
+    )
+    .unwrap();
+    let book_main = invoke(
+        &main,
+        "reader_open",
+        json!({"requestId":"shared-token","request":request(0)}),
+    )
+    .unwrap();
+    assert_ne!(book_a["readerId"], book_b["readerId"]);
+    assert_ne!(book_a["readerId"], book_main["readerId"]);
+    let page_a = json!({"readerId":book_a["readerId"],"chapterId":book_a["chapters"][0]["id"],"pageIndex":0});
+    assert_eq!(
+        invoke(&a, "reader_page", page_a.clone()).unwrap()["width"],
+        8
+    );
+    assert_eq!(
+        invoke(&b, "reader_page", page_a.clone()).unwrap_err(),
+        json!({"code":"READER_CLOSED"})
+    );
+    let before = invoke(&main, "jm_download_read", json!({})).unwrap();
+    for (command, body) in [
+        ("source_accounts", json!({})),
+        ("library_choose", json!({})),
+        ("jm_download_read", json!({})),
+        ("reader_window_open", json!({"request":request(0)})),
+        ("reader_main_close", json!({})),
+        ("reader_main_ready", json!({})),
+    ] {
+        assert!(invoke(&a, command, body).is_err(), "{command}");
+    }
+    // A local book, foreign session ID, or caller-supplied work ID cannot become
+    // a download handoff. No download or library action is performed by these IPCs.
+    assert!(invoke(
+        &a,
+        "reader_window_download",
+        json!({"readerId":book_a["readerId"]})
+    )
+    .is_err());
+    assert!(invoke(
+        &a,
+        "reader_window_download",
+        json!({"readerId":book_b["readerId"],"source":"JM","workId":"12345"})
+    )
+    .is_err());
+    assert_eq!(
+        invoke(&main, "jm_download_read", json!({})).unwrap(),
+        before
+    );
+    invoke(
+        &b,
+        "reader_cancel_open",
+        json!({"requestId":"shared-token"}),
+    )
+    .unwrap();
+    assert!(invoke(&a, "reader_page", page_a.clone()).is_ok());
+    invoke(&a, "reader_save_position", json!({"readerId":book_a["readerId"],"position":{"chapterId":book_a["chapters"][0]["id"],"pageIndex":0,"offset":0.3}})).unwrap();
+    invoke(&a, "reader_close", json!({"readerId":book_a["readerId"]})).unwrap();
+    assert!(invoke(&a, "reader_page", page_a).is_err());
+    let resumed = invoke(
+        &a,
+        "reader_open",
+        json!({"requestId":"resumed","request":request(0)}),
+    )
+    .unwrap();
+    assert_eq!(resumed["position"]["offset"], 0.3);
+    let main_page = json!({"readerId":book_main["readerId"],"chapterId":book_main["chapters"][0]["id"],"pageIndex":0});
+    assert!(invoke(&main, "reader_page", main_page).is_ok());
+}
+
+#[test]
 fn reader_commands_are_main_origin_only_and_reject_paths_unknown_sessions_and_invalid_positions() {
     let (_root, app) = fixture();
     let main = window(&app, "main");

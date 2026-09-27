@@ -16,7 +16,7 @@ pub(super) const fn error(code: &'static str) -> StoreError {
     StoreError { code }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
 #[serde(
     tag = "kind",
     rename_all = "lowercase",
@@ -177,6 +177,9 @@ impl PendingOpen {
 }
 
 pub(crate) struct DesktopReader {
+    namespace: String,
+    bound_request: Mutex<Option<ReaderRequest>>,
+    accepting: AtomicBool,
     pub sequence: AtomicU64,
     pub(super) current: Mutex<Option<Arc<Session>>>,
     pub(super) pending: Mutex<Option<Arc<PendingOpen>>>,
@@ -188,19 +191,110 @@ pub(crate) struct DesktopReader {
 
 impl Default for DesktopReader {
     fn default() -> Self {
-        Self {
-            sequence: AtomicU64::new(0),
-            current: Mutex::new(None),
-            pending: Mutex::new(None),
-            cancelled_requests: Mutex::new(VecDeque::new()),
-            pages: Arc::new(tokio::sync::Semaphore::new(2)),
-            fullscreen_before: Mutex::new(None),
-            progress: Arc::new(Mutex::new(())),
-        }
+        Self::scoped(
+            "main",
+            Arc::new(tokio::sync::Semaphore::new(2)),
+            Arc::new(Mutex::new(())),
+        )
     }
 }
 
 impl DesktopReader {
+    pub(crate) fn scoped(
+        namespace: &str,
+        pages: Arc<tokio::sync::Semaphore>,
+        progress: Arc<Mutex<()>>,
+    ) -> Self {
+        Self {
+            namespace: namespace.into(),
+            bound_request: Mutex::new(None),
+            accepting: AtomicBool::new(true),
+            sequence: AtomicU64::new(0),
+            current: Mutex::new(None),
+            pending: Mutex::new(None),
+            cancelled_requests: Mutex::new(VecDeque::new()),
+            pages,
+            fullscreen_before: Mutex::new(None),
+            progress,
+        }
+    }
+    pub(crate) fn session_id(&self, generation: u64) -> String {
+        format!("reader-{}-{generation}", self.namespace)
+    }
+    pub(crate) fn bind_request(&self, request: ReaderRequest) -> Result<()> {
+        let mut bound = self
+            .bound_request
+            .lock()
+            .map_err(|_| error("READER_UNAVAILABLE"))?;
+        self.cancel_all()?;
+        *bound = Some(request);
+        self.accepting.store(true, Ordering::Release);
+        Ok(())
+    }
+    pub(crate) fn retire(&self) -> Result<()> {
+        let mut bound = self
+            .bound_request
+            .lock()
+            .map_err(|_| error("READER_UNAVAILABLE"))?;
+        self.cancel_all()?;
+        *bound = None;
+        self.accepting.store(false, Ordering::Release);
+        Ok(())
+    }
+    pub(crate) fn resume(&self) {
+        self.accepting.store(true, Ordering::Release);
+    }
+    pub(super) fn begin_for(
+        &self,
+        request_id: &str,
+        request: &ReaderRequest,
+    ) -> Result<Arc<PendingOpen>> {
+        let bound = self
+            .bound_request
+            .lock()
+            .map_err(|_| error("READER_UNAVAILABLE"))?;
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(error("READER_CLOSED"));
+        }
+        if self.namespace != "main" && bound.as_ref() != Some(request) {
+            return Err(error("FORBIDDEN"));
+        }
+        self.begin(request_id)
+    }
+    pub(crate) fn cancel_all(&self) -> Result<()> {
+        let mut current = self
+            .current
+            .lock()
+            .map_err(|_| error("READER_UNAVAILABLE"))?;
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| error("READER_UNAVAILABLE"))?;
+        self.sequence.fetch_add(1, Ordering::AcqRel);
+        if let Some(session) = current.take() {
+            session.cancel();
+        }
+        if let Some(ticket) = pending.take() {
+            ticket.cancel();
+        }
+        Ok(())
+    }
+    pub(crate) fn online_reference(&self, id: &str) -> Result<LibraryReference> {
+        let session = self.session(id)?;
+        let Backend::Online(online) = &session.backend else {
+            return Err(error("READER_DOWNLOAD_UNAVAILABLE"));
+        };
+        online
+            .require_current()
+            .map_err(|problem| error(problem.code))?;
+        Ok(LibraryReference {
+            source: match online.source() {
+                workbench_accounts::ReaderSource::Jm => Source::Jm,
+                workbench_accounts::ReaderSource::Pica => Source::Pica,
+            },
+            work_id: online.work_id().into(),
+        })
+    }
     pub(super) fn begin(&self, request_id: &str) -> Result<Arc<PendingOpen>> {
         validate_request_id(request_id)?;
         let mut current = self
@@ -381,6 +475,44 @@ fn validate_request_id(value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn window_binding_pending_tokens_and_retirement_are_isolated() {
+        let main = DesktopReader::default();
+        let a = DesktopReader::scoped("reader-window-a", main.pages.clone(), main.progress.clone());
+        let b = DesktopReader::scoped("reader-window-b", main.pages.clone(), main.progress.clone());
+        let request_a = ReaderRequest::Library {
+            root_id: "a".repeat(64),
+            generation: 1,
+            entry_id: "b".repeat(64),
+        };
+        let request_b = ReaderRequest::Library {
+            root_id: "a".repeat(64),
+            generation: 1,
+            entry_id: "c".repeat(64),
+        };
+        a.bind_request(request_a.clone()).unwrap();
+        b.bind_request(request_b.clone()).unwrap();
+        assert_eq!(
+            a.begin_for("wrong-book", &request_b).err().unwrap().code,
+            "FORBIDDEN"
+        );
+        let open_a = a.begin_for("same-request-token", &request_a).unwrap();
+        let open_b = b.begin_for("same-request-token", &request_b).unwrap();
+        a.cancel_open("same-request-token").unwrap();
+        assert!(open_a.cancelled.load(Ordering::Acquire));
+        assert!(!open_b.cancelled.load(Ordering::Acquire));
+        assert!(b.require_generation(open_b.generation).is_ok());
+        a.bind_request(request_b.clone()).unwrap();
+        assert!(a.begin_for("old-context", &request_a).is_err());
+        let pending = a.begin_for("new-context", &request_b).unwrap();
+        a.retire().unwrap();
+        assert!(pending.cancelled.load(Ordering::Acquire));
+        assert_eq!(
+            a.begin_for("late-ipc", &request_b).err().unwrap().code,
+            "READER_CLOSED"
+        );
+        assert!(!open_b.cancelled.load(Ordering::Acquire));
+    }
     #[test]
     fn pending_cancel_is_token_scoped_and_remembered_before_open_starts() {
         let state = DesktopReader::default();

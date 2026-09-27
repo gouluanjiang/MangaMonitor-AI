@@ -46,3 +46,10 @@ export interface ReaderAdapter {
   close(readerId: string): Promise<void>;
   fullscreen(fullscreen: boolean): Promise<void>;
 }
+export type ReaderWindowControls = {
+  pinned: boolean;
+  pinBusy: boolean;
+  notice: string;
+  onPinnedChange(pinned: boolean): void;
+  onShowMain(): void;
+};

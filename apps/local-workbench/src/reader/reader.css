@@ -116,6 +116,16 @@
 .reader-toolbar-title small {
   color: #e3cba8;
 }
+.reader-close-error {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 1;
+  padding: 12px;
+  background: #382723;
+  color: #ffe2c5;
+}
 .reader-toolbar-controls {
   display: flex;
   align-items: center;
@@ -181,5 +191,48 @@
   }
   .reader-toolbar-zone {
     height: 150px;
+  }
+}
+@media (max-width: 540px) {
+  .reader-toolbar-zone {
+    height: min(280px, 70vh);
+  }
+  .reader-toolbar {
+    max-height: min(320px, 70vh);
+    overflow-y: auto;
+    padding: 10px 8px;
+  }
+  .reader-toolbar-title {
+    display: block;
+    margin-bottom: 8px;
+  }
+  .reader-toolbar-title > span {
+    display: block;
+    max-width: 100%;
+  }
+  .reader-toolbar-title small {
+    display: block;
+    margin-top: 4px;
+  }
+  .reader-toolbar-controls {
+    gap: 6px;
+  }
+  .comic-reader button,
+  .comic-reader select {
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+  .reader-toolbar-controls select[aria-label="选择章节"] {
+    max-width: min(190px, 48vw);
+    flex: 1;
+  }
+  .reader-toolbar-controls input[type="range"] {
+    flex-basis: 65%;
+  }
+  .reader-chapter-end {
+    bottom: min(280px, 70vh);
+    max-width: calc(100% - 20px);
+    gap: 8px;
+    padding: 8px;
   }
 }

@@ -46,3 +46,13 @@ commands.allow = ["library_read", "library_choose", "library_import_paths", "lib
 identifier = "workbench-reader"
 description = "Read selected indexed ZIP or authenticated source pages and save reading coordinates. No generic path, URL, download or inventory mutation."
 commands.allow = ["reader_open", "reader_cancel_open", "reader_chapter", "reader_page", "reader_save_position", "reader_close", "reader_fullscreen"]
+
+[[permission]]
+identifier = "workbench-reader-host"
+description = "Open a native-bound small reader and coordinate the main window close handshake."
+commands.allow = ["reader_window_open", "reader_main_ready", "reader_main_close"]
+
+[[permission]]
+identifier = "workbench-reader-child"
+description = "Operate only the calling registered reader window and hand a validated online book to main download preparation."
+commands.allow = ["reader_window_context", "reader_window_pin", "reader_window_show_main", "reader_window_download", "reader_window_close"]

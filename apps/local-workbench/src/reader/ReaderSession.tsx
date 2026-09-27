@@ -1,6 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import type { ReaderAdapter, ReaderPosition } from "./types.ts";
+import type {
+  ReaderAdapter,
+  ReaderPosition,
+  ReaderWindowControls,
+} from "./types.ts";
 import type { ComicReaderProps, ReaderSessionState } from "./ComicReader.tsx";
 import {
   ReaderDownloadError,
@@ -13,7 +17,7 @@ import {
   pageAtOffset,
   pageLayout,
   pageSegment,
-  readerWindow,
+  readerRequestedPages,
   visiblePages,
 } from "./model.ts";
 import { ReaderPage } from "./ReaderPage.tsx";
@@ -24,12 +28,14 @@ export function ReaderSession({
   onClose,
   onDownload,
   closing,
+  windowControls,
 }: {
   session: ReaderSessionState;
   adapter: ReaderAdapter;
   onClose: () => void;
   onDownload?: ComicReaderProps["onDownload"];
   closing: boolean;
+  windowControls?: ReaderWindowControls;
 }) {
   const { book, writer } = session;
   const initialChapter =
@@ -58,6 +64,9 @@ export function ReaderSession({
   const [fullscreen, setFullscreen] = useState(false);
   const [notice, setNotice] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [active, setActive] = useState(
+    () => document.visibilityState !== "hidden" && document.hasFocus(),
+  );
   const viewportRef = useRef<HTMLDivElement>(null);
   const cacheRef = useRef<ReaderPageCache | null>(null);
   const ratios = useRef(new Map<number, number>());
@@ -160,6 +169,18 @@ export function ReaderSession({
     [],
   );
   useEffect(() => {
+    const update = () =>
+      setActive(document.visibilityState !== "hidden" && document.hasFocus());
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  useEffect(() => {
     const element = viewportRef.current;
     if (!element) return;
     element.focus({ preventScroll: true });
@@ -225,6 +246,7 @@ export function ReaderSession({
         pendingAnchor.current = target;
         currentPosition.current = target;
         setPosition(target);
+        writer.set(target);
         setSegmentPage(target.pageIndex);
         setChapterCount({ id: chapterId, count: info.pageCount });
       })
@@ -279,12 +301,18 @@ export function ReaderSession({
   const visibleKey = visible.join(",");
   useEffect(() => {
     if (!count) return;
-    cacheRef.current?.request([
-      position.pageIndex,
-      ...visible,
-      ...readerWindow(position.pageIndex, count),
-    ]);
-  }, [chapterId, count, position.pageIndex, visibleKey, mode]);
+    const viewed =
+      active || mode === "single"
+        ? visible
+        : visible.filter(
+            (index) =>
+              layout.tops[index] + layout.heights[index] > logicalTop &&
+              layout.tops[index] < logicalTop + viewport.height,
+          );
+    cacheRef.current?.request(
+      readerRequestedPages(position.pageIndex, count, viewed, active),
+    );
+  }, [chapterId, count, position.pageIndex, visibleKey, mode, active]);
 
   const changeChapter = (id: string) => {
     if (id === chapterId) return;
@@ -634,7 +662,7 @@ export function ReaderSession({
         count={count}
         pageIndex={position.pageIndex}
         zoom={zoom}
-        notice={notice}
+        notice={notice || windowControls?.notice || ""}
         visible={toolbarHover || toolbarFocus}
         closing={closing}
         downloading={downloading}
@@ -657,7 +685,7 @@ export function ReaderSession({
             ? async () => {
                 setDownloading(true);
                 try {
-                  await onDownload(book.sourceRef!);
+                  await onDownload(book.sourceRef!, book.readerId);
                 } catch (failure) {
                   setNotice(
                     failure instanceof ReaderDownloadError
@@ -671,6 +699,7 @@ export function ReaderSession({
             : undefined
         }
         onFullscreen={() => void toggleFullscreen()}
+        windowControls={windowControls}
       />
     </>
   );

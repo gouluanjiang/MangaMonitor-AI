@@ -498,7 +498,7 @@ test("library languages use saved version tags and leave linked historical versi
   await page.getByTestId("library-open-" + id(1)).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
@@ -536,7 +536,7 @@ test("library detail reveals only the selected item and retains missing-file fee
   await page.getByTestId("library-open-" + id(1)).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   expect(await commands(page, "library_reveal")).toEqual([]);
   await page.getByTestId("library-reveal").click();
@@ -714,7 +714,7 @@ test("library admission sorting and state filters combine with search and preser
   await page.getByTestId("library-open-" + id(4)).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("library-added-at")).toContainText(
     "历史记录未知",
@@ -759,7 +759,7 @@ test("library version and admission dates display independently, compose with fi
   await page.getByTestId("library-open-" + id(4)).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("library-version-updated-at")).toHaveText(
     "版本更新：2026-09-02",
@@ -938,7 +938,7 @@ test("decoded offscreen covers release while compressed covers survive scrolling
   await page.getByTestId("library-open-" + id(1)).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("library-detail").locator("img")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
@@ -1004,7 +1004,7 @@ test("PC density changes and a detail return retain a deep catalog anchor", asyn
   await page.getByTestId("library-open-" + anchor).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
@@ -1035,7 +1035,7 @@ test("retired phone and classification lists neither appear nor load, while PC s
   await page.getByTestId("library-open-" + id(1)).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("library-source-id")).toHaveCount(0);
   await expect(page.getByTestId("library-link")).toHaveCount(0);
@@ -1048,7 +1048,7 @@ test("retired phone and classification lists neither appear nor load, while PC s
   await page.getByTestId("library-open-" + id(1)).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(
     page.getByTestId("library-detail").getByRole("heading", { level: 1 }),

@@ -193,22 +193,48 @@ function Dialog({
 }
 
 export default function App() {
-  const readerHost = useReaderHost(persistence.native, async (reference) => {
-    if (!getDownloadScope(accountsRef.current, reference.source))
-      throw new ReaderDownloadError("请返回设置连接对应来源账号，再准备下载。");
-    if (!library.controller.getState().snapshot.rootId)
-      throw new ReaderDownloadError("请先在设置中选择漫画库目录，再准备下载。");
-    if (downloads.controller.getState().busy)
-      throw new ReaderDownloadError("其他下载正在准备，请稍后再试。");
-    await beginDownload(reference.workId, undefined, reference.source);
-    const current = downloads.controller.getState();
-    if (current.error)
-      throw new ReaderDownloadError(downloadErrorMessage(current.error));
-    if (!current.plan)
-      throw new ReaderDownloadError(
-        "暂时无法准备下载，请返回下载队列查看状态。",
-      );
-  });
+  const readerDownloadPending = useRef(false);
+  const readerHost = useReaderHost(
+    persistence.native,
+    async (reference) => {
+      if (readerDownloadPending.current)
+        throw new ReaderDownloadError("其他下载正在准备，请稍后再试。");
+      readerDownloadPending.current = true;
+      try {
+        if (!getDownloadScope(accountsRef.current, reference.source))
+          throw new ReaderDownloadError(
+            "请返回设置连接对应来源账号，再准备下载。",
+          );
+        if (!library.controller.getState().snapshot.rootId)
+          throw new ReaderDownloadError(
+            "请先在设置中选择漫画库目录，再准备下载。",
+          );
+        const state = downloads.controller.getState();
+        if (state.plan || state.batchPlan)
+          throw new ReaderDownloadError(
+            "请先处理主界面中已有的下载确认，再准备其他作品。",
+          );
+        if (state.busy)
+          throw new ReaderDownloadError("其他下载正在准备，请稍后再试。");
+        await beginDownload(
+          reference.workId,
+          undefined,
+          reference.source,
+          true,
+        );
+        const current = downloads.controller.getState();
+        if (current.error)
+          throw new ReaderDownloadError(downloadErrorMessage(current.error));
+        if (!current.plan)
+          throw new ReaderDownloadError(
+            "暂时无法准备下载，请返回下载队列查看状态。",
+          );
+      } finally {
+        readerDownloadPending.current = false;
+      }
+    },
+    (message) => setNotice(message),
+  );
   const [downloadInput, setDownloadInput] = useState("");
   const [downloadSource, setDownloadSource] = useState<DownloadSource>("JM");
   const [downloadFeedback, setDownloadFeedback] = useState(false);
@@ -620,6 +646,7 @@ export default function App() {
     input: string,
     work?: SourceWork,
     requestedSource: DownloadSource = work?.source ?? downloadSource,
+    preserveExistingPlan = false,
   ) {
     const downloadScope = getDownloadScope(
       accountsRef.current,
@@ -679,6 +706,13 @@ export default function App() {
       setNotice("账号或电脑目录已改变，请核对后重新准备下载。");
       return;
     }
+    // The queue recheck above yields. A reader handoff must not replace a
+    // confirmation created by another entry point while it was waiting.
+    const prepared = downloads.controller.getState();
+    if (preserveExistingPlan && (prepared.plan || prepared.batchPlan))
+      throw new ReaderDownloadError(
+        "请先处理主界面中已有的下载确认，再准备其他作品。",
+      );
     if (inputs.length > 1) {
       await downloads.controller.prepareBatch(downloadContext, inputs);
       return;

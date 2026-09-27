@@ -11,6 +11,53 @@ export function readerWindow(current: number, count: number): number[] {
     (page) => page >= 0 && page < count && isReaderNeighbor(current, page),
   );
 }
+export function readerRequestedPages(
+  current: number,
+  count: number,
+  visible: readonly number[],
+  active: boolean,
+): number[] {
+  if (!count) return [];
+  return [
+    ...new Set([
+      current,
+      ...visible,
+      ...(active ? readerWindow(current, count) : []),
+    ]),
+  ]
+    .filter((index) => index >= 0 && index < count)
+    .slice(0, 12);
+}
+
+// One mounted reader owns one native open. Closing its window cancels a pending
+// open or awaits that reader's flush/close, without touching another window.
+export class ReaderLifetime {
+  private stopped = false;
+  private attached: (() => Promise<void>) | null = null;
+  private closing: Promise<void> | null = null;
+  private readonly cancel: () => Promise<void>;
+  constructor(cancel: () => Promise<void>) {
+    this.cancel = cancel;
+  }
+  attach(close: () => Promise<void>): boolean {
+    this.attached = close;
+    if (!this.stopped) return true;
+    void close().catch(() => undefined);
+    return false;
+  }
+  close(): Promise<void> {
+    this.stopped = true;
+    if (this.closing) return this.closing;
+    const closing = (this.attached ? this.attached() : this.cancel()).catch(
+      (failure) => {
+        if (this.closing === closing) this.closing = null;
+        throw failure;
+      },
+    );
+    this.closing = closing;
+    return closing;
+  }
+}
 export function clampPosition(
   position: ReaderPosition,
   count: number,

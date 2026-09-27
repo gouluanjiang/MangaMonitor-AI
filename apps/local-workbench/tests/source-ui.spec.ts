@@ -185,7 +185,7 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   await page.getByTestId("source-open-" + anchor).click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -215,7 +215,7 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   await page.getByTestId("source-open-JM:2000").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -677,7 +677,7 @@ test("partial favorites rebind scrolling after detail and do not fetch more for 
   await page.getByTestId("source-open-JM:1").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -1601,7 +1601,7 @@ test("both source lists show tag-only language badges without detail requests an
   await page.getByTestId("source-open-Pica:3").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(
     page.getByTestId("source-detail").getByTestId("source-language-badge"),
@@ -2105,7 +2105,7 @@ test("source covers release offscreen images but reuse successful session thumbn
   await page.getByTestId("source-open-JM:100").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await expect(
@@ -2243,7 +2243,7 @@ test("source search stays right-aligned at baseline width and fits a narrow wind
   await page.getByTestId("source-open-JM:123").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail").locator("h1")).toBeVisible();
   const detailLayout = await page
@@ -2390,14 +2390,14 @@ test("source search date order is stable, unknown-last, persistent and independe
   await page.getByTestId("source-open-JM:201").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-15");
   await page.getByTestId("source-detail-back").click();
   await page.getByTestId("source-open-JM:203").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-22");
   await page.getByTestId("source-detail-back").click();
@@ -2823,7 +2823,7 @@ async function detail(page: Page, source: Source = "JM") {
   await page.getByTestId("source-open-" + source + ":123").click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toContainText(
     "合成验收 " + source,

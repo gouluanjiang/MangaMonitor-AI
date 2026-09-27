@@ -31,6 +31,8 @@ export function readerErrorMessage(error: unknown): string {
           : error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
             ? error.message
             : "";
+  if (code.startsWith("READER_WINDOW_"))
+    return "暂时无法打开阅读小窗，请重试。";
   if (/SESSION|AUTH|LOGIN/.test(code))
     return "来源账号需要重新连接。已保存的阅读位置会保留。";
   if (/CHANGED|STALE|MISSING|NOT_FOUND/.test(code))

@@ -329,7 +329,7 @@ test("both recent feeds preserve source order, language and unknown dates and re
     .click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -721,7 +721,7 @@ test("programmatic position changes, resizing, detail return and hidden or filte
     .click();
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "作品详情", exact: true })
+    .getByRole("button", { name: "漫画详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();

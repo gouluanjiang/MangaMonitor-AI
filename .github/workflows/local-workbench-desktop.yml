@@ -25,6 +25,7 @@ on:
       - 'docs/USER_GUIDE.md'
       - 'docs/RELEASE_NOTES_*.md'
       - 'scripts/collect-release-licenses*'
+      - 'scripts/verify-nsis-bundle*'
       - 'third-party/dependency-licenses/**'
       - '.github/workflows/local-workbench-desktop.yml'
   pull_request:
@@ -51,6 +52,7 @@ on:
       - 'docs/USER_GUIDE.md'
       - 'docs/RELEASE_NOTES_*.md'
       - 'scripts/collect-release-licenses*'
+      - 'scripts/verify-nsis-bundle*'
       - 'third-party/dependency-licenses/**'
       - '.github/workflows/local-workbench-desktop.yml'
   workflow_dispatch:
@@ -132,8 +134,8 @@ jobs:
       - name: Build frontend assets for native context tests
         working-directory: apps/local-workbench
         run: pnpm build
-      - name: Test license collection with synthetic packages
-        run: node --test scripts/collect-release-licenses.test.mjs
+      - name: Test license collection and NSIS binary verification
+        run: node --test scripts/collect-release-licenses.test.mjs scripts/verify-nsis-bundle.test.mjs
       - name: Fetch locked native dependencies for license resources
         # tauri-build also reads resources during native tests; generate them first.
         run: cargo +1.98.1 fetch --locked --manifest-path apps/local-workbench/src-tauri/Cargo.toml --target x86_64-pc-windows-msvc

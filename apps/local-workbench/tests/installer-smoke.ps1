@@ -63,6 +63,7 @@ $evidence = [ordered]@{
     scope = 'fresh install, installed WebView startup/restart, same-candidate reinstall, uninstall preserving synthetic data, install again'
     historical034Upgrade = 'not tested'
     interactiveInstallerPages = 'not tested; silent current-user installation'
+    binary = $null
     steps = [Collections.Generic.List[string]]::new()
     passed = $false
 }
@@ -86,7 +87,16 @@ function Invoke-InstallerProcess([string] $Executable, [string] $Arguments) {
     if ($process.ExitCode -ne 0) { throw "Installer process failed with exit code $($process.ExitCode)." }
 }
 function Assert-Installed {
-    Assert-SameFile $builtExecutable $installedExecutable
+    if (-not (Test-Path -LiteralPath $installedExecutable -PathType Leaf)) {
+        throw 'The installed executable is missing from the requested directory.'
+    }
+    if ($null -eq $evidence.binary) {
+        $binaryEvidence = & node (Join-Path $repository 'scripts/verify-nsis-bundle.mjs') $builtExecutable $installedExecutable
+        if ($LASTEXITCODE -ne 0) { throw 'Installed executable verification failed.' }
+        $evidence.binary = $binaryEvidence | ConvertFrom-Json
+    } elseif ((Get-FileHash -LiteralPath $installedExecutable -Algorithm SHA256).Hash -ine $evidence.binary.installedSha256) {
+        throw 'Reinstalled executable differs from the verified first installation.'
+    }
     foreach ($resource in $resources.GetEnumerator()) {
         Assert-SameFile $resource.Value (Join-Path $installDirectory $resource.Key)
     }

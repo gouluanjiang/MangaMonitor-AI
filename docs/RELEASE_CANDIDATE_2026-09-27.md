@@ -60,6 +60,17 @@ registry cache instead; fixtures now model the real `registry/src` and
 `registry/cache` siblings. Missing or changed archives still stop packaging.
 Neither failed run produced a candidate installer for delivery.
 
+The next run passed actual license collection (357 components), 19 license
+regressions, 49 native tests, Clippy and NSIS construction. Its first-install
+check then found the pinned Tauri bundler's expected binary patch: it changes
+the first `__TAURI_BUNDLE_TYPE_VAR_UNK` marker to the equal-length
+`__TAURI_BUNDLE_TYPE_VAR_NSS`, then restores the unbundled executable afterward.
+The installer check now constructs only that documented patch in memory and
+requires all installed bytes to match; it does not alter either executable or
+accept unrelated differences. The delivered executable remains the installed
+copy that the native WebView suite actually exercises. This failed validation
+did not publish a candidate artifact.
+
 CI packaging/lifecycle checks and candidate artifact verification are in
 progress. No candidate-installation acceptance or public-release completion is
 claimed. Prior functional acceptance remains valid; the deferred all-author

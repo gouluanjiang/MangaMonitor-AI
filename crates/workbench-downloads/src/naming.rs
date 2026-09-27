@@ -1,6 +1,31 @@
 //! Shared JM/Pica external naming. Source identity remains in the metadata.
 use workbench_storage::JmDownloadMetadata;
 
+/// Use Windows ordinal case comparison for the desktop's destination names.
+/// The portable diagnostic path conservatively reserves Unicode case variants.
+pub(crate) fn same_destination(left: &str, right: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Globalization::{CompareStringOrdinal, CSTR_EQUAL};
+        let left: Vec<_> = left.encode_utf16().collect();
+        let right: Vec<_> = right.encode_utf16().collect();
+        // Both buffers stay alive for the call; filesystem names fit in i32.
+        unsafe {
+            CompareStringOrdinal(
+                left.as_ptr(),
+                left.len() as i32,
+                right.as_ptr(),
+                right.len() as i32,
+                1,
+            ) == CSTR_EQUAL
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        left.to_uppercase() == right.to_uppercase()
+    }
+}
+
 fn comparable(value: &str) -> String {
     value
         .chars()

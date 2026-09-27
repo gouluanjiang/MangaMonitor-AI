@@ -284,6 +284,42 @@ impl DownloadService {
         }
         Ok(())
     }
+    /// Compare only previews retained by this explicit selection. Unrelated or
+    /// cancelled single-work previews do not reserve a destination indefinitely.
+    /// A rejected new preview is discarded; retained previews are never changed.
+    pub fn check_prepared_destinations(
+        &self,
+        plan_id: &str,
+        reserved_plan_ids: &[String],
+    ) -> Result<()> {
+        let mut runtime = self.lock()?;
+        let result = (|| {
+            if reserved_plan_ids.len() > MAX_DOWNLOAD_SELECTION {
+                return Err(error("DOWNLOAD_BATCH_LIMIT"));
+            }
+            let current = runtime
+                .plans
+                .get(plan_id)
+                .ok_or(error("DOWNLOAD_PLAN_STALE"))?;
+            for id in reserved_plan_ids {
+                let old = runtime.plans.get(id).ok_or(error("DOWNLOAD_PLAN_STALE"))?;
+                if id != plan_id
+                    && old.record.root == current.record.root
+                    && crate::naming::same_destination(
+                        &old.record.destination,
+                        &current.record.destination,
+                    )
+                {
+                    return Err(error("DOWNLOAD_DESTINATION_EXISTS"));
+                }
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            runtime.plans.remove(plan_id);
+        }
+        result
+    }
     /// All selections are validated before the single durable queue write.
     /// A plan token is immutable; unrelated task progress may advance the
     /// document revision, so conflicts are freshly checked against that value.
@@ -618,6 +654,7 @@ impl DownloadService {
                     .library_entry_id
                     .clone()
                     .ok_or(error("DOWNLOAD_DOCUMENT_INVALID"))?,
+                output_identity: task.output_identity.clone(),
             });
         }
         for item in evidence {
@@ -872,6 +909,7 @@ impl DownloadService {
                 _ => {}
             }
             require_library_at(store, &record, admission.library_generation)?;
+            presence::require_output_destination(&record)?;
             let workspace = store.open_download_workspace()?;
             let path = workspace.path().to_path_buf();
             runtime.queued.remove(task_id);
@@ -1246,6 +1284,13 @@ fn check_new_download(
     let root = materialize::require_root(record)?;
     let mut missing = BTreeSet::new();
     for old in &downloads.tasks {
+        if old.root == record.root
+            && old.phase != DownloadPhase::Downloaded
+            && (old.source != record.source || old.metadata.work_id != record.metadata.work_id)
+            && crate::naming::same_destination(&old.destination, &record.destination)
+        {
+            return Err(error("DOWNLOAD_DESTINATION_EXISTS"));
+        }
         if old.source != record.source
             || old.metadata.work_id != record.metadata.work_id
             || old.root.id != record.root.id
@@ -1283,17 +1328,16 @@ fn check_new_download(
             && old.work_id == record.metadata.work_id
             && old.root.id == record.root.id
             && old.root.file_key == record.root.file_key
-            && presence::probe_path(
-                &root,
-                library
-                    .relocated_path(&old.destination)
-                    .map_or(&old.destination, |v| &v.new_path),
-            )?
-            .is_some()
         {
-            // Clearing history cannot turn an existing original directory into
-            // a new work when the upstream title or a manual association changes.
-            return Err(error("DOWNLOAD_ALREADY_PRESENT"));
+            let relocated = library.relocated_path(&old.destination);
+            let entry_id = relocated.map_or(&old.library_entry_id, |v| &v.new_item_id);
+            let indexed = library.records.iter().find(|r| r.item.id == *entry_id);
+            match presence::check_history(old, relocated, indexed) {
+                LocalFiles::Missing => {}
+                LocalFiles::Present => return Err(error("DOWNLOAD_ALREADY_PRESENT")),
+                LocalFiles::Incomplete => return Err(error("DOWNLOAD_LOCAL_FILES_INCOMPLETE")),
+                LocalFiles::Unavailable => return Err(error("DOWNLOAD_LOCAL_FILES_UNAVAILABLE")),
+            }
         }
     }
     // Only a stale row at the exact selected output path can be retired here.
@@ -1309,7 +1353,7 @@ fn check_new_download(
     if root
         .names()?
         .iter()
-        .any(|name| name.eq_ignore_ascii_case(&record.destination))
+        .any(|name| crate::naming::same_destination(name, &record.destination))
     {
         return Err(error("DOWNLOAD_DESTINATION_EXISTS"));
     }

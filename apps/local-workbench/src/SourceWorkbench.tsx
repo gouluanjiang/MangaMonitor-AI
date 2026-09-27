@@ -7,7 +7,7 @@ import {
   readCompleteSearch,
   readCompleteAuthorSearch,
 } from "./source-search.ts";
-import type { SearchProgress } from "./source-search.ts";
+import type { SearchPagination, SearchProgress } from "./source-search.ts";
 import { authorQueryError } from "./author-query.ts";
 import { partitionAuthorWorks, projectAuthorWork } from "./author-evidence.ts";
 import { AuthorCreditNote } from "./AuthorCreditNote.tsx";
@@ -385,6 +385,7 @@ export function SourceWorkbench({
   const [searchReadAt, setSearchReadAt] = useState<number | null>(null);
   const searchRecords = useRef(0);
   const searchIssues = useRef<SourceItemIssue[]>([]);
+  const searchPagination = useRef<SearchPagination | undefined>(undefined);
   const [searchIssueView, setSearchIssueView] = useState<SourceItemIssue[]>([]);
   const [pageInfo, setPageInfo] = useState<SourcePage | null>(null);
   const [loading, setLoading] = useState(false);
@@ -777,6 +778,7 @@ export function SourceWorkbench({
       setShowOtherAuthorResults(false);
       searchRecords.current = 0;
       searchIssues.current = [];
+      searchPagination.current = undefined;
       setSearchIssueView([]);
       setItems([]);
       setPageInfo(null);
@@ -790,6 +792,7 @@ export function SourceWorkbench({
       const onPage = (progress: SearchProgress) => {
         searchRecords.current = progress.recordsRead;
         searchIssues.current = progress.issues;
+        searchPagination.current = progress.pagination;
         setSearchIssueView(progress.issues);
         itemsRef.current = progress.items;
         setItems(progress.items);
@@ -827,6 +830,7 @@ export function SourceWorkbench({
           items: append ? itemsRef.current : [],
           recordsRead: searchRecords.current,
           issues: append ? searchIssues.current : [],
+          pagination: append ? searchPagination.current : undefined,
           onPage,
         });
     } catch (cause) {

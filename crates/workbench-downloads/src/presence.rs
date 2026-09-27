@@ -43,9 +43,40 @@ pub(crate) fn check(record: &DownloadRecord) -> LocalFiles {
     check_inner(record).unwrap_or(LocalFiles::Unavailable)
 }
 
+/// Reject a newly occupied target before acquiring media. A resumed task can
+/// use only its previously reserved native output, which saving verifies fully.
+pub(crate) fn require_output_destination(record: &DownloadRecord) -> Result<()> {
+    let root = materialize::require_root(record)?;
+    let occupied = root
+        .names()?
+        .iter()
+        .any(|name| crate::naming::same_destination(name, &record.destination));
+    match (&record.output_identity, occupied) {
+        (None, false) => {}
+        (None, true) => return Err(error("DOWNLOAD_DESTINATION_EXISTS")),
+        (Some(_), false) => return Err(error("DOWNLOAD_OUTPUT_CHANGED")),
+        (Some(expected), true) => {
+            let key = match root.probe(&record.destination)? {
+                Some(EntryKind::File(_)) if record.zip_output => {
+                    crate::fs::file_key(&root.read(&record.destination)?)?
+                }
+                Some(EntryKind::Directory) if !record.zip_output => {
+                    root.child(&record.destination)?.key()?
+                }
+                _ => return Err(error("DOWNLOAD_OUTPUT_CHANGED")),
+            };
+            if key != *expected {
+                return Err(error("DOWNLOAD_OUTPUT_CHANGED"));
+            }
+        }
+    }
+    materialize::require_root(record)?;
+    Ok(())
+}
+
 /// Clearing queue history retains a receipt, not a manga identity relation.
-/// The recorded path and current file identity are the only library evidence
-/// used here. Titles, source metadata and old manual links are irrelevant.
+/// The original output identity and verified relocation bind its current path.
+/// Titles, source metadata and old manual links do not establish that binding.
 pub(crate) fn check_history(
     receipt: &workbench_storage::DownloadHistoryEvidence,
     relocated: Option<&workbench_storage::LibraryRelocation>,
@@ -71,6 +102,17 @@ pub(crate) fn check_history(
         let Some(expected) = relocated.map(|v| &v.identity).or(record.identity.as_ref()) else {
             return Ok(LocalFiles::Unavailable);
         };
+        // A rescan can replace the row at the same path with another file.
+        // Only the immutable task identity, or a separately verified relocation,
+        // binds a compact receipt to that row. Legacy receipts remain unknown.
+        if relocated.is_none() {
+            let Some(original) = receipt.output_identity.as_ref() else {
+                return Ok(LocalFiles::Unavailable);
+            };
+            if expected.file_key != *original {
+                return Ok(LocalFiles::Incomplete);
+            }
+        }
         if record.item.relative_path != path
             || record.item.state != workbench_storage::LibraryItemState::Indexed
             || record.item.error_code.is_some()

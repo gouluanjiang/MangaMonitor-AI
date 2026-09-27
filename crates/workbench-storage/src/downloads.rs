@@ -139,6 +139,10 @@ pub struct DownloadHistoryEvidence {
     pub root: LibraryRoot,
     pub destination: String,
     pub library_entry_id: String,
+    /// Original output identity from the completed task, never a later scan.
+    /// Older compact receipts cannot establish unchanged-file ownership alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_identity: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -192,6 +196,10 @@ impl ValidatedDocument for DownloadsDocument {
                 || old.destination.contains('/')
                 || old.destination.encode_utf16().count() > 180
                 || !hash(&old.library_entry_id)
+                || old
+                    .output_identity
+                    .as_ref()
+                    .is_some_and(|identity| !hash(identity))
                 || !evidence.insert((
                     old.source,
                     &old.work_id,
@@ -199,6 +207,7 @@ impl ValidatedDocument for DownloadsDocument {
                     &old.root.file_key,
                     &old.destination,
                     &old.library_entry_id,
+                    &old.output_identity,
                 ))
             {
                 return Err(invalid());

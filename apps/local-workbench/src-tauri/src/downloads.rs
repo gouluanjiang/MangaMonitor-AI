@@ -303,6 +303,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
         downloads.preparation_epoch.load(Ordering::Acquire)
     };
     let mut seen = HashSet::new();
+    let mut reserved_plan_ids = Vec::new();
     {
         let mut batches = downloads
             .batches
@@ -313,6 +314,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
         }
         for id in &retained {
             let batch = &batches[id];
+            reserved_plan_ids.extend(batch.plans.iter().map(|plan| plan.plan_id.clone()));
             if batch.session.source() == scope.source {
                 seen.extend(batch.work_ids.iter().cloned());
             }
@@ -365,22 +367,30 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
             let store = Arc::clone(&store);
             let root_id = root_id.clone();
             let session = session.clone();
+            let reserved_plan_ids = reserved_plan_ids.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 session.require_current().map_err(|e| error(e.code))?;
-                downloads.service.prepare_for_source(
+                let plan = downloads.service.prepare_for_source(
                     &store,
                     &root_id,
                     generation,
                     storage_source(scope.source),
                     metadata,
-                )
+                )?;
+                downloads
+                    .service
+                    .check_prepared_destinations(&plan.plan_id, &reserved_plan_ids)?;
+                Ok::<_, StoreError>(plan)
             })
             .await
             .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?
         }
         .await;
         match prepared {
-            Ok(plan) => result.plans.push(plan),
+            Ok(plan) => {
+                reserved_plan_ids.push(plan.plan_id.clone());
+                result.plans.push(plan);
+            }
             Err(problem) => result.issues.push(DownloadBatchIssue {
                 input,
                 error_code: problem.code,

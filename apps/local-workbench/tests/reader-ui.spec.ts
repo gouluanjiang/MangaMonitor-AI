@@ -12,6 +12,7 @@ declare global {
       failChapter: string | null;
       firstChapterPages: number;
       imageHeight: number;
+      finalImageHeight: number | null;
       hold: boolean;
       release?: () => void;
       holdOpen: boolean;
@@ -50,6 +51,7 @@ test.beforeEach(async ({ page }) => {
       failChapter: null,
       firstChapterPages: 10000,
       imageHeight: 1000,
+      finalImageHeight: null,
       hold: false,
       holdOpen: false,
     } as Window["readerTest"]);
@@ -99,11 +101,16 @@ test.beforeEach(async ({ page }) => {
           if (state.fail === args.pageIndex)
             throw { code: "READER_IMAGE_DECODE" };
           const canvas = document.createElement("canvas");
+          const count = args.chapterId === "one" ? state.firstChapterPages : 3;
+          const height =
+            args.pageIndex === count - 1
+              ? (state.finalImageHeight ?? state.imageHeight)
+              : state.imageHeight;
           canvas.width = 720;
-          canvas.height = state.imageHeight;
+          canvas.height = height;
           const context = canvas.getContext("2d")!;
           context.fillStyle = args.chapterId === "one" ? "#593982" : "#245e47";
-          context.fillRect(0, 0, 720, state.imageHeight);
+          context.fillRect(0, 0, 720, height);
           context.fillStyle = "#fff";
           context.font = "50px sans-serif";
           context.fillText(
@@ -117,7 +124,7 @@ test.beforeEach(async ({ page }) => {
             pageIndex: args.pageIndex,
             dataUrl: canvas.toDataURL("image/png"),
             width: 720,
-            height: state.imageHeight,
+            height,
           };
         }
         case "reader_save_position":
@@ -175,7 +182,7 @@ async function openOnline(page: Page) {
   await page.getByRole("button", { name: "程序内阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
 }
-async function jump(page: Page, number: number) {
+async function jump(page: Page, number: number, count = 10000) {
   await showToolbar(page);
   await page
     .getByRole("slider", { name: "阅读进度" })
@@ -186,7 +193,7 @@ async function jump(page: Page, number: number) {
       )!.set!.call(input, String(value));
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }, number);
-  await expect(page.getByLabel("当前页码")).toHaveText(`${number} / 10000`);
+  await expect(page.getByLabel("当前页码")).toHaveText(`${number} / ${count}`);
 }
 
 test("local cover offers reading and details; large chapters stay virtual and reopening restores only position", async ({
@@ -499,6 +506,238 @@ test("fifty-thousand-page chapters cross scroll bands while dragging and reach t
     page.getByRole("img", { name: "第 1 页", exact: true }),
   ).toBeInViewport();
   await expect(page.getByLabel("当前页码")).toHaveText("1 / 50000");
+});
+
+test("a narrow vertical reader reaches a short final page naturally and restores its actual top anchor", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    window.readerTest.firstChapterPages = 3;
+    window.readerTest.imageHeight = 720;
+    window.readerTest.finalImageHeight = 360;
+  });
+  await openLibrary(page, 3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const viewport = page.getByTestId("reader-viewport");
+  await expect(
+    page.getByRole("img", { name: "第 3 页", exact: true }),
+  ).toBeVisible();
+  await page.mouse.move(180, 200);
+  await page.mouse.wheel(0, 2000);
+  await expect
+    .poll(() =>
+      viewport.evaluate((element) =>
+        Math.abs(
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+        ),
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  await expect(page.getByLabel("当前页码")).toHaveText("3 / 3");
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toBeVisible();
+  const bottom = await viewport.evaluate((element) => element.scrollTop);
+  expect(bottom).toBeGreaterThan(0);
+  await expect
+    .poll(() => page.evaluate(() => window.readerTest.saved?.offset ?? 0))
+    .toBeGreaterThan(0);
+  const saved = await page.evaluate(() => window.readerTest.saved!);
+  // Displaying the final page must not replace the earlier page/offset at the
+  // viewport top: that anchor restores the same composition on reopening.
+  expect(saved.pageIndex).toBeLessThan(2);
+  await showToolbar(page);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/reader-short-final-page.png",
+  });
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  await openLibrary(page, 3);
+  await expect(page.getByLabel("当前页码")).toHaveText("3 / 3");
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await viewport.evaluate((element) => element.scrollTop)) - bottom,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toBeVisible();
+
+  await page.mouse.move(180, 200);
+  await page.mouse.wheel(0, -80);
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("当前页码")).not.toHaveText("3 / 3");
+  await page.mouse.wheel(0, 2000);
+  await expect(page.getByLabel("当前页码")).toHaveText("3 / 3");
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, 500);
+  await expect
+    .poll(async () => Number(await viewport.getAttribute("data-zoom")))
+    .toBeLessThan(1);
+  await page.keyboard.up("Control");
+  await expect(page.getByLabel("当前页码")).toHaveText("3 / 3");
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toBeVisible();
+
+  await showToolbar(page);
+  await page.getByLabel("阅读模式").selectOption("single");
+  await expect(page.getByLabel("当前页码")).toHaveText("3 / 3");
+  await viewport.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByLabel("当前页码")).toHaveText("2 / 3");
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "下一章", exact: true }).click();
+  await expect(page.getByLabel("选择章节")).toHaveValue("two");
+  await expect(page.getByLabel("当前页码")).toHaveText("1 / 3");
+});
+
+test("twenty known short pages at minimum zoom keep the final image visible before chapter completion", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    window.readerTest.firstChapterPages = 20;
+    window.readerTest.imageHeight = 360;
+  });
+  await openLibrary(page, 20);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const viewport = page.getByTestId("reader-viewport");
+  await showToolbar(page);
+  await page.getByLabel("阅读模式").selectOption("single");
+  await viewport.focus();
+  // Resolve every ratio before zooming out; estimates could otherwise conceal
+  // the case where more than twelve very short images fit into the viewport.
+  for (let index = 1; index <= 20; index++) {
+    await expect(
+      page.getByRole("img", { name: `第 ${index} 页`, exact: true }),
+    ).toBeVisible();
+    if (index < 20) await page.keyboard.press("ArrowRight");
+  }
+  await showToolbar(page);
+  await page.getByLabel("阅读模式").selectOption("vertical");
+  await page.mouse.move(180, 200);
+  await page.keyboard.down("Control");
+  for (let index = 0; index < 20; index++) {
+    const before = Number(await viewport.getAttribute("data-zoom"));
+    if (before === 0.25) break;
+    await page.mouse.wheel(0, 500);
+    await expect
+      .poll(async () => Number(await viewport.getAttribute("data-zoom")))
+      .toBeLessThan(before);
+  }
+  await page.keyboard.up("Control");
+  await expect(viewport).toHaveAttribute("data-zoom", "0.25");
+  await page.mouse.wheel(0, 2000);
+  await expect(page.getByLabel("当前页码")).toHaveText("20 / 20");
+  await expect(
+    page.getByRole("img", { name: "第 20 页", exact: true }),
+  ).toBeInViewport();
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toBeVisible();
+  expect(await page.locator("[data-reader-page]").count()).toBeLessThanOrEqual(
+    12,
+  );
+  await expect
+    .poll(() =>
+      viewport.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const top = bounds.top + element.clientTop;
+        const left = bounds.left + element.clientLeft;
+        const visible = Array.from(
+          element.querySelectorAll<HTMLElement>("[data-reader-page]"),
+        ).filter((slot) => {
+          const box = slot.getBoundingClientRect();
+          return (
+            box.bottom > top &&
+            box.top < top + element.clientHeight &&
+            box.right > left &&
+            box.left < left + element.clientWidth
+          );
+        });
+        // Mounted overscan may remain unloaded in an inactive window. Every
+        // page actually intersecting the viewport must have decoded pixels.
+        return (
+          visible.length > 0 &&
+          visible.every((slot) => {
+            const image = slot.querySelector("img");
+            return image !== null && image.complete && image.naturalWidth > 0;
+          })
+        );
+      }),
+    )
+    .toBe(true);
+  const finalSlot = page.locator('[data-reader-page="20"]');
+  const geometry = await finalSlot.evaluate((element) => ({
+    width: element.getBoundingClientRect().width,
+    height: element.getBoundingClientRect().height,
+    viewportWidth: element.closest(".reader-viewport")!.clientWidth,
+    viewportHeight: element.closest(".reader-viewport")!.clientHeight,
+    objectFit: getComputedStyle(element.querySelector("img")!).objectFit,
+  }));
+  expect(geometry.width).toBeCloseTo(geometry.viewportWidth * 0.25, 1);
+  expect(geometry.height).toBeCloseTo(geometry.viewportHeight / 10, 1);
+  expect(geometry.objectFit).toBe("contain");
+  await showToolbar(page);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({
+    path: "visual-evidence/reader-short-pages-minimum-zoom.png",
+  });
+});
+
+test("a narrow long chapter exposes its end only at the final scroll segment", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    window.readerTest.firstChapterPages = 50000;
+    window.readerTest.finalImageHeight = 360;
+  });
+  await openLibrary(page, 50000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await jump(page, 25000, 50000);
+  await expect(
+    page.getByRole("img", { name: "第 25000 页", exact: true }),
+  ).toBeVisible();
+  const viewport = page.getByTestId("reader-viewport");
+  const oldLast = Number(
+    await page.locator(".reader-pages").getAttribute("data-last-page"),
+  );
+  expect(oldLast).toBeLessThan(50000);
+  await viewport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect
+    .poll(async () =>
+      Number(
+        await page.locator(".reader-pages").getAttribute("data-last-page"),
+      ),
+    )
+    .toBeGreaterThan(oldLast);
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("当前页码")).not.toHaveText("50000 / 50000");
+  await jump(page, 50000, 50000);
+  await expect(
+    page.getByRole("img", { name: "第 50000 页", exact: true }),
+  ).toBeVisible();
+  await page.mouse.move(180, 200);
+  await page.mouse.wheel(0, 2000);
+  await expect(page.getByLabel("当前页码")).toHaveText("50000 / 50000");
+  await expect(
+    page.getByRole("button", { name: "下一章", exact: true }),
+  ).toBeVisible();
 });
 
 test("closing during open cancels its token and closes a late obsolete book without reopening the reader", async ({

@@ -65,14 +65,39 @@ before capture, so visual review sees the final surface.
 Local work is editing, formatter application and independent review only.
 Formal checks/builds run once per necessary revision/target in the existing CI.
 CI execution, visual review of built artifacts and verified Dev delivery are
-pending as this implementation record is first committed. No real source
+complete. The user explicitly accepted the integrated executable on 2026-09-27
+and requested the subsequent project review. No real source
 queries, scans, downloads, follow edits, library writes or account actions have
 been performed. Production remains disabled; no installer or release is created.
 
+Final head `9d0237c654295b3e6c843af4c761249a3b0df11b`, test merge
+`cd381545c7b2aac433e43f34917a069013681c5d`:
+
+- [Frontend](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36320454271):
+  formatting, type-check/build, 229 logic tests and 209 Chromium cases passed.
+- [Baseline](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36320454249):
+  both jobs passed.
+- [Windows](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36320454262):
+  offline suites, isolated credential persistence, 49 native tests, Clippy, EXE
+  build and actual isolated WebView startup/restart/reader-window checks passed.
+
+Independent screenshot review verified recent updates, narrow library,
+appearance settings, the corrected deep-scroll toolbar and stable download
+confirmation surfaces. The native lifecycle evidence reports success without
+live sources or media reads; it is not user acceptance of real accounts/media.
+
+Dev folder: `Documents/Codex/MangaMonitor-Dev-20260927-9d0237c`.
+EXE SHA-256: `fac4067bdab6d95a73759a86860ed970c15c5367ebecc492eca128fcfe40e170`.
+Artifact digest, CRC, x64 and embedded revision were checked, and both existing
+Dev shortcuts updated with verified backups. The running user app was left
+alone. The private batch report and acceptance guide are in
+`Documents/Codex/MangaMonitor-UI-integration-20260927`.
+
 ## Remaining roadmap
 
-1. Finish integration validation and deliver the Dev UI for user acceptance.
-2. Formal release preparation after that acceptance.
+1. Integrated Dev UI: user acceptance complete.
+2. [Project review](PROJECT_REVIEW_2026-09-27.md): complete; four findings await correction.
+3. Formal release preparation after the review findings are addressed.
 
 A6 full-author acceptance remains explicitly deferred. Optional historical
 enrichment and the frozen updater do not become part of this UI implementation.

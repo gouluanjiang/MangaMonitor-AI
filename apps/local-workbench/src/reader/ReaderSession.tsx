@@ -18,6 +18,7 @@ import {
   pageLayout,
   pageSegment,
   readerRequestedPages,
+  verticalReaderProgress,
   visiblePages,
 } from "./model.ts";
 import { ReaderPage } from "./ReaderPage.tsx";
@@ -92,8 +93,17 @@ export function ReaderSession({
     (chapter) => chapter.id === chapterId,
   );
   const layout = useMemo(
-    () => pageLayout(count, viewport.width * zoom, ratios.current),
-    [count, viewport.width, zoom, revision],
+    // Reserve a small page slot even for tiny/zoomed-out images. At most eleven
+    // pages can intersect the viewport, leaving room for the preceding page in
+    // the existing twelve-page render/cache budget. Images keep their fit width.
+    () =>
+      pageLayout(
+        count,
+        viewport.width * zoom,
+        ratios.current,
+        viewport.height / 10,
+      ),
+    [count, viewport.width, viewport.height, zoom, revision],
   );
   const segment = useMemo(
     () => pageSegment(layout, segmentPage),
@@ -291,6 +301,14 @@ export function ReaderSession({
         layout.heights[Math.min(count - 1, pendingAnchor.current.pageIndex)] *
           pendingAnchor.current.offset
       : segment.start + scrollTop;
+  const verticalProgress = verticalReaderProgress(
+    layout,
+    segment,
+    logicalTop,
+    viewport.height,
+  );
+  const displayedPage =
+    mode === "vertical" ? verticalProgress.pageIndex : position.pageIndex;
   const visible = count
     ? mode === "vertical"
       ? visiblePages(layout, logicalTop, viewport.height).filter(
@@ -310,9 +328,9 @@ export function ReaderSession({
               layout.tops[index] < logicalTop + viewport.height,
           );
     cacheRef.current?.request(
-      readerRequestedPages(position.pageIndex, count, viewed, active),
+      readerRequestedPages(displayedPage, count, viewed, active),
     );
-  }, [chapterId, count, position.pageIndex, visibleKey, mode, active]);
+  }, [chapterId, count, displayedPage, visibleKey, mode, active]);
 
   const changeChapter = (id: string) => {
     if (id === chapterId) return;
@@ -353,7 +371,11 @@ export function ReaderSession({
   };
   const changeMode = (next: "vertical" | "single") => {
     if (next === mode) return;
-    const value = { ...capturePosition(), offset: 0 };
+    const value = {
+      ...capturePosition(),
+      pageIndex: displayedPage,
+      offset: 0,
+    };
     pendingAnchor.current = value;
     setSegmentPage(value.pageIndex);
     setMode(next);
@@ -570,8 +592,9 @@ export function ReaderSession({
   };
   const atEnd =
     count > 0 &&
-    position.pageIndex === count - 1 &&
-    (mode === "single" || logicalTop + viewport.height >= layout.total - 36);
+    (mode === "single"
+      ? position.pageIndex === count - 1
+      : verticalProgress.atEnd);
   return (
     <>
       <div
@@ -660,7 +683,7 @@ export function ReaderSession({
         chapterId={chapterId}
         mode={mode}
         count={count}
-        pageIndex={position.pageIndex}
+        pageIndex={displayedPage}
         zoom={zoom}
         notice={notice || windowControls?.notice || ""}
         visible={toolbarHover || toolbarFocus}

@@ -1079,6 +1079,334 @@ test("short, repeated and failed pages retain partial data and never report full
   }
 });
 
+test("search rejects total and page-count drift before publishing the changed page", async () => {
+  for (const [before, after] of [
+    [
+      { total: 4, pages: null },
+      { total: 3, pages: null },
+    ],
+    [
+      { total: 3, pages: null },
+      { total: 4, pages: null },
+    ],
+    [
+      { total: null, pages: 3 },
+      { total: null, pages: 2 },
+    ],
+    [
+      { total: null, pages: 2 },
+      { total: null, pages: 3 },
+    ],
+    [
+      { total: null, pages: null },
+      { total: 3, pages: null },
+    ],
+    [
+      { total: 3, pages: null },
+      { total: null, pages: null },
+    ],
+    [
+      { total: null, pages: null },
+      { total: null, pages: 2 },
+    ],
+    [
+      { total: null, pages: 2 },
+      { total: null, pages: null },
+    ],
+  ]) {
+    const calls = [],
+      seen = [];
+    await assert.rejects(
+      readCompleteSearch(
+        {
+          query: async (scope, request) => {
+            calls.push(request.page);
+            return {
+              ...scope,
+              page: request.page,
+              folders: [],
+              ...(request.page === 1 ? before : after),
+              hasMore: request.page === 1,
+              items:
+                request.page === 1
+                  ? [work(scope.source, 1), work(scope.source, 2)]
+                  : [work(scope.source, 4)],
+            };
+          },
+        },
+        scopes[0],
+        "Writer",
+        {
+          current: () => true,
+          onPage: (progress) => seen.push(progress),
+        },
+      ),
+      { code: "SEARCH_INCOMPLETE" },
+    );
+    assert.deepEqual(
+      calls,
+      [1, 2],
+      "drift never retries or restarts automatically",
+    );
+    assert.equal(
+      seen.length,
+      1,
+      "do not publish a page from a changed catalog",
+    );
+    assert.equal(seen[0].complete, false);
+    assert.deepEqual(
+      seen[0].items.map((item) => item.workId),
+      ["1", "2"],
+    );
+    assert.deepEqual(seen[0].pagination, before);
+  }
+});
+
+test("stable unknown pagination fields remain valid through the terminal page", async () => {
+  for (const pagination of [
+    { total: null, pages: null },
+    { total: null, pages: 2 },
+    { total: 2, pages: null },
+  ]) {
+    const seen = [];
+    await readCompleteSearch(
+      {
+        query: async (scope, request) => ({
+          ...scope,
+          ...pagination,
+          page: request.page,
+          folders: [],
+          hasMore: request.page < 2,
+          items: [work(scope.source, request.page)],
+        }),
+      },
+      scopes[0],
+      "Writer",
+      {
+        current: () => true,
+        onPage: (progress) => seen.push(progress),
+      },
+    );
+    assert.equal(seen.length, 2);
+    assert.equal(seen.at(-1).complete, true);
+    assert.deepEqual(seen.at(-1).pagination, pagination);
+  }
+});
+
+test("resumed search retains its baseline and issue rows, while a fresh retry can accept a new catalog", async () => {
+  for (const drift of [false, true]) {
+    const calls = [],
+      seen = [];
+    let failSecondPage = true;
+    const issue = {
+      page: 1,
+      index: 2,
+      workId: null,
+      code: "SOURCE_ITEM_INVALID",
+    };
+    const adapter = {
+      query: async (scope, request) => {
+        calls.push(request.page);
+        if (request.page === 2 && failSecondPage) {
+          failSecondPage = false;
+          throw new Error("synthetic source failure");
+        }
+        return {
+          ...scope,
+          page: request.page,
+          total: 3,
+          pages: drift && !failSecondPage ? 2 : null,
+          hasMore: request.page < 2,
+          folders: [],
+          items: [work(scope.source, request.page)],
+          issues: request.page === 1 ? [issue] : [],
+        };
+      },
+    };
+    await assert.rejects(
+      readCompleteSearch(adapter, scopes[0], "Writer", {
+        current: () => true,
+        onPage: (progress) => seen.push(progress),
+      }),
+      /synthetic source failure/,
+    );
+    const paused = seen.at(-1);
+    const resume = () =>
+      readCompleteSearch(adapter, scopes[0], "Writer", {
+        current: () => true,
+        fromPage: 2,
+        items: paused.items,
+        issues: paused.issues,
+        recordsRead: paused.recordsRead,
+        pagination: paused.pagination,
+        onPage: (progress) => seen.push(progress),
+      });
+    if (drift) {
+      await assert.rejects(resume(), { code: "SEARCH_INCOMPLETE" });
+      assert.equal(seen.length, 1);
+      assert.equal(paused.complete, false);
+    } else {
+      await resume();
+      assert.equal(seen.at(-1).complete, true);
+      assert.equal(seen.at(-1).items.length, 2);
+      assert.deepEqual(seen.at(-1).issues, [issue]);
+    }
+    assert.deepEqual(calls, [1, 2, 2]);
+    assert.deepEqual(
+      paused.items.map((item) => item.workId),
+      ["1"],
+    );
+    assert.deepEqual(paused.issues, [issue]);
+    assert.deepEqual(paused.pagination, { total: 3, pages: null });
+    if (drift) {
+      const refreshed = [];
+      await readCompleteSearch(adapter, scopes[0], "Writer", {
+        current: () => true,
+        onPage: (progress) => refreshed.push(progress),
+      });
+      assert.equal(refreshed.at(-1).complete, true);
+      assert.deepEqual(refreshed.at(-1).pagination, { total: 3, pages: 2 });
+      assert.deepEqual(calls, [1, 2, 2, 1, 2]);
+    }
+  }
+});
+
+test("search does not fetch a continuation without its original pagination baseline", async () => {
+  let calls = 0;
+  await assert.rejects(
+    readCompleteSearch(
+      {
+        query: async () => {
+          calls++;
+          throw new Error("unexpected query");
+        },
+      },
+      scopes[0],
+      "Writer",
+      {
+        current: () => true,
+        fromPage: 2,
+        items: [work("JM", 1)],
+        recordsRead: 1,
+        onPage() {
+          throw new Error("unexpected progress");
+        },
+      },
+    ),
+    { code: "SEARCH_INCOMPLETE" },
+  );
+  assert.equal(calls, 0);
+});
+
+test("each approved author query establishes its own pagination baseline", async () => {
+  const calls = [],
+    seen = [];
+  await readCompleteAuthorSearch(
+    {
+      authorPolicy: async (scope, author) => ({
+        ...(await defaultAuthorPolicy(scope, author)),
+        queries: ["Writer", "Alias"],
+      }),
+      query: async (scope, request) => {
+        calls.push([request.query, request.page]);
+        const total = request.query === "Writer" ? 1 : 2;
+        return {
+          ...scope,
+          page: request.page,
+          total,
+          pages: total,
+          hasMore: request.page < total,
+          folders: [],
+          items: [work(scope.source, request.page)],
+        };
+      },
+    },
+    scopes[0],
+    "Writer",
+    {
+      current: () => true,
+      onPage: (progress) => seen.push(progress),
+    },
+  );
+  assert.deepEqual(calls, [
+    ["Writer", 1],
+    ["Alias", 1],
+    ["Alias", 2],
+  ]);
+  assert.deepEqual(
+    seen.map((progress) => progress.pagination),
+    [
+      { total: 1, pages: 1 },
+      { total: 2, pages: 2 },
+      { total: 2, pages: 2 },
+    ],
+  );
+  assert.deepEqual(
+    seen.map((progress) => progress.complete),
+    [false, false, true],
+  );
+  assert.deepEqual(
+    seen.at(-1).items.map((item) => item.workId),
+    ["1", "2"],
+  );
+});
+
+test("author lookup cannot claim full coverage after a deletion moves a page boundary", async () => {
+  const calls = [];
+  const adapter = createAuthorSearchAdapter({
+    authorPolicy: defaultAuthorPolicy,
+    query: async (scope, request) => {
+      calls.push([scope.source, request.page]);
+      return scope.source === "Pica"
+        ? {
+            ...scope,
+            page: 1,
+            total: 0,
+            pages: 0,
+            hasMore: false,
+            folders: [],
+            items: [],
+          }
+        : {
+            ...scope,
+            page: request.page,
+            total: request.page === 1 ? 40 : 39,
+            pages: null,
+            hasMore: null,
+            folders: [],
+            items:
+              request.page === 1
+                ? Array.from({ length: 20 }, (_, index) =>
+                    work("JM", index + 1),
+                  )
+                : Array.from({ length: 19 }, (_, index) =>
+                    work("JM", index + 22),
+                  ),
+          };
+    },
+  });
+  await adapter.start(scopes, ["Writer"]);
+  for (
+    let attempt = 0;
+    attempt < 10 && (await adapter.read(scopes)).run.phase === "checking";
+    attempt++
+  )
+    await flush();
+  const snapshot = await adapter.read(scopes);
+  assert.equal(snapshot.run.phase, "partial");
+  const jm = snapshot.authors.find((range) => range.source === "JM");
+  assert.equal(jm.state, "error");
+  assert.equal(jm.pagesComplete, false);
+  assert.equal(jm.lastCompleteAt, null);
+  assert.equal(jm.errorCode, "SEARCH_INCOMPLETE");
+  assert.equal(snapshot.records.length, 20);
+  assert.deepEqual(calls, [
+    ["JM", 1],
+    ["JM", 2],
+    ["Pica", 1],
+  ]);
+});
+
 test("a bad later-page record is isolated while every valid author work is preserved", async () => {
   const calls = [],
     pageSizes = [];
@@ -1191,6 +1519,7 @@ test("search traverses all-issue pages and retains diagnostics when resuming", a
     items: paused.items,
     issues: paused.issues,
     recordsRead: paused.recordsRead,
+    pagination: paused.pagination,
     onPage: (value) => seen.push(value),
   });
   assert.deepEqual(calls, [1, 2, 3]);

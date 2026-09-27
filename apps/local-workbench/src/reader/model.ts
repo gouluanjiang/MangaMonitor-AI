@@ -114,6 +114,7 @@ export function pageLayout(
   count: number,
   width: number,
   ratios: ReadonlyMap<number, number>,
+  minimumHeight = 1,
 ): PageLayout {
   const tops: number[] = [],
     heights: number[] = [];
@@ -121,7 +122,7 @@ export function pageLayout(
   for (let index = 0; index < count; index++) {
     tops.push(total);
     const height = Math.max(
-      1,
+      Math.max(1, Math.min(maxReaderPageHeight, minimumHeight)),
       Math.min(maxReaderPageHeight, width * (ratios.get(index) ?? 1.45)),
     );
     heights.push(height);
@@ -141,6 +142,22 @@ export function pageAtOffset(layout: PageLayout, offset: number): number {
     else hi = middle - 1;
   }
   return lo;
+}
+// The viewport's top remains the saved/resize anchor. At the chapter's real
+// bottom, however, a short final image can be fully read while that top still
+// belongs to an earlier page. Report the final page without moving the anchor.
+export function verticalReaderProgress(
+  layout: PageLayout,
+  segment: PageSegment,
+  top: number,
+  viewportHeight: number,
+): { pageIndex: number; atEnd: boolean } {
+  const last = layout.tops.length - 1;
+  const atEnd =
+    last >= 0 &&
+    segment.last === last &&
+    top + viewportHeight >= layout.total - 1;
+  return { pageIndex: atEnd ? last : pageAtOffset(layout, top), atEnd };
 }
 export function visiblePages(
   layout: PageLayout,

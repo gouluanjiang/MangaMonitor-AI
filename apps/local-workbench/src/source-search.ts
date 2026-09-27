@@ -13,9 +13,16 @@ import { authorQueryError } from "./author-query.ts";
 export const jmSearchScopeNote =
   "JM 搜索范围：不含网页端的 English Manga（英文漫画）分类；“已读完”表示本次返回的全部分页已读取。";
 
+export interface SearchPagination {
+  total: number | null;
+  pages: number | null;
+}
+
 export interface SearchProgress {
   items: SourceWork[];
   page: SourceQueryResult;
+  /** First accepted page of this query, retained when a failed read resumes. */
+  pagination: SearchPagination;
   recordsRead: number;
   complete: boolean;
   issues: SourceItemIssue[];
@@ -94,6 +101,7 @@ export async function readCompleteAuthorSearch(
                   hasMore: !complete,
                 },
           recordsRead: recordsRead + progress.recordsRead,
+          pagination: progress.pagination,
           complete,
           issues: [
             ...issues,
@@ -134,11 +142,16 @@ export async function readCompleteSearch(
     items?: SourceWork[];
     recordsRead?: number;
     issues?: SourceItemIssue[];
+    pagination?: SearchPagination;
   },
 ): Promise<void> {
   let items = options.items ?? [],
     issues = options.issues ?? [],
-    recordsRead = options.recordsRead ?? 0;
+    recordsRead = options.recordsRead ?? 0,
+    pagination = options.pagination;
+  // A resumed page cannot establish a new baseline for already displayed rows.
+  if ((options.fromPage ?? 1) > 1 && !pagination)
+    throw new SourceError("SEARCH_INCOMPLETE");
   for (
     let page = options.fromPage ?? 1;
     page <= 1000 && options.current();
@@ -157,6 +170,14 @@ export async function readCompleteSearch(
       result.sessionId !== scope.sessionId
     )
       throw new SourceError("STALE_SESSION");
+    // Match the saved catalog traversal: changed totals/page counts can move a
+    // page boundary without repeating IDs. Retain only previously accepted pages.
+    if (
+      pagination &&
+      (result.total !== pagination.total || result.pages !== pagination.pages)
+    )
+      throw new SourceError("SEARCH_INCOMPLETE");
+    pagination ??= { total: result.total, pages: result.pages };
     const incomingIssues = result.issues ?? [];
     const rawCount = result.items.length + incomingIssues.length;
     if (recordsRead + rawCount > 20000)
@@ -203,6 +224,7 @@ export async function readCompleteSearch(
     options.onPage({
       items,
       page: { ...result, items: [] },
+      pagination: { ...pagination },
       recordsRead,
       complete,
       issues,

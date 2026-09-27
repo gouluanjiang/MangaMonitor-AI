@@ -52,6 +52,7 @@ type MockOptions = {
   reviewedWorkCredits?: boolean;
   workDates?: boolean;
   isolatedListing?: boolean;
+  searchPaginationDrift?: boolean;
   workTags?: Record<string, string[]>;
   detailTags?: Record<string, string[]>;
 };
@@ -1225,6 +1226,26 @@ async function installMock(page: Page, options: MockOptions = {}) {
             }
             const epoch = Number(scope.sessionId.split("-").at(-1));
             const pageNumber = raw.page as number;
+            if (options.searchPaginationDrift && raw.kind === "search") {
+              if (pageNumber === 2 && !pageFailureUsed) {
+                pageFailureUsed = true;
+                throw { code: "SOURCE_TIMEOUT" };
+              }
+              return {
+                ...scope,
+                page: pageNumber,
+                total: pageFailureUsed ? 3 : 4,
+                pages: null,
+                hasMore: null,
+                folders: [],
+                items: (pageNumber === 2
+                  ? [9004]
+                  : pageFailureUsed
+                    ? [9002, 9003]
+                    : [9001, 9002]
+                ).map((id) => makeWork(source, String(id), epoch)),
+              };
+            }
             if (
               options.isolatedListing &&
               ["search", "favorites"].includes(raw.kind as string)
@@ -2726,6 +2747,55 @@ test("source author mode blocks broad initials while explicit keyword mode remai
         .map((c) => c.page),
     ),
   ).toEqual([1, 2]);
+});
+
+test("keyword search rejects pagination drift on explicit continuation and permits a fresh retry", async ({
+  page,
+}) => {
+  await installMock(page, { searchPaginationDrift: true });
+  await page.goto("/");
+  await page.getByTestId("nav-discovery").click();
+  await page.getByTestId("source-tab-JM").click();
+  await page.getByTestId("source-query-mode").selectOption("search");
+  await page.getByTestId("source-search-input").fill("Synthetic");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-retry")).toBeEnabled();
+  await expect(page.getByTestId("source-completeness")).toContainText(
+    "本次读取未完成",
+  );
+  const searchPages = () =>
+    page.evaluate(() =>
+      window.sourceTest.calls
+        .filter(
+          (call) => call.command === "source_query" && call.kind === "search",
+        )
+        .map((call) => call.page),
+    );
+  expect(await searchPages()).toEqual([1, 2]);
+
+  await page.getByTestId("source-retry").click();
+  await expect.poll(searchPages).toEqual([1, 2, 2]);
+  await expect(page.getByTestId("source-retry")).toBeEnabled();
+  await expect(page.getByTestId("source-completeness")).toContainText(
+    "本次读取未完成",
+  );
+  await expect(page.getByTestId("source-filter-count")).toContainText(
+    "筛选覆盖已读取的 2 部",
+  );
+  await expect(page.getByTestId("source-card-JM:9001")).toBeVisible();
+  await expect(page.getByTestId("source-card-JM:9004")).toHaveCount(0);
+
+  // Drift marks the existing explicit retry as a fresh read; no automatic scan.
+  await page.getByTestId("source-retry").click();
+  await expect(page.getByTestId("source-completeness")).toContainText(
+    "已读完当前来源的搜索范围",
+  );
+  expect(await searchPages()).toEqual([1, 2, 2, 1, 2]);
+  await expect(page.getByTestId("source-filter-count")).toContainText(
+    "筛选覆盖已读取的 3 部",
+  );
+  await expect(page.getByTestId("source-card-JM:9001")).toHaveCount(0);
+  await expect(page.getByTestId("source-card-JM:9003")).toBeVisible();
 });
 
 test("explicit work-keyword mode retains all hits and mode changes clear author selections", async ({

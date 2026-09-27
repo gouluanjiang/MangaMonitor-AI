@@ -8,7 +8,9 @@ import {
   pageLayout,
   pageSegment,
   maxReaderPageHeight,
+  readerRequestedPages,
   readerWindow,
+  verticalReaderProgress,
   visiblePages,
 } from "../src/reader/model.ts";
 import {
@@ -101,6 +103,136 @@ test("long chapter bands preserve logical anchors within bounded browser coordin
       index - 1,
     );
   }
+});
+
+test("vertical chapter completion reports a short final page without changing the saved top anchor", () => {
+  const viewport = { width: 390, height: 844 };
+  const ratios = new Map([
+    [0, 1.45],
+    [1, 1.45],
+    [2, 1],
+  ]);
+  for (const zoom of [0.25, 1, 4]) {
+    const layout = pageLayout(3, viewport.width * zoom, ratios);
+    const segment = pageSegment(layout, 0);
+    const bottom = Math.max(0, layout.total - viewport.height);
+    assert.deepEqual(
+      verticalReaderProgress(layout, segment, bottom, viewport.height),
+      {
+        pageIndex: 2,
+        atEnd: true,
+      },
+    );
+    if (bottom > 2) {
+      assert.equal(
+        verticalReaderProgress(layout, segment, bottom - 2, viewport.height)
+          .atEnd,
+        false,
+      );
+      assert.equal(
+        verticalReaderProgress(layout, segment, bottom - 0.5, viewport.height)
+          .atEnd,
+        true,
+      );
+    }
+    const anchorPage = pageAtOffset(layout, bottom);
+    const anchorOffset =
+      (bottom - layout.tops[anchorPage]) / layout.heights[anchorPage];
+    assert.ok(
+      Math.abs(
+        layout.tops[anchorPage] +
+          layout.heights[anchorPage] * anchorOffset -
+          bottom,
+      ) < 1e-9,
+    );
+    if (zoom === 1) assert.equal(anchorPage, 1);
+  }
+  const empty = pageLayout(0, 390, new Map());
+  assert.equal(
+    verticalReaderProgress(empty, pageSegment(empty, 0), 0, 844).atEnd,
+    false,
+  );
+});
+
+test("zoomed-out short pages keep every viewport page inside the render and request budgets", () => {
+  const viewport = { width: 390, height: 844 };
+  for (const ratio of [0.5, 0.001]) {
+    const ratios = new Map(
+      Array.from({ length: 20 }, (_, index) => [index, ratio]),
+    );
+    for (const zoom of [0.25, 0.5, 1, 4]) {
+      const layout = pageLayout(
+        20,
+        viewport.width * zoom,
+        ratios,
+        viewport.height / 10,
+      );
+      const bottom = Math.max(0, layout.total - viewport.height);
+      for (const top of [
+        0,
+        bottom / 2,
+        layout.tops[9] - 11.5,
+        layout.tops[9] - 0.5,
+        bottom,
+      ]) {
+        const actual = layout.tops.flatMap((start, index) =>
+          start < top + viewport.height && start + layout.heights[index] > top
+            ? [index]
+            : [],
+        );
+        const visible = visiblePages(layout, top, viewport.height);
+        const progress = verticalReaderProgress(
+          layout,
+          pageSegment(layout, 0),
+          top,
+          viewport.height,
+        );
+        const requested = readerRequestedPages(
+          progress.pageIndex,
+          20,
+          visible,
+          true,
+        );
+        assert.ok(
+          actual.every((index) => visible.includes(index)),
+          "every intersecting page has a rendered slot",
+        );
+        assert.ok(
+          actual.every((index) => requested.includes(index)),
+          "every intersecting page can receive its image",
+        );
+        assert.ok(visible.length <= 12 && requested.length <= 12);
+        if (top === bottom) {
+          assert.equal(progress.atEnd, true);
+          assert.ok(visible.includes(19) && requested.includes(19));
+        }
+      }
+    }
+  }
+});
+
+test("a long chapter's physical segment boundary is not its reading end", () => {
+  const layout = pageLayout(50000, 390, new Map());
+  for (const page of [0, 25000]) {
+    const segment = pageSegment(layout, page);
+    const top = segment.start + segment.total - 844;
+    const progress = verticalReaderProgress(layout, segment, top, 844);
+    assert.equal(progress.atEnd, false);
+    assert.equal(progress.pageIndex, pageAtOffset(layout, top));
+    // Even an oversized viewport must not complete an unrendered final band.
+    assert.equal(
+      verticalReaderProgress(layout, segment, top, layout.total).atEnd,
+      false,
+    );
+  }
+  const final = pageSegment(layout, 49999);
+  assert.deepEqual(
+    verticalReaderProgress(layout, final, layout.total - 844, 844),
+    {
+      pageIndex: 49999,
+      atEnd: true,
+    },
+  );
 });
 
 test("page cache prioritizes current pages, caps concurrent reads and discards stale chapter work on disposal", async () => {

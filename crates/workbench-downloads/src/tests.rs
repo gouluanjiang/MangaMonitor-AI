@@ -32,6 +32,8 @@ mod pica_tests;
 mod queue_tests;
 #[path = "rescan_tests.rs"]
 mod rescan_tests;
+#[path = "review_regression_tests.rs"]
+mod review_regression_tests;
 #[path = "zip_tests.rs"]
 mod zip_tests;
 

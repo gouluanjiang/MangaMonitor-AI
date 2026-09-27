@@ -182,13 +182,12 @@ export function RecentUpdatesPanel({
     >
       <div className="page-heading source-heading">
         <div>
-          <h1>发现</h1>
-          <p>从来源推荐中浏览作品</p>
+          <h1>最近更新</h1>
+          <p>浏览 JM 与哔咔的新近作品，按网站提供的顺序展示。</p>
         </div>
       </div>
       {navigation}
-      <h2>{sourceLabel(source)} · 最近更新</h2>
-      <div className="source-toolbar">
+      <div className="source-toolbar source-page-tools">
         <div className="source-toolbar-leading">
           <label>
             来源{" "}
@@ -217,8 +216,9 @@ export function RecentUpdatesPanel({
             刷新最近更新
           </button>
         </div>
-        <div className="source-search source-search-host">
+        <div className="source-search">
           <input
+            type="search"
             aria-label="筛选已读取最近更新"
             placeholder="筛选已读取作品或作者…"
             value={query}
@@ -229,9 +229,6 @@ export function RecentUpdatesPanel({
           />
         </div>
       </div>
-      <p className="source-muted" data-testid="recent-order-note">
-        按来源最新顺序浏览，日期以网站提供为准；不保证每次章节更新都会排到前面。筛选仅覆盖已读取范围。
-      </p>
       {!scope ? (
         <div className="source-empty">
           <p>请先连接{sourceLabel(source)}账号。</p>
@@ -264,7 +261,7 @@ export function RecentUpdatesPanel({
               ),
             )}
           </div>
-          <p className="source-muted" data-testid="recent-counts">
+          <p className="page-summary" data-testid="recent-counts">
             已读取 {data?.items.length ?? 0} 部
             {data?.total !== null && data?.total !== undefined
               ? ` / 来源报告 ${data.total} 条`
@@ -281,12 +278,18 @@ export function RecentUpdatesPanel({
             pagesComplete={state?.phase === "complete"}
             testId="recent-issues"
           />
-          {data && (
-            <p className="source-muted">
-              最近读取：{new Date(data.updatedAt).toLocaleString()} ·{" "}
-              {inventoryScopeNote}
+          <details className="page-scope-details">
+            <summary>浏览范围与排序说明 · 仅筛选已读取作品</summary>
+            <p className="source-muted" data-testid="recent-order-note">
+              按来源最新顺序浏览，日期以网站提供为准；不保证每次章节更新都会排到前面。筛选仅覆盖已读取范围。
             </p>
-          )}
+            {data && (
+              <p className="source-muted">
+                最近读取：{new Date(data.updatedAt).toLocaleString()} ·{" "}
+                {inventoryScopeNote}
+              </p>
+            )}
+          </details>
           {visible.length > 0 && (
             <div className="source-toolbar">
               <div className="source-toolbar-leading">

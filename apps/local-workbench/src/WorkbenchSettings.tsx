@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import {
+  appearanceRefinement,
   initialPreferences,
   readBackgroundFile,
   resourcePreset,
@@ -9,6 +10,7 @@ import {
 import type {
   BackgroundSelection,
   AppearancePreferences,
+  AppearanceRefinement,
   CoverDensity,
   ResourcePreferences,
   WorkbenchPreferences,
@@ -18,11 +20,17 @@ import { matchingSettingsPages } from "./settings-navigation.ts";
 import type { SettingsPage } from "./settings-navigation.ts";
 
 function sameAppearance(a: AppearancePreferences, b: AppearancePreferences) {
+  const first = appearanceRefinement(a);
+  const second = appearanceRefinement(b);
   return (
     a.backgroundMode === b.backgroundMode &&
     a.density === b.density &&
     a.backgroundImage === b.backgroundImage &&
-    a.backgroundName === b.backgroundName
+    a.backgroundName === b.backgroundName &&
+    first.tone === second.tone &&
+    first.shade === second.shade &&
+    first.blur === second.blur &&
+    first.reducedMotion === second.reducedMotion
   );
 }
 
@@ -51,6 +59,7 @@ export interface WorkbenchSettingsProps {
   onResetDemo(): void;
   storageFailed: boolean;
   searchQuery: string;
+  searchControl?: ReactNode;
   onBackgroundValidated(dataUrl: string): void;
 }
 
@@ -71,6 +80,7 @@ export function WorkbenchSettings({
   onResetDemo,
   storageFailed,
   searchQuery,
+  searchControl,
   onBackgroundValidated,
 }: WorkbenchSettingsProps) {
   const visiblePages = matchingSettingsPages(searchQuery);
@@ -81,6 +91,7 @@ export function WorkbenchSettings({
       onPageChange(matches[0].id);
   }, [searchQuery, page, onPageChange]);
   const [appearance, setAppearance] = useState(preferences.appearance);
+  const refinement = appearanceRefinement(appearance);
   const [resources, setResources] = useState(preferences.resources);
   const [readingImage, setReadingImage] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -144,6 +155,14 @@ export function WorkbenchSettings({
     setReadingImage(false);
     setImageError(null);
     if (fileInput.current) fileInput.current.value = "";
+  }
+
+  function updateRefinement(patch: Partial<AppearanceRefinement>) {
+    setAppearance((draft) => ({
+      ...draft,
+      refinement: { ...appearanceRefinement(draft), ...patch },
+    }));
+    clearFeedback();
   }
 
   async function chooseBackground(event: ChangeEvent<HTMLInputElement>) {
@@ -241,6 +260,7 @@ export function WorkbenchSettings({
           <p>按自己的习惯整理漫画、背景和下载偏好。</p>
         </div>
       </div>
+      {searchControl}
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label="设置分类">
           {visiblePages.map((item) => {
@@ -360,6 +380,94 @@ export function WorkbenchSettings({
               <p className="settings-copy">
                 修改会在当前页面即时预览。保存后记住选择，离开设置时使用已保存的外观。
               </p>
+              <div className="settings-refinement">
+                <h3 className="settings-field-title">背景预设</h3>
+                <div
+                  className="settings-segmented settings-tone-options"
+                  role="group"
+                  aria-label="背景预设"
+                >
+                  {(
+                    [
+                      ["night", "夜色"],
+                      ["forest", "森林"],
+                      ["dusk", "暮色"],
+                    ] as const
+                  ).map(([tone, label]) => (
+                    <button
+                      key={tone}
+                      type="button"
+                      data-testid={`background-tone-${tone}`}
+                      data-tone={tone}
+                      aria-pressed={
+                        appearance.backgroundImage === null &&
+                        refinement.tone === tone
+                      }
+                      onClick={() => {
+                        cancelImageRead();
+                        setAppearance((draft) => ({
+                          ...restoreDefaultBackground(draft),
+                          refinement: { ...appearanceRefinement(draft), tone },
+                        }));
+                        clearFeedback();
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="settings-help">
+                  选择预设会替换当前自定义背景，保存后记住选择。
+                </p>
+                <label className="settings-range-row">
+                  <span>背景暗化</span>
+                  <input
+                    type="range"
+                    min="30"
+                    max="95"
+                    step="1"
+                    value={refinement.shade}
+                    aria-label="背景暗化"
+                    aria-valuetext={`${refinement.shade}%`}
+                    data-testid="background-shade"
+                    onChange={(event) =>
+                      updateRefinement({ shade: Number(event.target.value) })
+                    }
+                  />
+                  <output>{refinement.shade}%</output>
+                </label>
+                <label className="settings-range-row">
+                  <span>背景模糊</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="16"
+                    step="1"
+                    value={refinement.blur}
+                    aria-label="背景模糊"
+                    aria-valuetext={`${refinement.blur} 像素`}
+                    data-testid="background-blur"
+                    onChange={(event) =>
+                      updateRefinement({ blur: Number(event.target.value) })
+                    }
+                  />
+                  <output>{refinement.blur} px</output>
+                </label>
+                <label className="settings-motion-choice">
+                  <input
+                    type="checkbox"
+                    checked={refinement.reducedMotion}
+                    data-testid="reduced-motion"
+                    onChange={(event) =>
+                      updateRefinement({ reducedMotion: event.target.checked })
+                    }
+                  />
+                  <span>减少动态效果</span>
+                </label>
+                <p className="settings-help">
+                  关闭位移和弹跳过渡。系统已启用减少动态时，也会遵循系统设置。
+                </p>
+              </div>
               <div className="settings-background-picker">
                 <div className="settings-background-name">
                   <h3>自定义背景</h3>

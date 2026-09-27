@@ -91,6 +91,7 @@ export interface SourceWorkbenchProps {
   requestedWork?: WorkReference;
   requestedAuthorContext?: AuthorCreditContext;
   requestKey?: number;
+  dismissDetailKey?: number;
   loadingAccounts?: boolean;
   searchHost?: HTMLElement | null;
 }
@@ -304,6 +305,7 @@ export function SourceWorkbench({
   requestedWork,
   requestedAuthorContext,
   requestKey,
+  dismissDetailKey = 0,
   loadingAccounts = false,
   searchHost,
 }: SourceWorkbenchProps) {
@@ -417,6 +419,7 @@ export function SourceWorkbench({
   const pendingAnchor = useRef<Anchor | null>(null);
   const autoContext = useRef("");
   const handledWorkRequest = useRef("");
+  const handledDismissRequest = useRef(dismissDetailKey);
   const lastRead = useRef({
     kind: "favorites" as "favorites" | "search",
     query: "",
@@ -970,6 +973,16 @@ export function SourceWorkbench({
     pendingAnchor.current = savedAnchor.current;
     onDetailBack?.();
   }
+  useEffect(() => {
+    if (handledDismissRequest.current === dismissDetailKey) return;
+    handledDismissRequest.current = dismissDetailKey;
+    detailRequest.current += 1;
+    setDetailRef(null);
+    setDetail(null);
+    setDetailLoading(false);
+    setDetailError("");
+    pendingAnchor.current = savedAnchor.current;
+  }, [dismissDetailKey]);
   function updateWork(work: SourceWork) {
     setDetail(work);
     setItems((previous) =>
@@ -1230,6 +1243,7 @@ export function SourceWorkbench({
         {searching ? " 来源" : view === "following" ? " 关注" : " 收藏"}
       </span>
       <input
+        type="search"
         value={query}
         onChange={(event) => changeQuery(event.target.value)}
         data-testid="source-search-input"
@@ -1430,6 +1444,7 @@ export function SourceWorkbench({
   }
   const body = detailRef ? (
     <div className="source-detail" data-testid="source-detail">
+      {!searchHost && <div className="source-page-tools">{searchControl}</div>}
       <button
         type="button"
         className="text-button"
@@ -1685,22 +1700,24 @@ export function SourceWorkbench({
                 : "尚未连接账号"}
           </p>
         </div>
-        {!searchHost && searchControl}
       </div>
       {view === "search" && discoveryNavigation}
-      <div className="source-tabs" role="group" aria-label="来源">
-        {sources.map((item) => (
-          <button
-            type="button"
-            key={item}
-            className={source === item ? "active" : ""}
-            aria-pressed={source === item}
-            data-testid={"source-tab-" + item}
-            onClick={() => changeSource(item)}
-          >
-            {sourceLabel(item)}
-          </button>
-        ))}
+      <div className="source-page-tools">
+        {!searchHost && searchControl}
+        <div className="source-tabs" role="group" aria-label="来源">
+          {sources.map((item) => (
+            <button
+              type="button"
+              key={item}
+              className={source === item ? "active" : ""}
+              aria-pressed={source === item}
+              data-testid={"source-tab-" + item}
+              onClick={() => changeSource(item)}
+            >
+              {sourceLabel(item)}
+            </button>
+          ))}
+        </div>
       </div>
       {!connected ? (
         <div className="source-empty" data-testid="source-account-required">
@@ -2174,7 +2191,7 @@ export function SourceWorkbench({
                   ),
                 )}
               </div>
-              <p className="source-muted" data-testid="source-filter-count">
+              <p className="page-summary" data-testid="source-filter-count">
                 已入库{" "}
                 {
                   searchedWorks.filter(
@@ -2216,10 +2233,18 @@ export function SourceWorkbench({
                 issues={issues}
                 pagesComplete={complete}
               />
-              <p className="source-muted">{inventoryScopeNote}</p>
-              {searching && source === "JM" && (
-                <p className="source-muted">{jmSearchScopeNote}</p>
-              )}
+              <details className="page-scope-details">
+                <summary>
+                  筛选范围与入库说明
+                  {searching && source === "JM"
+                    ? " · JM 不含 English Manga"
+                    : ""}
+                </summary>
+                <p className="source-muted">{inventoryScopeNote}</p>
+                {searching && source === "JM" && (
+                  <p className="source-muted">{jmSearchScopeNote}</p>
+                )}
+              </details>
               {visible.length === 0 && browsingWorks.length > 0 && (
                 <p className="source-empty">
                   当前筛选没有结果

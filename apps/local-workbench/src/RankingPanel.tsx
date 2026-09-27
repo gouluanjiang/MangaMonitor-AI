@@ -196,12 +196,11 @@ export function RankingPanel({
     <section className="source-workbench" data-testid="ranking-panel">
       <div className="page-heading source-heading">
         <div>
-          <h1>发现</h1>
-          <p>从来源推荐中浏览作品</p>
+          <h1>{source === "JM" ? "JM · 每周必看" : "哔咔 · 排行榜"}</h1>
+          <p>浏览网站推荐与榜单，筛选漫画库中尚未入库的作品。</p>
         </div>
       </div>
       {navigation}
-      <h2>{source === "JM" ? "JM · 每周必看" : "哔咔 · 排行榜"}</h2>
       {!scope ? (
         <div className="source-empty">
           <p>请先连接{sourceLabel(source)}账号。</p>
@@ -209,7 +208,7 @@ export function RankingPanel({
         </div>
       ) : (
         <>
-          <div className="source-toolbar">
+          <div className="source-toolbar source-page-tools">
             <div className="source-toolbar-leading">
               {source === "JM" && (
                 <label>
@@ -259,6 +258,7 @@ export function RankingPanel({
               </button>
             </div>
             <input
+              type="search"
               aria-label="筛选当前榜单"
               placeholder="筛选作品或作者…"
               value={query}
@@ -290,7 +290,7 @@ export function RankingPanel({
               ),
             )}
           </div>
-          <p className="source-muted" data-testid="ranking-counts">
+          <p className="page-summary" data-testid="ranking-counts">
             已读取 {data?.page.items.length ?? 0} 条
             {data?.page.total !== null && data?.page.total !== undefined
               ? ` / 来源报告 ${data.page.total} 条`
@@ -312,10 +312,13 @@ export function RankingPanel({
             testId="ranking-issues"
           />
           {data && (
-            <p className="source-muted">
-              来源排序 · {new Date(data.time).toLocaleString()} ·
-              {inventoryScopeNote}
-            </p>
+            <details className="page-scope-details">
+              <summary>榜单范围与入库说明 · 保留网站排序</summary>
+              <p className="source-muted">
+                来源排序 · {new Date(data.time).toLocaleString()} ·
+                {inventoryScopeNote}
+              </p>
+            </details>
           )}
           {visible.length > 0 && (
             <div className="source-toolbar">

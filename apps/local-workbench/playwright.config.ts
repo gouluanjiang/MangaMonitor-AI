@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   testMatch: [
+    "**/refined-ui.spec.ts",
     "**/reader-ui.spec.ts",
     "**/reader-window-ui.spec.ts",
     "**/ui.spec.ts",

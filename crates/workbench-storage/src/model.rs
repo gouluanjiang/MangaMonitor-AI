@@ -18,6 +18,23 @@ pub enum BackgroundMode {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
+pub enum BackgroundTone {
+    Night,
+    Forest,
+    Dusk,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppearanceRefinement {
+    pub tone: BackgroundTone,
+    pub shade: u8,
+    pub blur: u8,
+    pub reduced_motion: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ResourceProfile {
     Economy,
     Balanced,
@@ -33,6 +50,21 @@ pub struct AppearancePreferences {
     pub background_image: Option<String>,
     #[serde(deserialize_with = "required_nullable")]
     pub background_name: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_refinement"
+    )]
+    pub refinement: Option<AppearanceRefinement>,
+}
+
+fn present_refinement<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<AppearanceRefinement>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    AppearanceRefinement::deserialize(deserializer).map(Some)
 }
 
 fn required_nullable<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
@@ -67,6 +99,7 @@ impl Default for WorkbenchPreferences {
                 density: 7,
                 background_image: None,
                 background_name: None,
+                refinement: None,
             },
             resources: ResourcePreferences {
                 profile: ResourceProfile::Balanced,
@@ -83,6 +116,11 @@ impl ValidatedDocument for WorkbenchPreferences {
             || ![5, 7, 9].contains(&self.appearance.density)
             || self.appearance.background_image.is_some()
                 != self.appearance.background_name.is_some()
+            || self
+                .appearance
+                .refinement
+                .as_ref()
+                .is_some_and(|value| !(30..=95).contains(&value.shade) || value.blur > 16)
             || !(1..=4).contains(&self.resources.simultaneous_works)
             || !(1..=8).contains(&self.resources.image_requests)
         {

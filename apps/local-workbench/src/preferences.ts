@@ -1,12 +1,34 @@
 export type BackgroundMode = "A" | "B";
+export type BackgroundTone = "night" | "forest" | "dusk";
 export type CoverDensity = 5 | 7 | 9;
 export type ResourceProfile = "economy" | "balanced" | "custom";
+
+export interface AppearanceRefinement {
+  tone: BackgroundTone;
+  shade: number;
+  blur: number;
+  reducedMotion: boolean;
+}
 
 export interface AppearancePreferences {
   backgroundMode: BackgroundMode;
   density: CoverDensity;
   backgroundImage: string | null;
   backgroundName: string | null;
+  refinement?: AppearanceRefinement;
+}
+
+export function appearanceRefinement(
+  appearance: AppearancePreferences,
+): AppearanceRefinement {
+  return (
+    appearance.refinement ?? {
+      tone: "night",
+      shade: 84,
+      blur: 0,
+      reducedMotion: false,
+    }
+  );
 }
 
 export interface ResourcePreferences {
@@ -131,22 +153,41 @@ function validAppearance(
   value: unknown,
   maxBytes = MAX_BACKGROUND_BYTES,
 ): value is AppearancePreferences {
+  const keys = [
+    "backgroundMode",
+    "density",
+    "backgroundImage",
+    "backgroundName",
+  ];
   if (
     !isObject(value) ||
-    !exactKeys(value, [
-      "backgroundMode",
-      "density",
-      "backgroundImage",
-      "backgroundName",
-    ]) ||
+    !exactKeys(value, "refinement" in value ? [...keys, "refinement"] : keys) ||
     (value.backgroundMode !== "A" && value.backgroundMode !== "B") ||
-    ![5, 7, 9].includes(value.density as number)
+    ![5, 7, 9].includes(value.density as number) ||
+    ("refinement" in value && !validRefinement(value.refinement))
   )
     return false;
   return value.backgroundImage === null
     ? value.backgroundName === null
     : isBackgroundDataUrl(value.backgroundImage, maxBytes) &&
         validName(value.backgroundName);
+}
+
+function validRefinement(value: unknown): value is AppearanceRefinement {
+  return (
+    isObject(value) &&
+    exactKeys(value, ["tone", "shade", "blur", "reducedMotion"]) &&
+    ["night", "forest", "dusk"].includes(value.tone as string) &&
+    typeof value.shade === "number" &&
+    Number.isInteger(value.shade) &&
+    value.shade >= 30 &&
+    value.shade <= 95 &&
+    typeof value.blur === "number" &&
+    Number.isInteger(value.blur) &&
+    value.blur >= 0 &&
+    value.blur <= 16 &&
+    typeof value.reducedMotion === "boolean"
+  );
 }
 
 function validResources(value: unknown): value is ResourcePreferences {

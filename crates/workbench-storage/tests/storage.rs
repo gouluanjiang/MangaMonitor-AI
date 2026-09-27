@@ -97,6 +97,114 @@ fn missing_documents_default_once_and_independent_documents_survive_reopen() {
 }
 
 #[test]
+fn appearance_refinement_does_not_rewrite_legacy_preferences() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let saved = store
+        .write_preferences(0, WorkbenchPreferences::default())
+        .unwrap();
+    let path = document_path(directory.path(), "preferences.json");
+    let original = fs::read_to_string(&path).unwrap();
+    let original_value: serde_json::Value = serde_json::from_str(&original).unwrap();
+    assert!(original_value["value"]["appearance"]
+        .get("refinement")
+        .is_none());
+    drop(store);
+    let reopened = WorkbenchStore::open(directory.path()).unwrap();
+    let mut loaded = reopened.read_preferences().unwrap();
+    assert_eq!(loaded, saved);
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    loaded.value.resources.profile = ResourceProfile::Economy;
+    loaded.value.resources.simultaneous_works = 1;
+    loaded.value.resources.image_requests = 2;
+    reopened
+        .write_preferences(loaded.revision, loaded.value)
+        .unwrap();
+    let updated: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(updated["value"]["version"], 1);
+    assert_eq!(
+        updated["value"]["appearance"],
+        original_value["value"]["appearance"]
+    );
+}
+
+#[test]
+fn explicit_appearance_refinement_roundtrips_and_bounds_block_writes() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut revision = 0;
+    for tone in ["night", "forest", "dusk"] {
+        for (shade, blur, reduced_motion) in [(30, 0, false), (95, 16, true)] {
+            let mut value = serde_json::to_value(WorkbenchPreferences::default()).unwrap();
+            value["appearance"]["refinement"] = json!({
+                "tone": tone, "shade": shade, "blur": blur, "reducedMotion": reduced_motion
+            });
+            let preferences: WorkbenchPreferences = serde_json::from_value(value.clone()).unwrap();
+            let saved = store.write_preferences(revision, preferences).unwrap();
+            revision = saved.revision;
+            assert_eq!(serde_json::to_value(&saved.value).unwrap(), value);
+            let reopened = WorkbenchStore::open(directory.path()).unwrap();
+            assert_eq!(reopened.read_preferences().unwrap(), saved);
+        }
+    }
+    let path = document_path(directory.path(), "preferences.json");
+    let original = fs::read_to_string(&path).unwrap();
+    for (shade, blur) in [(29, 0), (96, 0), (84, 17)] {
+        let mut value = serde_json::to_value(WorkbenchPreferences::default()).unwrap();
+        value["appearance"]["refinement"] =
+            json!({"tone": "night", "shade": shade, "blur": blur, "reducedMotion": false});
+        let preferences: WorkbenchPreferences = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            store
+                .write_preferences(revision, preferences)
+                .unwrap_err()
+                .code,
+            "VALIDATION_FAILED"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+}
+
+#[test]
+fn appearance_refinement_keeps_existing_fields_required_and_rejects_invalid_shapes() {
+    let valid = json!({"tone": "forest", "shade": 84, "blur": 0, "reducedMotion": false});
+    let mut invalid = vec![
+        serde_json::Value::Null,
+        json!([]),
+        json!({"tone": "forest", "shade": 84, "blur": 0}),
+    ];
+    for (key, bad) in [
+        ("tone", json!("other")),
+        ("shade", json!(84.5)),
+        ("shade", json!("84")),
+        ("blur", json!(-1)),
+        ("blur", json!(0.5)),
+        ("reducedMotion", json!(1)),
+        ("extra", json!(true)),
+    ] {
+        let mut value = valid.clone();
+        value[key] = bad;
+        invalid.push(value);
+    }
+    for refinement in invalid {
+        let mut value = serde_json::to_value(WorkbenchPreferences::default()).unwrap();
+        value["appearance"]["refinement"] = refinement;
+        assert!(serde_json::from_value::<WorkbenchPreferences>(value).is_err());
+    }
+    for field in ["backgroundMode", "density", "backgroundImage", "backgroundName"] {
+        let mut value = serde_json::to_value(WorkbenchPreferences::default()).unwrap();
+        value["appearance"]["refinement"] = valid.clone();
+        value["appearance"].as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<WorkbenchPreferences>(value).is_err());
+    }
+    let mut foreign = serde_json::to_value(WorkbenchPreferences::default()).unwrap();
+    foreign["appearance"]["refinement"] = valid;
+    foreign["appearance"]["extra"] = json!(true);
+    assert!(serde_json::from_value::<WorkbenchPreferences>(foreign).is_err());
+}
+
+#[test]
 fn stale_revision_cannot_overwrite_another_instance() {
     let directory = TempDir::new().unwrap();
     let first = WorkbenchStore::open(directory.path()).unwrap();

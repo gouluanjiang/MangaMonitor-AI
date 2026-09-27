@@ -546,7 +546,7 @@ export function CompletionPanel({
         </div>
       ) : (
         <>
-          <div className="completion-controls">
+          <div className="completion-controls source-page-tools">
             {mode === "search" ? (
               <label>
                 作者名{" "}
@@ -630,13 +630,6 @@ export function CompletionPanel({
               刷新结果与入库状态
             </button>
           </div>
-          {mode === "updates" && (
-            <p className="source-muted" data-testid="completion-check-mode">
-              首次检查会读取完整目录；之后优先检查新增作品并复用历史目录。
-              “完整复核”会重新读取所选作者在两站的所有分页，用于核对旧作补录等变化。
-              “仅补查未完成”只读取未完成的作者与来源，已完成来源保持原样。
-            </p>
-          )}
           {mode === "updates" && view && !authors.length && (
             <p className="source-empty">
               尚未关注作者。可以先搜索作者，再添加关注。
@@ -649,7 +642,11 @@ export function CompletionPanel({
             </p>
           )}
           {running && (
-            <p role="status" data-testid="completion-progress">
+            <p
+              className="page-summary"
+              role="status"
+              data-testid="completion-progress"
+            >
               {readFailure
                 ? "上次读取的检查进度（当前进度待刷新）："
                 : "正在检查 "}
@@ -713,7 +710,7 @@ export function CompletionPanel({
               入库状态暂未核对完成，当前不能判断已入库或未入库。请点击“刷新结果与入库状态”重试。
             </p>
           )}
-          <div className="completion-controls">
+          <div className="completion-controls source-page-tools">
             <label>
               来源{" "}
               <select
@@ -729,6 +726,7 @@ export function CompletionPanel({
               </select>
             </label>
             <input
+              type="search"
               aria-label="筛选作者更新"
               placeholder="筛选已发现作品或作者…"
               value={query}
@@ -885,7 +883,7 @@ export function CompletionPanel({
               ),
             )}
           </div>
-          <p data-testid="completion-counts">
+          <p className="page-summary" data-testid="completion-counts">
             {onlyNewVisible ? "仅看本次新发现 · " : ""}
             {showOther ? "其他关键词结果（未确认作者归属） · " : ""}
             {readFailure
@@ -941,40 +939,68 @@ export function CompletionPanel({
                   : "检查范围尚未读完，更新时间排序仅覆盖已读取结果。")}
             </p>
           )}
-          {mode === "updates" && undatedCount > 0 && (
-            <p
-              className="source-muted"
-              data-testid="completion-date-refresh-help"
-            >
-              旧目录可能未保存日期。可在上方选择一位作者，再点击“完整复核”重新读取该作者在两站的所有分页；来源未提供的日期仍显示未知。“刷新结果与入库状态”仅读取本机记录，不会补查网站日期。
-            </p>
-          )}
-          <p className="source-muted">
-            {inventoryScopeNote} JM 与哔咔分别计数，未选择下载的记录会继续保留。
+          <p className="completion-scope-summary source-muted">
+            {mode === "updates"
+              ? `完整目录 ${catalogScopes} / ${ranges.length} 个来源范围 · `
+              : "本次 JM 与哔咔分别计数 · "}
             {lastCheck > 0
-              ? ` 上次检查：${new Date(lastCheck).toLocaleString()}`
-              : " 尚未完成检查。"}
+              ? `最近检查 ${new Date(lastCheck).toLocaleString()}`
+              : "尚未完成检查"}
           </p>
-          {mode === "updates" && (
-            <p className="source-muted" data-testid="completion-catalog-scope">
-              已建立完整目录 {catalogScopes} / {ranges.length} 个来源范围。
-              {lastFullCheck > 0
-                ? ` 最近完整读取：${new Date(lastFullCheck).toLocaleString()}。`
-                : " 尚未完成首次目录读取。"}
-              {includesIncremental
-                ? " 增量检查没有重新读取所有历史分页，统计包含已保存的旧作品。"
-                : ""}
+          <details
+            className="page-scope-details"
+            data-testid="completion-scope-details"
+          >
+            <summary>
+              检查范围与统计说明
+              {source !== "Pica" ? " · JM 不含 English Manga" : ""}
+            </summary>
+            {mode === "updates" && (
+              <p className="source-muted" data-testid="completion-check-mode">
+                首次检查会读取完整目录；之后优先检查新增作品并复用历史目录。
+                “完整复核”会重新读取所选作者在两站的所有分页，用于核对旧作补录等变化。
+                “仅补查未完成”只读取未完成的作者与来源，已完成来源保持原样。
+              </p>
+            )}
+            {mode === "updates" && undatedCount > 0 && (
+              <p
+                className="source-muted"
+                data-testid="completion-date-refresh-help"
+              >
+                旧目录可能未保存日期。可在上方选择一位作者，再点击“完整复核”重新读取该作者在两站的所有分页；来源未提供的日期仍显示未知。“刷新结果与入库状态”仅读取本机记录，不会补查网站日期。
+              </p>
+            )}
+            <p className="source-muted">
+              {inventoryScopeNote} JM
+              与哔咔分别计数，未选择下载的记录会继续保留。
+              {lastCheck > 0
+                ? ` 上次检查：${new Date(lastCheck).toLocaleString()}`
+                : " 尚未完成检查。"}
             </p>
-          )}
-          <p className="source-muted" data-testid="completion-query-scope">
-            {mode === "search"
-              ? "读完来源的作者关键词查询，再按作者字段区分结果。"
-              : "来源的作者关键词查询结果按作者字段区分，历史记录会保留。"}
-            作者作品包含明确列出的合著者和“社团（作者）”；名称不同或信息缺失的记录保留在其他关键词结果中。
-          </p>
-          {source !== "Pica" && (
-            <p className="source-muted">{jmSearchScopeNote}</p>
-          )}
+            {mode === "updates" && (
+              <p
+                className="source-muted"
+                data-testid="completion-catalog-scope"
+              >
+                已建立完整目录 {catalogScopes} / {ranges.length} 个来源范围。
+                {lastFullCheck > 0
+                  ? ` 最近完整读取：${new Date(lastFullCheck).toLocaleString()}。`
+                  : " 尚未完成首次目录读取。"}
+                {includesIncremental
+                  ? " 增量检查没有重新读取所有历史分页，统计包含已保存的旧作品。"
+                  : ""}
+              </p>
+            )}
+            <p className="source-muted" data-testid="completion-query-scope">
+              {mode === "search"
+                ? "读完来源的作者关键词查询，再按作者字段区分结果。"
+                : "来源的作者关键词查询结果按作者字段区分，历史记录会保留。"}
+              作者作品包含明确列出的合著者和“社团（作者）”；名称不同或信息缺失的记录保留在其他关键词结果中。
+            </p>
+            {source !== "Pica" && (
+              <p className="source-muted">{jmSearchScopeNote}</p>
+            )}
+          </details>
           {fullRangeChecked &&
             issueCount === 0 &&
             !showOther &&

@@ -22,8 +22,15 @@ import { Icon } from "./icons.tsx";
 import { WorkbenchSettings } from "./WorkbenchSettings.tsx";
 import { DiagnosticsPanel } from "./DiagnosticsPanel.tsx";
 import type { SettingsPage } from "./settings-navigation.ts";
-import { initialPreferences, decodeBackgroundImage } from "./preferences.ts";
+import {
+  initialPreferences,
+  decodeBackgroundImage,
+  appearanceRefinement,
+} from "./preferences.ts";
 import type { WorkbenchPreferences } from "./preferences.ts";
+import { UiSidebar } from "./UiSidebar.tsx";
+import type { UiDestination } from "./UiSidebar.tsx";
+import { useUiMotion, useSidebarMotion } from "./ui-motion.ts";
 
 import { BooklistControls, BooklistPicker } from "./BooklistControls.tsx";
 import { initialBooklists, removeBooklistMembers } from "./booklists.ts";
@@ -80,6 +87,8 @@ import {
   sourceLabel,
   mergeSourceWorks,
 } from "./source-types.ts";
+import "./ui-theme.css";
+import "./ui-motion.css";
 import type {
   AccountSummary,
   Source,
@@ -127,7 +136,7 @@ const pageNames: Record<Page, string> = {
   completion: "作者更新",
   "author-search": "作者搜索",
   queue: "下载队列",
-  authors: "关注",
+  authors: "关注作者",
   settings: "设置",
 };
 const localStages: TaskStage[] = [
@@ -301,8 +310,7 @@ export default function App() {
   const [requestedAuthorContext, setRequestedAuthorContext] =
     useState<AuthorCreditContext>();
   const [sourceRequestKey, setSourceRequestKey] = useState(0);
-  const [sourceSearchHost, setSourceSearchHost] =
-    useState<HTMLDivElement | null>(null);
+  const [dismissSourceDetailKey, setDismissSourceDetailKey] = useState(0);
   const mergeAccounts = useCallback((updates: AccountSummary[]) => {
     const next = accountsRef.current.map(
       (previous) =>
@@ -791,6 +799,9 @@ export default function App() {
   >(null);
   const [failedBackground, setFailedBackground] = useState<string | null>(null);
   const appearance = appearanceDraft ?? preferences.appearance;
+  const refinement = appearanceRefinement(appearance);
+  useUiMotion(refinement.reducedMotion);
+  const sidebar = useSidebarMotion(refinement.reducedMotion);
   const displayBackground =
     appearance.backgroundImage === failedBackground
       ? null
@@ -1286,6 +1297,7 @@ export default function App() {
             )}
           </div>
         </div>
+        <div className="source-page-tools">{pageSearchControl}</div>
         {page === "library" &&
           !query &&
           source === "all" &&
@@ -2216,6 +2228,7 @@ export default function App() {
         }
         onPreview={setAppearanceDraft}
         searchQuery={settingsQuery}
+        searchControl={pageSearchControl}
         onBackgroundValidated={(dataUrl) => {
           if (dataUrl === failedBackground) setFailedBackground(null);
         }}
@@ -2234,13 +2247,95 @@ export default function App() {
       </p>
     );
   }
+  const uiDestination: UiDestination =
+    page === "discovery" && discoveryPane !== "search"
+      ? discoveryPane === "recent"
+        ? "recent"
+        : "ranking"
+      : page;
+  const pageTitle =
+    uiDestination === "recent"
+      ? "最近更新"
+      : uiDestination === "ranking"
+        ? "周排行榜"
+        : page === "discovery"
+          ? "来源搜索"
+          : pageNames[page];
+  function navigateUi(destination: UiDestination) {
+    if (destination === "settings") return openSettings();
+    if (destination === "discovery" && embeddedSourceDetail) {
+      setRequestedWork(undefined);
+      setRequestedAuthorContext(undefined);
+      setDismissSourceDetailKey((value) => value + 1);
+    }
+    if (
+      destination === "recent" ||
+      destination === "ranking" ||
+      destination === "discovery"
+    ) {
+      setDiscoveryPane(
+        destination === "recent"
+          ? "recent"
+          : destination === "ranking"
+            ? discoveryPane === "Pica"
+              ? "Pica"
+              : "JM"
+            : "search",
+      );
+      navigate("discovery");
+    } else navigate(destination);
+  }
+  const pageSearchControl = (
+    <label className="search-box page-search-box">
+      <Icon name="search" size={17} />
+      <input
+        data-testid="search-input"
+        aria-label={page === "settings" ? "搜索设置" : "搜索作品或作者"}
+        placeholder={page === "settings" ? "搜索设置…" : "搜索作品、作者…"}
+        value={page === "settings" ? settingsQuery : query}
+        onChange={(event) => {
+          if (page === "settings") {
+            setSettingsQuery(event.target.value);
+            return;
+          }
+          setQuery(event.target.value);
+          clearScopeSelection();
+          setDetail(null);
+          if (!["library", "favorites", "discovery"].includes(page)) {
+            setPage("discovery");
+            setFilter("all");
+            setSource("all");
+          }
+        }}
+      />
+      {(page === "settings" ? settingsQuery : query) && (
+        <button
+          className="icon-button"
+          aria-label="清空搜索"
+          onClick={() => {
+            if (page === "settings") setSettingsQuery("");
+            else {
+              setQuery("");
+              clearScopeSelection();
+            }
+          }}
+        >
+          <Icon name="close" size={14} />
+        </button>
+      )}
+    </label>
+  );
   const content = (
     <div
-      className="app-shell"
+      className={`app-shell ui-refined${sidebar.collapsed ? " sidebar-collapsed" : ""}`}
       inert={readerHost.isOpen}
       data-background-mode={appearance.backgroundMode}
+      data-background-tone={refinement.tone}
+      data-reduced-motion={refinement.reducedMotion}
       style={
         {
+          "--background-shade": refinement.shade / 100,
+          "--background-blur": `${refinement.blur}px`,
           "--user-background": displayBackground
             ? `url("${displayBackground}")`
             : "none",
@@ -2248,77 +2343,25 @@ export default function App() {
       }
     >
       <div className="workbench-background" aria-hidden="true" />
-      <aside className="sidebar">
-        <button
-          className="brand"
-          aria-label="MangaMonitor 首页"
-          onClick={() => navigate("library")}
-        >
-          <span className="brand-mark">
-            M<span />
-          </span>
-        </button>
-        <nav aria-label="主要导航">
-          {(
-            [
-              ["library", "library"],
-              ["favorites", "heart"],
-              ["discovery", "discover"],
-              ["queue", "download"],
-              ["authors", "people"],
-              ["completion", "completeness"],
-              ["author-search", "search"],
-            ] as const
-          )
-            .filter(
-              ([value]) =>
-                persistence.native ||
-                !["completion", "author-search"].includes(value),
-            )
-            .map(([value, icon]) => (
-              <button
-                key={value}
-                data-testid={`nav-${value}`}
-                className={`nav-item ${page === value ? "active" : ""}`}
-                aria-current={page === value ? "page" : undefined}
-                aria-label={pageNames[value]}
-                title={pageNames[value]}
-                onClick={() => navigate(value)}
-              >
-                <Icon name={icon} size={19} />
-                <span className="nav-tooltip">{pageNames[value]}</span>
-                {value === "queue" &&
-                  (persistence.native
-                    ? unfinishedDownloadCount(downloads.snapshot.tasks)
-                    : unfinished) > 0 && (
-                    <span className="nav-count">
-                      {persistence.native
-                        ? unfinishedDownloadCount(downloads.snapshot.tasks)
-                        : unfinished}
-                    </span>
-                  )}
-                {value === "discovery" && <span className="nav-dot" />}
-              </button>
-            ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <button
-            className={`nav-item ${page === "settings" ? "active" : ""}`}
-            data-testid="nav-settings"
-            aria-label="设置"
-            title="设置"
-            aria-current={page === "settings" ? "page" : undefined}
-            onClick={() => openSettings()}
-          >
-            <Icon name="settings" size={19} />
-            <span className="nav-tooltip">设置</span>
-          </button>
-        </div>
-      </aside>
-      <div className="main-shell">
+      <UiSidebar
+        sidebarRef={sidebar.sidebarRef}
+        active={uiDestination}
+        native={persistence.native}
+        collapsed={sidebar.collapsed}
+        accounts={accounts}
+        unfinished={
+          persistence.native
+            ? unfinishedDownloadCount(downloads.snapshot.tasks)
+            : unfinished
+        }
+        onNavigate={navigateUi}
+        onToggle={sidebar.toggle}
+        onOpenAccounts={() => openSettings("accounts")}
+      />
+      <div className="main-shell" ref={sidebar.workspaceRef}>
         <header className="topbar">
           <div className="breadcrumb">
-            工作台 <span>/</span> {pageNames[page]}
+            我的空间 <span>/</span> {pageTitle}
             {detail && (
               <>
                 <span>/</span>
@@ -2326,60 +2369,15 @@ export default function App() {
               </>
             )}
           </div>
-          <div
-            className="source-search-host"
-            ref={setSourceSearchHost}
-            hidden={!sourceActive}
-          />
-          {!sourceActive &&
-            !(
-              persistence.native &&
-              (["completion", "author-search"].includes(page) ||
-                (page === "discovery" && discoveryPane !== "search"))
-            ) && (
-              <label className="search-box">
-                <Icon name="search" size={17} />
-                <input
-                  data-testid="search-input"
-                  aria-label={
-                    page === "settings" ? "搜索设置" : "搜索作品或作者"
-                  }
-                  placeholder={
-                    page === "settings" ? "搜索设置…" : "搜索作品、作者…"
-                  }
-                  value={page === "settings" ? settingsQuery : query}
-                  onChange={(event) => {
-                    if (page === "settings") {
-                      setSettingsQuery(event.target.value);
-                      return;
-                    }
-                    setQuery(event.target.value);
-                    clearScopeSelection();
-                    setDetail(null);
-                    if (!["library", "favorites", "discovery"].includes(page)) {
-                      setPage("discovery");
-                      setFilter("all");
-                      setSource("all");
-                    }
-                  }}
-                />
-                {(page === "settings" ? settingsQuery : query) && (
-                  <button
-                    className="icon-button"
-                    aria-label="清空搜索"
-                    onClick={() => {
-                      if (page === "settings") setSettingsQuery("");
-                      else {
-                        setQuery("");
-                        clearScopeSelection();
-                      }
-                    }}
-                  >
-                    <Icon name="close" size={14} />
-                  </button>
-                )}
-              </label>
-            )}
+          <button
+            className="icon-button ui-appearance-shortcut"
+            aria-label="调整外观"
+            title="调整外观"
+            data-testid="appearance-shortcut"
+            onClick={() => openSettings("appearance")}
+          >
+            <Icon name="settings" size={18} />
+          </button>
           <div className="demo-label" data-testid="demo-label">
             <span />
             {persistence.native
@@ -2456,6 +2454,7 @@ export default function App() {
               density={appearance.density}
               onDensityChange={changeDensity}
               query={query}
+              searchControl={page === "library" ? pageSearchControl : undefined}
               externalWork={requestedLibraryWork}
               externalEntryId={requestedLibraryEntryId}
               requestKey={libraryRequestKey}
@@ -2637,8 +2636,8 @@ export default function App() {
               requestedWork={requestedWork}
               requestedAuthorContext={requestedAuthorContext}
               requestKey={sourceRequestKey}
+              dismissDetailKey={dismissSourceDetailKey}
               loadingAccounts={loadingAccounts}
-              searchHost={sourceSearchHost}
             />
           )}
           {sourceActive ||

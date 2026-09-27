@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  appearanceRefinement,
   initialPreferences,
   isBackgroundDataUrl,
   isWorkbenchPreferences,
@@ -73,6 +74,95 @@ test("defaults remember B, 7 covers and two distinct resource budgets", () => {
   first.resources.imageRequests = 1;
   assert.equal(initialPreferences().appearance.density, 7);
   assert.equal(initialPreferences().resources.imageRequests, 4);
+});
+
+test("legacy appearance uses refinement defaults without adding fields on read or unrelated save", async () => {
+  const legacy = withBackground();
+  const original = JSON.stringify(legacy);
+  const storage = storageWith(original);
+  const loaded = await readPreferences(storage, async () => true);
+  assert.deepEqual(appearanceRefinement(loaded.preferences.appearance), {
+    tone: "night",
+    shade: 84,
+    blur: 0,
+    reducedMotion: false,
+  });
+  appearanceRefinement(loaded.preferences.appearance).shade = 30;
+  assert.equal(appearanceRefinement(loaded.preferences.appearance).shade, 84);
+  assert.equal("refinement" in loaded.preferences.appearance, false);
+  assert.equal(storage.getItem(PREFERENCES_STORAGE_KEY), original);
+  const next = { ...loaded.preferences, resources: resourcePreset("economy") };
+  assert.equal(savePreferences(next, storage), true);
+  const stored = JSON.parse(storage.getItem(PREFERENCES_STORAGE_KEY));
+  assert.deepEqual(stored.appearance, legacy.appearance);
+  assert.equal(stored.version, 1);
+});
+
+test("explicit refinement round-trips with custom backgrounds and survives restoring only the background", async () => {
+  for (const tone of ["night", "forest", "dusk"]) {
+    for (const [shade, blur, reducedMotion] of [
+      [30, 0, false],
+      [95, 16, true],
+    ]) {
+      const preferences = withBackground();
+      preferences.appearance.refinement = { tone, shade, blur, reducedMotion };
+      const storage = storageWith();
+      assert.equal(savePreferences(preferences, storage), true);
+      const loaded = await readPreferences(storage, async () => true);
+      assert.deepEqual(loaded.preferences, preferences);
+      const cleared = restoreDefaultBackground(loaded.preferences.appearance);
+      assert.equal(cleared.backgroundImage, null);
+      assert.equal(cleared.backgroundName, null);
+      assert.deepEqual(cleared.refinement, preferences.appearance.refinement);
+      assert.equal(preferences.appearance.backgroundImage, pngDataUrl);
+    }
+  }
+});
+
+test("refinement rejects unknown, incomplete and out-of-range fields without weakening legacy validation", () => {
+  const valid = { tone: "forest", shade: 84, blur: 0, reducedMotion: false };
+  const invalid = [
+    null,
+    undefined,
+    [],
+    { ...valid, tone: "other" },
+    { ...valid, shade: 29 },
+    { ...valid, shade: 96 },
+    { ...valid, shade: 84.5 },
+    { ...valid, shade: "84" },
+    { ...valid, blur: -1 },
+    { ...valid, blur: 17 },
+    { ...valid, blur: 0.5 },
+    { ...valid, reducedMotion: 1 },
+    { tone: "forest", shade: 84, blur: 0 },
+    { ...valid, extra: true },
+  ];
+  for (const refinement of invalid) {
+    const preferences = withBackground();
+    preferences.appearance.refinement = refinement;
+    assert.equal(isWorkbenchPreferences(preferences), false);
+    const storage = storageWith("previous preferences");
+    assert.equal(savePreferences(preferences, storage), false);
+    assert.equal(
+      storage.getItem(PREFERENCES_STORAGE_KEY),
+      "previous preferences",
+    );
+  }
+  for (const field of [
+    "backgroundMode",
+    "density",
+    "backgroundImage",
+    "backgroundName",
+  ]) {
+    const preferences = withBackground();
+    preferences.appearance.refinement = valid;
+    delete preferences.appearance[field];
+    assert.equal(isWorkbenchPreferences(preferences), false);
+  }
+  const foreign = withBackground();
+  foreign.appearance.refinement = valid;
+  foreign.appearance.extra = true;
+  assert.equal(isWorkbenchPreferences(foreign), false);
 });
 
 test("strict restore rejects foreign schema, corrupt state and forged resource profiles", () => {

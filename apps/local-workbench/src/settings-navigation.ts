@@ -14,7 +14,8 @@ const pages: { id: SettingsPage; label: string; keywords: string }[] = [
   {
     id: "appearance",
     label: "外观",
-    keywords: "背景 图片 壁纸 封面 密度 主题",
+    keywords:
+      "背景 图片 壁纸 封面 密度 主题 预设 夜色 森林 暮色 暗化 模糊 动态 动画",
   },
   {
     id: "resources",

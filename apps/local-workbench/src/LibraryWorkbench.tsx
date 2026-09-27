@@ -1,4 +1,5 @@
 import { useReaderAccess } from "./reader-access.tsx";
+import type { ReactNode } from "react";
 import {
   useCallback,
   useEffect,
@@ -502,6 +503,7 @@ export function LibraryWorkbench({
   externalWork,
   externalEntryId,
   requestKey = 0,
+  searchControl,
 }: {
   library: LibraryState;
   active: boolean;
@@ -511,6 +513,7 @@ export function LibraryWorkbench({
   externalWork?: SourceWork | null;
   externalEntryId?: string | null;
   requestKey?: number;
+  searchControl?: ReactNode;
 }) {
   const readerAccess = useReaderAccess();
   const choose = (item: LibraryItem) => {
@@ -618,6 +621,7 @@ export function LibraryWorkbench({
             </div>
           </div>
           <div className="library-toolbar">
+            {searchControl}
             <div className="source-density" role="group" aria-label="封面密度">
               封面密度
               {([5, 7, 9] as const).map((value) => (

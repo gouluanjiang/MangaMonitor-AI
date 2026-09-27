@@ -2405,8 +2405,8 @@ test("source search stays in its page toolbar and detail content fits wide and n
     await expect(search).toBeVisible();
     await expect
       .poll(async () => (await geometry()).width)
-      .toBeGreaterThanOrEqual(418);
-    expect((await geometry()).width).toBeLessThanOrEqual(422);
+      .toBeGreaterThanOrEqual(478);
+    expect((await geometry()).width).toBeLessThanOrEqual(482);
     expect(
       Math.abs((await geometry()).left - (await geometry()).availableLeft),
     ).toBeLessThanOrEqual(2);

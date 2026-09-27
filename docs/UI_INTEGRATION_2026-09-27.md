@@ -37,6 +37,9 @@ by this UI batch.
 - Existing source, update, ranking and library components receive layout-only
   changes. Detailed scope text is folded; counts, incomplete/error status,
   retries and source restrictions remain accessible.
+- The visible library toolbar receives the existing sticky surface state in
+  both native and demo branches. Hidden mounted pages cannot supply that state
+  or the browsing anchor; deep-scroll controls remain above the virtual cards.
 - Optional `appearance.refinement` stores night/forest/dusk, shade 30–95,
   blur 0–16 and reduced motion through existing preview/save/revision handling.
   TypeScript and Rust validate the same bounds. Absent fields preserve legacy
@@ -55,6 +58,9 @@ through 320 synthetic books while changing sidebar width, reversible appearance
 drafts and narrow layouts. Existing reader, source, download, settings and
 inventory suites remain enabled. Three additional TypeScript and three Rust
 tests cover old-file compatibility, round-trip persistence and rejected shapes.
+The deep-scroll case checks the sticky surface and real hit targets after both
+sidebar directions. Download-dialog screenshots finish finite entry motion
+before capture, so visual review sees the final surface.
 
 Local work is editing, formatter application and independent review only.
 Formal checks/builds run once per necessary revision/target in the existing CI.

@@ -262,7 +262,7 @@ test("the refined cover menu preserves all three reader choices and a reversible
   ).toEqual([]);
 });
 
-test("deep library browsing keeps its visible book inside the viewport after both sidebar directions", async ({
+test("deep library browsing keeps its book and usable opaque toolbar after both sidebar directions", async ({
   page,
 }) => {
   await page.evaluate(() => {
@@ -333,9 +333,53 @@ test("deep library browsing keeps its visible book inside the viewport after bot
         }, anchor),
       )
       .toBe(true);
+    await expect(page.locator(".app-shell")).not.toHaveClass(
+      /ui-sidebar-moving/,
+    );
+    const toolbar = page
+      .getByTestId("library-workbench")
+      .locator(".library-toolbar");
+    await expect(toolbar).toHaveClass(/is-stuck/);
+    const surface = await toolbar.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const channels = style.backgroundColor.match(/[\d.]+/g) ?? [];
+      return {
+        position: style.position,
+        zIndex: Number(style.zIndex),
+        backgroundAlpha: channels.length === 4 ? Number(channels[3]) : 1,
+      };
+    });
+    expect(surface.position).toBe("sticky");
+    expect(surface.zIndex).toBeGreaterThan(0);
+    expect(surface.backgroundAlpha).toBeGreaterThanOrEqual(0.9);
+    for (const testId of ["search-input", "library-density-7"]) {
+      const control = toolbar.getByTestId(testId);
+      await expect(control).toBeVisible();
+      await expect
+        .poll(() =>
+          control.evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            const viewport = element.closest("main")!.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+              (bounds.left + bounds.right) / 2,
+              (bounds.top + bounds.bottom) / 2,
+            );
+            return (
+              bounds.top >= viewport.top - 1 &&
+              bounds.bottom <= viewport.bottom &&
+              hit !== null &&
+              element.contains(hit)
+            );
+          }),
+        )
+        .toBe(true);
+    }
   }
   await mkdir("visual-evidence", { recursive: true });
-  await page.screenshot({ path: "visual-evidence/refined-library-deep.png" });
+  await page.screenshot({
+    path: "visual-evidence/refined-library-deep.png",
+    animations: "disabled",
+  });
 });
 
 test("new appearance controls accept old preferences, preview reversibly, and save only the intended settings", async ({

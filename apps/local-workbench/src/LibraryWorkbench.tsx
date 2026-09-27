@@ -497,6 +497,7 @@ function LibraryDetail({
 export function LibraryWorkbench({
   library,
   active,
+  toolbarStuck = false,
   density,
   onDensityChange,
   query,
@@ -507,6 +508,7 @@ export function LibraryWorkbench({
 }: {
   library: LibraryState;
   active: boolean;
+  toolbarStuck?: boolean;
   density: 5 | 7 | 9;
   onDensityChange(value: 5 | 7 | 9): void | Promise<unknown>;
   query: string;
@@ -620,7 +622,7 @@ export function LibraryWorkbench({
               <p>浏览电脑漫画库中的作品与文件信息</p>
             </div>
           </div>
-          <div className="library-toolbar">
+          <div className={`library-toolbar${toolbarStuck ? " is-stuck" : ""}`}>
             {searchControl}
             <div className="source-density" role="group" aria-label="封面密度">
               封面密度

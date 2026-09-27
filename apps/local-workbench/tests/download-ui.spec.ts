@@ -1094,6 +1094,7 @@ test("more than fifty choices retain every chunk and enter the queue in one conf
   ).toBe(0);
   await page.screenshot({
     path: "visual-evidence/large-download-selection.png",
+    animations: "disabled",
   });
   await page.getByTestId("download-batch-confirm").click();
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);

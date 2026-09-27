@@ -2466,6 +2466,7 @@ test("full-range author selection waits for completion, excludes owned works and
   ]);
   await page.screenshot({
     path: "visual-evidence/mixed-source-download-selection.png",
+    animations: "disabled",
   });
   await page.getByTestId("download-batch-cancel").click();
   expect(

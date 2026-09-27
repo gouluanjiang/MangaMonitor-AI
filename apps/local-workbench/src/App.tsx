@@ -814,9 +814,17 @@ export default function App() {
     anchor: Anchor | null;
     detail: string | null;
   } | null>(null);
+  function visibleLibraryToolbar(container: HTMLElement | null) {
+    return Array.from(
+      container?.querySelectorAll<HTMLElement>(".library-toolbar") ?? [],
+    ).find(
+      (toolbar) =>
+        !toolbar.closest("[hidden]") && toolbar.getClientRects().length > 0,
+    );
+  }
   function updateToolbarSurface() {
     const container = contentRef.current;
-    const toolbar = container?.querySelector(".library-toolbar");
+    const toolbar = visibleLibraryToolbar(container);
     setToolbarStuck(
       Boolean(
         container &&
@@ -841,9 +849,7 @@ export default function App() {
     const container = contentRef.current;
     if (!container) return null;
     const containerTop = container.getBoundingClientRect().top;
-    const toolbar = container
-      .querySelector(".library-toolbar")
-      ?.getBoundingClientRect();
+    const toolbar = visibleLibraryToolbar(container)?.getBoundingClientRect();
     const top =
       toolbar && toolbar.top <= containerTop + 1
         ? toolbar.bottom
@@ -2451,6 +2457,7 @@ export default function App() {
               key={libraryNavigationKey}
               library={library}
               active={libraryActive}
+              toolbarStuck={toolbarStuck}
               density={appearance.density}
               onDensityChange={changeDensity}
               query={query}

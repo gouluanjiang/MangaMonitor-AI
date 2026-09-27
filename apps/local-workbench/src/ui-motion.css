@@ -103,7 +103,7 @@ body[data-ui-refined="true"] :is(.dialog, .reader-cover-actions)::backdrop {
       display 240ms allow-discrete,
       overlay 240ms allow-discrete;
   }
-  .ui-refined select::picker(select):popover-open {
+  .ui-refined select:open::picker(select) {
     opacity: 1;
     transform: none;
     transition:
@@ -126,7 +126,7 @@ body[data-ui-refined="true"] :is(.dialog, .reader-cover-actions)::backdrop {
     outline-offset: -2px;
   }
   @starting-style {
-    .ui-refined select::picker(select):popover-open {
+    .ui-refined select:open::picker(select) {
       opacity: 0;
       transform: translateY(-6px) scale(0.96);
     }

@@ -49,7 +49,7 @@ placement behavior documented in [MDN's picker reference](https://developer.mozi
 
 ## Verification plan and status
 
-Seven synthetic UI cases cover dedicated navigation, pointer/keyboard/reduced
+Eight synthetic UI cases cover dedicated navigation, pointer/keyboard/reduced
 sidebar interactions, page-local queries, all cover menu choices, deep scrolling
 through 320 synthetic books while changing sidebar width, reversible appearance
 drafts and narrow layouts. Existing reader, source, download, settings and

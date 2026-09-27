@@ -230,7 +230,10 @@ async function install(page: Page) {
   );
   await page.goto("/");
   await page.getByTestId("nav-discovery").click();
-  await page.getByRole("button", { name: "最近更新", exact: true }).click();
+  await page
+    .locator(".source-tabs")
+    .getByRole("button", { name: "最近更新", exact: true })
+    .click();
 }
 
 const recentCalls = (page: Page) =>
@@ -484,14 +487,23 @@ test("late pages cannot enter another source or replacement session, and switchi
     .click();
   await page.evaluate(() => window.recentTest.release!());
   await page.getByTestId("nav-discovery").click();
-  await page.getByRole("button", { name: "最近更新", exact: true }).click();
+  await page
+    .locator(".source-tabs")
+    .getByRole("button", { name: "最近更新", exact: true })
+    .click();
   await expect(recentCard(page, "JM", 1)).toContainText("replacement-JM");
   await expect(recentCard(page, "JM", 21)).toHaveCount(0);
   const beforeRanks = await recentCalls(page);
-  await page.getByRole("button", { name: "JM 每周必看", exact: true }).click();
+  await page
+    .locator(".source-tabs")
+    .getByRole("button", { name: "JM 每周必看", exact: true })
+    .click();
   await expect(page.getByTestId("rank-work-JM:901")).toBeVisible();
   expect(await recentCalls(page)).toEqual(beforeRanks);
-  await page.getByRole("button", { name: "最近更新", exact: true }).click();
+  await page
+    .locator(".source-tabs")
+    .getByRole("button", { name: "最近更新", exact: true })
+    .click();
   await expect(recentCard(page, "JM", 1)).toContainText("replacement-JM");
   expect(await recentCalls(page)).toEqual(beforeRanks);
 });
@@ -740,13 +752,19 @@ test("programmatic position changes, resizing, detail return and hidden or filte
     .getByLabel("最近更新入库筛选")
     .getByRole("button", { name: "全部 20", exact: true })
     .click();
-  await page.getByRole("button", { name: "JM 每周必看", exact: true }).click();
+  await page
+    .locator(".source-tabs")
+    .getByRole("button", { name: "JM 每周必看", exact: true })
+    .click();
   await expect(page.getByTestId("rank-work-JM:901")).toBeVisible();
   await main.hover();
   await page.mouse.wheel(0, 10000);
   await page.clock.runFor(1000);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
-  await page.getByRole("button", { name: "最近更新", exact: true }).click();
+  await page
+    .locator(".source-tabs")
+    .getByRole("button", { name: "最近更新", exact: true })
+    .click();
   await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
   await page.clock.runFor(1000);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);

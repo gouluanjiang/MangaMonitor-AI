@@ -918,11 +918,14 @@ test("appearance settings preserve an explicit favorite source and pending selec
   await expect(page.locator(".selected-count")).toHaveText("1");
 });
 
-test("search from a source detail retains its source list", async ({
+test("returning from a source detail restores its page-local search and source list", async ({
   page,
 }) => {
   await page.getByTestId("nav-favorites").click();
   await page.getByTestId("open-rain").click();
+  await expect(page.getByTestId("detail-page")).toBeVisible();
+  await expect(page.getByTestId("search-input")).toHaveCount(0);
+  await page.getByTestId("back-library").click();
   await page.getByTestId("search-input").fill("雨");
   await expect(page.getByTestId("detail-page")).toBeHidden();
   await expect(page.getByTestId("nav-favorites")).toHaveAttribute(

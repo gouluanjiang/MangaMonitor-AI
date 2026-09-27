@@ -2374,7 +2374,7 @@ test("an explicit expired session refreshes account state and removes the connec
   ).toBe(1);
 });
 
-test("source search stays right-aligned at baseline width and fits a narrow window", async ({
+test("source search stays in its page toolbar and detail content fits wide and narrow windows", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
@@ -2385,18 +2385,18 @@ test("source search stays right-aligned at baseline width and fits a narrow wind
   const geometry = () =>
     search.evaluate((element) => {
       const rect = element.getBoundingClientRect();
-      const header = element.closest("header")!;
-      const bounds = header.getBoundingClientRect();
-      const style = getComputedStyle(header);
+      const toolbar = element.closest(".source-page-tools")!;
+      const bounds = toolbar.getBoundingClientRect();
+      const style = getComputedStyle(toolbar);
       return {
         left: rect.left,
         right: rect.right,
         width: rect.width,
-        availableRight: bounds.right - parseFloat(style.paddingRight),
+        availableLeft: bounds.left + parseFloat(style.paddingLeft),
         overflow: Math.max(
           document.documentElement.scrollWidth -
             document.documentElement.clientWidth,
-          header.scrollWidth - header.clientWidth,
+          toolbar.scrollWidth - toolbar.clientWidth,
         ),
       };
     });
@@ -2405,12 +2405,15 @@ test("source search stays right-aligned at baseline width and fits a narrow wind
     await expect(search).toBeVisible();
     await expect
       .poll(async () => (await geometry()).width)
-      .toBeGreaterThanOrEqual(478);
-    expect((await geometry()).width).toBeLessThanOrEqual(482);
+      .toBeGreaterThanOrEqual(418);
+    expect((await geometry()).width).toBeLessThanOrEqual(422);
     expect(
-      Math.abs((await geometry()).right - (await geometry()).availableRight),
+      Math.abs((await geometry()).left - (await geometry()).availableLeft),
     ).toBeLessThanOrEqual(2);
-    expect((await geometry()).left).toBeGreaterThan(1672 / 2);
+    await expect(
+      page.locator(".topbar").getByTestId("source-search-control"),
+    ).toHaveCount(0);
+    expect((await geometry()).overflow).toBeLessThanOrEqual(1);
   }
   await page.getByTestId("nav-favorites").click();
   await page.getByTestId("source-open-JM:123").click();
@@ -2436,12 +2439,17 @@ test("source search stays right-aligned at baseline width and fits a narrow wind
         descriptionLeft: description.left,
       };
     });
-  expect(detailLayout.coverWidth).toBeGreaterThanOrEqual(420);
-  expect(detailLayout.coverWidth).toBeLessThanOrEqual(440);
-  expect(detailLayout.coverHeight).toBeGreaterThanOrEqual(620);
+  expect(detailLayout.coverWidth).toBeGreaterThanOrEqual(278);
+  expect(detailLayout.coverWidth).toBeLessThanOrEqual(282);
+  expect(
+    detailLayout.coverHeight / detailLayout.coverWidth,
+  ).toBeGreaterThanOrEqual(1.45);
+  expect(
+    detailLayout.coverHeight / detailLayout.coverWidth,
+  ).toBeLessThanOrEqual(1.55);
   expect(
     detailLayout.descriptionLeft - detailLayout.coverRight,
-  ).toBeGreaterThanOrEqual(48);
+  ).toBeGreaterThanOrEqual(26);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByTestId("nav-discovery").click();
   await page.getByTestId("source-search-input").fill("合成验收来源查询");

@@ -7,6 +7,7 @@ import {
   validateSourceWork,
   validateCatalogSnapshot,
   validateSourcePage,
+  validateAccount,
 } from "../src/source-runtime.ts";
 import {
   mergeSourceWorks,
@@ -621,6 +622,79 @@ test("following writes carry the reviewed revision and do not silently retry con
   assert.equal(attempts, 1);
 });
 
+test("account summaries default legacy login preference off and expose no stored credential", () => {
+  assert.equal(validateAccount(account()).rememberLogin, false);
+  const summary = validateAccount({
+    ...account(),
+    remembered: true,
+    rememberLogin: true,
+    username: "private-synthetic-user",
+    password: "private-synthetic-password",
+    credential: { token: "private-synthetic-token" },
+  });
+  assert.deepEqual(summary, {
+    ...account(),
+    remembered: true,
+    rememberLogin: true,
+  });
+  assert.doesNotMatch(
+    JSON.stringify(summary),
+    /private-synthetic|password|credential|token/,
+  );
+  for (const invalid of [
+    { ...account(), rememberLogin: "true" },
+    { ...account(), rememberLogin: true, remembered: false },
+    { ...account("Pica"), rememberLogin: true, remembered: true },
+  ])
+    assert.throws(() => validateAccount(invalid), { code: "INVALID_RESPONSE" });
+});
+
+test("remembered login requires explicit JM consent and a remembered session before IPC", async () => {
+  const calls = [];
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({
+        command,
+        remember: args.remember,
+        rememberLogin: args.rememberLogin,
+      });
+      return {
+        ...account(args.source),
+        remembered: args.remember,
+        rememberLogin: args.rememberLogin,
+      };
+    },
+  });
+  const input = {
+    source: "JM",
+    username: "synthetic-user",
+    password: "fixture-only",
+    remember: true,
+  };
+  assert.equal((await adapter.login(input)).rememberLogin, false);
+  assert.equal(
+    (await adapter.login({ ...input, rememberLogin: true })).rememberLogin,
+    true,
+  );
+  assert.deepEqual(calls, [
+    { command: "source_login", remember: true, rememberLogin: false },
+    { command: "source_login", remember: true, rememberLogin: true },
+  ]);
+  for (const invalid of [
+    { ...input, remember: false, rememberLogin: true },
+    { ...input, source: "Pica", rememberLogin: true },
+  ])
+    await assert.rejects(adapter.login(invalid), {
+      code: "LOGIN_REMEMBER_INVALID",
+    });
+  assert.equal(calls.length, 2);
+  assert.match(
+    sourceErrorMessage(new SourceError("LOGIN_REMEMBER_INVALID")),
+    /仅 JM.*记住会话/,
+  );
+});
+
 test("login only accepts its requested source and errors never retain raw credential-bearing text", async () => {
   const input = {
     source: "JM",
@@ -673,12 +747,14 @@ test("remembered invalid sessions can be forgotten without inventing a usable se
         displayName: null,
         state: "disconnected",
         remembered: false,
+        rememberLogin: false,
       };
     },
   });
   const result = await adapter.logout({ source: "JM", sessionId: null });
   assert.equal(result.state, "disconnected");
   assert.equal(result.remembered, false);
+  assert.equal(result.rememberLogin, false);
   await assert.rejects(
     adapter.query({ source: "JM", sessionId: null }, query),
     { code: "LOGIN_REQUIRED" },

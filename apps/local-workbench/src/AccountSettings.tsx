@@ -28,6 +28,7 @@ export function AccountSettings({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
+  const [rememberLogin, setRememberLogin] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -44,6 +45,8 @@ export function AccountSettings({
     if (lock.current) return;
     setPassword("");
     setUsername("");
+    setRemember(false);
+    setRememberLogin(false);
     setLoginSource(null);
     setError("");
   }
@@ -52,10 +55,12 @@ export function AccountSettings({
     setLoginSource(source);
     setUsername("");
     setPassword("");
-    setRemember(
-      currentAccounts.current.find((item) => item.source === source)
-        ?.remembered ?? false,
+    const account = currentAccounts.current.find(
+      (item) => item.source === source,
     );
+    const savedLogin = source === "JM" && account?.rememberLogin === true;
+    setRemember(savedLogin || account?.remembered === true);
+    setRememberLogin(savedLogin);
     setError("");
     setNotice("");
   }
@@ -88,6 +93,7 @@ export function AccountSettings({
       username: username.trim(),
       password,
       remember,
+      rememberLogin: loginSource === "JM" && remember && rememberLogin,
     };
     // Clear the displayed secret before starting IPC. It is never placed in persistent state.
     setPassword("");
@@ -162,7 +168,9 @@ export function AccountSettings({
                   {loadingAccounts
                     ? "正在恢复"
                     : account
-                      ? accountStateLabels[account.state]
+                      ? account.state === "expired" && account.remembered
+                        ? "连接需恢复"
+                        : accountStateLabels[account.state]
                       : "尚未读取"}
                 </span>
               </div>
@@ -173,14 +181,25 @@ export function AccountSettings({
               )}
               <p className="source-muted">
                 {connected
-                  ? account.remembered
-                    ? "已保存会话"
-                    : "仅本次应用会话"
-                  : "连接账号后可读取和更新网站收藏。"}
+                  ? account.rememberLogin
+                    ? "已保存登录信息，打开应用或重新读取账号状态时可恢复连接。"
+                    : account.remembered
+                      ? "已保存会话"
+                      : "仅本次应用会话"
+                  : account?.rememberLogin
+                    ? "已保存登录信息，可先重新读取账号状态尝试恢复连接。"
+                    : account?.remembered
+                      ? "已保存会话，可先重新读取账号状态尝试恢复连接。"
+                      : "连接账号后可读取和更新网站收藏。"}
               </p>
               {!loadingAccounts && account?.errorCode && (
                 <p className="source-warning">
-                  {sourceErrorMessage(new SourceError(account.errorCode))}
+                  {account.remembered &&
+                  /SESSION|LOGIN_REQUIRED|AUTH_REQUIRED|AUTH_EXPIRED|UNAUTHORIZED/.test(
+                    account.errorCode,
+                  )
+                    ? "保存的连接暂未恢复，可先重新读取账号状态；若仍无法恢复，再重新登录。"
+                    : sourceErrorMessage(new SourceError(account.errorCode))}
                 </p>
               )}
             </div>
@@ -208,6 +227,7 @@ export function AccountSettings({
               {account &&
                 (connected ||
                   account.remembered ||
+                  account.rememberLogin ||
                   account.state === "expired") && (
                   <button
                     type="button"
@@ -216,7 +236,11 @@ export function AccountSettings({
                     data-testid={"account-logout-" + source}
                     onClick={() => void logout(account)}
                   >
-                    {connected ? "退出登录" : "忘记保存的会话"}
+                    {connected
+                      ? "退出登录"
+                      : account.rememberLogin
+                        ? "忘记保存的登录"
+                        : "忘记保存的会话"}
                   </button>
                 )}
             </div>
@@ -225,6 +249,10 @@ export function AccountSettings({
       })}
       <p className="settings-help">
         “记住会话”仅将登录会话保存在系统安全存储，密码不写入普通配置或日志。
+      </p>
+      <p className="settings-help">
+        JM 可另选“记住登录”，密码仅保存在 Windows
+        系统凭据库。退出登录或忘记保存的登录会清除会话与登录信息。
       </p>
       <p className="settings-help">
         收藏与作者更新由你手动检查。账号操作独立完成，不需要点击其他设置页的保存按钮。
@@ -307,10 +335,34 @@ export function AccountSettings({
                 checked={remember}
                 disabled={pending}
                 data-testid="account-remember"
-                onChange={(event) => setRemember(event.target.checked)}
+                onChange={(event) => {
+                  setRemember(event.target.checked);
+                  if (!event.target.checked) setRememberLogin(false);
+                }}
               />
-              记住会话（不保存密码）
+              记住会话（仅选此项不保存密码）
             </label>
+            {loginSource === "JM" && (
+              <>
+                <label className="source-check">
+                  <input
+                    type="checkbox"
+                    checked={rememberLogin}
+                    disabled={pending}
+                    data-testid="account-remember-login"
+                    onChange={(event) => {
+                      setRememberLogin(event.target.checked);
+                      if (event.target.checked) setRemember(true);
+                    }}
+                  />
+                  记住登录（会话过期后自动重新登录）
+                </label>
+                <p className="settings-help">
+                  启用后会同时记住会话，密码仅保存在 Windows
+                  系统凭据库，不写入普通配置或日志。打开应用或重新读取账号状态时，仅明确过期才自动重新登录一次，网络错误不会反复登录，也不会重做收藏、下载或扫描操作。
+                </p>
+              </>
+            )}
             {error && (
               <p role="alert" className="source-warning">
                 {error}

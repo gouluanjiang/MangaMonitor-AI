@@ -70,6 +70,7 @@ struct Slot<S> {
     session_id: Option<String>,
     state: AccountState,
     saved_fingerprint: Option<[u8; 32]>,
+    remember_login: bool,
     error_code: Option<&'static str>,
     works: cache::WorkCache,
     uncertain_favorites: BTreeMap<String, bool>,
@@ -86,6 +87,7 @@ impl<S> Slot<S> {
             session_id: None,
             state: AccountState::Disconnected,
             saved_fingerprint: None,
+            remember_login: false,
             error_code: None,
             works: cache::WorkCache::default(),
             uncertain_favorites: BTreeMap::new(),
@@ -100,6 +102,7 @@ impl<S> Slot<S> {
             display_name: self.account.as_ref().map(|a| a.display_name.clone()),
             state: self.state,
             remembered: self.saved_fingerprint.is_some(),
+            remember_login: self.remember_login,
             error_code: self.error_code,
         }
     }
@@ -189,8 +192,54 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
         };
         slot.saved_fingerprint = Some(fingerprint(&credential));
-        match self.backend.restore(slot.source, &credential).await {
-            Ok(auth) => {
+        slot.remember_login = credential.login_password().is_some();
+        // The backend and its reusable SourceSession must never receive a saved
+        // password. Only the explicit, bounded login fallback borrows it.
+        let session_credential = credential.session_only();
+        let restored = self.backend.restore(slot.source, &session_credential).await;
+        let result = match (restored, credential.login_password()) {
+            (Err(error), Some(password))
+                if authentication_error(error.code) && slot.source == Source::Jm =>
+            {
+                // Do not submit a password that another process has forgotten or
+                // replaced while session validation was in flight.
+                if self.check_saved(slot).is_err() {
+                    return;
+                }
+                self.backend
+                    .login(slot.source, credential.account_name(), password)
+                    .await
+            }
+            (other, _) => other,
+        };
+        // This applies to failures too: a stale response must not describe a new
+        // credential generation or permit an automatic retry with its old login.
+        if self.check_saved(slot).is_err() {
+            return;
+        }
+        match result {
+            Ok(mut auth) => {
+                let stored = validate_account_profile(slot.source, &auth.account).and_then(|()| {
+                    let mut next = StoredCredential::new(
+                        credential.account_name(),
+                        auth.credential.kind(),
+                        auth.credential.secret(),
+                    )
+                    .map_err(|error| AccountError::new(error.code))?;
+                    if let Some(password) = credential.login_password() {
+                        next = next
+                            .with_login_password(password)
+                            .map_err(|error| AccountError::new(error.code))?;
+                    }
+                    Ok(next)
+                });
+                auth.credential = match stored {
+                    Ok(value) => value,
+                    Err(error) => {
+                        slot.invalidate(AccountState::Unavailable, Some(error.code));
+                        return;
+                    }
+                };
                 // A concurrent application may have replaced the credential while
                 // the network validation was pending. Never publish that old profile.
                 if self.check_saved(slot).is_ok() {
@@ -212,7 +261,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 }
             }
             Err(error) => slot.invalidate(
-                if authentication_error(error.code) {
+                if authentication_error(error.code) || error.code == "LOGIN_REJECTED" {
                     AccountState::Expired
                 } else {
                     AccountState::Unavailable
@@ -228,12 +277,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         auth: Authenticated<B::Session>,
         remembered: bool,
     ) -> Result<()> {
-        if auth.account.source != slot.source
-            || auth.account.account_id.is_empty()
-            || auth.account.account_id.len() > 256
-        {
-            return Err(AccountError::new("ACCOUNT_PROFILE_INVALID"));
-        }
+        validate_account_profile(slot.source, &auth.account)?;
         let mut random = [0u8; 24];
         rand::rngs::OsRng.fill_bytes(&mut random);
         let session_id = hex(&random);
@@ -245,6 +289,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         slot.session_id = Some(session_id);
         slot.lease = SessionLease(Arc::new(AtomicBool::new(true)));
         slot.saved_fingerprint = saved;
+        slot.remember_login = remembered && auth.credential.login_password().is_some();
         Ok(())
     }
 
@@ -259,6 +304,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 slot.initialized = false;
                 slot.invalidate(AccountState::Disconnected, None);
                 slot.saved_fingerprint = None;
+                slot.remember_login = false;
             }
             service.initialize(&mut slot).await;
             if slot.session.is_some() {
@@ -280,8 +326,25 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         password: String,
         remember: bool,
     ) -> Result<AccountSummary> {
+        self.login_remembered(source, username, password, remember, false)
+            .await
+    }
+
+    /// Save a JM login only after an explicit opt-in and a validated source login.
+    /// The normal session-only API remains available for existing callers.
+    pub async fn login_remembered(
+        &self,
+        source: Source,
+        username: String,
+        password: String,
+        remember: bool,
+        remember_login: bool,
+    ) -> Result<AccountSummary> {
         let username = Zeroizing::new(username);
         let password = Zeroizing::new(password);
+        if remember_login && (!remember || source != Source::Jm) {
+            return Err(AccountError::new("LOGIN_REMEMBER_INVALID"));
+        }
         if username.trim().is_empty()
             || username.len() > 1024
             || password.is_empty()
@@ -298,15 +361,18 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .map_err(|e| AccountError::new(e.code))?
             .as_ref()
             .map(fingerprint);
-        let auth = self.backend.login(source, &username, &password).await?;
-        if auth.account.source != source
-            || auth.account.account_id.is_empty()
-            || auth.account.account_id.len() > 256
-        {
-            return Err(AccountError::new("ACCOUNT_PROFILE_INVALID"));
+        let mut auth = self.backend.login(source, &username, &password).await?;
+        validate_account_profile(source, &auth.account)?;
+        auth.credential = auth.credential.session_only();
+        if remember_login {
+            auth.credential = auth
+                .credential
+                .with_login_password(password.as_str())
+                .map_err(|error| AccountError::new(error.code))?;
         }
         // Successful login and requested persistence must both finish before the
-        // renderer receives a connected summary. Passwords never enter the vault.
+        // renderer receives a connected summary. The one blob CAS commits or
+        // removes both choices; the password never enters auth.session.
         self.vault
             .compare_exchange(source, expected, remember.then_some(&auth.credential))
             .map_err(|e| AccountError::new(e.code))?;
@@ -326,6 +392,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .map_err(|e| AccountError::new(e.code))?;
         slot.invalidate(AccountState::Disconnected, None);
         slot.saved_fingerprint = None;
+        slot.remember_login = false;
         slot.initialized = true;
         Ok(slot.summary())
     }
@@ -337,6 +404,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             Ok(Some(value)) if Some(fingerprint(&value)) == expected => Ok(()),
             Ok(_) => {
                 slot.saved_fingerprint = None;
+                slot.remember_login = false;
                 slot.invalidate(AccountState::Disconnected, Some("SESSION_CHANGED"));
                 Err(AccountError::new("SESSION_CHANGED"))
             }
@@ -1182,6 +1250,13 @@ fn fingerprint(credential: &StoredCredential) -> [u8; 32] {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn validate_account_profile(source: Source, account: &SourceAccount) -> Result<()> {
+    if account.source != source || account.account_id.is_empty() || account.account_id.len() > 256 {
+        return Err(AccountError::new("ACCOUNT_PROFILE_INVALID"));
+    }
+    Ok(())
 }
 
 fn authentication_error(code: &str) -> bool {

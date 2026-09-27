@@ -52,6 +52,8 @@ pub struct AccountSummary {
     pub display_name: Option<String>,
     pub state: AccountState,
     pub remembered: bool,
+    #[serde(rename = "rememberLogin")]
+    pub remember_login: bool,
     pub error_code: Option<&'static str>,
 }
 

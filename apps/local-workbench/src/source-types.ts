@@ -98,6 +98,7 @@ export interface AccountSummary {
   displayName: string | null;
   state: "disconnected" | "connected" | "expired" | "unavailable";
   remembered: boolean;
+  rememberLogin: boolean;
   errorCode: string | null;
 }
 export interface SourceQuery {
@@ -133,6 +134,7 @@ export interface SourceAdapter {
     username: string;
     password: string;
     remember: boolean;
+    rememberLogin?: boolean;
   }): Promise<AccountSummary>;
   logout(scope: {
     source: Source;

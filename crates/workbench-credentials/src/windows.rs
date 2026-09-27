@@ -224,6 +224,17 @@ mod tests {
             let vault = WindowsVault {
                 test_namespace: Some(format!("MangaMonitor/WorkbenchPreview/CI/{suffix}")),
             };
+            if std::env::var("WORKBENCH_CREDENTIAL_CI_OPERATION").as_deref() == Ok("read-v2") {
+                // A fresh process reads only the parent's random synthetic slot;
+                // Eq/Debug never expose the account/session/password on failure.
+                let expected =
+                    StoredCredential::new("ci-other", CredentialKind::SessionCookie, "sid=two")
+                        .unwrap()
+                        .with_login_password("ci-old-password")
+                        .unwrap();
+                assert_eq!(vault.load(Source::Jm).unwrap(), Some(expected));
+                return;
+            }
             assert_eq!(vault.delete(Source::Jm), Err(VaultError::BUSY));
             return;
         }
@@ -279,6 +290,55 @@ mod tests {
         vault.save(Source::Pica, &pica).unwrap();
         vault.save(Source::Jm, &replacement).unwrap();
         let reopened = vault.clone();
+        assert_eq!(
+            reopened.load(Source::Jm).unwrap(),
+            Some(replacement.clone())
+        );
+        assert_eq!(reopened.load(Source::Pica).unwrap(), Some(pica.clone()));
+        // Upgrade and clear the optional login in the same random JM slot.
+        // A password-only update is a new CAS generation despite unchanged cookie.
+        let remembered = replacement
+            .clone()
+            .with_login_password("ci-old-password")
+            .unwrap();
+        let changed = replacement
+            .clone()
+            .with_login_password("ci-new-password")
+            .unwrap();
+        vault
+            .compare_exchange(
+                Source::Jm,
+                Some(replacement.fingerprint()),
+                Some(&remembered),
+            )
+            .unwrap();
+        assert_eq!(reopened.load(Source::Jm).unwrap(), Some(remembered.clone()));
+        let fresh_process = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "windows::tests::windows_credential_manager_roundtrip_uses_only_random_ci_slots",
+                "--exact",
+                "--ignored",
+            ])
+            .env("WORKBENCH_CREDENTIAL_CI_CHILD", &suffix)
+            .env("WORKBENCH_CREDENTIAL_CI_OPERATION", "read-v2")
+            .status()
+            .unwrap();
+        assert!(fresh_process.success());
+        vault
+            .compare_exchange(Source::Jm, Some(remembered.fingerprint()), Some(&changed))
+            .unwrap();
+        assert_eq!(
+            vault.compare_exchange(Source::Jm, Some(remembered.fingerprint()), None),
+            Err(VaultError::CHANGED)
+        );
+        assert_eq!(reopened.load(Source::Jm).unwrap(), Some(changed.clone()));
+        vault
+            .compare_exchange(
+                Source::Jm,
+                Some(changed.fingerprint()),
+                Some(&changed.session_only()),
+            )
+            .unwrap();
         assert_eq!(reopened.load(Source::Jm).unwrap(), Some(replacement));
         assert_eq!(reopened.load(Source::Pica).unwrap(), Some(pica.clone()));
         vault

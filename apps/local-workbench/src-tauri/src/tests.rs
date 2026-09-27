@@ -843,8 +843,8 @@ fn account_state_uses_only_empty_test_vault_and_no_account_operations_fail_close
     let (_root, app) = fixture();
     let main = window(&app, "main");
     let expected = json!([
-        {"source":"JM","sessionId":null,"accountId":null,"displayName":null,"state":"disconnected","remembered":false,"errorCode":null},
-        {"source":"Pica","sessionId":null,"accountId":null,"displayName":null,"state":"disconnected","remembered":false,"errorCode":null}
+        {"source":"JM","sessionId":null,"accountId":null,"displayName":null,"state":"disconnected","remembered":false,"rememberLogin":false,"errorCode":null},
+        {"source":"Pica","sessionId":null,"accountId":null,"displayName":null,"state":"disconnected","remembered":false,"rememberLogin":false,"errorCode":null}
     ]);
     assert_eq!(
         invoke(&main, "source_accounts", json!({})).unwrap(),
@@ -900,6 +900,17 @@ fn account_inputs_reject_unknown_sources_kinds_and_unsafe_boundaries() {
     for body in invalid_logins {
         let error = invoke(&main, "source_login", body).unwrap_err();
         assert_eq!(error, json!({"code":"LOGIN_INPUT_INVALID"}));
+    }
+    // Password persistence requires explicit JM opt-in and session persistence.
+    // Both invalid combinations fail before any source login or vault write.
+    for body in [
+        json!({"source":"JM","username":"fixture","password":"private-fixture-password","remember":false,"rememberLogin":true}),
+        json!({"source":"Pica","username":"fixture","password":"private-fixture-password","remember":true,"rememberLogin":true}),
+    ] {
+        assert_eq!(
+            invoke(&main, "source_login", body).unwrap_err(),
+            json!({"code":"LOGIN_REMEMBER_INVALID"})
+        );
     }
     for body in [
         json!({"source":"JM","sessionId":"stale","kind":"search","query":"query","folderId":null,"page":0}),

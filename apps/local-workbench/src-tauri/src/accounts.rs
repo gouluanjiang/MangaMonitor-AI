@@ -122,6 +122,7 @@ pub(super) async fn source_login<R: Runtime>(
     username: String,
     password: String,
     remember: bool,
+    remember_login: Option<bool>,
 ) -> Result<AccountSummary, AccountError> {
     // Also clear inputs if initialization fails or the waiting command is dropped.
     let mut username = Zeroizing::new(username);
@@ -131,11 +132,12 @@ pub(super) async fn source_login<R: Runtime>(
     // Only the native service receives these owned values. Its login operation
     // zeroizes them; neither command diagnostics nor the response contain them.
     service
-        .login(
+        .login_remembered(
             source,
             std::mem::take(&mut *username),
             std::mem::take(&mut *password),
             remember,
+            remember_login.unwrap_or(false),
         )
         .await
 }

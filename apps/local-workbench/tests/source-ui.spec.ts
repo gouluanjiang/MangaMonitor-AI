@@ -25,6 +25,7 @@ type MockOptions = {
   disconnected?: boolean;
   expired?: boolean;
   holdLogin?: boolean;
+  savedLogin?: boolean;
   holdJM?: boolean;
   partial?: boolean;
   unknownFavorite?: boolean;
@@ -65,6 +66,8 @@ type Call = {
   expectedRevision?: number;
   query?: string;
   reverse?: boolean;
+  remember?: boolean;
+  rememberLogin?: boolean;
 };
 type Hooks = {
   accounts: AccountSummary[];
@@ -768,7 +771,8 @@ async function installMock(page: Page, options: MockOptions = {}) {
       accountId: "synthetic-account-" + epoch,
       displayName: "合成验收账号 " + source + " " + epoch,
       state: "connected",
-      remembered: false,
+      remembered: source === "JM" && options.savedLogin === true,
+      rememberLogin: source === "JM" && options.savedLogin === true,
       errorCode: null,
     });
     const makeWork = (
@@ -811,7 +815,9 @@ async function installMock(page: Page, options: MockOptions = {}) {
             state: options.expired
               ? ("expired" as const)
               : ("disconnected" as const),
-            remembered: Boolean(options.expired),
+            remembered: Boolean(
+              options.expired || (source === "JM" && options.savedLogin),
+            ),
             errorCode: options.expired ? "SESSION_EXPIRED" : null,
           }
         : makeAccount(source),
@@ -897,6 +903,8 @@ async function installMock(page: Page, options: MockOptions = {}) {
             expectedRevision: raw.expectedRevision as number | undefined,
             query: raw.query as string | undefined,
             reverse: raw.reverse as boolean | undefined,
+            remember: raw.remember as boolean | undefined,
+            rememberLogin: raw.rememberLogin as boolean | undefined,
           });
           if (command === "read_preferences") return clone(hooks.preferences);
           if (command === "jm_download_read") return { revision: 0, tasks: [] };
@@ -1085,6 +1093,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
             const next = {
               ...makeAccount(source, epoch),
               remembered: Boolean(raw.remember),
+              rememberLogin: Boolean(raw.rememberLogin),
             };
             hooks.accounts = hooks.accounts.map((item) =>
               item.source === source ? next : item,
@@ -1106,6 +1115,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
               displayName: null,
               state: "disconnected",
               remembered: false,
+              rememberLogin: false,
               errorCode: null,
             };
             hooks.accounts = hooks.accounts.map((item) =>
@@ -1774,6 +1784,169 @@ test("disconnected source opens account settings; pending login clears secret an
   await expect(page.getByTestId("source-card-JM:123")).toContainText(
     "合成验收 JM",
   );
+});
+
+test("JM remembered login is opt-in, links session consent, inherits saved consent and stays isolated from Pica", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await installMock(page, { disconnected: true, holdLogin: true });
+  await openAccounts(page);
+  await page.getByTestId("account-connect-JM").click();
+  await expect(page.getByTestId("account-remember")).not.toBeChecked();
+  await expect(page.getByTestId("account-remember-login")).not.toBeChecked();
+  await page.getByTestId("account-remember-login").check();
+  await expect(page.getByTestId("account-remember")).toBeChecked();
+  await page.getByTestId("account-remember").uncheck();
+  await expect(page.getByTestId("account-remember-login")).not.toBeChecked();
+  await page.getByTestId("account-remember-login").check();
+  await expect(page.getByTestId("account-login-dialog")).toContainText(
+    "Windows 系统凭据库",
+  );
+  await expect(page.getByTestId("account-login-dialog")).toContainText(
+    "打开应用或重新读取账号状态时",
+  );
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/jm-remember-login.png" });
+  await page.setViewportSize({ width: 800, height: 700 });
+  await page.screenshot({
+    path: "visual-evidence/jm-remember-login-narrow.png",
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByTestId("account-username").fill("synthetic-remembered-user");
+  await page
+    .getByTestId("account-password")
+    .fill("fixture-only-remembered-password");
+  await page.getByTestId("account-login-submit").click();
+  await expect
+    .poll(() => page.evaluate(() => window.sourceTest.loginStarted))
+    .toBe(true);
+  await expect(page.getByTestId("account-password")).toHaveValue("");
+  await expect(page.getByTestId("account-remember-login")).toBeDisabled();
+  await page.evaluate(() => window.sourceTest.releaseLogin!(true));
+  await expect(page.getByTestId("account-login-dialog")).toBeHidden();
+  await expect(page.getByTestId("account-JM")).toContainText("已保存登录信息");
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter((call) => call.command === "source_login"),
+    ),
+  ).toEqual([
+    {
+      command: "source_login",
+      source: "JM",
+      remember: true,
+      rememberLogin: true,
+    },
+  ]);
+
+  await page.getByTestId("account-connect-JM").click();
+  await expect(page.getByTestId("account-remember")).toBeChecked();
+  await expect(page.getByTestId("account-remember-login")).toBeChecked();
+  await expect(page.getByTestId("account-username")).toHaveValue("");
+  await expect(page.getByTestId("account-password")).toHaveValue("");
+  await page.getByRole("button", { name: "关闭登录窗口" }).click();
+  await page.getByTestId("account-connect-Pica").click();
+  await expect(page.getByTestId("account-remember-login")).toHaveCount(0);
+  await expect(page.getByTestId("account-remember")).not.toBeChecked();
+  await page.getByTestId("account-remember").check();
+  await page.getByTestId("account-username").fill("synthetic-pica-user");
+  await page.getByTestId("account-password").fill("fixture-only-pica-password");
+  await page.getByTestId("account-login-submit").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.sourceTest.calls.filter(
+            (call) => call.command === "source_login",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await page.evaluate(() => window.sourceTest.releaseLogin!(true));
+  await expect(page.getByTestId("account-login-dialog")).toBeHidden();
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls
+        .filter((call) => call.command === "source_login")
+        .at(-1),
+    ),
+  ).toEqual({
+    command: "source_login",
+    source: "Pica",
+    remember: true,
+    rememberLogin: false,
+  });
+  await expect(page.getByTestId("account-Pica")).toContainText("已保存会话");
+  await expect(page.getByTestId("account-Pica")).not.toContainText(
+    "已保存登录信息",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        JSON.stringify(localStorage) +
+        JSON.stringify(window.sourceTest.calls) +
+        document.body.innerText,
+    ),
+  ).not.toMatch(
+    /fixture-only-(remembered|pica)-password|synthetic-remembered-user/,
+  );
+});
+
+test("saved JM login can retry account restoration or forget both permissions without a session", async ({
+  page,
+}) => {
+  await installMock(page, { expired: true, savedLogin: true });
+  await openAccounts(page);
+  await expect(page.getByTestId("account-JM")).toContainText(
+    "已保存登录信息，可先重新读取账号状态尝试恢复连接。",
+  );
+  await expect(page.getByTestId("account-JM")).toContainText("连接需恢复");
+  await expect(page.getByTestId("account-logout-JM")).toHaveText(
+    "忘记保存的登录",
+  );
+  const accountReads = await page.evaluate(
+    () =>
+      window.sourceTest.calls.filter(
+        (call) => call.command === "source_accounts",
+      ).length,
+  );
+  await page.getByTestId("accounts-reload").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.sourceTest.calls.filter(
+            (call) => call.command === "source_accounts",
+          ).length,
+      ),
+    )
+    .toBe(accountReads + 1);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter((call) => call.command === "source_login"),
+    ),
+  ).toEqual([]);
+  await page.getByTestId("account-logout-JM").click();
+  await expect(page.getByTestId("account-JM")).toContainText("未连接");
+  await expect(page.getByTestId("account-JM")).not.toContainText(
+    "已保存登录信息",
+  );
+  await expect(page.getByTestId("account-logout-JM")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.accounts.find((account) => account.source === "JM"),
+    ),
+  ).toMatchObject({ remembered: false, rememberLogin: false, sessionId: null });
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter(
+        (call) => call.command === "source_logout",
+      ),
+    ),
+  ).toEqual([{ command: "source_logout", source: "JM", sessionId: null }]);
+  await page.getByTestId("account-connect-JM").click();
+  await expect(page.getByTestId("account-remember")).not.toBeChecked();
+  await expect(page.getByTestId("account-remember-login")).not.toBeChecked();
 });
 
 test("expired remembered account without a usable session can forget its saved login", async ({

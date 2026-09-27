@@ -1,4 +1,5 @@
-//! Application-owned session credentials, with no filesystem or browser fallback.
+//! Application-owned session credentials and optional JM login, with no filesystem
+//! or browser fallback.
 //!
 //! Only the native application should use this API. Stored credentials deliberately
 //! do not implement serde traits and must never be returned to a renderer command.
@@ -64,12 +65,13 @@ impl CredentialKind {
     }
 }
 
-/// An explicitly owned session secret. There is intentionally no password variant.
+/// An explicitly owned session secret, optionally carrying an authorized JM login.
 #[derive(Clone, Eq, PartialEq)]
 pub struct StoredCredential {
     account_name: Zeroizing<String>,
     kind: CredentialKind,
     secret: Zeroizing<String>,
+    login_password: Option<Zeroizing<String>>,
 }
 
 impl StoredCredential {
@@ -82,10 +84,36 @@ impl StoredCredential {
             account_name: Zeroizing::new(account_name.into()),
             kind,
             secret: Zeroizing::new(secret.into()),
+            login_password: None,
         };
         // Check the actual serialized byte budget, including Unicode and escapes.
         codec::encode(kind.source(), &credential)?;
         Ok(credential)
+    }
+
+    /// Attach a native-only JM password to this same session record. The caller
+    /// must obtain explicit permission before persisting it; Pica is session-only.
+    pub fn with_login_password(mut self, password: impl Into<String>) -> Result<Self> {
+        self.login_password = Some(Zeroizing::new(password.into()));
+        codec::encode(self.kind.source(), &self)?;
+        Ok(self)
+    }
+
+    /// Borrow only for native JM authentication; never log or return to a UI.
+    pub fn login_password(&self) -> Option<&str> {
+        self.login_password
+            .as_ref()
+            .map(|password| password.as_str())
+    }
+
+    /// Preserve the session/account exactly, without copying the optional password.
+    pub fn session_only(&self) -> Self {
+        Self {
+            account_name: self.account_name.clone(),
+            kind: self.kind,
+            secret: self.secret.clone(),
+            login_password: None,
+        }
     }
 
     pub fn account_name(&self) -> &str {
@@ -104,9 +132,22 @@ impl StoredCredential {
     /// Native-only generation comparison; never send the fingerprint to a UI.
     pub fn fingerprint(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
+        if self.login_password.is_some() {
+            // Keep the v1 session-only fingerprint unchanged. A separate domain
+            // and explicit lengths bind password presence and all v2 fields.
+            hash.update(b"MangaMonitor/JM-login-credential/v2\0");
+            hash.update([1]);
+        }
         hash.update((self.account_name().len() as u64).to_le_bytes());
         hash.update(self.account_name().as_bytes());
+        if self.login_password.is_some() {
+            hash.update((self.secret().len() as u64).to_le_bytes());
+        }
         hash.update(self.secret().as_bytes());
+        if let Some(password) = self.login_password() {
+            hash.update((password.len() as u64).to_le_bytes());
+            hash.update(password.as_bytes());
+        }
         hash.finalize().into()
     }
 
@@ -117,6 +158,11 @@ impl StoredCredential {
             || self.account_name.encode_utf16().count() > MAX_ACCOUNT_NAME_UTF16
             || self.secret.trim().is_empty()
             || self.secret.chars().any(char::is_control)
+            || self.login_password().is_some_and(|password| {
+                source != Source::Jm
+                    || password.is_empty()
+                    || password.chars().any(char::is_control)
+            })
         {
             return Err(VaultError::INVALID_CREDENTIAL);
         }
@@ -131,6 +177,7 @@ impl fmt::Debug for StoredCredential {
             .field("account_name", &"[REDACTED]")
             .field("kind", &self.kind)
             .field("secret", &"[REDACTED]")
+            .field("login_password", &"[REDACTED]")
             .finish()
     }
 }
@@ -176,7 +223,7 @@ impl std::error::Error for VaultError {}
 
 pub type Result<T> = std::result::Result<T, VaultError>;
 
-/// The caller authorizes persistence of a server session before calling save.
+/// The caller authorizes persistence of a session and any optional JM password.
 /// Each source has one slot; save replaces it, and deleting a missing slot succeeds.
 /// A service coordinating concurrent account operations must order its own writes.
 pub trait Vault: Send + Sync {

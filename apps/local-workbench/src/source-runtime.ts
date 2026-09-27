@@ -42,6 +42,8 @@ export function sourceErrorMessage(error: unknown): string {
     return "最近更新达到 20000 条、1000 页或 32 MiB 浏览上限，已读内容保留。可以刷新最近更新重新浏览。";
   if (code === "DESKTOP_REQUIRED")
     return "请在桌面应用中连接来源账号。浏览器预览不会连接真实账号。";
+  if (code === "LOGIN_REMEMBER_INVALID")
+    return "仅 JM 支持记住登录，启用时也需要勾选记住会话。";
   if (
     /SESSION|LOGIN_REQUIRED|AUTH_REQUIRED|AUTH_EXPIRED|UNAUTHORIZED/.test(code)
   )
@@ -264,6 +266,10 @@ export function validateAccount(value: unknown): AccountSummary {
     !nullableText(value.accountId) ||
     !nullableText(value.displayName) ||
     typeof value.remembered !== "boolean" ||
+    (value.rememberLogin !== undefined &&
+      typeof value.rememberLogin !== "boolean") ||
+    (value.rememberLogin === true &&
+      (value.source === "Pica" || !value.remembered)) ||
     !nullableText(value.errorCode) ||
     (value.state === "connected" && (!value.sessionId || !value.accountId))
   )
@@ -275,6 +281,7 @@ export function validateAccount(value: unknown): AccountSummary {
     displayName: value.displayName as string | null,
     state: value.state as AccountSummary["state"],
     remembered: value.remembered,
+    rememberLogin: value.rememberLogin === true,
     errorCode: value.errorCode as string | null,
   };
 }
@@ -608,6 +615,7 @@ export function createSourceAdapter(
           displayName: null,
           state: "unavailable",
           remembered: false,
+          rememberLogin: false,
           errorCode: "DESKTOP_REQUIRED",
         }));
       const result = await call("source_accounts", { refresh });
@@ -625,11 +633,23 @@ export function createSourceAdapter(
         !validSource(input.source) ||
         !input.username.trim() ||
         !input.password ||
-        typeof input.remember !== "boolean"
+        typeof input.remember !== "boolean" ||
+        (input.rememberLogin !== undefined &&
+          typeof input.rememberLogin !== "boolean")
       ) {
         throw new SourceError("INVALID_INPUT");
       }
-      const result = validateAccount(await call("source_login", { ...input }));
+      if (
+        input.rememberLogin === true &&
+        (input.source !== "JM" || !input.remember)
+      )
+        throw new SourceError("LOGIN_REMEMBER_INVALID");
+      const result = validateAccount(
+        await call("source_login", {
+          ...input,
+          rememberLogin: input.rememberLogin ?? false,
+        }),
+      );
       if (result.source !== input.source) invalid();
       if (result.state !== "connected")
         throw new SourceError(result.errorCode ?? "LOGIN_FAILED");

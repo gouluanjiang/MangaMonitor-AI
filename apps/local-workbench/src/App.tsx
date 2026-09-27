@@ -257,6 +257,7 @@ export default function App() {
       displayName: null,
       state: "disconnected",
       remembered: false,
+      rememberLogin: false,
       errorCode: null,
     })),
   );

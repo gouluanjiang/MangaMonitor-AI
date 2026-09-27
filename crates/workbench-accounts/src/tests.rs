@@ -8,6 +8,8 @@ use workbench_credentials::{
 };
 use workbench_sources::{FavoritePageRequest, FavoriteUpdate};
 
+mod remember_login;
+
 #[derive(Clone, Default)]
 struct SharedVault(Arc<MemoryVault>);
 impl Vault for SharedVault {
@@ -36,7 +38,18 @@ impl Vault for SharedVault {
 
 #[derive(Default)]
 struct FakeState {
+    login_calls: AtomicUsize,
+    login_failure: Mutex<Option<&'static str>>,
+    login_secret: Mutex<Option<String>>,
+    last_login: Mutex<Option<(Source, String, String)>>,
+    block_login: AtomicBool,
+    login_started: Notify,
+    login_release: Notify,
     restore_calls: AtomicUsize,
+    restore_received_password: AtomicBool,
+    block_restore: AtomicBool,
+    restore_started: Notify,
+    restore_release: Notify,
     query_calls: AtomicUsize,
     recent_calls: AtomicUsize,
     favorite_calls: AtomicUsize,
@@ -124,9 +137,25 @@ impl SourceBackend for FakeBackend {
         username: &str,
         password: &str,
     ) -> Result<Authenticated<Self::Session>> {
+        self.0.login_calls.fetch_add(1, Ordering::SeqCst);
+        *self.0.last_login.lock().unwrap() = Some((source, username.into(), password.into()));
+        if self.0.block_login.load(Ordering::SeqCst) {
+            self.0.login_started.notify_one();
+            self.0.login_release.notified().await;
+        }
+        if let Some(code) = *self.0.login_failure.lock().unwrap() {
+            return Err(AccountError::new(code));
+        }
         if password == "rejected" {
             return Err(AccountError::new("LOGIN_REJECTED"));
         }
+        let saved = match self.0.login_secret.lock().unwrap().as_deref() {
+            Some(secret) => {
+                StoredCredential::new(username, credential(source, username).kind(), secret)
+                    .unwrap()
+            }
+            None => credential(source, username),
+        };
         Ok(Authenticated {
             session: FakeSession {
                 source,
@@ -137,7 +166,7 @@ impl SourceBackend for FakeBackend {
                 account_id: username.into(),
                 display_name: username.into(),
             },
-            credential: credential(source, username),
+            credential: saved,
         })
     }
     async fn restore(
@@ -146,11 +175,30 @@ impl SourceBackend for FakeBackend {
         saved: &StoredCredential,
     ) -> Result<Authenticated<Self::Session>> {
         self.0.restore_calls.fetch_add(1, Ordering::SeqCst);
+        if saved.login_password().is_some() {
+            self.0
+                .restore_received_password
+                .store(true, Ordering::SeqCst);
+        }
+        if self.0.block_restore.load(Ordering::SeqCst) {
+            self.0.restore_started.notify_one();
+            self.0.restore_release.notified().await;
+        }
         if let Some(code) = *self.0.restore_failure.lock().unwrap() {
             return Err(AccountError::new(code));
         }
-        self.login(source, saved.account_name(), "fixture-only")
-            .await
+        Ok(Authenticated {
+            session: FakeSession {
+                source,
+                name: saved.account_name().into(),
+            },
+            account: SourceAccount {
+                source,
+                account_id: saved.account_name().into(),
+                display_name: saved.account_name().into(),
+            },
+            credential: saved.session_only(),
+        })
     }
     async fn favorites(
         &self,

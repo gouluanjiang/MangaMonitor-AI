@@ -37,8 +37,30 @@ generation. This document does not authorize them.
 
 ## Verification status
 
-Implementation, independent review, CI packaging/lifecycle checks and candidate
-artifact verification are in progress. No candidate-installation acceptance or
-public-release completion is claimed. Record exact final evidence here before
-delivery. Prior functional acceptance remains valid; the deferred all-author
+Implementation and independent review are complete. The first Windows run at
+`c2bed62fad0339b596e0444af1ac42a7fd995f0d` correctly stopped before packaging:
+15 published Cargo archives omit standalone license text. Their exact archive
+checksums were verified against the native lockfile. The supplement manifest
+pins the package name/version, declaration, archive hash, known VCS commit and
+each raw text hash. Missing text in other packages still fails. Selected Zlib
+and explicit standard-license exceptions are documented alongside the source
+material; unknown release commits are not invented. Independent review checked
+all 15 archive identities and 41 mappings covering 22 distinct text files.
+
+The material correction is `4c53b0a8468ded938e5a05aa0ec539c529e8e3b3`. It changes only
+license collection/material and the affected CI triggers. The entire
+`apps/local-workbench` tree is unchanged from the first candidate commit.
+GitHub nevertheless automatically triggers frontend CI against the cumulative
+PR diff; no additional local suite or manually duplicated build was run.
+
+A second Windows run exposed an incorrect collector assumption: the ordinary
+Cargo registry source does not contain vendor-only `.cargo-checksum.json`.
+The follow-up hashes the actual exact-version `.crate` under the corresponding
+registry cache instead; fixtures now model the real `registry/src` and
+`registry/cache` siblings. Missing or changed archives still stop packaging.
+Neither failed run produced a candidate installer for delivery.
+
+CI packaging/lifecycle checks and candidate artifact verification are in
+progress. No candidate-installation acceptance or public-release completion is
+claimed. Prior functional acceptance remains valid; the deferred all-author
 summary acceptance is not automatically restarted for release paperwork.

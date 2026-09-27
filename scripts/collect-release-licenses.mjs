@@ -316,14 +316,59 @@ function publicSupplementSource(value) {
   }
 }
 
+function registryArchive(component) {
+  const packageRoot = path.resolve(component.root);
+  const registryIdRoot = path.dirname(packageRoot);
+  const srcRoot = path.dirname(registryIdRoot);
+  const registryRoot = path.dirname(srcRoot);
+  const registryId = path.basename(registryIdRoot);
+  const packageDirectory = `${component.name}-${component.version}`;
+  if (
+    path.basename(packageRoot) !== packageDirectory ||
+    path.basename(srcRoot) !== "src" ||
+    path.basename(registryRoot) !== "registry" ||
+    !/^[a-z0-9][a-z0-9._-]*$/i.test(registryId)
+  )
+    throw failure("SUPPLEMENT_REGISTRY_LAYOUT_INVALID");
+  const realRegistry = fs.realpathSync(registryRoot);
+  const realPackage = fs.realpathSync(packageRoot);
+  const expectedPackage = path.join(
+    realRegistry,
+    "src",
+    registryId,
+    packageDirectory,
+  );
+  if (
+    !inside(realRegistry, realPackage) ||
+    path.relative(expectedPackage, realPackage) !== ""
+  )
+    throw failure("SUPPLEMENT_REGISTRY_PATH_OUTSIDE_ROOT");
+  const expectedArchive = path.join(
+    realRegistry,
+    "cache",
+    registryId,
+    `${packageDirectory}.crate`,
+  );
+  if (!fs.existsSync(expectedArchive))
+    throw failure("SUPPLEMENT_ARCHIVE_MISSING");
+  const realArchive = fs.realpathSync(expectedArchive);
+  if (
+    !inside(realRegistry, realArchive) ||
+    path.relative(expectedArchive, realArchive) !== ""
+  )
+    throw failure("SUPPLEMENT_REGISTRY_PATH_OUTSIDE_ROOT");
+  if (!fs.statSync(realArchive).isFile())
+    throw failure("SUPPLEMENT_ARCHIVE_NOT_FILE");
+  return realArchive;
+}
+
 function readSupplement(component, entry, repositoryRoot, privateRoots) {
   if (entry.declaredLicense !== component.declaredLicense)
     throw failure("SUPPLEMENT_LICENSE_MISMATCH");
   // Bind an exception to the exact registry archive, not just a same-named package.
-  const checksum = JSON.parse(
-    fs.readFileSync(path.join(component.root, ".cargo-checksum.json"), "utf8"),
-  );
-  if (checksum.package !== entry.crateSha256)
+  // Regular registry sources use src/ and cache/ siblings. The per-directory
+  // .cargo-checksum.json belongs to vendored directory sources, not this layout.
+  if (sha256(fs.readFileSync(registryArchive(component))) !== entry.crateSha256)
     throw failure("SUPPLEMENT_CRATE_CHECKSUM_MISMATCH");
   if (entry.upstreamCommit !== null) {
     const vcs = JSON.parse(

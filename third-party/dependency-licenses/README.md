@@ -7,7 +7,10 @@ matches the exact package checksum in the native `Cargo.lock`.
 
 The collector applies a supplement only when the installed crate has no license
 text, the name/version and declared license match exactly, and its
-`.cargo-checksum.json` confirms the pinned archive. Where the published archive
+same-registry `cache/<registry>/<name>-<version>.crate` confirms the pinned archive.
+The source's `registry/src/<registry>/<name>-<version>` layout and resolved source/
+cache boundaries are checked before hashing that one existing file; a missing
+cache archive remains an error. No vendor-only checksum file is assumed. Where the published archive
 records a VCS commit, `.cargo_vcs_info.json` must match too. Each supplemental
 text is checked against its raw SHA-256. `.gitattributes` disables newline
 conversion for this directory. Other missing/invalid licenses remain errors;

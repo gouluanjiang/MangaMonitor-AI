@@ -11,6 +11,11 @@ import {
 
 const MIT =
   "MIT License\nCopyright (c) Synthetic contributors\nPermission is hereby granted, free of charge.\n";
+const ARCHIVE = Buffer.from(
+  "Synthetic registry archive bytes, not executed or extracted.\n",
+);
+const ARCHIVE_HASH = createHash("sha256").update(ARCHIVE).digest("hex");
+const CACHE_FILE = "cargo/registry/cache/test-index/runtime-1.0.0.crate";
 
 function fixture(t) {
   const root = fs.mkdtempSync(
@@ -62,7 +67,7 @@ function fixture(t) {
     license: "MIT",
     license_file: null,
     manifest_path: write(
-      `${local ? "native" : `registry/${name}`}/Cargo.toml`,
+      `${local ? "native" : `cargo/registry/src/test-index/${name}-1.0.0`}/Cargo.toml`,
       "[package]\n",
     ),
   });
@@ -73,7 +78,7 @@ function fixture(t) {
     cargoPackage("dev-helper"),
   ];
   for (const name of ["runtime", "build-helper"])
-    write(`registry/${name}/LICENSE`, MIT);
+    write(`cargo/registry/src/test-index/${name}-1.0.0/LICENSE`, MIT);
   const dependency = (pkg, kind) => ({
     pkg,
     dep_kinds: [{ kind, target: null }],
@@ -149,12 +154,18 @@ test("missing license text fails explicitly even when a SPDX declaration exists"
 
 test("includes nested vendored notices without copying unrelated source files", (t) => {
   const f = fixture(t);
-  f.write("registry/runtime/vendor/crypto/LICENSE", MIT);
   f.write(
-    "registry/runtime/vendor/crypto/NOTICE",
+    "cargo/registry/src/test-index/runtime-1.0.0/vendor/crypto/LICENSE",
+    MIT,
+  );
+  f.write(
+    "cargo/registry/src/test-index/runtime-1.0.0/vendor/crypto/NOTICE",
     "Synthetic public attribution\n",
   );
-  f.write("registry/runtime/vendor/crypto/source.c", "not a license\n");
+  f.write(
+    "cargo/registry/src/test-index/runtime-1.0.0/vendor/crypto/source.c",
+    "not a license\n",
+  );
   const report = f.run();
   assert.deepEqual(report.inventory.errors, []);
   const runtime = report.inventory.components.find(
@@ -255,7 +266,7 @@ function supplement(f) {
     name: "runtime",
     version: "1.0.0",
     declaredLicense: "MIT",
-    crateSha256: "b".repeat(64),
+    crateSha256: ARCHIVE_HASH,
     upstreamCommit: "a".repeat(40),
     files: [
       {
@@ -267,11 +278,11 @@ function supplement(f) {
       },
     ],
   };
-  fs.unlinkSync(path.join(f.root, "registry/runtime/LICENSE"));
-  f.write("registry/runtime/.cargo-checksum.json", {
-    package: row.crateSha256,
-  });
-  f.write("registry/runtime/.cargo_vcs_info.json", {
+  fs.unlinkSync(
+    path.join(f.root, "cargo/registry/src/test-index/runtime-1.0.0/LICENSE"),
+  );
+  f.write(CACHE_FILE, ARCHIVE.toString("utf8"));
+  f.write("cargo/registry/src/test-index/runtime-1.0.0/.cargo_vcs_info.json", {
     git: { sha1: row.upstreamCommit },
   });
   f.write("third-party/dependency-licenses/runtime/LICENSE", MIT);
@@ -293,7 +304,7 @@ test("an explicit exact-archive supplement restores omitted text and publishes i
     (entry) => entry.name === "runtime",
   );
   assert.equal(runtime.licenseFiles[0].provenance, "upstream-file");
-  assert.equal(runtime.licenseFiles[0].crateSha256, "b".repeat(64));
+  assert.equal(runtime.licenseFiles[0].crateSha256, ARCHIVE_HASH);
   assert.match(
     report.text,
     /Text source: https:\/\/raw\.githubusercontent\.com/,
@@ -323,18 +334,43 @@ test("supplements never excuse version, SPDX, archive, commit or text drift", as
     [
       "archive",
       "SUPPLEMENT_CRATE_CHECKSUM_MISMATCH",
-      (f) =>
-        f.write("registry/runtime/.cargo-checksum.json", {
-          package: "c".repeat(64),
-        }),
+      (f) => f.write(CACHE_FILE, "A different archive with the same filename."),
+    ],
+    [
+      "missing archive",
+      "SUPPLEMENT_ARCHIVE_MISSING",
+      (f) => fs.unlinkSync(path.join(f.root, CACHE_FILE)),
+    ],
+    [
+      "archive is a directory",
+      "SUPPLEMENT_ARCHIVE_NOT_FILE",
+      (f) => {
+        fs.unlinkSync(path.join(f.root, CACHE_FILE));
+        fs.mkdirSync(path.join(f.root, CACHE_FILE));
+      },
+    ],
+    [
+      "invalid registry layout",
+      "SUPPLEMENT_REGISTRY_LAYOUT_INVALID",
+      (f) => {
+        f.cargoMetadata.packages.find(
+          (entry) => entry.name === "runtime",
+        ).manifest_path = f.write(
+          "not-a-registry/runtime-1.0.0/Cargo.toml",
+          "[package]\n",
+        );
+      },
     ],
     [
       "commit",
       "SUPPLEMENT_COMMIT_MISMATCH",
       (f) =>
-        f.write("registry/runtime/.cargo_vcs_info.json", {
-          git: { sha1: "c".repeat(40) },
-        }),
+        f.write(
+          "cargo/registry/src/test-index/runtime-1.0.0/.cargo_vcs_info.json",
+          {
+            git: { sha1: "c".repeat(40) },
+          },
+        ),
     ],
     [
       "text",
@@ -361,7 +397,12 @@ test("supplements never excuse version, SPDX, archive, commit or text drift", as
 test("an unrelated missing package license still fails when a known supplement succeeds", (t) => {
   const f = fixture(t);
   supplement(f);
-  fs.unlinkSync(path.join(f.root, "registry/build-helper/LICENSE"));
+  fs.unlinkSync(
+    path.join(
+      f.root,
+      "cargo/registry/src/test-index/build-helper-1.0.0/LICENSE",
+    ),
+  );
   const report = f.run();
   assert.deepEqual(report.inventory.errors, [
     { component: "cargo:build-helper@1.0.0", code: "LICENSE_TEXT_MISSING" },
@@ -399,7 +440,12 @@ test("a reviewed legacy archive can use an explicitly identified standard licens
     sha256: createHash("sha256").update(publishedManifest).digest("hex"),
   });
   pinned.save();
-  fs.unlinkSync(path.join(f.root, "registry/runtime/.cargo_vcs_info.json"));
+  fs.unlinkSync(
+    path.join(
+      f.root,
+      "cargo/registry/src/test-index/runtime-1.0.0/.cargo_vcs_info.json",
+    ),
+  );
   const report = f.run();
   assert.deepEqual(report.inventory.errors, []);
   assert.match(

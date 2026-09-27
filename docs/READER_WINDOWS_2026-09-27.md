@@ -25,6 +25,8 @@ Implementation and independent static review are complete; CI and delivery remai
 
 Static review corrected close/context events to target one window explicitly and added a download-handoff flight guard plus a final existing-confirmation check after asynchronous queue inspection. The browser and native regressions retain the resulting isolation assertions.
 
+CI iteration note: the first run found a missing `Clone` document bound and a root Suspense retry held behind paused browser clocks; the corrected startup awaits only the relevant window entry before mounting. Existing frozen-clock tests remain unchanged. Page-position assertions keep exact chapter/page identity and tolerate only 1e-10 normalized offset rounding. At `5a7639f`, all 223 logic and 199 browser tests and baseline CI passed. Windows native tests passed; a `collapsible_match` lint in the resize handler requires a final correction before EXE/smoke validation. These intermediate results are not final delivery evidence.
+
 Dev stays 0.3.4, PR #19 stays draft/unmerged and production stays disabled. No installer or formal release is part of this batch. The user's running app and manga files are not modified during development.
 
 Roadmap: independent reader-window acceptance → overall UI/interaction refinement → formal release preparation. A6 all-author acceptance remains deferred.

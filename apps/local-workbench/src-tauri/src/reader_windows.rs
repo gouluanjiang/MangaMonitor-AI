@@ -540,18 +540,20 @@ pub(crate) fn window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) 
                 app.exit(0);
             }
         }
-        WindowEvent::Resized(size) if label != "main" => {
-            if !window.is_fullscreen().unwrap_or(true) && !window.is_maximized().unwrap_or(true) {
-                if let Ok(scale) = window.scale_factor() {
-                    let logical = size.to_logical::<f64>(scale);
-                    readers.record_size(
-                        label,
-                        ReaderWindowSize {
-                            width: logical.width,
-                            height: logical.height,
-                        },
-                    );
-                }
+        WindowEvent::Resized(size)
+            if label != "main"
+                && !window.is_fullscreen().unwrap_or(true)
+                && !window.is_maximized().unwrap_or(true) =>
+        {
+            if let Ok(scale) = window.scale_factor() {
+                let logical = size.to_logical::<f64>(scale);
+                readers.record_size(
+                    label,
+                    ReaderWindowSize {
+                        width: logical.width,
+                        height: logical.height,
+                    },
+                );
             }
         }
         _ => {}

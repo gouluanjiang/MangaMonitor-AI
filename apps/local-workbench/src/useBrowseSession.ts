@@ -70,6 +70,10 @@ export function useBrowseSession({
     last.current = readBrowsePosition(scope);
     const main = root.current?.closest("main");
     if (!main || !active || !enabled) return;
+    // The grid settles its own anchor across several frames. Those frames must
+    // not continue against the items of a different source, filter or sort.
+    const activeGrid = grid?.current;
+    activeGrid?.restore(null);
     let frame = 0;
     const domAnchor = () => {
       const top = main.getBoundingClientRect().top;
@@ -111,6 +115,7 @@ export function useBrowseSession({
     const apply = (position: BrowsePosition) => {
       restoring.current = true;
       cancelAnimationFrame(restoreFrame.current);
+      grid?.current?.restore(null);
       // A stored list can be awaiting its cached items. Preserve its anchor until
       // that data arrives instead of replacing it with an empty-list position.
       waitingForItems.current =
@@ -161,6 +166,7 @@ export function useBrowseSession({
     return () => {
       cancelAnimationFrame(frame);
       cancelAnimationFrame(restoreFrame.current);
+      activeGrid?.restore(null);
       restoring.current = false;
       waitingForItems.current = false;
       // Last visible snapshot survives unmount and hidden/detail transitions.

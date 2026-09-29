@@ -20,9 +20,9 @@ One source record still lacks usable metadata. Its scope remains explicitly part
 
 No agreed V1 development item remains open. Continue with actual maintenance issues or newly approved requirements. The in-app updater is for later discussion; cloud monitoring stays disabled and `production_enabled=false` is unchanged. Do not restart cancelled matching, phone-list, classification-booklist or other historical proposals. The reader and integrated UI have already shipped.
 
-## Approved experience batch in progress
+## Implemented experience batch awaiting acceptance
 
-The user approved the [browsing and download experience plan](BROWSING_DOWNLOAD_EXPERIENCE_2026-09-29.md). Implementation is on `codex/browsing-download-experience` from `01274ab1`; CI and user acceptance are pending. All manga browsing views preserve position for this run, including details and downloaded lists. This is a new maintenance batch, not part of the already accepted 1.0.1 payload.
+The user approved the [browsing and download experience plan](BROWSING_DOWNLOAD_EXPERIENCE_2026-09-29.md). Implementation is on `codex/browsing-download-experience` from `01274ab1`; [draft PR #23](https://github.com/gouluanjiang/MangaMonitor-AI/pull/23) records the current CI result and candidate revision. User acceptance remains pending. All manga browsing views preserve position for this run, including details and downloaded lists. This is a new maintenance batch, not part of the already accepted 1.0.1 payload. Do not merge, publish or replace the installed formal payload merely because the synthetic checks pass.
 
 For this batch, the user explicitly removed the second confirmation for both single and batch downloads. Clicking download authorizes those selected works; source/session/root/revision checks, no-overwrite behavior, and download history remain. This current instruction supersedes historical requirements to show another download confirmation. No release or replacement of installed 1.0.1 has occurred.
 

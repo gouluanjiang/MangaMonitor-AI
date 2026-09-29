@@ -1,5 +1,8 @@
 interface ScrollContinuation {
-  readonly state: { phase: string; snapshot?: { hasMore: boolean } | null };
+  readonly state: {
+    phase: string;
+    snapshot?: { hasMore: boolean | null } | null;
+  };
   loadNext(): Promise<unknown>;
 }
 

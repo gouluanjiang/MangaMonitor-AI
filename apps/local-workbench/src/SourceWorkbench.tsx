@@ -333,6 +333,7 @@ export function SourceWorkbench({
   loadingAccounts = false,
   searchHost,
 }: SourceWorkbenchProps) {
+  const readerAccess = useReaderAccess();
   const tagSearch = useTagSearch();
   const handledSearch = useRef<number | null>(null);
   const tagCategory = useRef(false);

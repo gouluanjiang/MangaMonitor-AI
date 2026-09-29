@@ -21,6 +21,7 @@ declare global {
       release?: () => void;
       total: number;
       blIds: number[];
+      aiIds: number[];
       catalogIds: number[];
       catalogOtherIds: number[];
       queue: DownloadSnapshot;
@@ -61,6 +62,7 @@ async function install(
   page: Page,
   options: {
     blIds?: number[];
+    aiIds?: number[];
     catalogIds?: number[];
     catalogOtherIds?: number[];
   } = {},
@@ -83,6 +85,7 @@ async function install(
         holdPage: null,
         total: 40,
         blIds: options.blIds ?? [],
+        aiIds: options.aiIds ?? [],
         catalogIds: options.catalogIds ?? [],
         catalogOtherIds: options.catalogOtherIds ?? [],
         queue: { revision: 0, tasks: [] },
@@ -98,12 +101,13 @@ async function install(
         authors: ["合成作者"],
         description: null,
         tags: hooks.blIds.includes(id)
-          ? ["耽美"]
+          ? ["耽美花園"]
           : id % 3 === 1
             ? ["中文"]
             : id % 3 === 2
               ? ["生肉"]
               : [],
+        categories: hooks.aiIds.includes(id) ? ["AI"] : undefined,
         favorite: null,
         chapterCount: 1,
         pageCount: 20,
@@ -438,11 +442,12 @@ test("both recent feeds preserve source order, language and unknown dates and di
   }
 });
 
-test("an entire page hidden by BL and confirmed author-update membership still continues, while unrelated keyword membership stays visible", async ({
+test("an entire page hidden by BL, AI categories and confirmed author-update membership still continues, while unrelated keyword membership stays visible", async ({
   page,
 }) => {
   await install(page, {
-    blIds: Array.from({ length: 10 }, (_, i) => i * 2 + 1),
+    blIds: Array.from({ length: 5 }, (_, i) => i * 4 + 1),
+    aiIds: Array.from({ length: 5 }, (_, i) => i * 4 + 3),
     catalogIds: Array.from({ length: 10 }, (_, i) => i * 2 + 2),
     catalogOtherIds: [21],
   });

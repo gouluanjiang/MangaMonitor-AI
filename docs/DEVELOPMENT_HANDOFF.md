@@ -16,6 +16,8 @@ See the [1.0.1 release record](RELEASE_1.0.1_2026-09-29.md) for CI links, hashes
 
 ## Known boundary and future work
 
+2026-09-29 acceptance follow-up: the user accepted most of the browsing/download candidate and requested five targeted corrections: an opaque selection dock outside the scrolling canvas, full context-menu titles, Pica's explicit BL category variants, explicit AI-label filtering, and direct failed-cover retries including stale metadata. See [the batch contract](BROWSING_DOWNLOAD_EXPERIENCE_2026-09-29.md). These corrections require their own CI and candidate acceptance. General typography/button/UI redesign is deferred for discussion after this batch; do not expand this fix into that redesign.
+
 One source record still lacks usable metadata. Its scope remains explicitly partial while valid results remain available; this is not an unfinished product feature or a promise to recover missing website data. Source availability, unencountered failures and future website changes are not guaranteed by the completed acceptance.
 
 No agreed V1 development item remains open. Continue with actual maintenance issues or newly approved requirements. The in-app updater is for later discussion; cloud monitoring stays disabled and `production_enabled=false` is unchanged. Do not restart cancelled matching, phone-list, classification-booklist or other historical proposals. The reader and integrated UI have already shipped.

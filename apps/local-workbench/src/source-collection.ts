@@ -147,7 +147,14 @@ function refreshHeadLanguage(snapshot: CatalogSnapshot, page: SourcePage) {
   const items = snapshot.items.map((work) => {
     const fresh = incoming.get(work.source + ":" + work.workId);
     if (!fresh) return work;
-    const tags = retainedContentTags(inheritContentTags(fresh.tags, work.tags));
+    const tags = retainedContentTags(
+      inheritContentTags(
+        compactWork(fresh).tags,
+        work.categories?.length
+          ? [...work.tags, ...work.categories]
+          : work.tags,
+      ),
+    );
     if (
       tags.length === work.tags.length &&
       tags.every((tag, i) => tag === work.tags[i])

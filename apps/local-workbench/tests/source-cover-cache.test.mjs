@@ -190,6 +190,29 @@ test("fixed errors are retained briefly, explicit retry clears failures, and mal
   assert.deepEqual(unknown, { status: "error", code: "SOURCE_UNAVAILABLE" });
 });
 
+test("a clicked failed cover clears only that source, session and work error", async () => {
+  const cache = new CoverSessionCache();
+  const nextSession = { ...jm, sessionId: "another-session" };
+  for (const [scope, id] of [
+    [jm, "1"],
+    [jm, "2"],
+    [pica, "1"],
+    [nextSession, "1"],
+  ])
+    await read(cache, scope, id, async () => null);
+  await read(cache, jm, "ready", async () => image);
+  cache.retryFailure(jm, "1");
+  assert.equal(cache.peek(jm, "1"), undefined);
+  for (const [scope, id] of [
+    [jm, "2"],
+    [pica, "1"],
+    [nextSession, "1"],
+  ])
+    assert.equal(cache.peek(scope, id)?.status, "error");
+  assert.equal(cache.peek(jm, "ready")?.status, "ready");
+  assert.equal((await read(cache, jm, "1", async () => image)).status, "ready");
+});
+
 test("source and opaque account sessions are isolated and logout discards late old-session results", async () => {
   const encoded = assets(128);
   const cache = new CoverSessionCache({ encode: encoded.encode });

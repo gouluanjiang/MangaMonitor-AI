@@ -2037,6 +2037,7 @@ fn clean_text(text: String) -> String {
 
 /// Stable metadata projection used when comparing a later source detail read.
 pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
+    let tags = inherit_content_tags(&work.tags, work.categories.as_deref().unwrap_or_default());
     DiscoveryWork {
         source: storage_source(work.source),
         work_id: work.work_id,
@@ -2048,8 +2049,7 @@ pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
             .filter(|author| !author.trim().is_empty())
             .collect(),
         description: work.description.map(clean_text),
-        tags: work
-            .tags
+        tags: tags
             .into_iter()
             .map(clean_text)
             .filter(|tag| !tag.trim().is_empty())
@@ -2074,6 +2074,7 @@ fn merged_record(
         incoming.first_discovered_run_id = existing.first_discovered_run_id.clone();
         let fresh_content_tags = retained_content_tags(&incoming.work.tags);
         let tags = inherit_content_tags(&incoming.work.tags, &existing.work.tags);
+        let compact_content_tags = retained_content_tags(&tags);
         let source_updated_at = incoming
             .work
             .source_updated_at
@@ -2090,14 +2091,15 @@ fn merged_record(
         // reuses the older work. Do not inherit unrelated historical tags.
         let original_tags = std::mem::replace(&mut incoming.work.tags, tags);
         if !incoming.work.is_valid() {
-            if fresh_content_tags.is_empty() {
+            if fresh_content_tags.is_empty()
+                && !compact_content_tags.iter().any(|tag| workbench_sources::is_blocked_tag(tag)) {
                 // Optional inheritance can yield to the existing work budget.
                 incoming.work.tags = original_tags;
             } else {
                 // The missing-author fallback may carry a large old description.
-                // Keep fresh language evidence, including conflicts, rather than
-                // restoring an older single-language conclusion.
-                incoming.work.tags = fresh_content_tags;
+                // Keep fresh language and inherited content evidence rather
+                // than making a previously known blocked record visible again.
+                incoming.work.tags = compact_content_tags;
                 if !incoming.work.is_valid() {
                     incoming.work.description = None;
                 }

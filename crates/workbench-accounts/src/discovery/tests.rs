@@ -802,9 +802,10 @@ fn discovery_language_merge_preserves_conflicts_and_fresh_tags_when_authors_are_
 }
 
 #[test]
-fn saved_author_catalog_keeps_bl_evidence_when_list_metadata_omits_tags() {
+fn saved_author_catalog_keeps_bl_and_ai_evidence_when_list_metadata_omits_tags() {
     let mut source_work = work(Source::Jm, "123", &["Author A"]);
     source_work.tags = vec!["BL".into(), "中文".into()];
+    source_work.categories = Some(vec!["AI漫畫".into()]);
     let existing = DiscoveryRecord {
         work: discovery_work_from_source(source_work), matched_authors: vec!["Author A".into()],
         author_verified: true, observed_at: 100, scan_id: "a".repeat(64), first_discovered_run_id: None,
@@ -813,8 +814,29 @@ fn saved_author_catalog_keeps_bl_evidence_when_list_metadata_omits_tags() {
     incoming.work.tags.clear();
     incoming.work.authors.clear();
     let merged = merged_record(Some(&existing), incoming);
-    assert_eq!(merged.work.tags, ["中文", "BL"]);
+    assert_eq!(merged.work.tags, ["中文", "BL", "AI漫畫"]);
     assert!(merged.work.is_valid());
+}
+
+#[test]
+fn inherited_content_evidence_survives_the_saved_work_byte_boundary() {
+    let mut source_work = work(Source::Jm, "123", &["Author A"]);
+    source_work.tags = vec!["耽美花園".into(), "AI".into()];
+    let existing = DiscoveryRecord {
+        work: discovery_work_from_source(source_work), matched_authors: vec!["Author A".into()],
+        author_verified: true, observed_at: 100, scan_id: "a".repeat(64), first_discovered_run_id: None,
+    };
+    let mut incoming = existing.clone();
+    incoming.work.tags = vec!["t".repeat(2000); 32];
+    incoming.work.tags.push("x".into());
+    let gap = 64 * 1024 - serde_json::to_vec(&incoming.work).unwrap().len();
+    assert!(gap < 2000);
+    incoming.work.tags[32] = "x".repeat(gap + 1);
+    assert!(incoming.work.is_valid());
+    let merged = merged_record(Some(&existing), incoming);
+    assert!(merged.work.is_valid());
+    assert_eq!(merged.work.tags, ["耽美花園", "AI"]);
+    assert_eq!(merged.work.authors, existing.work.authors);
 }
 
 #[test]

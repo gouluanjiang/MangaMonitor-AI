@@ -12,7 +12,7 @@ mod types;
 pub use language::{
     inherit_language_tags, language_tag_kind, retained_language_tags, LanguageTagKind,
 };
-pub use content::{inherit_content_tags, is_bl_tag, retained_content_tags};
+pub use content::{inherit_content_tags, is_ai_tag, is_bl_tag, is_blocked_tag, retained_content_tags};
 pub use protocol::parse_work_id;
 pub use types::*;
 

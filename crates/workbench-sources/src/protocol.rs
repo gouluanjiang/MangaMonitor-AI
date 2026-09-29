@@ -154,7 +154,7 @@ fn work_categories(source: Source, data: &Value) -> Option<Vec<String>> {
 
 fn work_tags(raw_tags: &[String], categories: Option<&[String]>) -> Vec<String> {
     // Both website arrays are bounded to 64 entries. Categories are genuine
-    // source labels (including BL), not guesses from titles or authors.
+    // source labels (including BL/AI), not guesses from titles or authors.
     let mut tags = raw_tags.to_vec();
     for text in categories.unwrap_or_default() {
         let exists = if let Some(kind) = crate::language_tag_kind(text) {
@@ -395,7 +395,7 @@ pub(crate) fn work(
     // Bound the actual IPC representation, including JSON string escaping.
     let mut serialized = serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
     if serialized.len() > MAX_WORK_JSON_BYTES && work.categories.is_some() {
-        // Prefer complete language evidence over optional description bytes.
+        // Prefer language/content evidence over optional description bytes.
         let description = work.description.take();
         serialized = serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
         if serialized.len() > MAX_WORK_JSON_BYTES {
@@ -403,14 +403,16 @@ pub(crate) fn work(
                 && crate::retained_language_tags(&work.tags).len() == 2;
             let added_bl = work.tags.iter().any(|tag| crate::is_bl_tag(tag))
                 && !raw_tags.iter().any(|tag| crate::is_bl_tag(tag));
-            if category_conflict || added_bl {
+            let added_ai = work.tags.iter().any(|tag| crate::is_ai_tag(tag))
+                && !raw_tags.iter().any(|tag| crate::is_ai_tag(tag));
+            if category_conflict || added_bl || added_ai {
                 // An extreme byte-boundary record must not turn a known
                 // conflict into a single language by dropping its categories.
                 while serialized.len() > MAX_WORK_JSON_BYTES {
                     let Some(index) = work
                         .tags
                         .iter()
-                        .rposition(|tag| crate::language_tag_kind(tag).is_none() && !crate::is_bl_tag(tag))
+                        .rposition(|tag| crate::language_tag_kind(tag).is_none() && !crate::is_blocked_tag(tag))
                     else {
                         break;
                     };

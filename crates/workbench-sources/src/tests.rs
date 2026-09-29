@@ -530,16 +530,22 @@ fn optional_language_categories_do_not_hide_a_work_at_the_ipc_byte_boundary() {
     assert_eq!(preserved.title, conflict.title);
     assert_eq!(preserved.authors, conflict.authors);
     assert!(serde_json::to_vec(&preserved).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
-    data["categories"] = json!(["生肉", "耽美"]);
+    data["categories"] = json!(["生肉", "耽美花園", "AI作画"]);
     let bl = protocol::work(Source::Pica, &data, false).unwrap().0;
     assert!(bl.tags.iter().any(|tag| is_bl_tag(tag)));
-    assert!(bl.categories.as_ref().unwrap().contains(&"耽美".into()));
+    assert!(bl.tags.iter().any(|tag| is_ai_tag(tag)));
+    assert!(bl.categories.as_ref().unwrap().contains(&"耽美花園".into()));
+    assert!(bl.categories.as_ref().unwrap().contains(&"AI作画".into()));
     assert!(serde_json::to_vec(&bl).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+    data["categories"] = json!(["AI"]);
+    let ai = protocol::work(Source::Pica, &data, false).unwrap().0;
+    assert!(ai.tags.iter().any(|tag| is_ai_tag(tag)));
+    assert!(serde_json::to_vec(&ai).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
 }
 
 #[tokio::test]
-async fn language_evidence_flows_through_existing_pica_routes_without_more_requests() {
-    let record = json!({"_id":PICA_ID,"title":"Fixture","categories":["同人","中文","生肉"]});
+async fn content_evidence_flows_through_existing_pica_routes_without_more_requests() {
+    let record = json!({"_id":PICA_ID,"title":"Fixture","categories":["同人","中文","生肉","耽美花園","AI漫畫"]});
     let paged = json!({"comics":{"page":1,"pages":1,"limit":20,"total":1,"docs":[record.clone()]}});
     let sources = scripted(vec![
         Ok(paged.clone()),
@@ -563,9 +569,9 @@ async fn language_evidence_flows_through_existing_pica_routes_without_more_reque
     let ranking = sources.ranking(&pica, None, "week").await.unwrap();
     let detail = sources.detail(&pica, PICA_ID).await.unwrap();
     for page in [search, favorites, ranking] {
-        assert_eq!(page.items[0].tags, ["同人", "中文", "生肉"]);
+        assert_eq!(page.items[0].tags, ["同人", "中文", "生肉", "耽美花園", "AI漫畫"]);
     }
-    assert_eq!(detail.tags, ["同人", "中文", "生肉"]);
+    assert_eq!(detail.tags, ["同人", "中文", "生肉", "耽美花園", "AI漫畫"]);
     assert_eq!(sources.recorded.lock().unwrap().len(), 4);
     assert!(sources.cover_recorded.lock().unwrap().is_empty());
 }

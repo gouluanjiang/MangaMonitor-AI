@@ -1,4 +1,5 @@
 import { CoverInteraction, useReaderAccess } from "./reader-access.tsx";
+import { useCoverRetry } from "./cover-retry.tsx";
 import { AuthorLinks } from "./AuthorLinks.tsx";
 import { useTagSearch } from "./TagSearch.tsx";
 import { browseScope } from "./browse-session.ts";
@@ -40,7 +41,7 @@ import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import {
   getContentFilterRevision,
-  isBlTagged,
+  isBlockedTagged,
   isContentHidden,
   rememberContentWork,
   subscribeContentFilter,
@@ -89,6 +90,15 @@ function LibraryCover({
   const [result, setResult] = useState<LibraryCoverResult>(),
     [visible, setVisible] = useState(false),
     [retry, setRetry] = useState(0);
+  const retryCover = useCallback(() => {
+    if (!snapshot.rootId) return;
+    cache.retry(snapshot.rootId, snapshot.generation, item.id);
+    setResult(undefined);
+    setRetry((value) => value + 1);
+  }, [cache, snapshot.rootId, snapshot.generation, item.id]);
+  const retryGesture = useCoverRetry(
+    result?.status === "error" ? retryCover : null,
+  );
   useEffect(() => {
     let disposed = false,
       shown = false,
@@ -194,21 +204,23 @@ function LibraryCover({
                   : "封面未读取"}
         </span>
       )}
-      {result?.status === "error" && (
-        <button
-          type="button"
-          className="library-cover-retry"
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (snapshot.rootId)
-              cache.retry(snapshot.rootId, snapshot.generation, item.id);
-            setRetry((value) => value + 1);
-          }}
-        >
-          重试封面
-        </button>
-      )}
+      {result?.status === "error" &&
+        !retryGesture.selectionMode &&
+        (retryGesture.managed ? (
+          <span className="cover-retry-hint">点击封面重试</span>
+        ) : (
+          <button
+            type="button"
+            className="library-cover-retry"
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              retryCover();
+            }}
+          >
+            重试封面
+          </button>
+        ))}
     </div>
   );
 }
@@ -561,7 +573,7 @@ export function LibraryWorkbench({
   );
   useEffect(() => {
     for (const item of library.snapshot.items) {
-      if (!isBlTagged(item.tags)) continue;
+      if (!isBlockedTagged(item.tags)) continue;
       if (item.sourceRef)
         rememberContentWork({ ...item.sourceRef, tags: item.tags });
       for (const link of item.links ?? [])
@@ -572,7 +584,7 @@ export function LibraryWorkbench({
     () =>
       library.snapshot.items.filter(
         (item) =>
-          !isBlTagged(item.tags) &&
+          !isBlockedTagged(item.tags) &&
           !(item.sourceRef && isContentHidden(item.sourceRef)) &&
           !(item.links ?? []).some((link) => isContentHidden(link.reference)),
       ),

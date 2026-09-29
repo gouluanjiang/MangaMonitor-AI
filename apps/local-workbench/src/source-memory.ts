@@ -10,7 +10,9 @@ export function jsonBytes(value: object): number {
   return bytes;
 }
 export function compactWork(work: SourceWork): SourceWork {
-  const tags = retainedContentTags(work.tags);
+  const tags = retainedContentTags(
+    work.categories?.length ? [...work.tags, ...work.categories] : work.tags,
+  );
   const categories = work.categories?.filter((category) =>
     tags.includes(category),
   );

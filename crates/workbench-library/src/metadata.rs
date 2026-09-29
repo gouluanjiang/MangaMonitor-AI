@@ -173,8 +173,8 @@ pub(crate) fn downloader_json(bytes: &[u8]) -> Result<Metadata> {
     }
     let names = |key: &str, maximum: usize| -> Vec<String> {
         let mut seen = HashSet::new();
-        object[key]
-            .as_array()
+        object.get(key)
+            .and_then(serde_json::Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(|entry| {
@@ -187,6 +187,18 @@ pub(crate) fn downloader_json(bytes: &[u8]) -> Result<Metadata> {
             .take(maximum)
             .collect()
     };
+    // Pica's downloader preserves website categories separately from tags.
+    // Put these bounded, explicit labels first so a full tag list cannot erase
+    // content evidence. Do not infer labels from the title or author.
+    let mut tags = if reference.source == Source::Pica {
+        names("categories", 64)
+    } else {
+        Vec::new()
+    };
+    for tag in names("tags", 100) {
+        if tags.len() >= 100 { break; }
+        if !tags.contains(&tag) { tags.push(tag); }
+    }
     let version_updated_at = local_version_date(object, reference.source);
     Ok(Metadata {
         title: Some(clean(name, 1024)),
@@ -195,7 +207,7 @@ pub(crate) fn downloader_json(bytes: &[u8]) -> Result<Metadata> {
             .and_then(serde_json::Value::as_str)
             .map(list)
             .unwrap_or_else(|| names("author", 50)),
-        tags: names("tags", 100),
+        tags,
         description: object
             .get("description")
             .and_then(serde_json::Value::as_str)

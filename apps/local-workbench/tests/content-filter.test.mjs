@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   isBlTag,
   isBlTagged,
+  isAiTag,
+  isBlockedTag,
+  isBlockedTagged,
   retainedContentTags,
   inheritContentTags,
   rememberContentWork,
@@ -27,32 +31,96 @@ const work = (workId, tags, source = "JM") => ({
   coverAvailable: false,
 });
 
-test("BL uses whole metadata labels with case and Unicode width normalization", () => {
-  for (const tag of [
-    "BL",
-    " ＢＬ ",
-    "YaOi",
-    "耽美",
-    "ＢＬ漫畫",
-    "Boys’ Love",
-    "Boys Love",
-    "ボーイズラブ",
-  ])
-    assert.equal(isBlTag(tag), true, tag);
-  for (const tag of [
-    "",
-    "非BL",
-    "非ＢＬ",
-    "BLではない",
-    "GL",
-    "百合",
-    "black",
-    "blonde",
-    "bl artist",
-  ])
-    assert.equal(isBlTag(tag), false, tag);
+test("exact label matrix is shared with Rust and never matches ordinary words", () => {
+  const matrix = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../crates/workbench-sources/src/content-labels.test.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  for (const [kind, matches] of [
+    ["bl", isBlTag],
+    ["ai", isAiTag],
+  ]) {
+    for (const tag of matrix[kind]) {
+      assert.equal(matches(tag), true, tag);
+      assert.equal(isBlockedTag(tag), true, tag);
+    }
+  }
+  for (const tag of matrix.visible) assert.equal(isBlockedTag(tag), false, tag);
   assert.equal(isBlTagged(undefined), false);
+  assert.equal(isBlockedTagged(undefined), false);
   assert.equal(isContentHidden(work("unknown", [])), false);
+  assert.equal(
+    isContentHidden({
+      ...work("ordinary-ai-title", []),
+      title: "AI研究",
+      authors: ["AI"],
+    }),
+    false,
+  );
+});
+
+test("AI and Pica category evidence survive compaction and lightweight refresh", () => {
+  const original = {
+    ...work("category-only-content", ["中文", "生肉"], "Pica"),
+    categories: ["同人", "耽美花園", "AI漫画"],
+  };
+  assert.equal(isContentHidden(original), true);
+  const compact = compactWork(original);
+  assert.deepEqual(compact.tags, ["中文", "生肉", "耽美花園", "AI漫画"]);
+  assert.deepEqual(compact.categories, ["耽美花園", "AI漫画"]);
+  assert.equal(compactWork(compact), compact);
+  const merged = mergeSourceWorks(
+    [compact],
+    [work(original.workId, ["生肉"], "Pica")],
+  );
+  assert.deepEqual(merged[0].tags, ["生肉", "耽美花園", "AI漫画"]);
+  const legacy = mergeSourceWorks(
+    [original],
+    [work(original.workId, [], "Pica")],
+  );
+  assert.deepEqual(legacy[0].tags, ["中文", "生肉", "耽美花園", "AI漫画"]);
+  const catalog = appendCatalog(null, {
+    items: [original],
+    page: 1,
+    pages: 1,
+    total: 1,
+    hasMore: false,
+    folders: [],
+  });
+  assert.equal(catalog.items[0].tags.some(isAiTag), true);
+  assert.equal(isContentHidden(catalog.items[0]), true);
+});
+
+test("128-label refresh retains both explicit blocked kinds without growing the cap", () => {
+  const incoming = Array.from({ length: 128 }, (_, n) => `ordinary${n}`);
+  const previous = ["中文", "生肉", "耽美花园", "AI作畫"];
+  const inherited = inheritContentTags(incoming, previous);
+  assert.equal(inherited.length, 128);
+  assert.equal(inherited.some(isBlTag), true);
+  assert.equal(inherited.some(isAiTag), true);
+  assert.equal(incoming.length, 128);
+  assert.equal(incoming.some(isBlockedTag), false);
+  assert.deepEqual(inheritContentTags(Array(128).fill("中文"), previous), [
+    "中文",
+    "耽美花园",
+    "AI作畫",
+  ]);
+});
+
+test("category-only AI evidence is shared with queue and lightweight exact-ID records", async () => {
+  const item = {
+    ...work("category-only-ai-memory", [], "Pica"),
+    categories: ["ＡＩ"],
+  };
+  rememberContentWork(item);
+  assert.equal(isContentHidden(work(item.workId, [], "Pica")), true);
+  assert.equal(isContentHidden(work(item.workId, [], "JM")), false);
+  await Promise.resolve();
 });
 
 test("compact caches and lightweight merges preserve BL alongside language conflicts", () => {

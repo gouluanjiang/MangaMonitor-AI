@@ -882,10 +882,14 @@ export function createSourceAdapter(
         verified: true,
       } as FavoriteResult;
     },
-    async cover(scope, workId) {
+    async cover(scope, workId, refreshMetadata = false) {
       checkScope(scope);
       if (!identity(workId)) throw new SourceError("INVALID_INPUT");
-      const result = await call("source_cover", { ...scope, workId });
+      const result = await call("source_cover", {
+        ...scope,
+        workId,
+        refreshMetadata,
+      });
       scoped(result, scope);
       if (
         result.workId !== workId ||

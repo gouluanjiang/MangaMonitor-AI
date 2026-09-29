@@ -47,6 +47,7 @@ type MockOptions = {
   picaCachePage?: number;
   picaDuplicateRecord?: number;
   coverFailureOnce?: boolean;
+  coverFailures?: number;
   cacheSnapshot?: CatalogSnapshot;
   crossSourcePhone?: boolean;
   crossSourcePC?: boolean;
@@ -75,6 +76,7 @@ type Call = {
   reverse?: boolean;
   remember?: boolean;
   rememberLogin?: boolean;
+  refreshMetadata?: boolean;
 };
 type Hooks = {
   accounts: AccountSummary[];
@@ -174,12 +176,12 @@ test("a clicked author opens the unified two-source search and a clicked tag sea
     .toEqual([1, 2]);
 });
 
-test("keyword search reads one page at a time and can continue past a whole page hidden by explicit BL tags", async ({
+test("keyword search reads one page at a time and can continue past a whole page hidden by explicit AI tags", async ({
   page,
 }) => {
   await installMock(page, {
     twoPageSearch: true,
-    workTags: { "123": ["Boys Love"], "456": ["眼镜"] },
+    workTags: { "123": ["AI漫画"], "456": ["眼镜", "非AI"] },
   });
   await page.goto("/");
   await openUnifiedSearch(page, "作品关键词");
@@ -880,7 +882,6 @@ async function installMock(page: Page, options: MockOptions = {}) {
   await page.addInitScript((options: MockOptions) => {
     const sources: Source[] = ["JM", "Pica"];
     const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
-    let coverFailureUsed = false;
     const makeAccount = (source: Source, epoch = 1): AccountSummary => ({
       source,
       sessionId: "synthetic-" + source + "-" + epoch,
@@ -1021,6 +1022,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
             reverse: raw.reverse as boolean | undefined,
             remember: raw.remember as boolean | undefined,
             rememberLogin: raw.rememberLogin as boolean | undefined,
+            refreshMetadata: raw.refreshMetadata as boolean | undefined,
           });
           if (command === "read_preferences") return clone(hooks.preferences);
           if (command === "jm_download_read") return { revision: 0, tasks: [] };
@@ -1589,12 +1591,16 @@ async function installMock(page: Page, options: MockOptions = {}) {
               );
             hooks.coverActive--;
             if (
-              options.coverFailureOnce &&
+              (options.coverFailureOnce || options.coverFailures) &&
               source === "Pica" &&
               raw.workId === "100" &&
-              !coverFailureUsed
+              hooks.calls.filter(
+                (call) =>
+                  call.command === "source_cover" &&
+                  call.source === "Pica" &&
+                  call.workId === "100",
+              ).length <= (options.coverFailures ?? 1)
             ) {
-              coverFailureUsed = true;
               throw {
                 code: "SOURCE_COVER_ACCESS_DENIED",
                 message: "SECRET URL TOKEN",
@@ -2505,6 +2511,108 @@ test("Pica cover failure shows a fixed diagnostic and explicit retry succeeds wi
         ).length,
     ),
   ).toBe(2);
+});
+
+for (const gesture of ["click", "keyboard"] as const) {
+  test(`a failed cover retries in place by ${gesture}, while selection only selects`, async ({
+    page,
+  }) => {
+    await installMock(page, { coverCount: 120, coverFailureOnce: true });
+    await openFavorites(page);
+    await page.getByTestId("source-tab-Pica").click();
+    const cover = page.getByTestId("source-cover-Pica:100");
+    const card = page.getByTestId("source-card-Pica:100");
+    await expect(cover).toContainText("点击封面重试");
+    await page.getByRole("button", { name: "多选", exact: true }).click();
+    await cover.click();
+    await expect(card.getByRole("checkbox")).toBeChecked();
+    await expect(cover).toContainText("SOURCE_COVER_ACCESS_DENIED");
+    expect(
+      await page.evaluate(
+        () =>
+          window.sourceTest.calls.filter(
+            (call) =>
+              call.command === "source_cover" &&
+              call.source === "Pica" &&
+              call.workId === "100",
+          ).length,
+      ),
+    ).toBe(1);
+    await page
+      .getByRole("toolbar", { name: "批量下载操作" })
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
+    if (gesture === "click") await cover.dblclick();
+    else await card.locator(".cover-interaction").press("Enter");
+    await expect(cover.locator("img")).toBeVisible();
+    await expect(page.getByTestId("source-detail")).toHaveCount(0);
+    await expect(page.getByTestId("reader-cover-actions")).toHaveCount(0);
+    const calls = await page.evaluate(() => window.sourceTest.calls);
+    expect(
+      calls
+        .filter(
+          (call) =>
+            call.command === "source_cover" &&
+            call.source === "Pica" &&
+            call.workId === "100",
+        )
+        .map((call) => call.refreshMetadata),
+    ).toEqual([false, true]);
+    expect(
+      calls.filter(
+        (call) =>
+          call.command.startsWith("reader_") ||
+          (call.command === "source_query" && call.kind === "detail"),
+      ),
+    ).toEqual([]);
+    await cover.click();
+    expect(
+      await page.evaluate(
+        () =>
+          window.sourceTest.calls.filter(
+            (call) =>
+              call.command === "source_cover" &&
+              call.source === "Pica" &&
+              call.workId === "100",
+          ).length,
+      ),
+    ).toBe(2);
+  });
+}
+
+test("a metadata refresh is consumed once and held retry keys cannot open a reader", async ({
+  page,
+}) => {
+  await installMock(page, { coverCount: 120, coverFailures: 2 });
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  const cover = page.getByTestId("source-cover-Pica:100");
+  await expect(cover).toContainText("点击封面重试");
+  await cover.click();
+  await expect(cover).toContainText("SOURCE_COVER_ACCESS_DENIED");
+  await page.getByTestId("source-cover-retry").click();
+  await expect(cover.locator("img")).toBeVisible();
+  await page
+    .getByTestId("source-card-Pica:100")
+    .locator(".cover-interaction")
+    .dispatchEvent("keydown", { key: "Enter", repeat: true, bubbles: true });
+  const calls = await page.evaluate(() => window.sourceTest.calls);
+  expect(
+    calls
+      .filter(
+        (call) =>
+          call.command === "source_cover" &&
+          call.source === "Pica" &&
+          call.workId === "100",
+      )
+      .map((call) => call.refreshMetadata),
+  ).toEqual([false, true, false]);
+  expect(
+    calls.filter(
+      (call) =>
+        call.command === "reader_open" || call.command === "reader_window_open",
+    ),
+  ).toEqual([]);
 });
 
 test("an explicit expired session refreshes account state and removes the connected source view", async ({

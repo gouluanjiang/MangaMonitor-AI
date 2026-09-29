@@ -51,35 +51,41 @@
     border-color: var(--accent, #956bfa);
   }
 }
-.floating-selection-space {
-  height: 84px;
+.floating-selection-host {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  max-height: 35dvh;
+  overflow: auto;
+  padding: 8px 34px;
+  border-top: 1px solid var(--line, #484052);
+  background: var(--surface, #201d27);
+  color: var(--text, #f5f3fa);
 }
-.floating-selection-space[data-active="true"] {
-  height: 112px;
+/* With a dock, keep transient feedback away from wrapped selection actions. */
+.app-shell:has(.floating-selection-host) .toast {
+  top: 70px;
+  bottom: auto;
+  left: calc(50% + var(--sidebar-width, 68px) / 2);
+  max-width: calc(100vw - var(--sidebar-width, 68px) - 32px);
 }
-.floating-selection-entry,
+.app-shell.ui-refined .floating-selection-host .button.secondary {
+  background: #29282f;
+}
+.app-shell.ui-refined
+  .floating-selection-host
+  .button.secondary:hover:not(:disabled) {
+  background: #34323d;
+}
 .floating-selection-bar {
-  position: fixed;
-  bottom: 46px;
-  z-index: 35;
-  box-shadow: 0 8px 28px #0007;
-}
-.floating-selection-entry {
-  right: 34px;
-}
-.floating-selection-bar {
-  left: calc(var(--sidebar-width, 84px) + 24px);
-  right: 34px;
+  width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
-  padding: 14px 18px;
-  border: 1px solid var(--line, #484052);
-  border-radius: 14px;
-  background: var(--surface, #201d27);
-  color: var(--text, #f5f3fa);
   opacity: 1;
   transform: translateY(0);
   transition:
@@ -95,6 +101,17 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+.floating-selection-options > button {
+  padding: 8px 12px;
+  border: 1px solid var(--line, #484052);
+  border-radius: 7px;
+  color: inherit;
+  background: #29282f;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 @starting-style {
   .floating-selection-bar {
@@ -103,17 +120,11 @@
   }
 }
 @media (max-width: 760px) {
-  .floating-selection-entry {
-    right: 18px;
+  .floating-selection-host {
+    padding: 8px 16px;
   }
   .floating-selection-bar {
-    left: calc(var(--sidebar-width, 68px) + 16px);
-    right: 16px;
     gap: 9px;
-    padding: 12px;
-  }
-  .floating-selection-space[data-active="true"] {
-    height: 170px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

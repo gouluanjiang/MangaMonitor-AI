@@ -67,6 +67,9 @@ struct FakeState {
     cover_started: Notify,
     cover_release: Notify,
     detail_calls: AtomicUsize,
+    detail_failure: Mutex<Option<&'static str>>,
+    detail_work_id: Mutex<Option<String>>,
+    detail_cover_image: Mutex<Option<String>>,
     cover_calls: AtomicUsize,
     cover_missing_once: AtomicBool,
     cover_metadata: AtomicBool,
@@ -276,10 +279,22 @@ impl SourceBackend for FakeBackend {
             self.0.detail_started.notify_one();
             self.0.detail_release.notified().await;
         }
+        if let Some(code) = *self.0.detail_failure.lock().unwrap() {
+            return Err(AccountError::new(code));
+        }
+        if let Some(image) = self.0.detail_cover_image.lock().unwrap().clone() {
+            *self.0.cover_image.lock().unwrap() = Some(image);
+        }
         let mut item = work(session.source, self.0.favorite.load(Ordering::SeqCst));
         item.source_updated_at = self.0.source_updated_at.lock().unwrap().clone();
         item.tags = self.0.work_tags.lock().unwrap().clone();
-        item.work_id = id.into();
+        item.work_id = self
+            .0
+            .detail_work_id
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| id.into());
         Ok(item)
     }
     async fn favorite(
@@ -1278,6 +1293,130 @@ async fn retained_cover_metadata_skips_detail_without_granting_action_authority(
         "WORK_NOT_LOADED"
     );
     assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn explicit_cover_refresh_replaces_missing_or_bad_retained_data_without_action_authority() {
+    for stale in [None, Some("data:image/jpeg;base64,AA==".to_owned())] {
+        let root = TempDir::new().unwrap();
+        let backend = FakeBackend::default();
+        let service = service(&root, backend.clone(), SharedVault::default());
+        let session = login(&service, Source::Pica, "synthetic", false).await;
+        backend.0.cover_metadata.store(true, Ordering::SeqCst);
+        *backend.0.cover_image.lock().unwrap() = stale.clone();
+        let first = service.cover(Source::Pica, &session, "123").await;
+        if stale.is_some() {
+            assert_eq!(error(first), "SOURCE_COVER_INVALID");
+        } else {
+            assert!(first.unwrap().data_url.is_none());
+        }
+        assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+
+        let image = cover_image();
+        *backend.0.detail_cover_image.lock().unwrap() = Some(image.clone());
+        assert_eq!(
+            service
+                .cover_with_refresh(Source::Pica, &session, "123", true)
+                .await
+                .unwrap()
+                .data_url,
+            Some(image.clone())
+        );
+        assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            service
+                .cover(Source::Pica, &session, "123")
+                .await
+                .unwrap()
+                .data_url,
+            Some(image)
+        );
+        assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            error(service.favorite(Source::Pica, &session, "123", true).await),
+            "WORK_NOT_LOADED"
+        );
+        assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn explicit_cover_refresh_is_one_detail_even_for_a_loaded_work() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "synthetic", false).await;
+    query(&service, Source::Jm, &session).await.unwrap();
+    backend.0.cover_missing_once.store(true, Ordering::SeqCst);
+    assert_eq!(
+        error(
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        ),
+        "WORK_NOT_LOADED"
+    );
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn failed_or_mismatched_explicit_cover_detail_never_requests_the_image() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "synthetic", false).await;
+    backend.0.cover_metadata.store(true, Ordering::SeqCst);
+    *backend.0.detail_failure.lock().unwrap() = Some("SOURCE_TIMEOUT");
+    assert_eq!(
+        error(
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        ),
+        "SOURCE_TIMEOUT"
+    );
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
+    *backend.0.detail_failure.lock().unwrap() = None;
+    *backend.0.detail_work_id.lock().unwrap() = Some("456".into());
+    assert_eq!(
+        error(
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        ),
+        "SOURCE_RESPONSE_INVALID"
+    );
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn logout_during_explicit_cover_refresh_stops_before_the_image_request() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "synthetic", false).await;
+    backend.0.cover_metadata.store(true, Ordering::SeqCst);
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move {
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        })
+    };
+    backend.0.detail_started.notified().await;
+    service.logout(Source::Jm, Some(&session)).await.unwrap();
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

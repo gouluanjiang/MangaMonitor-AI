@@ -1,9 +1,10 @@
 import {
   inheritLanguageTags,
+  languageTagKind,
   retainedLanguageTags,
 } from "./source-language.ts";
 
-// Whole metadata labels only. A title/author containing "bl" is not evidence.
+// Whole metadata labels only. Titles, authors and descriptions are never evidence.
 const blLabels = new Set([
   "bl",
   "耽美",
@@ -23,26 +24,71 @@ const blLabels = new Set([
   "耽美漫畫",
   "耽美漫画",
   "耽美向",
+  "耽美花園",
+  "耽美花园",
 ]);
+const aiLabels = new Set([
+  "ai",
+  "aigc",
+  "ai漫画",
+  "ai漫畫",
+  "ai作画",
+  "ai作畫",
+  "ai绘画",
+  "ai繪畫",
+  "ai绘图",
+  "ai繪圖",
+  "ai绘制",
+  "ai繪製",
+  "ai生成",
+  "ai生成漫画",
+  "ai生成漫畫",
+  "ai生成作品",
+  "aiart",
+  "aiartwork",
+  "aicomic",
+  "aicomics",
+  "aigenerated",
+  "aigeneratedart",
+  "aigeneratedcomic",
+  "aigeneratedcomics",
+  "aiイラスト",
+  "aiコミック",
+  "aiマンガ",
+  "ai絵",
+]);
+function normalizedLabel(tag: string): string {
+  return tag
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[’‘]/gu, "'")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
 export function isBlTag(tag: string): boolean {
-  return blLabels.has(
-    tag
-      .normalize("NFKC")
-      .toLowerCase()
-      .replace(/[’‘]/gu, "'")
-      .replace(/\s+/gu, " ")
-      .trim(),
-  );
+  return blLabels.has(normalizedLabel(tag));
+}
+export function isAiTag(tag: string): boolean {
+  // Only separators within a complete known label are optional; no substring match.
+  return aiLabels.has(normalizedLabel(tag).replace(/[ _-]/gu, ""));
+}
+export function isBlockedTag(tag: string): boolean {
+  return isBlTag(tag) || isAiTag(tag);
 }
 export function isBlTagged(tags?: readonly string[]): boolean {
   return tags?.some(isBlTag) ?? false;
 }
+export function isBlockedTagged(tags?: readonly string[]): boolean {
+  return tags?.some(isBlockedTag) ?? false;
+}
 
-/** Compact catalogs keep at most two language labels and one BL label. */
+/** Compact catalogs keep at most two language labels and one label per blocked kind. */
 export function retainedContentTags(tags: readonly string[]): string[] {
   const retained = retainedLanguageTags(tags);
-  const bl = tags.find(isBlTag);
-  if (bl) retained.push(bl.trim());
+  for (const matches of [isBlTag, isAiTag]) {
+    const label = tags.find(matches);
+    if (label) retained.push(label.trim());
+  }
   return retained;
 }
 
@@ -51,15 +97,31 @@ export function inheritContentTags(
   incoming: string[],
   previous: readonly string[],
 ): string[] {
-  const tags = inheritLanguageTags(incoming, previous);
-  const priorBl = !isBlTagged(tags) && previous.find(isBlTag);
-  return priorBl && tags.length < 128 ? [...tags, priorBl.trim()] : tags;
+  let tags = inheritLanguageTags(incoming, previous);
+  for (const matches of [isBlTag, isAiTag]) {
+    const prior = !tags.some(matches) && previous.find(matches);
+    if (!prior) continue;
+    if (tags === incoming) tags = [...tags];
+    if (tags.length >= 128) {
+      const removable = tags.findLastIndex(
+        (tag) => !languageTagKind(tag) && !isBlockedTag(tag),
+      );
+      // A saturated list consisting only of evidence can be compacted safely.
+      tags =
+        removable < 0
+          ? retainedContentTags(tags)
+          : tags.toSpliced(removable, 1);
+    }
+    tags.push(prior.trim());
+  }
+  return tags;
 }
 
 type ContentWork = {
   source: string;
   workId: string;
   tags?: readonly string[];
+  categories?: readonly string[];
 };
 // Only explicit positives live here, for this process. No disk persistence,
 // title matching, account details, extra source reads, or cross-site guessing.
@@ -69,7 +131,11 @@ let revision = 0,
   notificationQueued = false;
 const key = (work: ContentWork) => JSON.stringify([work.source, work.workId]);
 export function rememberContentWork(work: ContentWork): void {
-  if (!isBlTagged(work.tags) || known.has(key(work))) return;
+  if (
+    (!isBlockedTagged(work.tags) && !isBlockedTagged(work.categories)) ||
+    known.has(key(work))
+  )
+    return;
   known.add(key(work));
   revision++;
   if (!notificationQueued) {
@@ -81,7 +147,11 @@ export function rememberContentWork(work: ContentWork): void {
   }
 }
 export function isContentHidden(work: ContentWork): boolean {
-  return isBlTagged(work.tags) || known.has(key(work));
+  return (
+    isBlockedTagged(work.tags) ||
+    isBlockedTagged(work.categories) ||
+    known.has(key(work))
+  );
 }
 export function subscribeContentFilter(listener: () => void): () => void {
   listeners.add(listener);

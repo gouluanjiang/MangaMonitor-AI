@@ -1883,20 +1883,25 @@ test("clicking download on a source detail retries its failed task without recre
   ).toEqual([[failed.id, 1]]);
 });
 
-test("explicit BL download metadata is hidden from every queue category while unknown labels remain visible", async ({
+test("explicit BL and AI download metadata is hidden from every queue category while unknown labels remain visible", async ({
   page,
 }) => {
   const hidden = queueTask(1, "downloaded", { tags: ["Boys Love"] });
   const visible = queueTask(2, "downloaded", { tags: [] });
-  await install(page, { initialTasks: [hidden, visible] });
+  const ai = queueTask(3, "downloaded", { tags: ["AI作画"] });
+  const aiFailed = queueTask(4, "error", { tags: ["ＡＩ"] });
+  await install(page, { initialTasks: [hidden, visible, ai, aiFailed] });
   await page.getByTestId("nav-queue").click();
   await page.getByTestId("download-filter-downloaded").click();
   await expectQueueCounts(page, 0, 0, 1);
   await expect(page.getByTestId("download-task-" + hidden.id)).toHaveCount(0);
   await expect(page.getByTestId("download-task-" + visible.id)).toBeVisible();
+  await expect(page.getByTestId("download-task-" + ai.id)).toHaveCount(0);
+  await page.getByTestId("download-filter-error").click();
+  await expect(page.getByTestId("download-task-" + aiFailed.id)).toHaveCount(0);
   expect(
     await page.evaluate(() => window.downloadTest.queue.tasks.length),
-  ).toBe(2);
+  ).toBe(4);
   expect(await calls(page, "jm_download_history_remove")).toEqual([]);
 });
 

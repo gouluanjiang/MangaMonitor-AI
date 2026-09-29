@@ -960,6 +960,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         session_id: &str,
         work_id: &str,
     ) -> Result<CoverResult> {
+        self.cover_with_refresh(source, session_id, work_id, false)
+            .await
+    }
+
+    pub async fn cover_with_refresh(
+        &self,
+        source: Source,
+        session_id: &str,
+        work_id: &str,
+        refresh_metadata: bool,
+    ) -> Result<CoverResult> {
         let (session, known) = {
             let mut slot = self.slot(source).lock().await;
             self.require_scope(&mut slot, session_id)?;
@@ -992,7 +1003,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             let mut hydrated = false;
             // Full work metadata may be evicted before its small cover descriptor.
             // Reuse the native session descriptor without restoring action authority.
-            if !known && !self.backend.has_cover_metadata(&session, work_id) {
+            // An explicit failed-cover retry refreshes even a retained stale URL
+            // or cached missing descriptor. Ordinary loading keeps the fast path;
+            // this read does not populate the favorite/follow authority cache.
+            if refresh_metadata
+                || (!known && !self.backend.has_cover_metadata(&session, work_id))
+            {
                 let work = self.backend.detail(&session, work_id).await?;
                 cache::validate_work(source, &work)?;
                 if work.work_id != work_id {

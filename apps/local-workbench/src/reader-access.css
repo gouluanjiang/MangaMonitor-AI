@@ -5,7 +5,7 @@
   background: var(--surface, #201d27);
   border: 1px solid var(--line, #484052);
   border-radius: 10px;
-  width: min(260px, calc(100vw - 16px));
+  width: min(320px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
   overflow: auto;
   padding: 0;
@@ -27,10 +27,9 @@
   padding: 6px 9px;
   font-size: 12px;
   color: var(--muted, #b5abbf);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 .reader-cover-actions [role="menuitem"] {
   padding: 10px 9px;
@@ -58,6 +57,28 @@
 }
 .cover-interaction:focus {
   outline-color: var(--accent, #926cff);
+}
+.cover-interaction[data-cover-retry] {
+  cursor: pointer;
+}
+.source-cover:has(> .cover-retry-hint) {
+  position: relative;
+}
+.source-cover > .cover-retry-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 38px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 16px);
+  padding: 4px 6px;
+  border: 1px solid #77658e;
+  border-radius: 5px;
+  background: #2f293b;
+  color: #eee7fa;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
 }
 .source-card:has(.cover-interaction:focus) h3 {
   color: var(--text, #f5f3fa);

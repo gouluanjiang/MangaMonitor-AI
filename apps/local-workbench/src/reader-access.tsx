@@ -1,8 +1,10 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -23,6 +25,7 @@ import type { ReaderRequest } from "./reader/types.ts";
 import type { WorkReference } from "./booklists.ts";
 import type { SourceScope, SourceWork } from "./source-types.ts";
 import "./reader-access.css";
+import { CoverRetryContext, type CoverRetryAction } from "./cover-retry.tsx";
 
 interface ReaderAccess {
   choose(
@@ -44,7 +47,7 @@ const ReaderContext = createContext<ReaderAccess>({
 export const ReaderAccessProvider = ReaderContext.Provider;
 export const useReaderAccess = () => useContext(ReaderContext);
 
-/** A single pointer click focuses; it must never race a double click into details. */
+/** A single click focuses or retries a failed cover; no click races into details. */
 export function CoverInteraction({
   request,
   title,
@@ -67,6 +70,22 @@ export function CoverInteraction({
   testId?: string;
 }) {
   const access = useReaderAccess();
+  const retry = useRef<CoverRetryAction>(null);
+  const retriedClick = useRef(false);
+  const [canRetry, setCanRetry] = useState(false);
+  const register = useCallback((action: CoverRetryAction) => {
+    retry.current = action;
+    setCanRetry(action !== null);
+    return () => {
+      if (retry.current !== action) return;
+      retry.current = null;
+      setCanRetry(false);
+    };
+  }, []);
+  const retryContext = useMemo(
+    () => ({ register, selectionMode }),
+    [register, selectionMode],
+  );
   const menu = (
     element: HTMLElement,
     x: number,
@@ -84,17 +103,27 @@ export function CoverInteraction({
       tabIndex={0}
       className={`${className} cover-interaction`}
       data-testid={testId}
-      aria-label={`打开《${title}》`}
+      aria-label={
+        canRetry && !selectionMode ? `重试《${title}》封面` : `打开《${title}》`
+      }
+      data-cover-retry={canRetry && !selectionMode ? true : undefined}
       aria-haspopup={selectionMode ? undefined : "menu"}
       aria-pressed={selectionMode ? selected : undefined}
       onClick={(event) => {
         if ((event.target as HTMLElement).closest("button, input, a")) return;
         event.currentTarget.focus({ preventScroll: true });
-        if (selectionMode && event.detail < 2) onToggleSelection?.();
+        if (event.detail >= 2) return;
+        retriedClick.current = false;
+        if (selectionMode) onToggleSelection?.();
+        else if (retry.current) {
+          retriedClick.current = true;
+          retry.current();
+        }
       }}
       onDoubleClick={(event) => {
         if (
           selectionMode ||
+          retriedClick.current ||
           (event.target as HTMLElement).closest("button, input, a")
         )
           return;
@@ -112,6 +141,19 @@ export function CoverInteraction({
       }}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
+        if (event.repeat && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          return;
+        }
+        if (
+          !selectionMode &&
+          retry.current &&
+          (event.key === "Enter" || event.key === " ")
+        ) {
+          event.preventDefault();
+          retry.current();
+          return;
+        }
         if (selectionMode && (event.key === " " || event.key === "Enter")) {
           event.preventDefault();
           onToggleSelection?.();
@@ -132,7 +174,9 @@ export function CoverInteraction({
         }
       }}
     >
-      {children}
+      <CoverRetryContext.Provider value={retryContext}>
+        {children}
+      </CoverRetryContext.Provider>
     </div>
   );
 }

@@ -20,6 +20,7 @@ type Options = {
   pcCount?: number;
   phoneCount?: number;
   covers?: boolean;
+  failCoverOnce?: boolean;
   unicode?: boolean;
   selectCount?: number;
   cancelChoose?: boolean;
@@ -371,6 +372,16 @@ async function installMock(page: Page, options: Options = {}) {
           }
           if (command === "library_cover") {
             if (
+              options.failCoverOnce &&
+              args.entryId === id(1) &&
+              hooks.calls.filter(
+                (call) =>
+                  call.command === "library_cover" &&
+                  call.args.entryId === id(1),
+              ).length === 1
+            )
+              throw { code: "LIBRARY_UNAVAILABLE" };
+            if (
               args.rootId !== hooks.pc.rootId ||
               args.generation !== hooks.pc.generation ||
               !hooks.pc.items.some((entry) => entry.id === args.entryId)
@@ -472,12 +483,12 @@ async function installMock(page: Page, options: Options = {}) {
   await expect(page.getByTestId("library-workbench")).toBeVisible();
 }
 
-test("library hides explicit BL metadata and leaves unknown tags visible without changing files or fetching source details", async ({
+test("library hides explicit BL and AI metadata and leaves unknown or negative labels visible without changing files or fetching source details", async ({
   page,
 }) => {
   await installMock(page, {
     pcCount: 4,
-    languageTags: [["BL"], ["耽美"], [], ["中文", "眼镜"]],
+    languageTags: [["耽美花園"], ["ＡＩ"], [], ["中文", "非AI", "maid"]],
   });
   await expect(page.getByTestId("library-grid")).toHaveAttribute(
     "data-total-items",
@@ -943,6 +954,31 @@ test("scan errors retain the partial catalog across settings and require an expl
       (call) => call.args.action === "start",
     ),
   ).toBe(true);
+});
+
+test("clicking a failed library cover retries only its image without entering detail or reading", async ({
+  page,
+}) => {
+  await installMock(page, { pcCount: 3, covers: true, failCoverOnce: true });
+  const cover = page.getByTestId("library-cover-" + id(1));
+  await expect(cover).toContainText("点击封面重试");
+  await cover.click();
+  await expect(cover.locator("img")).toBeVisible();
+  expect(
+    (await commands(page, "library_cover")).filter(
+      (call) => call.args.entryId === id(1),
+    ),
+  ).toHaveLength(2);
+  await expect(page.getByTestId("reader-cover-actions")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.libraryTest.calls.filter(
+        (call) =>
+          call.command.startsWith("reader_") ||
+          call.command === "library_detail",
+      ),
+    ),
+  ).toEqual([]);
 });
 
 test("decoded offscreen covers release while compressed covers survive scrolling, detail and settings", async ({

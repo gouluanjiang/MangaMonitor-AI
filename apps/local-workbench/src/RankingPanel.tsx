@@ -346,6 +346,7 @@ export function RankingPanel({
             </details>
           )}
           <FloatingSelection
+            visible={active}
             active={selectionMode}
             selectedCount={selected.length}
             onEnter={() => setSelectionMode(true)}

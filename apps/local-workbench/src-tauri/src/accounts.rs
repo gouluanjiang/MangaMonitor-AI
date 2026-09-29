@@ -224,10 +224,18 @@ pub(super) async fn source_cover<R: Runtime>(
     source: Source,
     session_id: String,
     work_id: String,
+    refresh_metadata: Option<bool>,
 ) -> Result<CoverResult, AccountError> {
     require_main(window.label())?;
     let service = service(Arc::clone(accounts.inner())).await?;
-    service.cover(source, &session_id, &work_id).await
+    service
+        .cover_with_refresh(
+            source,
+            &session_id,
+            &work_id,
+            refresh_metadata.unwrap_or(false),
+        )
+        .await
 }
 
 #[tauri::command]

@@ -551,6 +551,26 @@ test("favorite writes require matching identity and read-back confirmation of th
   assert.equal((await adapter.favorite(scope, "123", true)).verified, true);
 });
 
+test("only explicit cover retries ask native code to refresh metadata", async () => {
+  const calls = [];
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return { ...scope, workId: "123", dataUrl: null };
+    },
+  });
+  await adapter.cover(scope, "123");
+  await adapter.cover(scope, "123", true);
+  assert.deepEqual(
+    calls.map(({ command, args }) => [command, args.refreshMetadata]),
+    [
+      ["source_cover", false],
+      ["source_cover", true],
+    ],
+  );
+});
+
 test("only data images or null leave the native cover adapter", async () => {
   for (const dataUrl of [
     "https://private.invalid/cover",

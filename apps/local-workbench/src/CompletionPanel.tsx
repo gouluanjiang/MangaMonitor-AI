@@ -1268,6 +1268,7 @@ export function CompletionPanel({
           />
           {!showOther && (
             <FloatingSelection
+              visible={active}
               active={selectionMode}
               selectedCount={selected.length}
               onEnter={() => setSelectionMode(true)}

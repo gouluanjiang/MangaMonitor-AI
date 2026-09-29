@@ -1,4 +1,5 @@
 import { CoverInteraction } from "./reader-access.tsx";
+import { useCoverRetry } from "./cover-retry.tsx";
 import { AuthorLinks } from "./AuthorLinks.tsx";
 import { FloatingSelection } from "./FloatingSelection.tsx";
 import { useBrowseSession } from "./useBrowseSession.ts";
@@ -26,7 +27,14 @@ import { partitionAuthorWorks, projectAuthorWork } from "./author-evidence.ts";
 import { AuthorCreditNote } from "./AuthorCreditNote.tsx";
 import { downloadSelectionLimit } from "./download-types.ts";
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { LibrarySnapshot } from "./library-types.ts";
 import type { DownloadInventorySnapshot } from "./download-types.ts";
 import { createInventoryMatcher, inventoryLabel } from "./inventory-model.ts";
@@ -133,6 +141,11 @@ export function SourceCover({
   const container = useRef<HTMLDivElement>(null);
   const cache = getCoverCache(adapter);
   const identity = JSON.stringify([scope.source, scope.sessionId, work.workId]);
+  const [retryState, setRetryState] = useState({ identity, version: 0 });
+  const localRetry = retryState.identity === identity ? retryState.version : 0;
+  const pendingMetadataRefresh = useRef<string | null>(null);
+  if (pendingMetadataRefresh.current !== identity)
+    pendingMetadataRefresh.current = null;
   const [state, setState] = useState<{
     identity: string;
     result: CoverResult | undefined;
@@ -153,6 +166,19 @@ export function SourceCover({
           shown: true,
           loading: false,
         };
+  const retryCover = useCallback(() => {
+    pendingMetadataRefresh.current = identity;
+    cache.retryFailure(scope, work.workId);
+    setState({ identity, result: undefined, shown: true, loading: true });
+    setRetryState((previous) => ({
+      identity,
+      version: previous.identity === identity ? previous.version + 1 : 1,
+    }));
+  }, [cache, identity, scope.source, scope.sessionId, work.workId]);
+  const canRetry =
+    current.result?.status === "error" ||
+    (!work.coverAvailable && !current.result && !current.loading);
+  const retryGesture = useCoverRetry(canRetry ? retryCover : null);
   useEffect(() => {
     let disposed = false;
     let visible: boolean | null = null;
@@ -173,7 +199,8 @@ export function SourceCover({
         !cached &&
         !work.coverAvailable &&
         !resolveMissing &&
-        retryVersion === 0
+        retryVersion === 0 &&
+        localRetry === 0
       ) {
         setState({ identity, result: undefined, shown: true, loading: false });
         return;
@@ -182,7 +209,13 @@ export function SourceCover({
       const job = cache.acquire(
         scope,
         work.workId,
-        () => adapter.cover(scope, work.workId),
+        () => {
+          // Consume only when queued work actually starts. Later scroll/cache
+          // reloads must not inherit the user's one explicit metadata refresh.
+          const refresh = pendingMetadataRefresh.current === identity;
+          if (refresh) pendingMetadataRefresh.current = null;
+          return adapter.cover(scope, work.workId, refresh);
+        },
         priority,
       );
       request = job;
@@ -249,6 +282,7 @@ export function SourceCover({
     work.workId,
     work.coverAvailable,
     retryVersion,
+    localRetry,
     resolveMissing,
   ]);
   return (
@@ -295,6 +329,19 @@ export function SourceCover({
                 : "封面未读取"}
         </span>
       )}
+      {canRetry &&
+        !retryGesture.selectionMode &&
+        (retryGesture.managed ? (
+          <span className="cover-retry-hint">点击封面重试</span>
+        ) : (
+          <button
+            type="button"
+            className="library-cover-retry"
+            onClick={retryCover}
+          >
+            重试读取
+          </button>
+        ))}
     </div>
   );
 }
@@ -2707,6 +2754,7 @@ export function SourceWorkbench({
                   )}
                 {!showingOtherAuthors && (
                   <FloatingSelection
+                    visible={active && !detailRef}
                     active={selectionMode}
                     selectedCount={selectedWorks.length}
                     onEnter={() => setSelectionMode(true)}

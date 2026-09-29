@@ -167,7 +167,11 @@ export interface SourceAdapter {
     workId: string,
     desired: boolean,
   ): Promise<FavoriteResult>;
-  cover(scope: SourceScope, workId: string): Promise<string | null>;
+  cover(
+    scope: SourceScope,
+    workId: string,
+    refreshMetadata?: boolean,
+  ): Promise<string | null>;
   following(scope: SourceScope): Promise<FollowingSnapshot>;
   follow(
     scope: SourceScope,
@@ -193,7 +197,12 @@ export function mergeSourceWorks(
     const key = sourceWorkKey(work),
       previous = merged.get(key);
     const tags = previous
-      ? inheritContentTags(work.tags, previous.tags)
+      ? inheritContentTags(
+          work.tags,
+          previous.categories?.length
+            ? [...previous.tags, ...previous.categories]
+            : previous.tags,
+        )
       : work.tags;
     const sourceUpdatedAt =
       work.sourceUpdatedAt == null && previous?.sourceUpdatedAt

@@ -411,6 +411,30 @@ fn directory_metadata_pages_cover_and_reopen_are_read_only() {
 }
 
 #[test]
+fn pica_zip_categories_are_metadata_and_survive_full_tag_lists() {
+    let app = TempDir::new().unwrap();
+    let media = TempDir::new().unwrap();
+    let data = serde_json::json!({
+        "id":"0123456789abcdef01234567", "title":"Synthetic", "author":"Writer",
+        "pagesCount":1, "chapterInfos":[], "categories":["耽美花園", "AI漫畫"],
+        "tags": (0..100).map(|n| format!("tag{n}")).collect::<Vec<_>>()
+    });
+    let encoded = serde_json::to_vec(&data).unwrap();
+    let path = media.path().join("synthetic.zip");
+    archive(&path, &[("1.png", &image_bytes()), ("元数据.json", &encoded)]);
+    let original = fs::read(&path).unwrap();
+    let store = WorkbenchStore::open(app.path()).unwrap();
+    let mut service = LibraryService::new();
+    let selected = service.choose(&store, media.path()).unwrap();
+    let result = finish(&mut service, &store, selected);
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(&result.items[0].tags[..2], ["耽美花園", "AI漫畫"]);
+    assert_eq!(result.items[0].tags.len(), 100);
+    assert_eq!(service.read(&store).unwrap().items[0].tags, result.items[0].tags);
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn pica_directory_shape_is_distinct_and_arbitrary_id_json_is_not_evidence() {
     let app = TempDir::new().unwrap();
     let media = TempDir::new().unwrap();

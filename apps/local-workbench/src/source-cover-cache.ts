@@ -293,6 +293,9 @@ export class CoverSessionCache {
     for (const [key, entry] of this.errors)
       if (entry.scope === wanted) this.errors.delete(key);
   }
+  retryFailure(scope: SourceScope, workId: string) {
+    this.errors.delete(keyOf(scope, workId));
+  }
   decodeFailed(scope: SourceScope, workId: string, url: string) {
     const key = keyOf(scope, workId);
     const latest = this.ready.get(key);

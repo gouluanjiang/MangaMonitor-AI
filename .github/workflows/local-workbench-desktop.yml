@@ -67,17 +67,27 @@ on:
         type: boolean
         default: false
         required: false
+      author_audit_build_only:
+        description: Build only an optimized local author audit helper from already reviewed source; never execute it in CI
+        type: boolean
+        default: false
+        required: false
+      reviewed_revision:
+        description: Full reviewed commit SHA required by author_audit_build_only
+        type: string
+        default: ''
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: local-workbench-desktop-${{ github.head_ref || github.ref_name }}
+  group: local-workbench-desktop-${{ github.head_ref || github.ref_name }}${{ inputs.author_audit_build_only && '-author-audit-build' || '' }}
   cancel-in-progress: true
 
 jobs:
   rust-format:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.format_only }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.format_only && !inputs.author_audit_build_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -99,8 +109,80 @@ jobs:
           path: rust-format.patch
           retention-days: 7
           if-no-files-found: error
+  author-audit-build:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.author_audit_build_only }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      REVIEWED_REVISION: ${{ inputs.reviewed_revision }}
+      FORMAT_ONLY: ${{ inputs.format_only }}
+      PACKAGE_INSTALLER: ${{ inputs.package_installer }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require unchanged reviewed source and an exclusive build-only mode
+        shell: pwsh
+        run: |
+          if ($env:FORMAT_ONLY -eq 'true' -or $env:PACKAGE_INSTALLER -eq 'true') {
+            throw 'author_audit_build_only cannot be combined with format_only or package_installer'
+          }
+          if ($env:REVIEWED_REVISION -cnotmatch '^[0-9a-fA-F]{40}$') {
+            throw 'reviewed_revision must be a full 40-character commit SHA'
+          }
+          git cat-file -e "$($env:REVIEWED_REVISION)^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed commit is unavailable' }
+          git diff --exit-code $env:REVIEWED_REVISION HEAD -- Cargo.toml Cargo.lock rust-toolchain.toml .cargo crates
+          if ($LASTEXITCODE -ne 0) { throw 'Helper source differs from the reviewed revision' }
+      - name: Install the pinned compiler only
+        run: rustup toolchain install 1.98.1 --profile minimal --target x86_64-pc-windows-msvc
+      - name: Build the optimized local author coverage helper only
+        # Never run this helper in CI. Its real-data entry point refuses CI execution.
+        run: cargo +1.98.1 build --release --locked -p workbench-accounts --example author_coverage_audit
+      - name: Record executable identity and reviewed-source equivalence
+        shell: pwsh
+        run: |
+          git diff --exit-code $env:REVIEWED_REVISION HEAD -- Cargo.toml Cargo.lock rust-toolchain.toml .cargo crates
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed source equivalence changed during the build' }
+          git diff --exit-code -- Cargo.toml Cargo.lock rust-toolchain.toml .cargo crates
+          if ($LASTEXITCODE -ne 0) { throw 'Build modified the reviewed source or lockfile' }
+          $actualHead = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualHead -cnotmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve build HEAD' }
+          $auditStage = Join-Path $env:RUNNER_TEMP 'author-audit-build'
+          [System.IO.Directory]::CreateDirectory($auditStage) | Out-Null
+          $auditExe = Get-Item -LiteralPath 'target/release/examples/author_coverage_audit.exe' -ErrorAction Stop
+          Copy-Item -LiteralPath $auditExe.FullName -Destination (Join-Path $auditStage $auditExe.Name)
+          [ordered]@{
+            version = 1
+            actualHead = $actualHead
+            reviewedSourceRevision = $env:REVIEWED_REVISION.ToLowerInvariant()
+            buildProfile = 'release'
+            toolchain = '1.98.1'
+            executable = $auditExe.Name
+            bytes = $auditExe.Length
+            sha256 = (Get-FileHash -LiteralPath $auditExe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            sourceIdentityDiff = [ordered]@{
+              exitCode = 0
+              paths = @('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo', 'crates')
+              unchangedWorkingTree = $true
+            }
+            helperExecutedInCi = $false
+            formalSuitesRepeated = $false
+          } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $auditStage 'manifest.json') -Encoding utf8
+      - name: Upload only the optimized helper and identity manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-author-coverage-audit-release-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/author-audit-build/author_coverage_audit.exe
+            ${{ runner.temp }}/author-audit-build/manifest.json
+          retention-days: 7
+          if-no-files-found: error
   windows-desktop:
-    if: ${{ !inputs.format_only }}
+    if: ${{ !inputs.format_only && !inputs.author_audit_build_only }}
     runs-on: windows-latest
     timeout-minutes: 50
     env:

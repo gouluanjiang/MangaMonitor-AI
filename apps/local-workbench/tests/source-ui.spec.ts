@@ -2683,7 +2683,7 @@ test("unified author search separates keyword hits across both sources and compl
     "Mintleaf",
   );
   await expect(page.getByTestId("author-update-Pica:203")).toContainText(
-    "作者资料未取得",
+    "作者信息未提供",
   );
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前显示 3 条",

@@ -394,6 +394,9 @@ export default function App() {
     navigate("discovery");
   }
   function chooseSearchMode(mode: "author" | "search" | "detail" | "tag") {
+    setRequestedWork(undefined);
+    setRequestedAuthorContext(undefined);
+    setDismissSourceDetailKey((value) => value + 1);
     setUnifiedSearchMode(mode);
     setDiscoveryPane("search");
     navigate(mode === "author" ? "author-search" : "discovery");

@@ -508,6 +508,55 @@ test("feed anchors and loaded pages survive section and source switches, while a
     .toBe(0);
 });
 
+test("recent source switches restore each feed's query and inventory filter without refetching its catalog", async ({
+  page,
+}) => {
+  await install(page);
+  const query = page.getByLabel("筛选已读取最近更新");
+  const filters = page.getByRole("group", { name: "最近更新入库筛选" });
+  await query.fill("更新 2");
+  await filters.getByRole("button", { name: /^未入库 / }).click();
+  await expect(page.getByTestId("recent-counts")).toContainText(
+    "当前显示 2 部",
+  );
+
+  await page.getByLabel("最近更新来源").selectOption("JM");
+  await expect(query).toHaveValue("");
+  await expect(filters.getByRole("button", { name: /^全部 / })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await query.fill("更新 1");
+  await filters.getByRole("button", { name: /^已入库 / }).click();
+  await expect(page.getByTestId("recent-counts")).toContainText(
+    "当前显示 1 部",
+  );
+
+  await page.getByLabel("最近更新来源").selectOption("Pica");
+  await expect(query).toHaveValue("更新 2");
+  await expect(
+    filters.getByRole("button", { name: /^未入库 / }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("recent-counts")).toContainText(
+    "当前显示 2 部",
+  );
+  await expect(recentCard(page, "Pica", 2)).toBeVisible();
+  await expect(recentCard(page, "Pica", 20)).toBeVisible();
+
+  await page.getByLabel("最近更新来源").selectOption("JM");
+  await expect(query).toHaveValue("更新 1");
+  await expect(
+    filters.getByRole("button", { name: /^已入库 / }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(recentCard(page, "JM", 1)).toBeVisible();
+  expect(
+    (await recentCalls(page)).map(({ source, page }) => [source, page]),
+  ).toEqual([
+    ["Pica", 1],
+    ["JM", 1],
+  ]);
+});
+
 test("a downward browse reads only the next page, keeps good cards on failure, and deduplicates the retried live page", async ({
   page,
 }) => {
@@ -546,19 +595,24 @@ test("a downward browse reads only the next page, keeps good cards on failure, a
   await page.clock.runFor(3000);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2, 2]);
   await expect(recentCard(page, "Pica", 20)).toHaveCount(1);
-  await page
-    .getByLabel("筛选已读取最近更新")
-    .fill("not-in-this-synthetic-catalog");
+  const query = page.getByLabel("筛选已读取最近更新");
+  await query.focus();
+  await page.clock.runFor(150);
+  const unfilteredAnchor = await captureRecentAnchor(page);
+  await query.fill("not-in-this-synthetic-catalog");
   await expect(page.getByTestId("recent-grid").locator("article")).toHaveCount(
     0,
   );
-  await main.hover();
+  await page.getByTestId("recent-progress").hover();
   await page.mouse.wheel(0, 10000);
   await page.clock.runFor(2000);
-  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2, 2]);
-  await page.getByLabel("筛选已读取最近更新").fill("");
-  await page.getByTestId("recent-counts").scrollIntoViewIfNeeded();
-  await expect(recentCard(page, "Pica", 1)).toBeInViewport();
+  await expect
+    .poll(async () => (await recentCalls(page)).map((args) => args.page))
+    .toEqual([1, 2, 2, 3]);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 40 部");
+  await query.fill("");
+  await page.clock.runFor(150);
+  await expectRecentAnchor(page, unfilteredAnchor);
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({
     path: "visual-evidence/recent-updates-pica-partial.png",
@@ -889,9 +943,13 @@ test("programmatic changes and hidden feeds never supply browse intent, while an
     .getByRole("button", { name: "已入库 0", exact: true })
     .click();
   // A deliberate downward input can advance even when the current ownership filter hides every card.
-  await main.hover();
+  await page.getByTestId("recent-progress").hover();
   await page.mouse.wheel(0, 10000);
   await page.clock.runFor(500);
+  await expect
+    .poll(async () => (await recentCalls(page)).map((args) => args.page))
+    .toEqual([1, 2]);
+  await page.clock.runFor(1000);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
   await page
     .getByLabel("最近更新入库筛选")

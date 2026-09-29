@@ -43,7 +43,8 @@
   padding: 0.65rem;
   max-width: 100%;
 }
-.completion-panel button:not(.source-cover-button) {
+.completion-panel
+  button:not(.source-cover-button, .text-button, .browse-author-link, .button) {
   color: inherit;
   cursor: pointer;
   border: 1px solid #48414f;

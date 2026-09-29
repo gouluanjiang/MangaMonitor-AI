@@ -237,8 +237,6 @@ export function RecentUpdatesPanel({
               onChange={(event) => {
                 setSource(event.target.value as Source);
                 clearSelection();
-                setQuery("");
-                setFilter("all");
               }}
             >
               <option value="Pica">哔咔</option>
@@ -459,7 +457,7 @@ export function RecentUpdatesPanel({
                         ? "来源本次返回的分页已读完，仍有记录待核对。"
                         : "来源本次返回的分页已读完。"
                       : terms || filter !== "all"
-                        ? "仅筛选已读取范围；点击读取下一页可继续，清空筛选后恢复滚动读取。"
+                        ? "仅筛选已读取范围；向下滚动或点击读取下一页可继续查找。"
                         : data?.hasMore === null
                           ? "来源未确认后续范围，可点击读取下一页继续。"
                           : "向下滚动或点击读取下一页继续浏览。"}

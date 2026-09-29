@@ -62,6 +62,7 @@ export function useBrowseSession({
   live.current = { active, enabled, itemKeys };
   const last = useRef<BrowsePosition | undefined>(undefined);
   const restoring = useRef(false);
+  const waitingForItems = useRef(false);
   const restoreFrame = useRef(0);
   const capture = useRef<() => void>(() => {});
   const restore = useRef<(position: BrowsePosition) => void>(() => {});
@@ -112,7 +113,9 @@ export function useBrowseSession({
       cancelAnimationFrame(restoreFrame.current);
       // A stored list can be awaiting its cached items. Preserve its anchor until
       // that data arrives instead of replacing it with an empty-list position.
-      if (!live.current.itemKeys.length && position.keys.length) return;
+      waitingForItems.current =
+        !live.current.itemKeys.length && position.keys.length > 0;
+      if (waitingForItems.current) return;
       const anchor = resolveBrowseAnchor(position, live.current.itemKeys);
       if (anchor && grid?.current) grid.current.restore(anchor);
       else if (anchor) {
@@ -142,6 +145,7 @@ export function useBrowseSession({
     const interrupt = () => {
       cancelAnimationFrame(restoreFrame.current);
       restoring.current = false;
+      waitingForItems.current = false;
       remember();
       schedule();
     };
@@ -158,6 +162,7 @@ export function useBrowseSession({
       cancelAnimationFrame(frame);
       cancelAnimationFrame(restoreFrame.current);
       restoring.current = false;
+      waitingForItems.current = false;
       // Last visible snapshot survives unmount and hidden/detail transitions.
       if (last.current) saveBrowsePosition(scope, last.current);
       capture.current = () => {};
@@ -173,7 +178,8 @@ export function useBrowseSession({
     const previous = last.current;
     if (
       previous &&
-      (previous.keys.length !== itemKeys.length ||
+      (waitingForItems.current ||
+        previous.keys.length !== itemKeys.length ||
         previous.keys.some((key, index) => key !== itemKeys[index]))
     )
       restore.current(previous);

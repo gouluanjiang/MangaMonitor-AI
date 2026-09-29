@@ -31,7 +31,7 @@ export function AuthorLinks({
               {search ? (
                 <button
                   type="button"
-                  className="author-link"
+                  className="browse-author-link"
                   onClick={(event) => {
                     event.stopPropagation();
                     search(name);

@@ -140,7 +140,18 @@ fn strings(source: Source, value: &Value) -> SourceResult<Vec<String>> {
 }
 
 fn work_categories(source: Source, data: &Value) -> Option<Vec<String>> {
-    if source != Source::Pica { return None; }
+    if source == Source::Jm {
+        // Dedicated author queries can include an explicit English Manga
+        // subcategory. Keep this evidence without deleting raw paging slots.
+        // JM does not use Pica's similarly named categories array.
+        let categories: Vec<String> = ["category", "category_sub"]
+            .iter()
+            .filter_map(|field| data[*field]["title"].as_str())
+            .filter(|text| !text.trim().is_empty() && within_text_limit(text, 2000))
+            .map(|text| text.trim().to_owned())
+            .collect();
+        return (!categories.is_empty()).then_some(categories);
+    }
     let categories = data["categories"].as_array().filter(|values| {
         values.len() <= 64
             && values.iter().all(|value| {
@@ -405,14 +416,21 @@ pub(crate) fn work(
                 && !raw_tags.iter().any(|tag| crate::is_bl_tag(tag));
             let added_ai = work.tags.iter().any(|tag| crate::is_ai_tag(tag))
                 && !raw_tags.iter().any(|tag| crate::is_ai_tag(tag));
-            if category_conflict || added_bl || added_ai {
+            let added_english_scope = source == Source::Jm
+                && work.tags.iter().any(|tag| crate::is_jm_english_category(tag))
+                && !raw_tags.iter().any(|tag| crate::is_jm_english_category(tag));
+            if category_conflict || added_bl || added_ai || added_english_scope {
                 // An extreme byte-boundary record must not turn a known
                 // conflict into a single language by dropping its categories.
                 while serialized.len() > MAX_WORK_JSON_BYTES {
                     let Some(index) = work
                         .tags
                         .iter()
-                        .rposition(|tag| crate::language_tag_kind(tag).is_none() && !crate::is_blocked_tag(tag))
+                        .rposition(|tag| {
+                            crate::language_tag_kind(tag).is_none()
+                                && !crate::is_blocked_tag(tag)
+                                && !crate::is_jm_english_category(tag)
+                        })
                     else {
                         break;
                     };
@@ -430,6 +448,18 @@ pub(crate) fn work(
                     }
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
+                }
+                if serialized.len() > MAX_WORK_JSON_BYTES && added_english_scope {
+                    // The scope marker already lives in tags. Remove the
+                    // duplicate category representation before giving up.
+                    work.categories = None;
+                    serialized =
+                        serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
+                    if serialized.len() > MAX_WORK_JSON_BYTES {
+                        // Keep a visible item issue rather than silently make
+                        // a known excluded source category appear eligible.
+                        return Err(error("SOURCE_RESPONSE_INVALID"));
+                    }
                 }
                 // If required identity/author fields leave insufficient room
                 // even for both compact labels, keep the work unknown, never
@@ -605,7 +635,7 @@ pub(crate) fn page(
     ))
 }
 
-/// Search-only evidence does not relax parsing or remove any source rows.
+/// Ordered JM search/recent evidence never relaxes parsing or removes source rows.
 pub(crate) fn search_page(
     source: Source,
     data: &Value,

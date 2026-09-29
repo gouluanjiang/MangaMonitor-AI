@@ -39,7 +39,8 @@ pub struct SourceWork {
     pub authors: Vec<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
-    /// Preserve Pica category provenance: c= is not the same query as t=.
+    /// Explicit source category provenance: JM category/subcategory titles or
+    /// Pica categories. Only Pica supports category browsing (c= rather than t=).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub categories: Option<Vec<String>>,
     pub favorite: Option<bool>,
@@ -121,7 +122,7 @@ pub struct SourcePage {
     pub items: Vec<SourceWork>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issues: Vec<SourceItemIssue>,
-    /// Bounded evidence only for ordinary JM search pages with a known total.
+    /// Raw boundary evidence for JM keyword/author/tag/recent lists with a known total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jm_search_boundary: Option<JmSearchBoundary>,
 }

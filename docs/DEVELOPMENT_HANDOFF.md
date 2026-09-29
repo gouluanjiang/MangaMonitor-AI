@@ -30,6 +30,8 @@ For this batch, the user explicitly removed the second confirmation for both sin
 
 ## Continuing development
 
+The user additionally authorized the [author catalog coverage repair](AUTHOR_CATALOG_COVERAGE_2026-09-29.md), followed by individual known-gap retests, saved-evidence cross-checks, both-source full checks of the current following list, continuous recent-feed supplementation and investigation of newly found discrepancies. The privately maintained acceptance list contains 28 works (the user's initial “8” was explicitly corrected to 28). Implementation and verification are in progress; do not mark this accepted or release it based on synthetic checks alone. Metadata observations may supplement the author catalog, but must not change ownership, download history or source pagination baselines. Real plans, account metadata and results stay outside Git.
+
 - Use the canonical `MangaMonitor-AI` checkout and refresh current `main`, status and applicable instructions before editing. Retired dated worktrees and historical EXE paths are not continuation targets. The currently installed app remains the reviewed formal version.
 - Read [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md). Formal suites/builds run in CI; do not duplicate them locally or trigger full source scans for documentation maintenance.
 - Preserve local data identity, verified ownership, source uncertainty and file-operation authority; apply the current download-click authorization described above. Apply the [download thaw gate](DOWNLOAD_EXECUTOR_THAW_GATE.md) when changing download behavior or authority.

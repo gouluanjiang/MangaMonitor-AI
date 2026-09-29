@@ -25,6 +25,7 @@ fn record(source: Source, id: &str) -> DiscoveryRecord {
         matched_authors: vec!["作者".into()],
         author_verified: true,
         observed_at: 10,
+        metadata_detail_at: None,
         scan_id: "a".repeat(64),
         first_discovered_run_id: None,
     }
@@ -61,6 +62,24 @@ fn legacy_catalog_and_page_have_no_invented_first_discovery_or_summary() {
         .unwrap()
         .last_check
         .is_none());
+}
+
+#[test]
+fn observations_without_query_hits_roundtrip_but_future_detail_evidence_is_rejected() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut observed = record(Source::Jm, "123");
+    observed.matched_authors.clear();
+    observed.author_verified = false;
+    observed.metadata_detail_at = Some(observed.observed_at);
+    store.apply_discovery_patch_for_following(0, 0, patch(vec![observed.clone()])).unwrap();
+    let saved = store.read_discovery().unwrap();
+    assert_eq!(saved.value.accounts[0].records[0], observed);
+    assert!(saved.value.accounts[0].last_check.is_none());
+    observed.metadata_detail_at = Some(observed.observed_at + 1);
+    assert_eq!(store.apply_discovery_patch_for_following(1, 0, patch(vec![observed])).unwrap_err().code,
+        "VALIDATION_FAILED");
+    assert_eq!(store.read_discovery().unwrap(), saved);
 }
 
 #[test]

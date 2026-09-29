@@ -98,7 +98,12 @@ pub struct AuthorQueryPolicy {
 /// deliberately do not invalidate a remote-query checkpoint.
 pub fn author_query_fingerprint(source: Source, queries: &[String]) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"author-query-v1:newest:jm-default-categories:pica-default\0");
+    // Only JM changes protocol semantics. Pica's exact previous prefix and
+    // source bytes remain stable so its accepted baselines are not invalidated.
+    digest.update(match source {
+        Source::Jm => b"author-query-v2:newest:jm-main-tag-2:exclude-english-manga\0".as_slice(),
+        Source::Pica => b"author-query-v1:newest:jm-default-categories:pica-default\0".as_slice(),
+    });
     digest.update(match source {
         Source::Jm => b"jm".as_slice(),
         Source::Pica => b"pica".as_slice(),

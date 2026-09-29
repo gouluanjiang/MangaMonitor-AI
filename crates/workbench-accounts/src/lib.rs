@@ -2,6 +2,7 @@
 mod backend;
 mod cache;
 mod discovery;
+mod observations;
 mod service;
 
 pub use backend::{Authenticated, SourceBackend};
@@ -13,6 +14,7 @@ pub use discovery::{
     discovery_work_from_source, DiscoveryMode, DiscoveryPhase, DiscoveryProgress, DiscoveryRun,
     DiscoveryScope, DiscoverySnapshot, DiscoveryStart,
 };
+pub use observations::{KnownAuthorWorksResult, RecentCheckRun, RecentCheckResult, RecentHistoryResult};
 pub use service::{AccountService, DownloadSession, SessionLease};
 pub use workbench_credentials::Source;
 pub use workbench_sources::{
@@ -63,6 +65,7 @@ pub struct AccountSummary {
 pub enum QueryKind {
     Favorites,
     Search,
+    Author,
     Tag,
     Category,
     Ranking,
@@ -77,6 +80,10 @@ pub struct QueryResult {
     pub session_id: String,
     #[serde(flatten)]
     pub page: SourcePage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovery_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_error_code: Option<String>,
 }
 
 #[derive(Serialize)]

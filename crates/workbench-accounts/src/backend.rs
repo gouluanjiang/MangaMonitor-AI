@@ -47,6 +47,16 @@ pub trait SourceBackend: Send + Sync + 'static {
         query: &str,
         page: u64,
     ) -> impl Future<Output = Result<SourcePage>> + Send;
+    /// Synthetic backends may reuse search fixtures; the live backend below
+    /// explicitly selects each source's author-query semantics.
+    fn author(
+        &self,
+        session: &Self::Session,
+        query: &str,
+        page: u64,
+    ) -> impl Future<Output = Result<SourcePage>> + Send {
+        self.search(session, query, page)
+    }
     fn detail(
         &self,
         session: &Self::Session,
@@ -185,6 +195,11 @@ impl SourceBackend for WorkbenchSources {
     }
     async fn search(&self, session: &Self::Session, query: &str, page: u64) -> Result<SourcePage> {
         WorkbenchSources::search(self, session, query, page)
+            .await
+            .map_err(|error| AccountError::new(error.code))
+    }
+    async fn author(&self, session: &Self::Session, query: &str, page: u64) -> Result<SourcePage> {
+        WorkbenchSources::author(self, session, query, page)
             .await
             .map_err(|error| AccountError::new(error.code))
     }

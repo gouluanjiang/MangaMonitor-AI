@@ -205,6 +205,9 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             discovery::discovery_start,
             discovery::discovery_start_unfinished,
             discovery::discovery_cancel,
+            discovery::recent_check_start,
+            discovery::recent_check_progress,
+            discovery::recent_check_cancel,
             downloads::jm_download_prepare,
             downloads::jm_download_confirm,
             downloads::jm_download_read,
@@ -233,6 +236,8 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             accounts::source_cover,
             accounts::source_following,
             accounts::source_author_policy,
+            accounts::source_recent_history,
+            accounts::source_author_known_works,
             accounts::source_follow,
         ])
 }

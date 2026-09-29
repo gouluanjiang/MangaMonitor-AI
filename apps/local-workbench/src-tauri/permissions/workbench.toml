@@ -19,6 +19,8 @@ commands.allow = [
   "source_logout",
   "source_query",
   "source_author_policy",
+  "source_recent_history",
+  "source_author_known_works",
   "source_rank_options",
   "source_catalog",
   "source_favorite",
@@ -30,6 +32,9 @@ commands.allow = [
   "discovery_start",
   "discovery_start_unfinished",
   "discovery_cancel",
+  "recent_check_start",
+  "recent_check_progress",
+  "recent_check_cancel",
 ]
 
 [[permission]]

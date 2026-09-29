@@ -42,6 +42,10 @@ pub struct DiscoveryRecord {
     pub matched_authors: Vec<String>,
     pub author_verified: bool,
     pub observed_at: u64,
+    /// Only a successful native detail read sets this evidence timestamp. A
+    /// subsequent abbreviated listing cannot replace its author attribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_detail_at: Option<u64>,
     pub scan_id: String,
     /// Absent legacy records are the historical baseline, never dated retroactively.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -414,12 +418,12 @@ impl ValidatedDocument for DiscoveryDocument {
                 if !record.work.is_valid()
                     || !keys.insert((record.work.source, &record.work.work_id))
                     || record.observed_at > MAX_SAFE_INTEGER
+                    || record.metadata_detail_at.is_some_and(|time| time > record.observed_at)
                     || !library_hash_is_valid(&record.scan_id)
                     || record
                         .first_discovered_run_id
                         .as_ref()
                         .is_some_and(|id| !library_hash_is_valid(id))
-                    || record.matched_authors.is_empty()
                     || record.matched_authors.len() > MAX_DISCOVERY_AUTHORS
                     || record.matched_authors.iter().any(|author| {
                         !discovery_author_is_valid(author)

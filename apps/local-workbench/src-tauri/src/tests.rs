@@ -64,6 +64,9 @@ fn manual_discovery_and_download_inventory_keep_main_origin_boundaries() {
             json!({"scopes":scopes,"authors":[],"mode":"full"}),
         ),
         ("discovery_cancel", json!({"runId":"synthetic"})),
+        ("recent_check_start", json!({"scopes":scopes,"maxPages":8})),
+        ("recent_check_progress", json!({})),
+        ("recent_check_cancel", json!({"runId":"synthetic"})),
         ("download_inventory_read", json!({})),
     ] {
         assert!(invoke(&other, command, body.clone()).is_err());
@@ -562,6 +565,18 @@ fn account_commands() -> Vec<(&'static str, Value)> {
             json!({"source":"JM","sessionId":"stale"}),
         ),
         (
+            "source_recent_history",
+            json!({"source":"JM","sessionId":"stale"}),
+        ),
+        (
+            "source_author_known_works",
+            json!({"source":"JM","sessionId":"stale","author":"Fixture Writer"}),
+        ),
+        (
+            "source_query",
+            json!({"source":"JM","sessionId":"stale","kind":"author","query":"Fixture Writer","folderId":null,"page":1}),
+        ),
+        (
             "source_follow",
             json!({"source":"JM","sessionId":"stale","kind":"author","value":"Author","desired":true,"expectedRevision":0}),
         ),
@@ -918,6 +933,8 @@ fn account_inputs_reject_unknown_sources_kinds_and_unsafe_boundaries() {
     }
     for body in [
         json!({"source":"JM","sessionId":"stale","kind":"search","query":"query","folderId":null,"page":0}),
+        json!({"source":"JM","sessionId":"stale","kind":"author","query":" ","folderId":null,"page":1}),
+        json!({"source":"JM","sessionId":"stale","kind":"author","query":"Writer","folderId":"0","page":1}),
         json!({"source":"JM","sessionId":"stale","kind":"search","query":"query\n","folderId":null,"page":1}),
         json!({"source":"JM","sessionId":"stale","kind":"recent","query":"keyword","folderId":null,"page":1}),
         json!({"source":"Pica","sessionId":"stale","kind":"recent","query":"","folderId":"0","page":1}),

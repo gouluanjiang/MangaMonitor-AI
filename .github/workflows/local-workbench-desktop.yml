@@ -57,6 +57,11 @@ on:
       - '.github/workflows/local-workbench-desktop.yml'
   workflow_dispatch:
     inputs:
+      format_only:
+        description: Produce a Rust formatting patch only; no tests, build, publication or source push
+        type: boolean
+        default: false
+        required: false
       package_installer:
         description: Build and verify an installer (stable and RC versions do this automatically)
         type: boolean
@@ -71,7 +76,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust-format:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.format_only }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned formatter only
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+      - name: Format the checked-out source without running checks or builds
+        run: |
+          cargo +1.98.1 fmt --all
+          cargo +1.98.1 fmt --manifest-path apps/local-workbench/src-tauri/Cargo.toml --package mangamonitor-workbench-preview
+          git diff --binary > rust-format.patch
+          git diff --stat
+      - name: Upload formatting patch for local review
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-format-patch-${{ github.sha }}
+          path: rust-format.patch
+          retention-days: 7
+          if-no-files-found: error
   windows-desktop:
+    if: ${{ !inputs.format_only }}
     runs-on: windows-latest
     timeout-minutes: 50
     env:
@@ -127,6 +156,11 @@ jobs:
         run: cargo +1.98.1 test --locked -p workbench-credentials windows_credential_manager_roundtrip_uses_only_random_ci_slots -- --ignored --test-threads=1
       - name: Build the local reviewed-library import helper
         run: cargo +1.98.1 build --locked -p workbench-library --bin mangamonitor-library-review
+      - name: Test local author audit plan guards without opening sessions
+        run: cargo +1.98.1 test --locked -p workbench-accounts --example author_coverage_audit
+      - name: Build the local author coverage acceptance helper
+        # Builds only. Live execution refuses CI and requires an explicit local plan.
+        run: cargo +1.98.1 build --locked -p workbench-accounts --example author_coverage_audit
       - name: Build the isolated catalog diagnostic
         run: cargo +1.98.1 build --locked -p workbench-storage --example discovery_catalog_probe
       - name: Build the reviewed author policy import helper
@@ -258,6 +292,13 @@ jobs:
         with:
           name: mangamonitor-library-review-${{ github.sha }}
           path: target/debug/mangamonitor-library-review.exe
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload local author coverage acceptance helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: mangamonitor-author-coverage-audit-${{ github.sha }}
+          path: target/debug/examples/author_coverage_audit.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload isolated catalog diagnostic

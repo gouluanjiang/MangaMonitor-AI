@@ -366,3 +366,20 @@ fn policies_are_bounded_revisioned_and_do_not_rewrite_unrelated_documents() {
     );
     assert_eq!(store.read_author_query_policies().unwrap(), applied);
 }
+
+
+#[test]
+fn dedicated_jm_author_queries_invalidate_only_jm_protocol_baselines() {
+    let queries = vec!["Writer~Name".to_owned(), "Writer～Name".to_owned()];
+    // Accepted v1 baselines captured before the author-protocol change.
+    let old_jm = "b3593004487b572a43992124ad9c789270dab2ef3b3faf5ce7eec22c5d016548";
+    let old_pica = "a76adfcee1a8e900296c91de36583fef5ed0d5c19e5bfcd00888143c36c94aee";
+    assert_ne!(workbench_storage::author_query_fingerprint(Source::Jm, &queries), old_jm);
+    assert_eq!(workbench_storage::author_query_fingerprint(Source::Pica, &queries), old_pica);
+    let mut reordered = queries.clone();
+    reordered.reverse();
+    for source in [Source::Jm, Source::Pica] {
+        assert_ne!(workbench_storage::author_query_fingerprint(source, &queries),
+            workbench_storage::author_query_fingerprint(source, &reordered));
+    }
+}

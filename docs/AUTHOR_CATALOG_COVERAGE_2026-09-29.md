@@ -1,0 +1,72 @@
+# Author catalog coverage repair
+
+## Problem and scope
+
+A followed creator's work can be visible in a source's recent feed while absent
+from author updates. The previous implementation used a general keyword query
+for JM authors, treated the query that originally found a record as an attribution
+boundary, and did not retain other browsing discoveries in the author catalog.
+Refreshing the local display did not perform a new source check.
+
+This maintenance batch repairs those paths. It does not promise access to works
+that every source endpoint omits, change the library identity model, or infer
+authorship from a work title. The installed 1.0.1 release and its acceptance remain
+separate from this candidate.
+
+## Contract
+
+- JM author queries use the source's author field (`main_tag=2`). General keyword
+  and tag searches retain their respective routes. Pica uses its supported search
+  route followed by exact credit verification.
+- Attribution considers all currently followed names, verified aliases, explicit
+  compound credits and reviewed source/work-specific corrections. The original
+  query that found a work remains provenance, not an exclusion rule. A short name
+  can have valid exact credits even when automatic broad queries are disallowed.
+- A work has one source/ID record and may belong to several followed authors.
+  Removing a follow removes that membership without discarding raw evidence.
+- Source-account observations from favorites, recent updates, search, ranking and
+  detail are retained as metadata. A later abbreviated list cannot erase known
+  detail credits. Timestamp/evidence precedence handles out-of-order responses.
+- Observation persistence and author-catalog incorporation are distinct. If an
+  author scan currently owns the catalog, observations remain queued for replay.
+  Failed storage never signals a successful catalog change or advances a recent
+  coverage checkpoint.
+- Author pagination baselines are advanced only by author queries. Observed works
+  do not manufacture a completed range, a new author scan, or its last-check time.
+- All author entrances can supplement source query results with already saved,
+  credit-confirmed works. Supplements do not affect raw page counts or source
+  pagination boundaries. Missing account context is reported as incomplete local
+  history availability, not as proof that a work is absent.
+- Recent-feed duplicates are hidden only after the exact source/ID is in the
+  confirmed author catalog. Nonfollowed and still-unconfirmed records remain in
+  the recent history. Explicit content filters and ownership filters remain
+  independent; unknown tags do not cause a full detail-request fanout.
+- JM's explicit English Manga category remains outside the agreed JM author
+  scope. Raw rows still participate in pagination accounting. Pica is not given
+  an equivalent blanket language exclusion.
+
+## Recent-feed coverage
+
+Recent coverage is separate from author coverage. The first check establishes an
+explicit bounded continuous window (eight pages by default; the local audit may
+request a larger initial window). It is labeled an initial window, never the
+source's complete historical archive. Subsequent checks continue until the prior
+ordered head sequence is joined or the source reports its end. Repetition,
+isolated malformed rows, storage failure, source errors and exhausted traversal
+limits leave a partial result and preserve the last successful boundary.
+
+The source can still change its index, reorder results or omit records. The UI
+must show the actual check range and unresolved errors rather than claiming that
+all published works everywhere have been found.
+
+## Verification and delivery
+
+Implementation and synthetic regression are in progress. Required formal tests
+and builds run in CI. Real metadata verification runs locally through normal
+account restoration, with private plans and reports outside Git. The verification
+sequence is individual known-gap retests, all saved evidence cross-check, all
+followed creators on both sources, continuous recent-feed supplementation, and
+investigation of new discrepancies. No manga download is part of that sequence.
+
+Preserve download history, library identities, current follows and the original
+metadata backup. A passed build is not a passed live check or user acceptance.

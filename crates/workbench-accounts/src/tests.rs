@@ -677,7 +677,7 @@ async fn query_retains_language_only_for_the_exact_current_session_work_without_
 }
 
 #[tokio::test]
-async fn query_boundary_evidence_is_forwarded_only_for_jm_search() {
+async fn query_boundary_evidence_is_forwarded_only_for_jm_ordered_lists() {
     let root = TempDir::new().unwrap();
     let backend = FakeBackend::default();
     let service = service(&root, backend.clone(), SharedVault::default());
@@ -696,13 +696,18 @@ async fn query_boundary_evidence_is_forwarded_only_for_jm_search() {
         .query(Source::Jm, &jm, QueryKind::Search, "Author", None, 1)
         .await
         .unwrap();
-    assert_eq!(result.page.jm_search_boundary, Some(boundary));
+    assert_eq!(result.page.jm_search_boundary, Some(boundary.clone()));
     let dto = serde_json::to_value(&result).unwrap();
     assert_eq!(dto["jmSearchBoundary"]["first"]["workId"], "123");
     assert_eq!(dto["jmSearchBoundary"]["first"]["fingerprint"], "a".repeat(64));
+    for kind in [QueryKind::Author, QueryKind::Tag, QueryKind::Recent] {
+        let query = if matches!(kind, QueryKind::Recent) { "" } else { "Author" };
+        let result = service.query(Source::Jm, &jm, kind, query, None, 1).await.unwrap();
+        assert_eq!(result.page.jm_search_boundary, Some(boundary.clone()));
+    }
     for (source, session, kind) in [
         (Source::Jm, &jm, QueryKind::Favorites),
-        (Source::Jm, &jm, QueryKind::Recent),
+        (Source::Pica, &pica, QueryKind::Recent),
         (Source::Pica, &pica, QueryKind::Search),
         (Source::Pica, &pica, QueryKind::Favorites),
     ] {

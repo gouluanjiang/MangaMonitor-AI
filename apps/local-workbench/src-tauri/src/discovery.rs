@@ -78,3 +78,41 @@ pub(crate) async fn discovery_cancel<R: Runtime>(
         .await?
         .discovery_cancel(&run_id)
 }
+
+
+#[tauri::command]
+pub(crate) async fn recent_check_start<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    scopes: Vec<DiscoveryScope>,
+    max_pages: Option<u64>,
+) -> Result<workbench_accounts::RecentCheckRun, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .recent_check_start(scopes, max_pages)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn recent_check_progress<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+) -> Result<Option<workbench_accounts::RecentCheckRun>, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .recent_check_progress()
+}
+
+#[tauri::command]
+pub(crate) async fn recent_check_cancel<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    run_id: String,
+) -> Result<workbench_accounts::RecentCheckRun, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .recent_check_cancel(&run_id)
+}

@@ -13,7 +13,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use workbench_credentials::Vault;
-use workbench_sources::{inherit_language_tags, retained_language_tags};
+use workbench_sources::{inherit_content_tags, retained_content_tags};
 pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
     discovery_author_is_valid, discovery_record_matches_author, AuthorQueryDocument,
@@ -2072,8 +2072,8 @@ fn merged_record(
     }) {
         // None is meaningful: pre-feature records stay in the historical baseline.
         incoming.first_discovered_run_id = existing.first_discovered_run_id.clone();
-        let fresh_language_tags = retained_language_tags(&incoming.work.tags);
-        let tags = inherit_language_tags(&incoming.work.tags, &existing.work.tags);
+        let fresh_content_tags = retained_content_tags(&incoming.work.tags);
+        let tags = inherit_content_tags(&incoming.work.tags, &existing.work.tags);
         let source_updated_at = incoming
             .work
             .source_updated_at
@@ -2090,14 +2090,14 @@ fn merged_record(
         // reuses the older work. Do not inherit unrelated historical tags.
         let original_tags = std::mem::replace(&mut incoming.work.tags, tags);
         if !incoming.work.is_valid() {
-            if fresh_language_tags.is_empty() {
+            if fresh_content_tags.is_empty() {
                 // Optional inheritance can yield to the existing work budget.
                 incoming.work.tags = original_tags;
             } else {
                 // The missing-author fallback may carry a large old description.
                 // Keep fresh language evidence, including conflicts, rather than
                 // restoring an older single-language conclusion.
-                incoming.work.tags = fresh_language_tags;
+                incoming.work.tags = fresh_content_tags;
                 if !incoming.work.is_valid() {
                     incoming.work.description = None;
                 }

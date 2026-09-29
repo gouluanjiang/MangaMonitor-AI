@@ -20,11 +20,17 @@ One source record still lacks usable metadata. Its scope remains explicitly part
 
 No agreed V1 development item remains open. Continue with actual maintenance issues or newly approved requirements. The in-app updater is for later discussion; cloud monitoring stays disabled and `production_enabled=false` is unchanged. Do not restart cancelled matching, phone-list, classification-booklist or other historical proposals. The reader and integrated UI have already shipped.
 
+## Approved experience batch in progress
+
+The user approved the [browsing and download experience plan](BROWSING_DOWNLOAD_EXPERIENCE_2026-09-29.md). Implementation is on `codex/browsing-download-experience` from `01274ab1`; CI and user acceptance are pending. All manga browsing views preserve position for this run, including details and downloaded lists. This is a new maintenance batch, not part of the already accepted 1.0.1 payload.
+
+For this batch, the user explicitly removed the second confirmation for both single and batch downloads. Clicking download authorizes those selected works; source/session/root/revision checks, no-overwrite behavior, and download history remain. This current instruction supersedes historical requirements to show another download confirmation. No release or replacement of installed 1.0.1 has occurred.
+
 ## Continuing development
 
 - Use the canonical `MangaMonitor-AI` checkout and refresh current `main`, status and applicable instructions before editing. Retired dated worktrees and historical EXE paths are not continuation targets. The currently installed app remains the reviewed formal version.
 - Read [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md). Formal suites/builds run in CI; do not duplicate them locally or trigger full source scans for documentation maintenance.
-- Preserve local data identity, verified ownership, source uncertainty, download confirmation and file-operation authority. Apply the [download thaw gate](DOWNLOAD_EXECUTOR_THAW_GATE.md) when changing download behavior or authority.
+- Preserve local data identity, verified ownership, source uncertainty and file-operation authority; apply the current download-click authorization described above. Apply the [download thaw gate](DOWNLOAD_EXECUTOR_THAW_GATE.md) when changing download behavior or authority.
 - Private account, book, library, installation and cleanup evidence stays outside Git. Local cleanup receipts are not product payloads or public documentation.
 - Repository organization changes documentation and navigation only. Do not rebuild, republish or replace 1.0.1 assets for these text changes.
 

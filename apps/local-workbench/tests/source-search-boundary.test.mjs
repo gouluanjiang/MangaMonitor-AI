@@ -69,6 +69,104 @@ function adapterFor(pages, calls = []) {
     },
   });
 }
+
+test("keyword and tag browsing fetch one requested page and can resume with pagination evidence", async () => {
+  for (const requestKind of ["search", "tag"]) {
+    const calls = [],
+      seen = [];
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async (command, args) => {
+        assert.equal(command, "source_query");
+        assert.equal(args.kind, requestKind);
+        calls.push(args.page);
+        return page(args.page, args.page === 1 ? [1, 2] : [3, 4], {
+          total: 4,
+          pages: 2,
+        });
+      },
+    });
+    await readCompleteSearch(adapter, scope, "Fixture tag", {
+      current: () => true,
+      onPage: (value) => seen.push(value),
+      requestKind,
+      pageLimit: 1,
+    });
+    assert.deepEqual(calls, [1]);
+    assert.equal(seen[0].complete, false);
+    const previous = seen[0];
+    await readCompleteSearch(adapter, scope, "Fixture tag", {
+      current: () => true,
+      onPage: (value) => seen.push(value),
+      requestKind,
+      pageLimit: 1,
+      fromPage: 2,
+      items: previous.items,
+      recordsRead: previous.recordsRead,
+      issues: previous.issues,
+      pagination: previous.pagination,
+    });
+    assert.deepEqual(calls, [1, 2]);
+    assert.equal(seen[1].complete, true);
+    assert.equal(seen[1].items.length, 4);
+  }
+});
+
+test("one-page browsing still rejects contradictory pagination rather than calling it a pause", async () => {
+  const adapter = adapterFor([
+    page(1, [1, 2], { total: 9, pages: 2, hasMore: false }),
+  ]);
+  await assert.rejects(
+    readCompleteSearch(adapter, scope, "Fixture", {
+      current: () => true,
+      onPage() {},
+      pageLimit: 1,
+    }),
+    /SEARCH_INCOMPLETE/,
+  );
+});
+
+test("Pica category browsing is forwarded distinctly from tags and JM cannot submit a category", async () => {
+  const pica = { source: "Pica", sessionId: "pica-category-fixture" };
+  const calls = [];
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push(args);
+      return {
+        ...pica,
+        page: 1,
+        pages: 1,
+        total: 1,
+        hasMore: false,
+        folders: [],
+        items: [
+          { ...work(1, "Pica"), tags: ["Category"], categories: ["Category"] },
+        ],
+      };
+    },
+  });
+  const seen = [];
+  await readCompleteSearch(adapter, pica, "Category", {
+    current: () => true,
+    onPage: (value) => seen.push(value),
+    requestKind: "category",
+    pageLimit: 1,
+  });
+  assert.equal(calls[0].kind, "category");
+  assert.equal(seen[0].complete, true);
+  assert.deepEqual(seen[0].items[0].categories, ["Category"]);
+  await assert.rejects(
+    adapter.query(scope, {
+      kind: "category",
+      query: "Category",
+      folderId: null,
+      page: 1,
+    }),
+    { code: "INVALID_INPUT" },
+  );
+  assert.equal(calls.length, 1);
+});
 const readOptions = (seen) => ({
   current: () => true,
   onPage: (value) => seen.push(value),

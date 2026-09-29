@@ -1,6 +1,7 @@
 //! Account and catalog operations only. No task authority, chapter/media routes,
 //! filesystem writes, automatic pagination, retries, or production-state access.
 mod cover;
+mod content;
 mod language;
 mod protocol;
 mod ranking;
@@ -11,6 +12,7 @@ mod types;
 pub use language::{
     inherit_language_tags, language_tag_kind, retained_language_tags, LanguageTagKind,
 };
+pub use content::{inherit_content_tags, is_bl_tag, retained_content_tags};
 pub use protocol::parse_work_id;
 pub use types::*;
 
@@ -355,6 +357,26 @@ impl WorkbenchSources {
         keyword: &str,
         page: u64,
     ) -> SourceResult<SourcePage> {
+        self.search_kind(session, keyword, page, false, false).await
+    }
+
+    /// Native tag browsing, one requested page; never a keyword approximation.
+    pub async fn tag(
+        &self, session: &SourceSession, tag: &str, page: u64,
+    ) -> SourceResult<SourcePage> {
+        self.search_kind(session, tag, page, true, false).await
+    }
+
+    pub async fn category(
+        &self, session: &SourceSession, category: &str, page: u64,
+    ) -> SourceResult<SourcePage> {
+        if session.source != Source::Pica { return Err(error("SOURCE_CATEGORY_UNSUPPORTED")); }
+        self.search_kind(session, category, page, false, true).await
+    }
+
+    async fn search_kind(
+        &self, session: &SourceSession, keyword: &str, page: u64, tag: bool, category: bool,
+    ) -> SourceResult<SourcePage> {
         protocol::validate_page(page)?;
         if keyword.trim().is_empty()
             || keyword.len() > 1024
@@ -368,7 +390,8 @@ impl WorkbenchSources {
                 let mut url = Url::parse(&format!("https://{JM_HOST}/search"))
                     .map_err(|_| error("SOURCE_CLIENT_FAILED"))?;
                 url.query_pairs_mut()
-                    .append_pair("main_tag", "0")
+                    // Pinned JM Python search_tag passes main_tag=3.
+                    .append_pair("main_tag", if tag { "3" } else { "0" })
                     .append_pair("search_query", keyword)
                     .append_pair("page", &page.to_string())
                     .append_pair("o", "mr");
@@ -377,6 +400,16 @@ impl WorkbenchSources {
                     format!("/search?{}", url.query().unwrap_or_default()),
                     None,
                 )
+            }
+            Source::Pica if tag || category => {
+                // Existing PicaComic-go pin: Comics(block, tag, sort, page).
+                let mut url = Url::parse(&format!("https://{PICA_HOST}/comics"))
+                    .map_err(|_| error("SOURCE_CLIENT_FAILED"))?;
+                url.query_pairs_mut()
+                    .append_pair(if category { "c" } else { "t" }, keyword)
+                    .append_pair("s", "dd")
+                    .append_pair("page", &page.to_string());
+                (Method::GET, format!("comics?{}", url.query().unwrap_or_default()), None)
             }
             Source::Pica => (
                 Method::POST,
@@ -395,6 +428,7 @@ impl WorkbenchSources {
             )
             .await?;
         if session.source == Source::Jm && !data["redirect_aid"].is_null() {
+            if tag { return Err(error("SOURCE_RESPONSE_INVALID")); }
             if page != 1 {
                 return Err(error("SOURCE_PAGINATION_INVALID"));
             }

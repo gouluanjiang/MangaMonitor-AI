@@ -52,6 +52,8 @@ struct FakeState {
     restore_release: Notify,
     query_calls: AtomicUsize,
     recent_calls: AtomicUsize,
+    tag_calls: AtomicUsize,
+    category_calls: AtomicUsize,
     favorite_calls: AtomicUsize,
     favorite: AtomicBool,
     unknown_write: AtomicBool,
@@ -102,6 +104,7 @@ fn work(source: Source, favorite: bool) -> SourceWork {
         authors: vec!["Synthetic Author".into()],
         description: None,
         tags: vec![],
+        categories: None,
         favorite: Some(favorite),
         chapter_count: None,
         page_count: None,
@@ -258,6 +261,14 @@ impl SourceBackend for FakeBackend {
             },
         )
         .await
+    }
+    async fn tag(&self, session: &Self::Session, _: &str, page: u64) -> Result<SourcePage> {
+        self.0.tag_calls.fetch_add(1, Ordering::SeqCst);
+        self.favorites(session, FavoritePageRequest { page, folder_id: None, reverse: false }).await
+    }
+    async fn category(&self, session: &Self::Session, _: &str, page: u64) -> Result<SourcePage> {
+        self.0.category_calls.fetch_add(1, Ordering::SeqCst);
+        self.favorites(session, FavoritePageRequest { page, folder_id: None, reverse: false }).await
     }
     async fn detail(&self, session: &Self::Session, id: &str) -> Result<SourceWork> {
         self.0.detail_calls.fetch_add(1, Ordering::SeqCst);
@@ -430,6 +441,57 @@ async fn recent_query_is_bounded_session_scoped_and_does_not_mutate_follows_or_f
         ),
         "SESSION_EXPIRED"
     );
+}
+
+#[tokio::test]
+async fn tag_queries_use_a_separate_session_scoped_backend_without_mutating_follows() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture-tag", false).await;
+    backend.0.query_batch_size.store(2, Ordering::SeqCst);
+    let before = service.following(Source::Jm, &session).await.unwrap();
+    let result = service.query(Source::Jm, &session, QueryKind::Tag, "Fixture tag", None, 2).await.unwrap();
+    assert_eq!(result.page.page, 2);
+    assert_eq!(backend.0.tag_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(service.following(Source::Jm, &session).await.unwrap().revision, before.revision);
+    assert_eq!(error(service.query(Source::Jm, "old-session", QueryKind::Tag, "Fixture", None, 1).await), "SESSION_CHANGED");
+    for (query, folder) in [("", None), ("Fixture", Some("1".into()))] {
+        assert_eq!(error(service.query(Source::Jm, &session, QueryKind::Tag, query, folder, 1).await), "QUERY_INVALID");
+    }
+    assert_eq!(backend.0.tag_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn pica_category_query_has_a_distinct_backend_and_jm_is_refused_before_query() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let pica = login(&service, Source::Pica, "fixture-category", false).await;
+    service.query(Source::Pica, &pica, QueryKind::Category, "Fixture", None, 1).await.unwrap();
+    assert_eq!(backend.0.category_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.tag_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(error(service.query(Source::Jm, "missing", QueryKind::Category, "Fixture", None, 1).await), "QUERY_INVALID");
+    assert_eq!(backend.0.category_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn bl_metadata_survives_lightweight_responses_for_only_the_same_work() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture-bl", false).await;
+    *backend.0.work_tags.lock().unwrap() = vec!["ＢＬ".into(), "中文".into()];
+    service.query(Source::Jm, &session, QueryKind::Detail, "123", None, 1).await.unwrap();
+    backend.0.work_tags.lock().unwrap().clear();
+    let same = query(&service, Source::Jm, &session).await.unwrap();
+    assert_eq!(same.page.items[0].tags, ["中文", "ＢＬ"]);
+    let other = service.query(Source::Jm, &session, QueryKind::Detail, "124", None, 1).await.unwrap();
+    assert!(other.page.items[0].tags.is_empty());
+    assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

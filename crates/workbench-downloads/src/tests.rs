@@ -228,6 +228,20 @@ fn file_status_is_advisory_read_only_and_polling_reuses_only_the_same_revision()
     assert_eq!(f.store.read_library().unwrap(), index_before);
 }
 
+#[test]
+fn task_snapshot_exposes_metadata_tags_and_exact_download_root_without_side_effects() {
+    let f = fixture();
+    let before = f.store.read_downloads().unwrap();
+    let snapshot = f.service.read(&f.store).unwrap();
+    let task = &snapshot.tasks[0];
+    assert_eq!(task.tags, ["test"]);
+    assert_eq!(task.root_id, record(&f).root.id);
+    let dto = serde_json::to_value(task).unwrap();
+    assert_eq!(dto["tags"], serde_json::json!(["test"]));
+    assert_eq!(dto["rootId"], task.root_id);
+    assert_eq!(f.store.read_downloads().unwrap().revision, before.revision);
+}
+
 #[tokio::test]
 async fn deleted_completed_work_requires_a_new_confirmation_then_registers_without_old_identity() {
     let f = fixture();

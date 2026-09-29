@@ -598,6 +598,7 @@ mod tests {
             authors: vec![],
             description: None,
             tags: vec![],
+            categories: None,
             favorite: Some(true),
             chapter_count: None,
             page_count: None,

@@ -1,7 +1,9 @@
+import { openUnifiedSearch } from "./browse-ui-helpers.ts";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { initialPreferences } from "../src/preferences.ts";
 import { emptyLibrary } from "../src/library-types.ts";
+import type { DownloadSnapshot, DownloadPlan } from "../src/download-types.ts";
 import type {
   AccountSummary,
   Source,
@@ -18,6 +20,10 @@ declare global {
       holdPage: number | null;
       release?: () => void;
       total: number;
+      blIds: number[];
+      catalogIds: number[];
+      catalogOtherIds: number[];
+      queue: DownloadSnapshot;
       observedWheelDelta?: number;
       directionInputs?: { x: number; y: number; shift: boolean }[];
     };
@@ -42,7 +48,7 @@ test.afterEach(async ({ page }) => {
   expect(
     await page.evaluate(() =>
       window.recentTest.calls.filter((call) =>
-        /discovery_start|download_(confirm|batch_confirm|selection_confirm)|source_favorite|source_follow$|source_matches_|phone_library_|library_scan/.test(
+        /discovery_start|source_favorite|source_follow$|source_matches_|phone_library_|library_scan/.test(
           call.command,
         ),
       ),
@@ -51,9 +57,16 @@ test.afterEach(async ({ page }) => {
 });
 
 // Synthetic IPC only: no accounts, source traffic, files or download execution.
-async function install(page: Page) {
+async function install(
+  page: Page,
+  options: {
+    blIds?: number[];
+    catalogIds?: number[];
+    catalogOtherIds?: number[];
+  } = {},
+) {
   await page.addInitScript(
-    ({ preferences, library }) => {
+    ({ preferences, library, options }) => {
       const hooks = (window.recentTest = {
         calls: [],
         accounts: (["JM", "Pica"] as const).map((source) => ({
@@ -69,6 +82,10 @@ async function install(page: Page) {
         failPage: null,
         holdPage: null,
         total: 40,
+        blIds: options.blIds ?? [],
+        catalogIds: options.catalogIds ?? [],
+        catalogOtherIds: options.catalogOtherIds ?? [],
+        queue: { revision: 0, tasks: [] },
       } as Window["recentTest"]);
       const work = (
         source: Source,
@@ -80,7 +97,13 @@ async function install(page: Page) {
         title: source + " 合成最近更新 " + id + " · " + session,
         authors: ["合成作者"],
         description: null,
-        tags: id % 3 === 1 ? ["中文"] : id % 3 === 2 ? ["生肉"] : [],
+        tags: hooks.blIds.includes(id)
+          ? ["耽美"]
+          : id % 3 === 1
+            ? ["中文"]
+            : id % 3 === 2
+              ? ["生肉"]
+              : [],
         favorite: null,
         chapterCount: 1,
         pageCount: 20,
@@ -90,6 +113,7 @@ async function install(page: Page) {
             ? null
             : new Date(1800000000000 - id * 1000).toISOString(),
       });
+      let plan: DownloadPlan | null = null;
       Object.defineProperty(window, "__TAURI_INTERNALS__", {
         configurable: true,
         value: {
@@ -104,7 +128,28 @@ async function install(page: Page) {
             if (command === "source_accounts")
               return structuredClone(hooks.accounts);
             if (command === "jm_download_read")
-              return { revision: 0, tasks: [] };
+              return structuredClone(hooks.queue);
+            if (command === "discovery_read")
+              return {
+                scopes: args.scopes,
+                revision: 1,
+                run: null,
+                authors: [],
+                records: [...hooks.catalogIds, ...hooks.catalogOtherIds].map(
+                  (id) => ({
+                    work: {
+                      ...work("Pica", id, "fixture-Pica"),
+                      authors: hooks.catalogOtherIds.includes(id)
+                        ? ["其他作者"]
+                        : ["合成作者"],
+                    },
+                    matchedAuthors: ["合成作者"],
+                    authorVerified: !hooks.catalogOtherIds.includes(id),
+                    observedAt: 1800000000000,
+                    scanId: "synthetic-catalog",
+                  }),
+                ),
+              };
             if (command === "download_inventory_read")
               return {
                 rootId: library.rootId,
@@ -197,7 +242,7 @@ async function install(page: Page) {
                 Number(args.input),
                 scope.sessionId,
               );
-              return {
+              plan = {
                 planId: "c".repeat(64),
                 revision: 0,
                 source: scope.source,
@@ -208,6 +253,34 @@ async function install(page: Page) {
                 rootId: library.rootId,
                 generation: 1,
               };
+              return structuredClone(plan);
+            }
+            if (command === "jm_download_confirm") {
+              if (!plan || args.planId !== plan.planId)
+                throw { code: "DOWNLOAD_PLAN_STALE" };
+              hooks.queue = {
+                revision: hooks.queue.revision + 1,
+                tasks: [
+                  {
+                    id: "d".repeat(64),
+                    revision: 1,
+                    source: plan.source,
+                    workId: plan.workId,
+                    title: plan.title,
+                    destinationDisplay: plan.destinationDisplay,
+                    phase: "queued",
+                    filesDone: 0,
+                    filesTotal: null,
+                    bytesDone: 0,
+                    errorCode: null,
+                    allowedActions: ["pause"],
+                    libraryEntryId: null,
+                    localFiles: null,
+                    updatedAt: 1800000000000,
+                  },
+                ],
+              };
+              return structuredClone(hooks.queue);
             }
             if (command === "jm_download_cancel_plan") return null;
             throw { code: "UNEXPECTED_SYNTHETIC_COMMAND" };
@@ -216,6 +289,7 @@ async function install(page: Page) {
       });
     },
     {
+      options,
       preferences: initialPreferences(),
       library: {
         ...emptyLibrary(),
@@ -229,7 +303,7 @@ async function install(page: Page) {
     },
   );
   await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page
     .locator(".source-tabs")
     .getByRole("button", { name: "最近更新", exact: true })
@@ -297,7 +371,7 @@ async function expectRecentAnchor(
     .toBeLessThanOrEqual(4);
 }
 
-test("both recent feeds preserve source order, language and unknown dates and reuse ownership, detail and explicit download confirmation", async ({
+test("both recent feeds preserve source order, language and unknown dates and directly enqueue without leaving the feed", async ({
   page,
 }) => {
   await install(page);
@@ -329,10 +403,10 @@ test("both recent feeds preserve source order, language and unknown dates and re
   await expect(recentCard(page, "JM", 2)).toBeVisible();
   await recentCard(page, "JM", 2)
     .getByRole("button", { name: /打开《/ })
-    .click();
+    .click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -351,17 +425,87 @@ test("both recent feeds preserve source order, language and unknown dates and re
   await recentCard(page, "JM", 2)
     .getByRole("button", { name: "下载到漫画库", exact: true })
     .click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-plan-title")).toContainText(
-    "JM 合成最近更新 2",
-  );
-  await page.getByTestId("download-cancel").click();
+  await expect
+    .poll(() => page.evaluate(() => window.recentTest.queue.tasks.length))
+    .toBe(1);
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("recent-panel")).toBeVisible();
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
   for (const args of await recentCalls(page)) {
     expect(args.query).toBe("");
     expect(args.folderId).toBeNull();
     expect(args).not.toHaveProperty("reverse");
   }
+});
+
+test("an entire page hidden by BL and confirmed author-update membership still continues, while unrelated keyword membership stays visible", async ({
+  page,
+}) => {
+  await install(page, {
+    blIds: Array.from({ length: 10 }, (_, i) => i * 2 + 1),
+    catalogIds: Array.from({ length: 10 }, (_, i) => i * 2 + 2),
+    catalogOtherIds: [21],
+  });
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await expect(page.getByTestId("recent-grid")).toHaveAttribute(
+    "data-total-items",
+    "0",
+  );
+  await expect(page.getByTestId("recent-progress")).not.toContainText(
+    "分页已读完",
+  );
+  const main = page.getByRole("main");
+  await main.hover();
+  await page.mouse.wheel(0, 10000);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await expect(recentCard(page, "Pica", 21)).toBeVisible();
+  expect((await recentCalls(page)).map((value) => value.page)).toEqual([1, 2]);
+  expect(
+    await page.evaluate(() =>
+      window.recentTest.calls.filter(
+        ({ command, args }) =>
+          command === "source_query" && args.kind !== "recent",
+      ),
+    ),
+  ).toEqual([]);
+});
+
+test("feed anchors and loaded pages survive section and source switches, while a fresh app view starts at the top", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByRole("button", { name: "读取下一页", exact: true }).click();
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await page.getByRole("main").evaluate((main) => {
+    main.scrollTop = 1500;
+  });
+  const anchor = await captureRecentAnchor(page);
+  const before = await recentCalls(page);
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-recent").click();
+  await expectRecentAnchor(page, anchor);
+  expect(await recentCalls(page)).toEqual(before);
+  await page
+    .getByLabel("最近更新来源")
+    .evaluate((select: HTMLSelectElement) => {
+      select.value = "JM";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await page.getByLabel("最近更新来源").selectOption("Pica");
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await expectRecentAnchor(page, anchor);
+  expect(
+    (await recentCalls(page))
+      .filter((value) => value.source === "Pica")
+      .map((value) => value.page),
+  ).toEqual([1, 2]);
+  await page.reload();
+  await page.getByTestId("nav-recent").click();
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await expect
+    .poll(() => page.getByRole("main").evaluate((main) => main.scrollTop))
+    .toBe(0);
 });
 
 test("a downward browse reads only the next page, keeps good cards on failure, and deduplicates the retried live page", async ({
@@ -486,7 +630,7 @@ test("late pages cannot enter another source or replacement session, and switchi
     .getByRole("button", { name: "重新读取账号状态", exact: true })
     .click();
   await page.evaluate(() => window.recentTest.release!());
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page
     .locator(".source-tabs")
     .getByRole("button", { name: "最近更新", exact: true })
@@ -730,10 +874,10 @@ test("programmatic position changes, resizing, detail return and hidden or filte
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
   await recentCard(page, "Pica", 20)
     .getByRole("button", { name: /打开《/ })
-    .click();
+    .click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -770,7 +914,7 @@ test("programmatic position changes, resizing, detail return and hidden or filte
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
 });
 
-test("download-dialog scrolling and focused-input keys cannot continue the background recent feed", async ({
+test("context-menu scrolling and focused-input keys cannot continue the background recent feed", async ({
   page,
 }) => {
   await page.clock.install();
@@ -788,24 +932,21 @@ test("download-dialog scrolling and focused-input keys cannot continue the backg
   await page.clock.runFor(1500);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
   await recentCard(page, "Pica", 20)
-    .getByRole("button", { name: "下载到漫画库", exact: true })
-    .click();
-  const dialog = page.getByTestId("download-confirmation");
+    .getByRole("button", { name: /打开《/ })
+    .click({ button: "right" });
+  const dialog = page.getByTestId("reader-cover-actions");
   await expect(dialog).toBeVisible();
-  // Keep the background exactly at its next-page threshold while interacting
-  // with the real application dialog, not an artificial modal fixture.
-  await main.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
+  // A menu is anchored outside the scrolling feed; its input must not grant
+  // another pagination credit to the background list.
   await dialog.hover();
   await page.mouse.wheel(0, 600);
-  await dialog.focus();
+  await dialog.getByRole("menuitem").first().focus();
   await page.keyboard.press("PageDown");
   await page.keyboard.press("End");
   await page.clock.runFor(1500);
   await expect(dialog).toBeVisible();
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
-  await page.getByTestId("download-cancel").click();
+  await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await page.clock.runFor(1500);
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);

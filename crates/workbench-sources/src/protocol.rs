@@ -139,32 +139,30 @@ fn strings(source: Source, value: &Value) -> SourceResult<Vec<String>> {
         .collect()
 }
 
-fn work_tags(source: Source, data: &Value, raw_tags: &[String]) -> Vec<String> {
-    // The original website tag contract remains at 64 raw entries. Only two
-    // distinct language kinds can be added from optional Pica categories.
-    let mut tags = raw_tags.to_vec();
-    if source != Source::Pica {
-        return tags;
-    }
-    let Some(categories) = data["categories"].as_array().filter(|values| {
+fn work_categories(source: Source, data: &Value) -> Option<Vec<String>> {
+    if source != Source::Pica { return None; }
+    let categories = data["categories"].as_array().filter(|values| {
         values.len() <= 64
             && values.iter().all(|value| {
                 value
                     .as_str()
                     .is_some_and(|text| !text.trim().is_empty() && within_text_limit(text, 2000))
             })
-    }) else {
-        // Malformed optional categories do not invalidate an otherwise readable
-        // work, and partial parsing must not hide one side of a conflict.
-        return tags;
-    };
-    for category in categories {
-        let text = category.as_str().unwrap();
-        if crate::language_tag_kind(text).is_some_and(|kind| {
-            !tags
-                .iter()
-                .any(|tag| crate::language_tag_kind(tag) == Some(kind))
-        }) {
+    })?;
+    Some(categories.iter().map(|value| value.as_str().unwrap().trim().to_owned()).collect())
+}
+
+fn work_tags(raw_tags: &[String], categories: Option<&[String]>) -> Vec<String> {
+    // Both website arrays are bounded to 64 entries. Categories are genuine
+    // source labels (including BL), not guesses from titles or authors.
+    let mut tags = raw_tags.to_vec();
+    for text in categories.unwrap_or_default() {
+        let exists = if let Some(kind) = crate::language_tag_kind(text) {
+            tags.iter().any(|tag| crate::language_tag_kind(tag) == Some(kind))
+        } else {
+            tags.iter().any(|tag| tag.trim() == text.trim())
+        };
+        if !exists {
             tags.push(text.trim().to_owned());
         }
     }
@@ -369,6 +367,7 @@ pub(crate) fn work(
         ),
     };
     let raw_tags = strings(source, &data["tags"])?;
+    let categories = work_categories(source, data);
     let mut work = SourceWork {
         source,
         work_id,
@@ -385,7 +384,8 @@ pub(crate) fn work(
             }
             Some(text.to_owned())
         },
-        tags: work_tags(source, data, &raw_tags),
+        tags: work_tags(&raw_tags, categories.as_deref()),
+        categories,
         favorite,
         chapter_count,
         page_count,
@@ -394,30 +394,38 @@ pub(crate) fn work(
     };
     // Bound the actual IPC representation, including JSON string escaping.
     let mut serialized = serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
-    if serialized.len() > MAX_WORK_JSON_BYTES && work.tags != raw_tags {
+    if serialized.len() > MAX_WORK_JSON_BYTES && work.categories.is_some() {
         // Prefer complete language evidence over optional description bytes.
         let description = work.description.take();
         serialized = serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
         if serialized.len() > MAX_WORK_JSON_BYTES {
             let category_conflict = crate::retained_language_tags(&raw_tags).len() == 1
                 && crate::retained_language_tags(&work.tags).len() == 2;
-            if category_conflict {
+            let added_bl = work.tags.iter().any(|tag| crate::is_bl_tag(tag))
+                && !raw_tags.iter().any(|tag| crate::is_bl_tag(tag));
+            if category_conflict || added_bl {
                 // An extreme byte-boundary record must not turn a known
                 // conflict into a single language by dropping its categories.
                 while serialized.len() > MAX_WORK_JSON_BYTES {
                     let Some(index) = work
                         .tags
                         .iter()
-                        .rposition(|tag| crate::language_tag_kind(tag).is_none())
+                        .rposition(|tag| crate::language_tag_kind(tag).is_none() && !crate::is_bl_tag(tag))
                     else {
                         break;
                     };
                     work.tags.remove(index);
+                    if let Some(categories) = &mut work.categories {
+                        categories.retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
+                    }
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
                 }
                 if serialized.len() > MAX_WORK_JSON_BYTES {
-                    work.tags = crate::retained_language_tags(&work.tags);
+                    work.tags = crate::retained_content_tags(&work.tags);
+                    if let Some(categories) = &mut work.categories {
+                        categories.retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
+                    }
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
                 }
@@ -426,11 +434,13 @@ pub(crate) fn work(
                 // falsely choose only one side. Required metadata is untouched.
                 if serialized.len() > MAX_WORK_JSON_BYTES {
                     work.tags.clear();
+                    work.categories = None;
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
                 }
             } else {
                 work.tags = raw_tags;
+                work.categories = None;
                 work.description = description;
                 serialized =
                     serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;

@@ -5,7 +5,6 @@ import type {
   DownloadTask,
   DownloadPlan,
   DownloadSource,
-  DownloadBatchPlan,
 } from "../src/download-types.ts";
 import type { LibrarySnapshot } from "../src/library-types.ts";
 import type { AccountSummary } from "../src/source-types.ts";
@@ -20,6 +19,7 @@ type Options = {
   mixedQueue?: boolean;
   batchWorks?: boolean;
   initialTasks?: DownloadTask[];
+  failPrepareIds?: string[];
 };
 type Hooks = {
   calls: { command: string; args: Record<string, unknown> }[];
@@ -236,9 +236,6 @@ async function install(page: Page, options: Options = {}) {
     // Explicit fixtures model the native snapshot after restart/file checks.
     let restored = Boolean(options.initialTasks);
     let preparedPlan: DownloadPlan | null = null;
-    let preparedBatch: DownloadBatchPlan | null = null;
-    const preparedBatches = new Map<string, DownloadBatchPlan>();
-    let batchSequence = 0;
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
@@ -352,101 +349,35 @@ async function install(page: Page, options: Options = {}) {
                 : "JM"
               : requestedSource;
             const title = source === "JM" ? "合成单本作品" : "合成 Pica 作品";
+            const rawInput = String(args.input).trim().replace(/^JM/i, "");
+            const requestedId = rawInput.startsWith("https://")
+              ? new URL(rawInput).pathname.split("/").at(-1)!
+              : rawInput;
+            const workId = options.wrongPlanSource
+              ? source === "JM"
+                ? sourceId
+                : picaId
+              : requestedId;
+            if (options.failPrepareIds?.includes(workId))
+              throw { code: "DOWNLOAD_METADATA_INVALID" };
             preparedPlan = {
-              planId: (hooks.queue.tasks.length ? "d" : "c").repeat(64),
+              planId:
+                source === "JM" && workId !== sourceId
+                  ? Number(workId).toString(16).padStart(64, "0")
+                  : (hooks.queue.tasks.length ? "d" : "c").repeat(64),
               revision: hooks.queue.revision,
               source,
-              workId: source === "JM" ? sourceId : picaId,
-              title,
+              workId,
+              title:
+                source === "JM" && workId !== sourceId
+                  ? `合成批量作品 ${workId}`
+                  : title,
               authors: ["合成作者"],
               destinationDisplay: "C:\\Synthetic\\" + title,
               rootId,
               generation: 1,
             };
             return clone(preparedPlan);
-          }
-          if (command === "jm_download_batch_prepare") {
-            const retained = (args.retainedBatchIds ?? []) as string[];
-            for (const id of preparedBatches.keys())
-              if (!retained.includes(id)) preparedBatches.delete(id);
-            const seen = new Set<string>(
-              [...preparedBatches.values()].flatMap((batch) =>
-                batch.plans.map((plan) => plan.workId),
-              ),
-            );
-            const plans: DownloadPlan[] = [],
-              issues: DownloadBatchPlan["issues"] = [];
-            for (const input of args.inputs as string[]) {
-              const id = input.replace(/^JM/i, "");
-              if (seen.has(id)) {
-                issues.push({ input, errorCode: "DOWNLOAD_BATCH_DUPLICATE" });
-                continue;
-              }
-              seen.add(id);
-              plans.push({
-                planId: Number(id).toString(16).padStart(64, "0"),
-                revision: hooks.queue.revision,
-                source: "JM",
-                workId: id,
-                title: "合成批量作品 " + id,
-                authors: ["合成作者"],
-                destinationDisplay: "C:\\Synthetic\\" + id,
-                rootId,
-                generation: 1,
-              });
-            }
-            preparedBatch = {
-              batchId: plans.length
-                ? (++batchSequence).toString(16).padStart(64, "0")
-                : null,
-              plans,
-              issues,
-            };
-            if (preparedBatch.batchId)
-              preparedBatches.set(preparedBatch.batchId, preparedBatch);
-            return clone(preparedBatch);
-          }
-          if (command === "jm_download_batch_cancel") {
-            preparedBatches.clear();
-            preparedBatch = null;
-            return null;
-          }
-          if (
-            command === "jm_download_batch_confirm" ||
-            command === "jm_download_selection_confirm"
-          ) {
-            const ids = (
-              command === "jm_download_batch_confirm"
-                ? [args.batchId]
-                : args.batchIds
-            ) as string[];
-            if (ids.some((id) => !preparedBatches.has(id)))
-              throw { code: "DOWNLOAD_PLAN_STALE" };
-            const tasks: DownloadTask[] = ids
-              .flatMap((id) => preparedBatches.get(id)!.plans)
-              .map((plan, index) => ({
-                id: plan.planId,
-                revision: 1,
-                source: plan.source,
-                workId: plan.workId,
-                title: plan.title,
-                phase: index === 0 ? "downloading" : "queued",
-                filesDone: 0,
-                filesTotal: null,
-                bytesDone: 0,
-                errorCode: null,
-                allowedActions: ["pause"],
-                libraryEntryId: null,
-                localFiles: null,
-                updatedAt: 1,
-                destinationDisplay: plan.destinationDisplay,
-              }));
-            hooks.queue = {
-              revision: hooks.queue.revision + 1,
-              tasks: [...hooks.queue.tasks, ...tasks],
-            };
-            save();
-            return clone(hooks.queue);
           }
           if (
             command === "jm_download_pause_all" ||
@@ -519,7 +450,10 @@ async function install(page: Page, options: Options = {}) {
             if (
               hooks.queue.tasks.some(
                 (task) =>
-                  task.phase !== "downloaded" || task.localFiles !== "missing",
+                  task.source === preparedPlan!.source &&
+                  task.workId === preparedPlan!.workId &&
+                  (task.phase !== "downloaded" ||
+                    task.localFiles !== "missing"),
               )
             )
               throw { code: "DOWNLOAD_ALREADY_EXISTS" };
@@ -529,7 +463,13 @@ async function install(page: Page, options: Options = {}) {
               source: preparedPlan.source,
               workId: preparedPlan.workId,
               title: preparedPlan.title,
-              phase: "downloading",
+              phase: hooks.queue.tasks.some((task) =>
+                ["queued", "downloading", "verifying", "saving"].includes(
+                  task.phase,
+                ),
+              )
+                ? "queued"
+                : "downloading",
               filesDone: 0,
               filesTotal: null,
               bytesDone: 0,
@@ -602,7 +542,9 @@ async function prepare(page: Page) {
   await page.getByTestId("nav-queue").click();
   await page.getByTestId("download-input").fill("JM123");
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(1);
 }
 
 function queueTask(
@@ -806,7 +748,6 @@ test("automatic completion leaves the active view without switching the selected
 }) => {
   await install(page);
   await prepare(page);
-  await page.getByTestId("download-confirm").click();
   await expect(page.getByTestId("download-phase-" + "c".repeat(64))).toHaveText(
     "正在下载",
   );
@@ -1073,7 +1014,7 @@ test("native queue is empty on first read and never shows or persists demo tasks
   expect(await calls(page, "jm_download_control")).toEqual([]);
 });
 
-test("more than fifty choices retain every chunk and enter the queue in one confirmation", async ({
+test("more than fifty choices queue every unique work directly without a confirmation dialog", async ({
   page,
 }) => {
   await install(page);
@@ -1081,51 +1022,41 @@ test("more than fifty choices retain every chunk and enter the queue in one conf
   const ids = Array.from({ length: 61 }, (_, i) => `JM${1000 + i}`);
   await page.getByTestId("download-input").fill([...ids, ids[0]].join("\n"));
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-batch-plan")).toHaveCount(61);
-  await expect(page.getByTestId("download-batch-issues")).toContainText(
-    "JM1000",
-  );
-  const prepares = await calls(page, "jm_download_batch_prepare");
-  expect(prepares.map((call) => (call.args.inputs as string[]).length)).toEqual(
-    [20, 20, 20, 2],
-  );
-  expect(
-    await page.evaluate(() => window.downloadTest.queue.tasks.length),
-  ).toBe(0);
-  await page.screenshot({
-    path: "visual-evidence/large-download-selection.png",
-    animations: "disabled",
-  });
-  await page.getByTestId("download-batch-confirm").click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(61);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
-  expect(await calls(page, "jm_download_selection_confirm")).toHaveLength(1);
-  expect(await calls(page, "jm_download_batch_confirm")).toHaveLength(0);
+  expect(
+    (await calls(page, "jm_download_prepare")).map((call) => call.args.input),
+  ).toEqual(ids);
   expect(
     await page.evaluate(() =>
       window.downloadTest.queue.tasks.map((task) => task.workId),
     ),
   ).toEqual(ids.map((id) => id.slice(2)));
+  await page.screenshot({
+    path: "visual-evidence/large-download-selection.png",
+    animations: "disabled",
+  });
 });
 
-test("preparation shows the exact title and destination while cancel creates no task", async ({
+test("one click queues the exact work and destination without another confirmation", async ({
   page,
 }) => {
   await install(page);
   await prepare(page);
-  await expect(page.getByTestId("download-plan-title")).toHaveText(
-    "合成单本作品",
-  );
-  await expect(page.getByTestId("download-plan-destination")).toContainText(
-    "C:\\Synthetic\\合成单本作品",
-  );
-  await expect(page.getByTestId("download-confirmation")).toContainText(
-    "保存为一个 ZIP",
-  );
-  expect((await calls(page, "jm_download_prepare"))[0].args.input).toBe("123");
-  await page.getByTestId("download-cancel").click();
+  const row = page.getByTestId("download-task-" + "c".repeat(64));
+  await expect(row).toContainText("合成单本作品");
+  await expect(row).toContainText("C:\\Synthetic\\合成单本作品");
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
-  await expect(page.getByTestId("download-empty")).toBeVisible();
-  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect((await calls(page, "jm_download_prepare"))[0].args.input).toBe(
+    "JM123",
+  );
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
+  await page.getByTestId("download-prepare").click();
+  await expect(page.getByTestId("download-prepare")).toBeEnabled();
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
 });
 
 test("confirmed work pauses, survives restart and resumes only after an explicit click", async ({
@@ -1133,7 +1064,6 @@ test("confirmed work pauses, survives restart and resumes only after an explicit
 }) => {
   await install(page);
   await prepare(page);
-  await page.getByTestId("download-confirm").click();
   // The controller waits for any in-flight read before sending confirmation.
   // Wait for the actual invocation while retaining exact count and revision.
   await expect
@@ -1197,7 +1127,6 @@ test("error retry retains the task and final native registration refreshes PC me
 }) => {
   await install(page, { phoneOwned: true });
   await prepare(page);
-  await page.getByTestId("download-confirm").click();
   await expect(
     page.getByTestId(
       "download-task-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -1249,8 +1178,9 @@ test("full image progress during a library rescan stays pending until final regi
   await page.getByTestId("download-source").selectOption("Pica");
   await page.getByTestId("download-input").fill("0123456789abcdef01234567");
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await page.getByTestId("download-confirm").click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(1);
   const taskId = "c".repeat(64);
   // Confirmation includes an asynchronous inventory refresh. Only advance the
   // synthetic task after the UI observes the committed queue entry.
@@ -1309,55 +1239,47 @@ test("an unregistered PC metadata reference does not override explicit source do
   page,
 }) => {
   await install(page, { existing: true });
-  await page.getByTestId("nav-queue").click();
-  await page.getByTestId("download-input").fill("JM123");
-  await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-plan-source")).toContainText("JM");
+  await prepare(page);
+  await expect(
+    page.getByTestId("download-task-" + "c".repeat(64)),
+  ).toContainText("JM · 123");
   expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
-  await page.getByTestId("download-cancel").click();
-  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
 });
 
-test("JM and Pica source details prepare only their own source without creating a task on cancel", async ({
+test("JM and Pica detail download buttons queue their own source and leave the detail in place", async ({
   page,
 }) => {
   await install(page);
   await page.getByTestId("nav-favorites").click();
-  await page.getByTestId("source-open-JM:123").click();
-  await page
-    .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
-    .click();
-  await page.getByTestId("source-download").click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-plan-source")).toContainText(
-    "JM · 123",
-  );
-  await page.getByTestId("download-cancel").click();
-  await page.getByTestId("source-detail-back").click();
-  await page.getByTestId("source-tab-Pica").click();
-  await page.getByTestId("source-open-Pica:0123456789abcdef01234567").click();
-  await page
-    .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
-    .click();
-  await expect(page.getByTestId("source-download")).toBeEnabled();
-  await page.getByTestId("source-download").click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-plan-source")).toContainText(
-    "哔咔 · 0123456789abcdef01234567",
-  );
-  await expect(page.getByTestId("download-plan-title")).toHaveText(
-    "合成 Pica 作品",
-  );
-  await page.getByTestId("download-cancel").click();
+  for (const [source, id] of [
+    ["JM", "123"],
+    ["Pica", "0123456789abcdef01234567"],
+  ] as const) {
+    await page.getByTestId("source-tab-" + source).click();
+    await page
+      .getByTestId(`source-open-${source}:${id}`)
+      .click({ button: "right" });
+    await page
+      .getByTestId("reader-cover-actions")
+      .getByRole("menuitem", { name: "作品详细", exact: true })
+      .click();
+    await page.getByTestId("source-download").click();
+    await expect(page.getByTestId("source-download")).toHaveText(
+      /已排队|下载中/,
+    );
+    await expect(page.getByTestId("source-detail-back")).toBeVisible();
+    await expect(page.getByTestId("native-downloads")).toBeHidden();
+    await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+    await page.getByTestId("source-detail-back").click();
+  }
   expect(
     (await calls(page, "jm_download_prepare")).map((call) => call.args.scope),
   ).toEqual([
     { source: "JM", sessionId: "session-JM" },
     { source: "Pica", sessionId: "session-Pica" },
   ]);
-  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(2);
 });
 
 test("unreadable persisted queue is not treated as empty and raw native messages stay hidden", async ({
@@ -1382,7 +1304,7 @@ test("unreadable persisted queue is not treated as empty and raw native messages
 const oldTaskId = "c".repeat(64);
 const newTaskId = "d".repeat(64);
 
-test("typing a removed work directly rechecks stale presence before deciding whether a PC copy exists", async ({
+test("typing a removed work refreshes file presence and queues a new attempt directly", async ({
   page,
 }) => {
   await install(page, { completed: true });
@@ -1391,32 +1313,35 @@ test("typing a removed work directly rechecks stale presence before deciding whe
   await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
     "已下载",
   );
-  const readsBefore = (await calls(page, "jm_download_read")).length;
+  const before = (await calls(page, "jm_download_read")).length;
   await page.evaluate(() => {
     window.downloadTest.filePresence = "missing";
   });
   await page.getByTestId("download-input").fill("JM123");
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(1);
   expect(
     (await calls(page, "jm_download_read"))
-      .slice(readsBefore)
-      .map((call) => call.args.recheckFiles),
-  ).toEqual([true]);
+      .slice(before)
+      .some((call) => call.args.recheckFiles === true),
+  ).toBe(true);
   expect(
     (await calls(page, "jm_download_prepare")).map((call) => call.args.input),
-  ).toEqual(["123"]);
-  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  ).toEqual(["JM123"]);
   expect(await calls(page, "jm_download_control")).toEqual([]);
-  await page.getByTestId("download-cancel").click();
-  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   await page.getByTestId("download-filter-error").click();
   await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
     "文件已移除",
   );
+  await page.getByTestId("download-filter-active").click();
+  await expect(page.getByTestId("download-phase-" + newTaskId)).toHaveText(
+    "正在下载",
+  );
 });
 
-test("removed files leave the downloaded filter and require a new plan and confirmation", async ({
+test("removed files retain history while redownload creates one new validated attempt", async ({
   page,
 }) => {
   await install(page, { completed: true, phoneOwned: true });
@@ -1432,32 +1357,21 @@ test("removed files leave the downloaded filter and require a new plan and confi
   await expect(page.getByTestId("download-task-" + oldTaskId)).toHaveCount(0);
   await page.getByTestId("download-filter-error").click();
   const oldTask = page.getByTestId("download-task-" + oldTaskId);
-  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
-    "文件已移除",
-  );
   await expect(oldTask).toContainText("历史完成：3 / 3");
-  await expect(oldTask).not.toContainText("电脑文件已保存并登记");
   await expect(page.getByTestId("download-open-" + oldTaskId)).toHaveCount(0);
-  expect(await page.evaluate(() => window.downloadTest.queue.revision)).toBe(1);
-  expect(await calls(page, "jm_download_control")).toEqual([]);
   await page.getByTestId("download-reprepare-" + oldTaskId).click();
-  await expect(page.getByTestId("download-input")).toHaveValue("123");
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  expect(await calls(page, "jm_download_confirm")).toEqual([]);
-  await page.getByTestId("download-cancel").click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(1);
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
-  expect(
-    await page.evaluate(() => window.downloadTest.queue.tasks),
-  ).toHaveLength(1);
-  await page.getByTestId("download-reprepare-" + oldTaskId).click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await page.getByTestId("download-confirm").click();
-  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("download-filter-error")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await page.getByTestId("download-filter-active").click();
   await expect(page.getByTestId("download-phase-" + newTaskId)).toHaveText(
     "正在下载",
   );
-  await expect(page.getByTestId("download-task-" + oldTaskId)).toHaveCount(0);
   await page.getByTestId("download-filter-error").click();
   await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
     "文件已移除",
@@ -1571,22 +1485,18 @@ test("manual Pica selection preserves the official link and only confirmed compl
   const input = `https://picaapi.picacomic.com/comics/${picaWorkId}`;
   await page.getByTestId("download-input").fill(input);
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-plan-source")).toContainText(
-    `哔咔 · ${picaWorkId}`,
-  );
-  await expect(page.getByTestId("download-confirmation")).toContainText(
-    "哔咔保留原图格式",
-  );
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(1);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   expect((await calls(page, "jm_download_prepare"))[0].args).toEqual({
     scope: { source: "Pica", sessionId: "session-Pica" },
     input,
     rootId: "a".repeat(64),
     generation: 1,
   });
-  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
   expect(await page.evaluate(() => window.downloadTest.pc.items)).toEqual([]);
-  await page.getByTestId("download-confirm").click();
   await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
     "正在下载",
   );
@@ -1637,7 +1547,7 @@ test("a Pica preparation returning a JM plan cannot show a confirmation or creat
   await page.getByTestId("download-source").selectOption("Pica");
   await page.getByTestId("download-input").fill(picaWorkId);
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-error")).toBeVisible();
+  await expect(page.getByTestId("download-submission-issues")).toBeVisible();
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
   expect(await calls(page, "jm_download_confirm")).toEqual([]);
@@ -1731,11 +1641,10 @@ test("Pica missing-file reprepare selects the original task source and creates a
   await page.getByTestId("download-reprepare-" + oldTaskId).click();
   await expect(page.getByTestId("download-source")).toHaveValue("Pica");
   await expect(page.getByTestId("download-input")).toHaveValue(picaWorkId);
-  await expect(page.getByTestId("download-plan-source")).toContainText(
-    `哔咔 · ${picaWorkId}`,
-  );
-  expect(await calls(page, "jm_download_confirm")).toEqual([]);
-  await page.getByTestId("download-confirm").click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(1);
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
   await page.getByTestId("download-filter-active").click();
   await expect(page.getByTestId("download-phase-" + newTaskId)).toHaveText(
     "正在下载",
@@ -1764,32 +1673,32 @@ for (const fixtureSource of ["JM", "Pica"] as const)
     await page.getByTestId("download-source").selectOption("Pica");
     await page.getByTestId("download-input").fill(picaWorkId);
     await page.getByTestId("download-prepare").click();
-    await expect(page.getByTestId("download-plan-source")).toContainText(
+    await expect
+      .poll(async () => (await calls(page, "jm_download_confirm")).length)
+      .toBe(1);
+    expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
+    await expect(page.getByTestId("download-task-" + oldTaskId)).toContainText(
       "哔咔",
     );
-    await page.getByTestId("download-cancel").click();
-    expect(await calls(page, "jm_download_prepare")).toHaveLength(1);
-    expect(await calls(page, "jm_download_confirm")).toEqual([]);
   });
 
-test("batch review excludes duplicates and cancellation never queues tasks", async ({
+test("batch direct submission deduplicates IDs without creating a review dialog", async ({
   page,
 }) => {
   await install(page);
   await page.getByTestId("nav-queue").click();
   await page.getByTestId("download-input").fill("JM123\nJM124\nJM123");
   await page.getByTestId("download-prepare").click();
-  await expect(page.getByTestId("download-batch-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
-  await expect(page.getByTestId("download-batch-issues")).toContainText(
-    "JM123",
-  );
-  await expect(page.getByTestId("download-batch-confirmation")).toContainText(
-    "C:\\Synthetic\\124",
-  );
-  await page.getByTestId("download-batch-cancel").click();
-  expect(await calls(page, "jm_download_batch_confirm")).toEqual([]);
-  await expect(page.getByTestId("download-empty")).toBeVisible();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(2);
+  await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.downloadTest.queue.tasks.map((task) => task.workId),
+    ),
+  ).toEqual(["123", "124"]);
+  expect(await calls(page, "jm_download_prepare")).toHaveLength(2);
 });
 
 test("multiple queued works pause and resume explicitly under one source after restart", async ({
@@ -1799,10 +1708,9 @@ test("multiple queued works pause and resume explicitly under one source after r
   await page.getByTestId("nav-queue").click();
   await page.getByTestId("download-input").fill("JM123\nJM124");
   await page.getByTestId("download-prepare").click();
-  await page.getByTestId("download-batch-confirm").click();
-  await expect(
-    page.getByTestId("download-phase-" + "7b".padStart(64, "0")),
-  ).toHaveText("正在下载");
+  await expect(page.getByTestId("download-phase-" + "c".repeat(64))).toHaveText(
+    "正在下载",
+  );
   await expect(
     page.getByTestId("download-phase-" + "7c".padStart(64, "0")),
   ).toHaveText("等待下载");
@@ -1813,20 +1721,20 @@ test("multiple queued works pause and resume explicitly under one source after r
   await page.reload();
   await page.getByTestId("nav-queue").click();
   expect(await calls(page, "jm_download_resume_many")).toEqual([]);
-  await expect(
-    page.getByTestId("download-phase-" + "7b".padStart(64, "0")),
-  ).toHaveText("已暂停");
+  await expect(page.getByTestId("download-phase-" + "c".repeat(64))).toHaveText(
+    "已暂停",
+  );
   await page.getByTestId("download-resume-many-JM").click();
-  await expect(
-    page.getByTestId("download-phase-" + "7b".padStart(64, "0")),
-  ).toHaveText("等待下载");
+  await expect(page.getByTestId("download-phase-" + "c".repeat(64))).toHaveText(
+    "等待下载",
+  );
   await expect
     .poll(async () => (await calls(page, "jm_download_resume_many")).length)
     .toBe(1);
   expect((await calls(page, "jm_download_resume_many"))[0].args).toEqual({
     scope: { source: "JM", sessionId: "session-JM" },
     tasks: [
-      { taskId: "7b".padStart(64, "0"), expectedRevision: 2 },
+      { taskId: "c".repeat(64), expectedRevision: 2 },
       { taskId: "7c".padStart(64, "0"), expectedRevision: 2 },
     ],
   });
@@ -1854,21 +1762,192 @@ test("completed history filtering and removal preserve PC entries", async ({
   expect(await calls(page, "jm_download_history_remove")).toHaveLength(1);
 });
 
-test("favorite multi-selection opens reviewed batch before any download", async ({
+test("favorite multi-selection downloads directly and retains the browsing page", async ({
   page,
 }) => {
   await install(page, { batchWorks: true });
   await page.getByTestId("nav-favorites").click();
   await expect(page.getByTestId("source-card-JM:124")).toBeVisible();
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-all").click();
-  await page.getByTestId("source-batch-download").click();
-  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  await page
+    .getByRole("toolbar", { name: "批量下载操作" })
+    .getByRole("button", { name: "下载", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(2);
   expect(
-    (await calls(page, "jm_download_batch_prepare"))[0].args.inputs,
+    (await calls(page, "jm_download_prepare")).map((call) => call.args.input),
   ).toEqual(["123", "124"]);
-  expect(await calls(page, "jm_download_batch_confirm")).toEqual([]);
-  await page.getByTestId("download-batch-confirm").click();
+  await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  await expect(page.getByTestId("source-card-JM:124")).toBeVisible();
+});
+
+test("a mixed-success favorite selection keeps only the failed work selected for retry", async ({
+  page,
+}) => {
+  await install(page, { batchWorks: true, failPrepareIds: ["124"] });
+  await page.getByTestId("nav-favorites").click();
+  await expect(page.getByTestId("source-card-JM:124")).toBeVisible();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await page.getByTestId("source-select-all").click();
+  await page
+    .getByRole("toolbar", { name: "批量下载操作" })
+    .getByRole("button", { name: "下载", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_prepare")).length)
+    .toBe(2);
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(1);
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作" }),
+  ).toContainText("已选 1 本");
+  expect(
+    await page.evaluate(() =>
+      window.downloadTest.queue.tasks.map((task) => task.workId),
+    ),
+  ).toEqual(["123"]);
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-submission-issues")).toContainText(
+    "1 项未能加入",
+  );
+});
+
+test("completed task browsing resumes at the same work after visiting another section", async ({
+  page,
+}) => {
+  const tasks = Array.from({ length: 45 }, (_, index) =>
+    queueTask(index + 1, "downloaded"),
+  );
+  await install(page, { initialTasks: tasks });
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-filter-downloaded").click();
+  const target = page.getByTestId("download-task-" + tasks[20].id);
+  await target.scrollIntoViewIfNeeded();
+  const offset = await target.evaluate(
+    (element) => element.getBoundingClientRect().top,
+  );
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-filter-downloaded")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await target.evaluate(
+          (element) => element.getBoundingClientRect().top,
+        )) - offset,
+      ),
+    )
+    .toBeLessThan(4);
+});
+
+test("clicking download on a source detail retries its failed task without recreating it or leaving the page", async ({
+  page,
+}) => {
+  const failed = queueTask(1, "error", {
+    id: "c".repeat(64),
+    workId: "123",
+    title: "合成单本作品",
+  });
+  await install(page, { initialTasks: [failed] });
+  await page.getByTestId("nav-favorites").click();
+  await page.getByTestId("source-open-JM:123").click({ button: "right" });
+  await page
+    .getByTestId("reader-cover-actions")
+    .getByRole("menuitem", { name: "作品详细", exact: true })
+    .click();
+  await expect(page.getByTestId("source-download")).toHaveText("重试下载");
+  await page.getByTestId("source-download").click();
+  await expect(page.getByTestId("source-download")).toHaveText("下载中");
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  expect(await calls(page, "jm_download_prepare")).toEqual([]);
+  expect(await calls(page, "jm_download_confirm")).toEqual([]);
+  expect(
+    (await calls(page, "jm_download_control")).map((call) => [
+      call.args.taskId,
+      call.args.action,
+    ]),
+  ).toEqual([[failed.id, "retry"]]);
+  expect(
+    await page.evaluate(() =>
+      window.downloadTest.queue.tasks.map((task) => [task.id, task.filesDone]),
+    ),
+  ).toEqual([[failed.id, 1]]);
+});
+
+test("explicit BL download metadata is hidden from every queue category while unknown labels remain visible", async ({
+  page,
+}) => {
+  const hidden = queueTask(1, "downloaded", { tags: ["Boys Love"] });
+  const visible = queueTask(2, "downloaded", { tags: [] });
+  await install(page, { initialTasks: [hidden, visible] });
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-filter-downloaded").click();
+  await expectQueueCounts(page, 0, 0, 1);
+  await expect(page.getByTestId("download-task-" + hidden.id)).toHaveCount(0);
+  await expect(page.getByTestId("download-task-" + visible.id)).toBeVisible();
+  expect(
+    await page.evaluate(() => window.downloadTest.queue.tasks.length),
+  ).toBe(2);
+  expect(await calls(page, "jm_download_history_remove")).toEqual([]);
+});
+
+test("new download failures produce one temporary grouped warning and its view action opens attention tasks", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-input").fill("JM123\nJM124");
+  await page.getByTestId("download-prepare").click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(2);
+  const toast = page.getByTestId("download-attention-toast");
+  await expect(toast).toHaveCount(0);
+  await page.evaluate(() => window.downloadTest.advance("error"));
+  await expect(toast).toContainText("2 个下载任务需要处理");
+  await expect(toast).toHaveCount(1);
+  await expect(page.getByTestId("download-filter-active")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(toast).toHaveCount(0, { timeout: 7000 });
+  await page.getByTestId("download-read").click();
+  await page.getByTestId("download-filter-error").click();
+  await expect(toast).toHaveCount(0);
+  await page.getByTestId("download-retry-" + oldTaskId).click();
+  await page.getByTestId("download-filter-active").click();
+  await expect(page.getByTestId("download-phase-" + oldTaskId)).toHaveText(
+    "正在下载",
+  );
+  await page.evaluate(() => window.downloadTest.advance("error"));
+  await expect(toast).toContainText("1 个下载任务需要处理");
+  await page.getByTestId("nav-settings").click();
+  await toast.getByRole("button", { name: "查看", exact: true }).click();
   await expect(page.getByTestId("native-downloads")).toBeVisible();
-  expect(await calls(page, "jm_download_batch_confirm")).toHaveLength(1);
+  await expect(page.getByTestId("download-filter-error")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(toast).toHaveCount(0);
+  await expect(taskRows(page)).toHaveCount(2);
+  await page.getByTestId("download-filter-downloaded").click();
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-filter-downloaded")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("download-filter-error")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
 });

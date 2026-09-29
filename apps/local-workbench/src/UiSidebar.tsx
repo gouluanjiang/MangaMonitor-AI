@@ -33,7 +33,7 @@ const groups: { label: string; entries: Entry[] }[] = [
       { id: "favorites", label: "在线收藏", icon: "heart" },
       { id: "recent", label: "最近更新", icon: "clock", native: true },
       { id: "ranking", label: "周排行榜", icon: "discover", native: true },
-      { id: "discovery", label: "来源搜索", icon: "search" },
+      { id: "discovery", label: "搜索", icon: "search" },
     ],
   },
   {
@@ -45,7 +45,6 @@ const groups: { label: string; entries: Entry[] }[] = [
         icon: "completeness",
         native: true,
       },
-      { id: "author-search", label: "作者搜索", icon: "search", native: true },
       { id: "authors", label: "关注作者", icon: "people" },
     ],
   },

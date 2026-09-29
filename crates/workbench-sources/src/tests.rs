@@ -66,6 +66,53 @@ async fn large_current_session_catalog_reuses_early_addresses_without_detail_req
 const PICA_ID: &str = "0123456789abcdef01234567";
 
 #[tokio::test]
+async fn native_tag_routes_are_single_page_encoded_and_not_keyword_searches() {
+    let sources = scripted(vec![
+        Ok(json!({"total":1,"content":[{"id":"123","name":"Fixture","tags":["Tag & Name"]}]})),
+        Ok(json!({"comics":{"page":2,"pages":3,"limit":20,"total":41,"docs":[{"_id":PICA_ID,"title":"Fixture","categories":["耽美"]}]}})),
+    ]);
+    let jm = session(Source::Jm);
+    let pica = session(Source::Pica);
+    let jm_page = sources.tag(&jm, "Tag & Name", 1).await.unwrap();
+    let pica_page = sources.tag(&pica, "Tag & Name", 2).await.unwrap();
+    assert_eq!(jm_page.items.len(), 1);
+    assert!(jm_page.jm_search_boundary.is_some());
+    assert_eq!(pica_page.page, 2);
+    assert!(pica_page.items[0].tags.iter().any(|tag| is_bl_tag(tag)));
+    assert_eq!(sources.recorded.lock().unwrap().as_slice(), &[
+        (Source::Jm, Method::GET, "/search?main_tag=3&search_query=Tag+%26+Name&page=1&o=mr".into()),
+        (Source::Pica, Method::GET, "comics?t=Tag+%26+Name&s=dd&page=2".into()),
+    ]);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+    for invalid in ["", "   ", "bad\nlabel"] {
+        assert_eq!(sources.tag(&jm, invalid, 1).await.unwrap_err().code, "SOURCE_QUERY_INVALID");
+    }
+    assert_eq!(sources.recorded.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn tag_redirect_never_falls_back_to_number_or_detail_search() {
+    let sources = scripted(vec![Ok(json!({"redirect_aid":"123","total":1,"content":[]}))]);
+    assert_eq!(sources.tag(&session(Source::Jm), "123", 1).await.unwrap_err().code, "SOURCE_RESPONSE_INVALID");
+    assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn pica_category_keeps_its_origin_and_uses_c_instead_of_t() {
+    let sources = scripted(vec![Ok(json!({"comics":{"page":1,"pages":1,"limit":20,"total":1,"docs":[{
+        "_id":PICA_ID,"title":"Fixture","tags":["Raw tag"],"categories":["Category & Name", "耽美"]
+    }]}}))]);
+    let result = sources.category(&session(Source::Pica), "Category & Name", 1).await.unwrap();
+    assert_eq!(result.items[0].categories.as_ref().unwrap(), &["Category & Name", "耽美"]);
+    assert_eq!(result.items[0].tags, ["Raw tag", "Category & Name", "耽美"]);
+    assert_eq!(sources.recorded.lock().unwrap().as_slice(), &[
+        (Source::Pica, Method::GET, "comics?c=Category+%26+Name&s=dd&page=1".into()),
+    ]);
+    assert_eq!(sources.category(&session(Source::Jm), "Category", 1).await.unwrap_err().code, "SOURCE_CATEGORY_UNSUPPORTED");
+    assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn recent_lists_fetch_one_requested_page_and_preserve_source_order_metadata_and_issues() {
     let sources = scripted(vec![
         Ok(json!({"total":1_000_000,"content":[
@@ -398,7 +445,7 @@ fn detail_value(source: Source, favorite: Option<bool>) -> Value {
 }
 
 #[test]
-fn pica_categories_add_only_explicit_language_kinds_without_discarding_raw_tags() {
+fn pica_categories_preserve_meaningful_labels_without_discarding_raw_tags() {
     let raw_tags = (0..64).map(|i| format!("Tag {i}")).collect::<Vec<_>>();
     let mut data = json!({
         "_id": PICA_ID, "title": "日本語 title [中文]", "author": "漢化組",
@@ -406,12 +453,12 @@ fn pica_categories_add_only_explicit_language_kinds_without_discarding_raw_tags(
     });
     let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
     assert_eq!(&work.tags[..64], raw_tags);
-    assert_eq!(&work.tags[64..], ["中文", "生肉"]);
-    assert_eq!(work.tags.len(), 66);
+    assert_eq!(&work.tags[64..], ["日漫", "中文", "生肉"]);
+    assert_eq!(work.tags.len(), 67);
 
     data["tags"] = json!([" 日文 ", "Other"]);
     let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
-    assert_eq!(work.tags, [" 日文 ", "Other", "中文"]);
+    assert_eq!(work.tags, [" 日文 ", "Other", "日漫", "中文"]);
     data["tags"] = json!(vec!["Tag"; 65]);
     assert_eq!(
         protocol::work(Source::Pica, &data, false).unwrap_err().code,
@@ -433,12 +480,15 @@ fn optional_categories_never_guess_from_unrelated_fields_or_hide_malformed_parts
         json!(["中文", ""]),
         json!(["中文", "x".repeat(2001)]),
         json!(vec!["中文"; 65]),
-        json!(["日漫", "漢化組", "中文标题", "英語 ENG"]),
     ] {
         data["categories"] = categories;
         let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
         assert_eq!(work.tags, ["Other"]);
     }
+    data["categories"] = json!(["日漫", "漢化組", "中文标题", "英語 ENG", "耽美"]);
+    let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
+    assert_eq!(work.tags, ["Other", "日漫", "漢化組", "中文标题", "英語 ENG", "耽美"]);
+    assert!(retained_language_tags(&work.tags).is_empty());
     let jm = json!({
         "id":"123", "name":"日本語 [中文]", "author":"中文", "tags":["Other"],
         "category":{"title":"日漫"}, "category_sub":{"title":"中文"},
@@ -480,6 +530,11 @@ fn optional_language_categories_do_not_hide_a_work_at_the_ipc_byte_boundary() {
     assert_eq!(preserved.title, conflict.title);
     assert_eq!(preserved.authors, conflict.authors);
     assert!(serde_json::to_vec(&preserved).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+    data["categories"] = json!(["生肉", "耽美"]);
+    let bl = protocol::work(Source::Pica, &data, false).unwrap().0;
+    assert!(bl.tags.iter().any(|tag| is_bl_tag(tag)));
+    assert!(bl.categories.as_ref().unwrap().contains(&"耽美".into()));
+    assert!(serde_json::to_vec(&bl).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
 }
 
 #[tokio::test]
@@ -508,9 +563,9 @@ async fn language_evidence_flows_through_existing_pica_routes_without_more_reque
     let ranking = sources.ranking(&pica, None, "week").await.unwrap();
     let detail = sources.detail(&pica, PICA_ID).await.unwrap();
     for page in [search, favorites, ranking] {
-        assert_eq!(page.items[0].tags, ["中文", "生肉"]);
+        assert_eq!(page.items[0].tags, ["同人", "中文", "生肉"]);
     }
-    assert_eq!(detail.tags, ["中文", "生肉"]);
+    assert_eq!(detail.tags, ["同人", "中文", "生肉"]);
     assert_eq!(sources.recorded.lock().unwrap().len(), 4);
     assert!(sources.cover_recorded.lock().unwrap().is_empty());
 }

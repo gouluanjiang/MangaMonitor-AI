@@ -63,6 +63,8 @@ pub struct AccountSummary {
 pub enum QueryKind {
     Favorites,
     Search,
+    Tag,
+    Category,
     Ranking,
     Recent,
     Detail,

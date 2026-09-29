@@ -5,10 +5,7 @@ import type {
   SourceScope,
 } from "./source-types.ts";
 import { SourceError } from "./source-runtime.ts";
-import {
-  inheritLanguageTags,
-  retainedLanguageTags,
-} from "./source-language.ts";
+import { inheritContentTags, retainedContentTags } from "./content-filter.ts";
 import {
   compactWork,
   catalogBytes,
@@ -150,9 +147,7 @@ function refreshHeadLanguage(snapshot: CatalogSnapshot, page: SourcePage) {
   const items = snapshot.items.map((work) => {
     const fresh = incoming.get(work.source + ":" + work.workId);
     if (!fresh) return work;
-    const tags = retainedLanguageTags(
-      inheritLanguageTags(fresh.tags, work.tags),
-    );
+    const tags = retainedContentTags(inheritContentTags(fresh.tags, work.tags));
     if (
       tags.length === work.tags.length &&
       tags.every((tag, i) => tag === work.tags[i])

@@ -1,3 +1,4 @@
+import { openUnifiedSearch } from "./browse-ui-helpers.ts";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import {
@@ -35,12 +36,12 @@ async function localCover(main: Page) {
   await main.getByTestId("nav-library").click();
   await main
     .getByRole("button", { name: "打开《已保存作品》", exact: true })
-    .click();
+    .click({ button: "right" });
   await expect(main.getByTestId("reader-cover-actions")).toBeVisible();
 }
 async function openLocalWindow(main: Page) {
   await localCover(main);
-  await main.getByRole("button", { name: "手机小框阅读", exact: true }).click();
+  await main.getByRole("menuitem", { name: "小窗阅读", exact: true }).click();
   await expect(main.getByTestId("reader-cover-actions")).toHaveCount(0);
 }
 async function openOnlineWindow(main: Page, workId = "102") {
@@ -48,8 +49,8 @@ async function openOnlineWindow(main: Page, workId = "102") {
   await main
     .getByTestId(`source-card-JM:${workId}`)
     .getByRole("button", { name: /打开/ })
-    .click();
-  await main.getByRole("button", { name: "手机小框阅读", exact: true }).click();
+    .click({ button: "right" });
+  await main.getByRole("menuitem", { name: "小窗阅读", exact: true }).click();
   await expect(main.getByTestId("reader-cover-actions")).toHaveCount(0);
 }
 async function toolbar(page: Page) {
@@ -88,29 +89,71 @@ function expectPageStart(
   expect(offset).toBeCloseTo(0, 10);
 }
 
+test("cover single click stays in the list, double click opens a small reader, and the right-click menu is anchored and keyboard accessible", async ({
+  page,
+}) => {
+  const harness = harnesses.get(page)!;
+  await page.getByTestId("nav-library").click();
+  const cover = page.getByRole("button", {
+    name: "打开《已保存作品》",
+    exact: true,
+  });
+  await cover.click();
+  await expect(cover).toBeFocused();
+  await expect(page.getByTestId("reader-cover-actions")).toHaveCount(0);
+  await expect(page.getByTestId("library-detail")).toHaveCount(0);
+  expect(
+    harness.calls.filter(({ command }) => command === "reader_window_open"),
+  ).toHaveLength(0);
+  await cover.click({ button: "right", position: { x: 20, y: 30 } });
+  const menu = page.getByRole("menu", { name: "打开漫画" });
+  await expect(menu).toBeVisible();
+  const coverBounds = (await cover.boundingBox())!;
+  const menuBounds = (await menu.boundingBox())!;
+  expect(Math.abs(menuBounds.x - coverBounds.x - 20)).toBeLessThan(2);
+  expect(Math.abs(menuBounds.y - coverBounds.y - 30)).toBeLessThan(2);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(cover).toBeFocused();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.getByRole("menuitem", { name: "作品详细" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "程序内阅读" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await cover.dblclick();
+  await harness.child(1);
+  await expect(page.getByTestId("library-detail")).toHaveCount(0);
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  await expect(menu).toHaveCount(0);
+});
+
 test("three cover choices preserve details and cancellation; independent small readers leave the main application usable", async ({
   page,
 }) => {
   const harness = harnesses.get(page)!;
   await localCover(page);
   const menu = page.getByTestId("reader-cover-actions");
-  for (const name of ["漫画详细", "程序内阅读", "手机小框阅读"])
-    await expect(menu.getByRole("button", { name, exact: true })).toBeVisible();
-  await menu.getByRole("button", { name: "取消", exact: true }).click();
+  for (const name of ["作品详细", "程序内阅读", "小窗阅读"])
+    await expect(
+      menu.getByRole("menuitem", { name, exact: true }),
+    ).toBeVisible();
+  await page.keyboard.press("Escape");
   expect(
     harness.calls.filter(({ command }) =>
       /reader_(open|window_open)$/.test(command),
     ),
   ).toEqual([]);
   await localCover(page);
-  await menu.getByRole("button", { name: "漫画详细", exact: true }).click();
+  await menu.getByRole("menuitem", { name: "作品详细", exact: true }).click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
   await openLocalWindow(page);
   const first = await harness.child(1);
   await expect(page.locator(".app-shell")).not.toHaveAttribute("inert", "");
   await expect(page.getByTestId("comic-reader")).toHaveCount(0);
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成新作者");
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
     "合成新作者",
@@ -155,7 +198,7 @@ test("three cover choices preserve details and cancellation; independent small r
       ({ label, command }) => label === "main" && command === "reader_open",
     ),
   ).toEqual([]);
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
     "合成新作者",
   );

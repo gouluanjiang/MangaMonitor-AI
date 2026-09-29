@@ -246,8 +246,8 @@ impl DiscoveryWork {
                 .description
                 .as_ref()
                 .is_none_or(|text| bounded(text, 10_000))
-            // Up to 64 original source tags plus two explicit language kinds.
-            && self.tags.len() <= 66
+            // Up to 64 original tags plus 64 bounded Pica category labels.
+            && self.tags.len() <= 128
             && self
                 .tags
                 .iter()

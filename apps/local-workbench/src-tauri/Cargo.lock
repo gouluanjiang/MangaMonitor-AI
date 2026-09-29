@@ -5327,6 +5327,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "unicode-normalization",
  "workbench-credentials",
 ]
 

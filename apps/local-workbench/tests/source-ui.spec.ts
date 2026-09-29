@@ -1,3 +1,8 @@
+import {
+  openUnifiedSearch,
+  chooseSearchMode,
+  continueSearch,
+} from "./browse-ui-helpers.ts";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import type {
@@ -54,6 +59,7 @@ type MockOptions = {
   isolatedListing?: boolean;
   searchPaginationDrift?: boolean;
   workTags?: Record<string, string[]>;
+  twoPageSearch?: boolean;
   detailTags?: Record<string, string[]>;
 };
 type Call = {
@@ -101,6 +107,113 @@ test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) => collected.push(error.message));
 });
 
+test("a clicked author opens the unified two-source search and a clicked tag searches only its originating source", async ({
+  page,
+}) => {
+  await installMock(page, {
+    collectionCover: true,
+    twoPageSearch: true,
+    workTags: { "123": ["眼镜"], "456": ["眼镜"] },
+  });
+  await openFavorites(page);
+  await page
+    .getByTestId("source-card-JM:123")
+    .getByRole("button", { name: "搜索作者 合成验收作者", exact: true })
+    .click();
+  await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
+    "合成验收作者",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  const searchedSources = await page.evaluate(() => [
+    ...new Set(
+      window.sourceTest.calls
+        .filter(
+          (call) => call.command === "source_query" && call.kind === "search",
+        )
+        .map((call) => call.source),
+    ),
+  ]);
+  expect(searchedSources.sort()).toEqual(["JM", "Pica"]);
+  await openFavorites(page);
+  await page.getByTestId("source-tab-Pica").click();
+  await page.getByTestId("source-card-Pica:123").locator("h3 button").click();
+  await page
+    .getByTestId("source-detail")
+    .getByRole("button", { name: "眼镜", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("group", { name: "搜索方式" })
+      .getByRole("button", { name: "标签", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("source-search-input")).toHaveValue("眼镜");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.sourceTest.calls
+          .filter(
+            (call) => call.command === "source_query" && call.kind === "tag",
+          )
+          .map((call) => [call.source, call.query, call.page]),
+      ),
+    )
+    .toEqual([["Pica", "眼镜", 1]]);
+  await continueSearch(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.sourceTest.calls
+          .filter(
+            (call) => call.command === "source_query" && call.kind === "tag",
+          )
+          .map((call) => call.page),
+      ),
+    )
+    .toEqual([1, 2]);
+});
+
+test("keyword search reads one page at a time and can continue past a whole page hidden by explicit BL tags", async ({
+  page,
+}) => {
+  await installMock(page, {
+    twoPageSearch: true,
+    workTags: { "123": ["Boys Love"], "456": ["眼镜"] },
+  });
+  await page.goto("/");
+  await openUnifiedSearch(page, "作品关键词");
+  await page.getByTestId("source-search-input").fill("合成关键词");
+  await page.getByTestId("source-search-submit").click();
+  await expect(page.getByTestId("source-filter-count")).toContainText(
+    "当前显示 0 部",
+  );
+  await expect(page.getByTestId("source-completeness")).not.toContainText(
+    "已读完",
+  );
+  const pages = () =>
+    page.evaluate(() =>
+      window.sourceTest.calls
+        .filter(
+          (call) => call.command === "source_query" && call.kind === "search",
+        )
+        .map((call) => call.page),
+    );
+  expect(await pages()).toEqual([1]);
+  await page.getByRole("main").hover();
+  await page.mouse.wheel(0, 10000);
+  await expect(page.getByTestId("source-card-JM:456")).toBeVisible();
+  await expect(page.getByTestId("source-card-JM:123")).toHaveCount(0);
+  expect(await pages()).toEqual([1, 2]);
+  expect(
+    await page.evaluate(() =>
+      window.sourceTest.calls.filter(
+        (call) => call.command === "source_query" && call.kind === "detail",
+      ),
+    ),
+  ).toEqual([]);
+});
+
 test("cached 2000-work catalog uses bounded rows, full-data selection and stable density/detail anchors", async ({
   page,
 }) => {
@@ -144,11 +257,11 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   expect(
     await page.getByTestId("source-grid").locator("article").count(),
   ).toBeLessThan(90);
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-all").click();
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 2000 部",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 2000 本");
   await page.getByTestId("source-grid").evaluate((element) => {
     element.closest("main")!.scrollTop = 18000;
   });
@@ -179,17 +292,17 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
       .getByRole("button", { name: "来源每行 " + density + " 部", exact: true })
       .evaluate((button: HTMLButtonElement) => button.click());
     await expect(page.getByTestId("source-card-" + anchor)).toBeVisible();
-    await expect(page.getByTestId("source-selection-bar")).toContainText(
-      "已选 2000 部",
-    );
+    await expect(
+      page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+    ).toContainText("已选 2000 本");
     expect(
       await page.getByTestId("source-grid").locator("article").count(),
     ).toBeLessThan(90);
   }
-  await page.getByTestId("source-open-" + anchor).click();
   await page
-    .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByTestId("source-open-" + anchor)
+    .locator("xpath=ancestor::article")
+    .locator("h3 button")
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -216,10 +329,10 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   await expect(
     page.getByTestId("source-cover-JM:2000").locator("img"),
   ).toBeVisible();
-  await page.getByTestId("source-open-JM:2000").click();
+  await page.getByTestId("source-open-JM:2000").click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -249,9 +362,9 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
     await expect(
       page.getByTestId("source-grid").locator(".source-virtual-row").first(),
     ).toHaveAttribute("data-columns", String(viewport.columns));
-    await expect(page.getByTestId("source-selection-bar")).toContainText(
-      "已选 2000 部",
-    );
+    await expect(
+      page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+    ).toContainText("已选 2000 本");
     const heights = await page.getByTestId("source-grid").evaluate(
       (element) =>
         new Promise<string[]>((resolve) => {
@@ -292,14 +405,16 @@ test("explicit Pica time switches finish one forward catalog and reuse it for lo
   await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
   await page.waitForTimeout(700);
   expect(await picaFavoritePages(page, false)).toEqual([1]);
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-Pica:1").check();
   await page
     .getByTestId("source-workbench")
     .locator(".source-sort select")
     .selectOption("source-reverse");
   await expect(page.getByTestId("source-card-Pica:65")).toBeVisible();
-  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 0 本");
   await expect(page.getByTestId("source-workbench")).toContainText(
     "临时选择已清空",
   );
@@ -371,11 +486,11 @@ test("Pica finishes 1877 raw records, deduplicates works and reverses the comple
   await expect(
     page.getByTestId("source-grid").locator("article").first(),
   ).toHaveAttribute("data-source-work-key", "Pica:1877");
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-all").click();
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 1876 部",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 1876 本");
   for (const id of ["1", "1859"]) {
     await page.getByTestId("source-search-input").fill("目录作者:" + id + ":");
     await expect(page.getByTestId("source-grid")).toHaveAttribute(
@@ -465,7 +580,7 @@ test("favorite full selection waits for every page and includes offscreen result
   await openFavorites(page);
   await page.getByTestId("source-tab-Pica").click();
   await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-all").click();
   await expect
     .poll(() => page.evaluate(() => window.sourceTest.picaHeld))
@@ -473,11 +588,13 @@ test("favorite full selection waits for every page and includes offscreen result
   await expect(page.getByTestId("source-select-all")).toContainText(
     "完成后全选",
   );
-  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 0 本");
   await page.evaluate(() => window.sourceTest.releasePica?.());
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 65 部",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 65 本");
   expect(await picaFavoritePages(page, false)).toEqual([1, 2, 3, 4]);
   await expect(page.getByTestId("source-select-all")).toHaveText(
     "全选当前筛选范围",
@@ -678,10 +795,10 @@ test("partial favorites rebind scrolling after detail and do not fetch more for 
   await page.waitForTimeout(700);
   expect(await favoritePages(page)).toEqual([1]);
   await page.getByRole("button", { name: "清空来源搜索", exact: true }).click();
-  await page.getByTestId("source-open-JM:1").click();
+  await page.getByTestId("source-open-JM:1").click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -1226,6 +1343,22 @@ async function installMock(page: Page, options: MockOptions = {}) {
             }
             const epoch = Number(scope.sessionId.split("-").at(-1));
             const pageNumber = raw.page as number;
+            if (
+              options.twoPageSearch &&
+              ["search", "tag"].includes(raw.kind as string)
+            ) {
+              return {
+                ...scope,
+                items: [
+                  makeWork(source, pageNumber === 1 ? "123" : "456", epoch),
+                ],
+                page: pageNumber,
+                total: 2,
+                pages: 2,
+                hasMore: pageNumber === 1,
+                folders: [],
+              };
+            }
             if (options.searchPaginationDrift && raw.kind === "search") {
               if (pageNumber === 2 && !pageFailureUsed) {
                 pageFailureUsed = true;
@@ -1585,12 +1718,12 @@ test("both source lists show tag-only language badges without detail requests an
         ),
       ),
     ).toEqual([]);
-    await page.getByTestId("source-toggle-selection").click();
+    await page.getByRole("button", { name: "多选", exact: true }).click();
     await page.getByTestId(`source-select-${source}:1`).check();
     await page.getByTestId(`source-select-${source}:2`).check();
-    await expect(page.getByTestId("source-selection-bar")).toContainText(
-      "已选 2 部",
-    );
+    await expect(
+      page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+    ).toContainText("已选 2 本");
     await page.getByTestId(`source-card-${source}:1`).scrollIntoViewIfNeeded();
     for (const workId of ["1", "2", "3", "4", "5"]) {
       await expect(
@@ -1624,15 +1757,15 @@ test("both source lists show tag-only language badges without detail requests an
     await page.screenshot({
       path: `visual-evidence/source-language-${source.toLowerCase()}-selection.png`,
     });
-    await page.getByTestId("source-toggle-selection").click();
+    await page.getByRole("button", { name: "多选", exact: true }).click();
     if (source === "JM")
       await page.setViewportSize({ width: 1280, height: 900 });
   }
 
-  await page.getByTestId("source-open-Pica:3").click();
+  await page.getByTestId("source-open-Pica:3").click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(
     page.getByTestId("source-detail").getByTestId("source-language-badge"),
@@ -1726,10 +1859,12 @@ test("favorites status filtering clears hidden selection and offers a direct ful
   await openFavorites(page);
   await page.getByTestId("source-tab-Pica").click();
   await expect(page.getByTestId("source-card-Pica:1")).toBeVisible();
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-Pica:1").check();
   await page.getByTestId("source-filter-owned").click();
-  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 0 本");
   await expect(page.getByTestId("source-filter-count")).toContainText(
     "当前显示 0 部",
   );
@@ -2005,14 +2140,16 @@ test("switching sources discards a late previous response and clears only tempor
   await page.evaluate(() => window.sourceTest.releaseJM!());
   await expect(page.getByTestId("source-card-JM:123")).toHaveCount(0);
   await expect(page.getByTestId("source-folder")).toHaveCount(0);
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-Pica:123").check();
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 1 部",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 1 本");
   await page.getByTestId("source-tab-JM").click();
   await expect(page.getByTestId("source-card-JM:123")).toBeVisible();
-  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByTestId("source-select-JM:123")).toHaveCount(0);
 });
 
@@ -2296,10 +2433,10 @@ test("source covers release offscreen images but reuse successful session thumbn
         ).length,
     ),
   ).toBe(1);
-  await page.getByTestId("source-open-JM:100").click();
+  await page.getByTestId("source-open-JM:100").click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await expect(
@@ -2437,10 +2574,10 @@ test("source search stays in its page toolbar and detail content fits wide and n
     expect((await geometry()).overflow).toBeLessThanOrEqual(1);
   }
   await page.getByTestId("nav-favorites").click();
-  await page.getByTestId("source-open-JM:123").click();
+  await page.getByTestId("source-open-JM:123").click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail").locator("h1")).toBeVisible();
   const detailLayout = await page
@@ -2472,7 +2609,7 @@ test("source search stays in its page toolbar and detail content fits wide and n
     detailLayout.descriptionLeft - detailLayout.coverRight,
   ).toBeGreaterThanOrEqual(26);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("合成验收来源查询");
   await expect(page.getByTestId("source-search-submit")).toBeVisible();
   await expect
@@ -2484,87 +2621,76 @@ test("source search stays in its page toolbar and detail content fits wide and n
   expect(narrow.width).toBeGreaterThan(250);
 });
 
-for (const source of ["JM", "Pica"] as const) {
-  test(`${source} source author search separates keyword hits before counting and selecting across all pages`, async ({
-    page,
-  }) => {
-    await installMock(page, { authorSearchResults: true });
-    await page.goto("/");
-    await page.getByTestId("nav-discovery").click();
-    await page.getByTestId("source-tab-" + source).click();
-    await expect(page.getByTestId("source-query-mode")).toHaveValue("author");
-    await page.getByTestId("source-search-input").fill("Mint");
-    await page.getByTestId("source-search-submit").click();
-    await expect(page.getByTestId("source-completeness")).toContainText(
-      "已读完",
+test("unified author search separates keyword hits across both sources and complete pages", async ({
+  page,
+}) => {
+  await installMock(page, { authorSearchResults: true });
+  await openUnifiedSearch(page);
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("Mint");
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前检查范围已读完",
+  );
+  await expect(page.getByTestId("completion-other-results")).toContainText(
+    "作者作品 4 条 · 其他关键词结果 6 条",
+  );
+  for (const source of ["JM", "Pica"] as const) {
+    await page.getByLabel("更新来源").selectOption(source);
+    await expect(page.getByTestId("completion-counts")).toContainText(
+      "未入库 2 条 · 当前显示 2 条",
     );
-    await expect(page.getByTestId("source-author-evidence")).toContainText(
-      "作者作品 2 部 · 其他关键词结果 3 部",
-    );
-    await expect(page.getByTestId("source-filter-count")).toContainText(
-      "未入库 2 部 · 当前显示 2 部",
-    );
-    await expect(
-      page.getByTestId("source-card-" + source + ":201"),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId("source-card-" + source + ":204"),
-    ).toBeVisible();
+    for (const id of ["201", "204"])
+      await expect(
+        page.getByTestId(`author-update-${source}:${id}`),
+      ).toBeVisible();
     for (const id of ["202", "203", "205"])
       await expect(
-        page.getByTestId("source-card-" + source + ":" + id),
+        page.getByTestId(`author-update-${source}:${id}`),
       ).toHaveCount(0);
-    if (source === "Pica") {
-      await mkdir("visual-evidence", { recursive: true });
-      await page.screenshot({
-        path: "visual-evidence/source-author-results.png",
-        fullPage: true,
-      });
-    }
-    await page.getByTestId("source-toggle-selection").click();
-    await page.getByTestId("source-select-all").click();
-    await expect(page.getByTestId("source-selection-bar")).toContainText(
-      "已选 2 部",
-    );
-    await page.getByTestId("source-author-results-toggle").click();
-    await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
-    await expect(page.getByTestId("source-toggle-selection")).toHaveCount(0);
-    await expect(
-      page.getByTestId("source-grid").getByRole("checkbox"),
-    ).toHaveCount(0);
-    await expect(
-      page.getByTestId("source-card-" + source + ":202"),
-    ).toContainText("Mintleaf");
-    await expect(
-      page.getByTestId("source-card-" + source + ":203"),
-    ).toContainText("作者资料未取得");
-    await expect(
-      page.getByTestId("source-card-" + source + ":205"),
-    ).toContainText("Other Writer");
-    await expect(page.getByTestId("source-filter-count")).toContainText(
-      "当前显示 3 部",
-    );
-    await expect(page.getByTestId("source-all-owned")).toHaveCount(0);
-    if (source === "Pica")
-      await page.screenshot({
-        path: "visual-evidence/source-other-keywords.png",
-        fullPage: true,
-      });
-    await page.getByTestId("source-author-results-toggle").click();
-    await expect(page.getByTestId("source-filter-count")).toContainText(
-      "当前显示 2 部",
-    );
     expect(
-      await page.evaluate(() =>
-        window.sourceTest.calls
-          .filter(
-            (call) => call.command === "source_query" && call.kind === "search",
-          )
-          .map((call) => call.page),
+      await page.evaluate(
+        (target) =>
+          window.sourceTest.calls
+            .filter(
+              (call) =>
+                call.command === "source_query" &&
+                call.kind === "search" &&
+                call.source === target,
+            )
+            .map((call) => call.page),
+        source,
       ),
     ).toEqual([1, 2]);
-  });
-}
+  }
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await page.getByTestId("completion-select-all").click();
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作" }),
+  ).toContainText("已选 2 本");
+  await page
+    .getByRole("button", { name: "查看其他关键词结果", exact: true })
+    .click();
+  await expect(page.getByRole("toolbar", { name: "批量下载操作" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "多选", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("author-update-Pica:202")).toContainText(
+    "Mintleaf",
+  );
+  await expect(page.getByTestId("author-update-Pica:203")).toContainText(
+    "作者资料未取得",
+  );
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前显示 3 条",
+  );
+  await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
+  await page.getByRole("button", { name: "返回作者作品", exact: true }).click();
+  await expect(page.getByTestId("completion-counts")).toContainText(
+    "当前显示 2 条",
+  );
+});
 
 test("source search date order is stable, unknown-last, persistent and independent of favorite ordering", async ({
   page,
@@ -2572,10 +2698,12 @@ test("source search date order is stable, unknown-last, persistent and independe
   await page.setViewportSize({ width: 1672, height: 1020 });
   await installMock(page, { authorSearchResults: true, workDates: true });
   await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
-  await page.getByTestId("source-query-mode").selectOption("search");
+  await openUnifiedSearch(page, "作品关键词");
+  await chooseSearchMode(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("Mint");
   await page.getByTestId("source-search-submit").click();
+  await continueSearch(page);
+
   await expect(page.getByTestId("source-completeness")).toContainText("已读完");
   const cards = page.getByTestId("source-grid").locator("article");
   await expect(cards).toHaveCount(5);
@@ -2589,17 +2717,17 @@ test("source search date order is stable, unknown-last, persistent and independe
   await expect(page.getByTestId("source-date-sort-scope")).toContainText(
     "已读取完整范围",
   );
-  await page.getByTestId("source-open-JM:201").click();
+  await page.getByTestId("source-open-JM:201").click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-15");
   await page.getByTestId("source-detail-back").click();
-  await page.getByTestId("source-open-JM:203").click();
+  await page.getByTestId("source-open-JM:203").click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-updated-at")).toHaveText("2026-09-22");
   await page.getByTestId("source-detail-back").click();
@@ -2625,7 +2753,7 @@ test("source search date order is stable, unknown-last, persistent and independe
   await page.getByTestId("nav-favorites").click();
   await expect(page.getByTestId("source-sort")).toHaveValue("source");
   await page.reload();
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await expect(page.getByTestId("source-sort")).toHaveValue("updated-asc");
 });
 
@@ -2638,10 +2766,12 @@ test("failed source pagination never labels a partial date order as a full catal
     partial: true,
   });
   await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
-  await page.getByTestId("source-query-mode").selectOption("search");
+  await openUnifiedSearch(page, "作品关键词");
+  await chooseSearchMode(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("Mint");
   await page.getByTestId("source-search-submit").click();
+  await continueSearch(page);
+
   await expect(page.getByTestId("source-grid").locator("article")).toHaveCount(
     3,
   );
@@ -2659,10 +2789,13 @@ test("source searches keep later pages after isolated rows and show diagnostics 
   await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { isolatedListing: true });
   await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
-  await page.getByTestId("source-query-mode").selectOption("search");
+  await openUnifiedSearch(page, "作品关键词");
+  await chooseSearchMode(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("Synthetic query");
   await page.getByTestId("source-search-submit").click();
+  await continueSearch(page);
+  await continueSearch(page);
+
   await expect(page.getByTestId("source-completeness")).toContainText(
     "分页已读完，来源记录仍待核对",
   );
@@ -2706,11 +2839,11 @@ test("favorite inversion reads past an issue-only page and excludes it from sele
   const issues = page.getByTestId("source-issues");
   await issues.locator("summary").click();
   await expect(issues).toContainText("哔咔 · 第 2 页 · 第 1 条 · 编号缺失");
-  await page.getByTestId("source-toggle-selection").click();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-all").click();
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 2 部",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 2 本");
   await expect(issues.getByRole("checkbox")).toHaveCount(0);
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({
@@ -2718,33 +2851,33 @@ test("favorite inversion reads past an issue-only page and excludes it from sele
   });
 });
 
-test("source author mode blocks broad initials while explicit keyword mode remains available", async ({
+test("unified author mode blocks broad initials while explicit keyword mode remains available", async ({
   page,
 }) => {
   await installMock(page, { authorSearchResults: true });
-  await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
-  await page.getByTestId("source-search-input").fill("P");
-  await page.getByTestId("source-search-submit").click();
-  await expect(
-    page.getByText(/单个字母或数字无法限定作者范围，本次未发送查询/),
-  ).toBeVisible();
+  await openUnifiedSearch(page);
+  await page.getByRole("textbox", { name: "搜索作者名" }).fill("P");
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByText(/单个字母或数字无法限定作者范围/)).toBeVisible();
   expect(
     await page.evaluate(() =>
       window.sourceTest.calls.filter(
-        (c) => c.command === "source_query" && c.kind === "search",
+        (call) => call.command === "source_query" && call.kind === "search",
       ),
     ),
   ).toEqual([]);
-  await page.getByTestId("source-query-mode").selectOption("search");
+  await chooseSearchMode(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("P");
   await page.getByTestId("source-search-submit").click();
+  await continueSearch(page);
   await expect(page.getByTestId("source-completeness")).toContainText("已读完");
   expect(
     await page.evaluate(() =>
       window.sourceTest.calls
-        .filter((c) => c.command === "source_query" && c.kind === "search")
-        .map((c) => c.page),
+        .filter(
+          (call) => call.command === "source_query" && call.kind === "search",
+        )
+        .map((call) => call.page),
     ),
   ).toEqual([1, 2]);
 });
@@ -2754,11 +2887,13 @@ test("keyword search rejects pagination drift on explicit continuation and permi
 }) => {
   await installMock(page, { searchPaginationDrift: true });
   await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page.getByTestId("source-tab-JM").click();
-  await page.getByTestId("source-query-mode").selectOption("search");
+  await chooseSearchMode(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("Synthetic");
   await page.getByTestId("source-search-submit").click();
+  await continueSearch(page);
+
   await expect(page.getByTestId("source-retry")).toBeEnabled();
   await expect(page.getByTestId("source-completeness")).toContainText(
     "本次读取未完成",
@@ -2787,6 +2922,7 @@ test("keyword search rejects pagination drift on explicit continuation and permi
 
   // Drift marks the existing explicit retry as a fresh read; no automatic scan.
   await page.getByTestId("source-retry").click();
+  await continueSearch(page);
   await expect(page.getByTestId("source-completeness")).toContainText(
     "已读完当前来源的搜索范围",
   );
@@ -2798,41 +2934,29 @@ test("keyword search rejects pagination drift on explicit continuation and permi
   await expect(page.getByTestId("source-card-JM:9003")).toBeVisible();
 });
 
-test("explicit work-keyword mode retains all hits and mode changes clear author selections", async ({
+test("keyword results remain distinct from author results and changing search modes clears temporary selection", async ({
   page,
 }) => {
   await installMock(page, { authorSearchResults: true });
-  await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("Mint");
   await page.getByTestId("source-search-submit").click();
-  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
-  await page.getByTestId("source-toggle-selection").click();
-  await page.getByTestId("source-select-all").click();
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 2 部",
-  );
-  await page.getByTestId("source-query-mode").selectOption("search");
-  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
-  await expect(page.getByTestId("source-author-evidence")).toHaveCount(0);
-  await expect(page.getByTestId("source-card-JM:201")).toHaveCount(0);
-  await page.getByTestId("source-search-submit").click();
-  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
-  await expect(page.getByTestId("source-keyword-scope")).toContainText(
-    "不代表这些作品属于同一作者",
-  );
+  await continueSearch(page);
   await expect(page.getByTestId("source-filter-count")).toContainText(
     "当前显示 5 部",
   );
-  await expect(page.getByTestId("source-card-JM:203")).toContainText(
-    "Mint 合成标题命中",
+  await expect(page.getByTestId("source-keyword-scope")).toContainText(
+    "不代表这些作品属于同一作者",
   );
+  await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-all").click();
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 5 部",
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作" }),
+  ).toContainText("已选 5 本");
+  await chooseSearchMode(page, "编号或链接");
+  await expect(page.getByRole("toolbar", { name: "批量下载操作" })).toHaveCount(
+    0,
   );
-  await page.getByTestId("source-query-mode").selectOption("detail");
-  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
   await page.getByTestId("source-search-input").fill("203");
   await page.getByTestId("source-search-submit").click();
   await expect(page.getByTestId("source-detail")).toContainText(
@@ -2840,191 +2964,124 @@ test("explicit work-keyword mode retains all hits and mode changes clear author 
   );
 });
 
-for (const source of ["JM", "Pica"] as const) {
-  test(`${source} author lookup resolves source spelling and aliases identically from search and followed rows`, async ({
+for (const reviewed of [false, true]) {
+  test(`unified and followed author entries share ${reviewed ? "reviewed work credits" : "source spelling and aliases"}`, async ({
     page,
   }) => {
     await installMock(page, {
       authorSearchResults: true,
-      authorPolicyResults: true,
+      authorPolicyResults: !reviewed,
+      reviewedWorkCredits: reviewed,
     });
-    await page.goto("/");
-    const primary = source === "JM" ? "Mentha～" : "Mentha Name";
     for (const entry of ["search", "following"] as const) {
       if (entry === "search") {
-        await page.getByTestId("nav-discovery").click();
-        await page.getByTestId("source-tab-" + source).click();
-        await page.getByTestId("source-search-input").fill("Mint");
-        await page.getByTestId("source-search-submit").click();
+        await openUnifiedSearch(page);
+        await page.getByRole("textbox", { name: "搜索作者名" }).fill("Mint");
+        await page.getByTestId("completion-start").click();
       } else {
         await page.getByTestId("nav-authors").click();
-        await page.getByTestId("source-tab-" + source).click();
+        await page.getByTestId("source-tab-Pica").click();
         await page
           .getByRole("button", { name: "搜索该作者", exact: true })
           .click();
       }
-      await expect(page.getByTestId("source-completeness")).toContainText(
-        "已读完",
+      await expect(page.getByTestId("completion-counts")).toContainText(
+        "当前检查范围已读完",
       );
-      await expect(page.getByTestId("source-author-evidence")).toContainText(
-        "作者作品 3 部 · 其他关键词结果 3 部",
-      );
-      for (const id of ["201", "204", "206"])
-        await expect(
-          page.getByTestId(`source-card-${source}:${id}`),
-        ).toBeVisible();
-      for (const id of ["202", "203", "205"])
-        await expect(
-          page.getByTestId(`source-card-${source}:${id}`),
-        ).toHaveCount(0);
-      await page.getByTestId("source-toggle-selection").click();
-      await page.getByTestId("source-select-all").click();
-      await expect(page.getByTestId("source-selection-bar")).toContainText(
-        "已选 3 部",
-      );
+      for (const source of ["JM", "Pica"] as const) {
+        await page.getByLabel("更新来源").selectOption(source);
+        const correctId =
+          reviewed && source === "Pica" ? "201".padStart(24, "0") : "201";
+        const otherId =
+          reviewed && source === "Pica" ? "204".padStart(24, "0") : "204";
+        const correct = page.getByTestId(
+          `author-update-${source}:${correctId}`,
+        );
+        await expect(correct).toContainText(
+          reviewed ? "Harbor Studio (Mint)" : "Harbor Studio (Mentha)",
+        );
+        await expect(page.getByTestId("completion-counts")).toContainText(
+          `未入库 ${reviewed ? 1 : 3} 条 · 当前显示 ${reviewed ? 1 : 3} 条`,
+        );
+        if (reviewed) {
+          await expect(
+            correct.getByTestId("author-credit-reviewed"),
+          ).toHaveAttribute(
+            "title",
+            "已按本作品核对署名。来源原署名：Incorrect credit",
+          );
+          await expect(
+            page.getByTestId(`author-update-${source}:${otherId}`),
+          ).toHaveCount(0);
+          await page
+            .getByRole("button", { name: "查看其他关键词结果", exact: true })
+            .click();
+          const other = page.getByTestId(`author-update-${source}:${otherId}`);
+          await expect(other).toContainText("Different Writer");
+          await expect(other.getByRole("checkbox")).toHaveCount(0);
+          await expect(page.getByTestId("completion-select-all")).toHaveCount(
+            0,
+          );
+          await page
+            .getByRole("button", { name: "返回作者作品", exact: true })
+            .click();
+        } else {
+          for (const id of ["204", "206"])
+            await expect(
+              page.getByTestId(`author-update-${source}:${id}`),
+            ).toBeVisible();
+        }
+      }
     }
-    expect(
-      await page.evaluate(
-        (source) =>
-          window.sourceTest.calls
-            .filter(
-              (call) =>
-                call.command === "source_query" &&
-                call.kind === "search" &&
-                call.source === source,
-            )
-            .map((call) => [call.query, call.page]),
-        source,
-      ),
-    ).toEqual([
-      [primary, 1],
-      [primary, 2],
-      ["Mentha", 1],
-      ["Mentha", 2],
-      [primary, 1],
-      [primary, 2],
-      ["Mentha", 1],
-      ["Mentha", 2],
-    ]);
-  });
-}
-
-for (const source of ["JM", "Pica"] as const) {
-  test(`${source} reviewed work credits agree between discovery and followed-author entries and never override fresh changed credits`, async ({
-    page,
-  }) => {
-    const correctId = source === "Pica" ? "201".padStart(24, "0") : "201";
-    const otherId = source === "Pica" ? "204".padStart(24, "0") : "204";
-    await installMock(page, {
-      authorSearchResults: true,
-      reviewedWorkCredits: true,
-    });
-    await page.goto("/");
-    for (const entry of ["search", "following"] as const) {
-      if (entry === "search") {
-        await page.getByTestId("nav-discovery").click();
-        await page.getByTestId("source-tab-" + source).click();
-        await page.getByTestId("source-search-input").fill("Mint");
-        await page.getByTestId("source-search-submit").click();
-      } else {
-        await page.getByTestId("nav-authors").click();
-        await page.getByTestId("source-tab-" + source).click();
-        await page
-          .getByRole("button", { name: "搜索该作者", exact: true })
-          .click();
-      }
-      await expect(page.getByTestId("source-completeness")).toContainText(
-        "已读完",
+    if (reviewed) {
+      const correct = page.getByTestId(
+        `author-update-Pica:${"201".padStart(24, "0")}`,
       );
-      await expect(page.getByTestId("source-author-evidence")).toContainText(
-        "作者作品 1 部 · 其他关键词结果 4 部",
-      );
-      await expect(page.getByTestId("source-filter-count")).toContainText(
-        "未入库 1 部 · 当前显示 1 部",
-      );
-      const correct = page.getByTestId(`source-card-${source}:${correctId}`);
-      await expect(correct).toContainText("Harbor Studio (Mint)");
-      await expect(
-        correct.getByTestId("author-credit-reviewed"),
-      ).toHaveAttribute(
-        "title",
-        "已按本作品核对署名。来源原署名：Incorrect credit",
-      );
-      await expect(
-        page.getByTestId(`source-card-${source}:${otherId}`),
-      ).toHaveCount(0);
-      await page.getByTestId("source-toggle-selection").click();
-      await page.getByTestId("source-select-all").click();
-      await expect(page.getByTestId("source-selection-bar")).toContainText(
-        "已选 1 部",
-      );
-      await page.getByTestId("source-author-results-toggle").click();
-      const other = page.getByTestId(`source-card-${source}:${otherId}`);
-      await expect(other).toContainText("Different Writer");
-      await expect(other.getByTestId("author-credit-reviewed")).toHaveAttribute(
-        "title",
-        "已按本作品核对署名。来源原署名：Guest、Mint",
-      );
-      await expect(other.getByRole("checkbox")).toHaveCount(0);
-      await expect(page.getByTestId("source-select-all")).toHaveCount(0);
-      await page.getByTestId("source-author-results-toggle").click();
       await correct.locator("h3 button").click();
-      await expect(page.getByTestId("source-detail")).toContainText(
-        "Harbor Studio (Mint)",
-      );
       await expect(
         page.getByTestId("source-detail").getByTestId("author-credit-reviewed"),
       ).toHaveCount(1);
       await page.getByTestId("source-detail-back").click();
+      await page.evaluate(() => {
+        window.sourceTest.changedDetailCredit = true;
+      });
+      await correct.locator("h3 button").click();
+      await expect(page.getByTestId("source-detail")).toContainText(
+        "Website now changed credit",
+      );
+      await expect(
+        page.getByTestId("source-detail").getByTestId("author-credit-reviewed"),
+      ).toHaveCount(0);
+    } else {
+      for (const source of ["JM", "Pica"] as const) {
+        const primary = source === "JM" ? "Mentha～" : "Mentha Name";
+        expect(
+          await page.evaluate(
+            (target) =>
+              window.sourceTest.calls
+                .filter(
+                  (call) =>
+                    call.command === "source_query" &&
+                    call.kind === "search" &&
+                    call.source === target,
+                )
+                .map((call) => [call.query, call.page]),
+            source,
+          ),
+        ).toEqual([
+          [primary, 1],
+          [primary, 2],
+          ["Mentha", 1],
+          ["Mentha", 2],
+          [primary, 1],
+          [primary, 2],
+          ["Mentha", 1],
+          ["Mentha", 2],
+        ]);
+      }
     }
-    await page
-      .getByTestId(`source-card-${source}:${correctId}`)
-      .locator("h3 button")
-      .click();
-    await page.evaluate(() => {
-      window.sourceTest.changedDetailCredit = true;
-    });
-    // Reopening obtains fresh metadata; the old expected-author guard must fail.
-    await page.getByTestId("source-detail-back").click();
-    await page
-      .getByTestId(`source-card-${source}:${correctId}`)
-      .locator("h3 button")
-      .click();
-    await expect(page.getByTestId("source-detail")).toContainText(
-      "Website now changed credit",
-    );
-    await expect(
-      page.getByTestId("source-detail").getByTestId("author-credit-reviewed"),
-    ).toHaveCount(0);
   });
 }
-
-test("searching a followed source author uses the same explicit author evidence", async ({
-  page,
-}) => {
-  await installMock(page, { authorSearchResults: true });
-  await page.goto("/");
-  await page.getByTestId("nav-authors").click();
-  await page.getByTestId("source-tab-Pica").click();
-  await expect(page.getByTestId("source-authors")).toContainText("Mint");
-  await page.getByRole("button", { name: "搜索该作者", exact: true }).click();
-  await expect(page.getByTestId("source-sort")).toHaveValue("updated-desc");
-  await page.getByTestId("source-sort").selectOption("updated-asc");
-  await expect(page.getByTestId("source-completeness")).toContainText("已读完");
-  await expect(page.getByTestId("source-author-evidence")).toContainText(
-    "作者作品 2 部 · 其他关键词结果 3 部",
-  );
-  await expect(page.getByTestId("source-card-Pica:202")).toHaveCount(0);
-  await expect(page.getByTestId("source-query-mode")).toHaveCount(0);
-  await page.getByTestId("source-toggle-selection").click();
-  await page.getByTestId("source-select-all").click();
-  await expect(page.getByTestId("source-selection-bar")).toContainText(
-    "已选 2 部",
-  );
-  await page.getByTestId("source-author-results-toggle").click();
-  await expect(page.getByTestId("source-selection-bar")).toHaveCount(0);
-  await expect(page.getByTestId("source-card-Pica:205")).toBeVisible();
-});
 
 async function favoritePages(page: Page) {
   return page.evaluate(() =>
@@ -3071,10 +3128,10 @@ async function connectJM(page: Page) {
 async function detail(page: Page, source: Source = "JM") {
   await openFavorites(page);
   await page.getByTestId("source-tab-" + source).click();
-  await page.getByTestId("source-open-" + source + ":123").click();
   await page
-    .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByTestId("source-open-" + source + ":123")
+    .locator("xpath=ancestor::article")
+    .locator("h3 button")
     .click();
   await expect(page.getByTestId("source-detail")).toContainText(
     "合成验收 " + source,

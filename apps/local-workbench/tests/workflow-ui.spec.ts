@@ -1,3 +1,4 @@
+import { openUnifiedSearch } from "./browse-ui-helpers.ts";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { installWorkflow } from "./workflow-fixture.ts";
@@ -42,21 +43,21 @@ test.afterEach(async ({ page }) => {
   ).toEqual([]);
 });
 async function searchAuthor(page: Page) {
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成新作者");
   await page.getByTestId("completion-start").click();
 }
 async function downloadOne(page: Page, key: string) {
+  const before = (await calls(page, "jm_download_confirm")).length;
   await card(page, key)
     .getByRole("button", { name: "下载到漫画库", exact: true })
     .click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-plan-destination")).toContainText(
-    ".zip",
-  );
-  await page.getByTestId("download-confirm").click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(before + 1);
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
-  await expect(page.getByTestId("native-downloads")).toBeVisible();
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  await expect(page.getByTestId("completion-panel")).toBeVisible();
 }
 
 test("manual updates, mixed downloads, automatic ownership, a new author and restart form one continuous workflow", async ({
@@ -78,15 +79,18 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
   await page.getByRole("button", { name: "多选", exact: true }).click();
   await card(page, "JM:102").getByRole("checkbox").check();
   await card(page, pica(201)).getByRole("checkbox").check();
-  await page.getByRole("button", { name: "查看下载计划", exact: true }).click();
-  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
-  expect(await page.evaluate(() => window.workflowTest.queue.tasks)).toEqual(
-    [],
-  );
-  await page.getByTestId("download-batch-confirm").click();
+  await page
+    .getByRole("toolbar", { name: "批量下载操作" })
+    .getByRole("button", { name: "下载", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () => (await calls(page, "jm_download_selection_confirm")).length,
+    )
+    .toBe(1);
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
   expect(await calls(page, "jm_download_selection_confirm")).toHaveLength(1);
-  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("completion-panel")).toBeVisible();
   await expect(counts(page)).toContainText("已入库 1 条 · 未入库 4 条");
   await page.evaluate(() => window.workflowTest.finishDownloads());
   // No refresh click: the download controller's completion must update this page.
@@ -110,7 +114,7 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
   await page.getByTestId("source-filter-missing").click();
   await expect(page.getByTestId("source-card-JM:103")).toBeVisible();
   await expect(page.getByTestId("source-card-JM:102")).toHaveCount(0);
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page.getByTestId("discovery-JM").click();
   await expect(page.getByTestId("ranking-counts")).toContainText(
     "已入库 2 条 · 未入库 1 条",
@@ -130,7 +134,7 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
     ["Pica", 2],
   ]);
   await downloadOne(page, "JM:104");
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByLabel("搜索作者名")).toHaveValue("合成新作者");
   await expect(counts(page)).toContainText("已记录 4 条");
   await page.evaluate(() => window.workflowTest.finishDownloads());
@@ -140,7 +144,7 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
   await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
   await downloadOne(page, pica(203));
   await page.evaluate(() => window.workflowTest.finishDownloads());
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(counts(page)).toContainText(
     "已入库 4 条 · 未入库 0 条 · 当前显示 0 条",
   );
@@ -166,9 +170,59 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
   await expect(counts(page)).toContainText("已入库 3 条 · 未入库 2 条");
   expect(await calls(page, "discovery_start")).toHaveLength(0);
   expect(await calls(page, "jm_download_confirm")).toHaveLength(0);
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByLabel("搜索作者名")).toBeEmpty();
   expect(await calls(page, "source_query")).toHaveLength(0);
+});
+
+test("floating selection enqueues successful items and retains only failed items without leaving author updates", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const target = window as unknown as {
+      __TAURI_INTERNALS__: {
+        invoke(
+          command: string,
+          args?: Record<string, unknown>,
+        ): Promise<unknown>;
+      };
+    };
+    const previous = target.__TAURI_INTERNALS__.invoke;
+    target.__TAURI_INTERNALS__.invoke = async (command, args = {}) => {
+      if (
+        command === "jm_download_batch_prepare" &&
+        (args.scope as { source?: string })?.source === "Pica"
+      ) {
+        window.workflowTest.calls.push({ command, args });
+        return {
+          batchId: null,
+          plans: [],
+          issues: (args.inputs as string[]).map((input) => ({
+            input,
+            errorCode: "SOURCE_TIMEOUT",
+          })),
+        };
+      }
+      return previous(command, args);
+    };
+  });
+  await page.getByTestId("nav-completion").click();
+  await page.getByTestId("completion-start").click();
+  await expect(page.getByTestId("completion-progress")).toBeVisible();
+  await page.evaluate(() => window.workflowTest.finishCheck());
+  await expect(card(page, "JM:102")).toBeVisible();
+  await page.getByRole("button", { name: "多选", exact: true }).click();
+  await card(page, "JM:102").getByRole("checkbox").check();
+  await card(page, pica(201)).getByRole("checkbox").check();
+  const bar = page.getByRole("toolbar", { name: "批量下载操作" });
+  await expect(bar).toContainText("已选 2 本");
+  await bar.getByRole("button", { name: "下载", exact: true }).click();
+  await expect(bar).toContainText("已选 1 本");
+  await expect(card(page, "JM:102").getByRole("checkbox")).not.toBeChecked();
+  await expect(card(page, pica(201)).getByRole("checkbox")).toBeChecked();
+  await expect(page.getByTestId("completion-panel")).toBeVisible();
+  await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
 });
 
 test("a later search-page failure survives navigation without claiming completion or silently retrying", async ({
@@ -190,7 +244,7 @@ test("a later search-page failure survives navigation without claiming completio
   ).toBeVisible();
   await page.getByLabel("更新来源").selectOption("Pica");
   await page.getByTestId("nav-queue").click();
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByLabel("更新来源")).toHaveValue("Pica");
   await expect(counts(page)).toContainText("检查范围尚未读完 · 已记录 1 条");
   await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
@@ -219,7 +273,7 @@ test("a manually started search survives a queue visit but a changed account inv
     window.workflowTest.searchFault = "none";
     window.workflowTest.releasePage!();
   });
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(counts(page)).toContainText("当前检查范围已读完 · 已记录 4 条");
   expect(await calls(page, "source_query")).toHaveLength(4);
 
@@ -241,7 +295,7 @@ test("a manually started search survives a queue visit but a changed account inv
     window.workflowTest.searchFault = "none";
     window.workflowTest.releasePage!();
   });
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByLabel("搜索作者名")).toBeEmpty();
   await expect(counts(page)).toContainText("已记录 0 条");
   await searchAuthor(page);
@@ -276,7 +330,7 @@ test("library read failure makes author and ranking ownership unknown until a su
   await expect(counts(page)).toContainText(
     "已入库 0 条 · 未入库 0 条 · 当前显示 0 条 · 状态待核实 5 条",
   );
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page.getByTestId("discovery-JM").click();
   await expect(page.getByTestId("ranking-counts")).toContainText(
     "已入库 0 条 · 未入库 0 条",

@@ -16,6 +16,8 @@ All asynchronous methods return `SourceResult<T>`:
 - `profile(&SourceSession) -> SourceAccount`
 - `favorites(&SourceSession, FavoritePageRequest) -> SourcePage`
 - `search(&SourceSession, keyword, page) -> SourcePage`
+- `tag(&SourceSession, tag, page) -> SourcePage` (native tag browsing)
+- `category(&SourceSession, category, page) -> SourcePage` (Pica only)
 - `detail(&SourceSession, id_or_link) -> SourceWork`
 - `set_favorite(&SourceSession, work_id, desired) -> FavoriteUpdate`
 - `thumbnail(&SourceSession, work_id) -> Option<String>` (static JPEG data URL)
@@ -51,18 +53,28 @@ authors, translation-team names and ordinary categories such as `日漫` never i
 a language.
 
 Pica favorites expose `categories`; its search, ranking and detail schemas also
-expose `tags`. Only explicit language labels from a bounded valid categories
-array can supplement tags, once per kind, for at most 66 normalized tags. Invalid
-optional categories do not hide an otherwise valid work. JM list schemas do not
-establish language tags; already available JM detail tags remain usable. The
-account layer can retain at most two previously read language labels for the
-exact work in the current source session when a response has no explicit label.
+expose `tags`. Valid category labels supplement tags, including explicit BL
+categories. Each raw array keeps its existing 64-entry limit; the merged DTO
+contains at most 128 labels. Language labels still collapse to one per kind.
+Optional `SourceWork.categories` preserves the source field's provenance, so
+the interface can browse a category with `c=` instead of confusing it with `t=`.
+Invalid optional categories do not hide an otherwise valid work. JM list
+schemas do not establish language tags; already available detail tags remain
+usable. The account layer retains compact language and BL evidence for the
+exact work in the current source session when lightweight responses omit it.
 Fresh labels, including conflicts, replace historical language evidence. These
 metadata operations add no source requests and do not expand the 64 KiB work
 budget. At its extreme boundary, category language evidence first replaces an
 optional description; non-language tags can then yield to preserve a conflict.
 If even both compact language labels cannot fit beside required metadata, the
 work remains unknown rather than falsely selecting one conflict side.
+
+BL classification uses whole explicit labels such as `BL`, `耽美`, `Yaoi`, and
+`Boys Love`, with Unicode NFKC, case, apostrophe and whitespace normalization.
+It does not inspect titles/authors, match substrings (`black`, `非BL`, and `GL`
+are not BL evidence), or infer missing classifications. Compact browser caches
+retain at most two language labels and one BL label. No additional detail
+request is made for classification; older records with no evidence stay unknown.
 
 JM and Pica search, favorite and ranking pages isolate malformed work records.
 `SourcePage.items` contains only validated works in their original relative order;
@@ -106,6 +118,10 @@ request still uses `FavoritePageRequest.folderId`. The API's POST
 `/favorite` accepts `aid` and toggles add/remove; it does not select a folder.
 Search uses GET `/search?main_tag=0&search_query=...&page=...&o=mr`; `redirect_aid`
 is handled by an exact detail read. GET `/album?id=...` returns one work.
+Native tag browsing uses the same search route with `main_tag=3`, as established
+by the already-pinned Python `JmSearchClient.search_tag` and mobile
+`JmApiClient.search` implementation. A tag response cannot redirect into a
+number lookup or silently fall back to keyword search.
 
 Pica: POST `auth/sign-in` returns the session token; GET `users/profile` validates
 it. GET `users/favourite?s=dd&page=...` returns a paged `comics` object. Keyword
@@ -113,6 +129,14 @@ search uses POST `comics/advanced-search?page=...` with keyword/sort/categories.
 GET `comics/{id}` returns details. The account-only supplementary reference below
 defines POST `comics/{id}/favourite` with no body, returning action `favourite` or
 `un_favourite`; details provide `isFavourite`.
+Native tag browsing uses GET `comics?t=<encoded tag>&s=dd&page=<page>`, defined
+by that same fixed PicaComic-go reference's `Comics` function (`tag` maps to `t`,
+whereas category maps to `c`). It fetches only the caller-requested page and is
+distinct from `advanced-search` keyword matching. These are pinned protocol
+facts and synthetic routing evidence, not a claim of live account acceptance.
+Pica category browsing uses the separate `comics?c=<category>&s=dd&page=<page>`
+route from the same function. JM category browsing is explicitly unsupported
+by this new request kind; existing JM ranking/recent routes are unchanged.
 
 `FavoritePageRequest.reverse` defaults to false. Pica uses source-side `dd`
 (newest first) or `da` (oldest first). JM's default remains exactly `o=mr`;

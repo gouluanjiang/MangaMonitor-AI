@@ -39,6 +39,9 @@ pub struct SourceWork {
     pub authors: Vec<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    /// Preserve Pica category provenance: c= is not the same query as t=.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Vec<String>>,
     pub favorite: Option<bool>,
     pub chapter_count: Option<u64>,
     pub page_count: Option<u64>,

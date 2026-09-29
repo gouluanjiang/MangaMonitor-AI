@@ -1,5 +1,5 @@
 import type { WorkReference } from "./booklists.ts";
-import { inheritLanguageTags } from "./source-language.ts";
+import { inheritContentTags } from "./content-filter.ts";
 
 export type Source = "JM" | "Pica";
 export interface SourceScope {
@@ -38,6 +38,8 @@ export interface SourceWork {
   authorCreditReview?: { originalAuthors: string[] };
   description: string | null;
   tags: string[];
+  /** Pica category provenance; category browsing uses c=, tags use t=. */
+  categories?: string[];
   favorite: boolean | null;
   chapterCount: number | null;
   pageCount: number | null;
@@ -108,7 +110,14 @@ export interface AccountSummary {
   errorCode: string | null;
 }
 export interface SourceQuery {
-  kind: "favorites" | "search" | "detail" | "ranking" | "recent";
+  kind:
+    | "favorites"
+    | "search"
+    | "tag"
+    | "category"
+    | "detail"
+    | "ranking"
+    | "recent";
   query: string;
   folderId: string | null;
   page: number;
@@ -184,7 +193,7 @@ export function mergeSourceWorks(
     const key = sourceWorkKey(work),
       previous = merged.get(key);
     const tags = previous
-      ? inheritLanguageTags(work.tags, previous.tags)
+      ? inheritContentTags(work.tags, previous.tags)
       : work.tags;
     const sourceUpdatedAt =
       work.sourceUpdatedAt == null && previous?.sourceUpdatedAt

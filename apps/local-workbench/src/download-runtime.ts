@@ -1,5 +1,9 @@
 import { invokeDesktop, isDesktopRuntime } from "./runtime.ts";
 import {
+  downloadInputWorkId,
+  downloadSubmissionKey,
+} from "./download-input.ts";
+import {
   emptyDownloads,
   downloadSelectionLimit,
   downloadPreparationChunk,
@@ -20,6 +24,8 @@ import type {
   DownloadContexts,
   DownloadSelectionInput,
   DownloadSelectionPlan,
+  DownloadSubmissionResult,
+  DownloadSubmissionFailure,
 } from "./download-types.ts";
 import type { AccountSummary } from "./source-types.ts";
 export class DownloadError extends Error {
@@ -173,6 +179,17 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
       source: downloadSource(task.source),
       workId: workId(downloadSource(task.source), task.workId),
       title: text(task.title),
+      ...(task.tags === undefined
+        ? {}
+        : {
+            tags:
+              Array.isArray(task.tags) && task.tags.length <= 1000
+                ? task.tags.map((tag) => text(tag))
+                : invalid(),
+          }),
+      ...(task.rootId === undefined
+        ? {}
+        : { rootId: rootIdentity(task.rootId) }),
       phase: task.phase,
       filesDone,
       filesTotal,
@@ -632,6 +649,34 @@ export interface DownloadState {
   batchPlan: DownloadSelectionPlan | null;
   preparation: { done: number; total: number } | null;
   recentBatch: RecentDownloadBatch | null;
+  submittingKeys: string[];
+  submissionIssues: DownloadSubmissionFailure[];
+}
+export function downloadActionState(
+  state: Pick<DownloadState, "snapshot" | "submittingKeys">,
+  source: DownloadSource,
+  workId: string,
+  rootId?: string | null,
+): { label: string; disabled: boolean } {
+  if (state.submittingKeys.includes(downloadSubmissionKey(source, workId)))
+    return { label: "正在加入…", disabled: true };
+  const tasks = state.snapshot.tasks.filter(
+    (task) =>
+      task.source === source &&
+      task.workId === workId &&
+      (!rootId || !task.rootId || task.rootId === rootId),
+  );
+  const task =
+    tasks.find((item) => item.phase !== "downloaded") ??
+    tasks.find(isDownloadPresent);
+  if (!task) return { label: "下载到漫画库", disabled: false };
+  if (task.phase === "error") return { label: "重试下载", disabled: false };
+  if (task.phase === "paused") return { label: "继续下载", disabled: false };
+  if (isDownloadPresent(task)) return { label: "已入库", disabled: true };
+  return {
+    label: task.phase === "queued" ? "已排队" : "下载中",
+    disabled: true,
+  };
 }
 /** Read polling is single-flight and never starts or resumes persisted work. */
 export class DownloadController {
@@ -646,6 +691,8 @@ export class DownloadController {
     batchPlan: null,
     preparation: null,
     recentBatch: null,
+    submittingKeys: [],
+    submissionIssues: [],
   };
   private listeners = new Set<(state: DownloadState) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -657,6 +704,8 @@ export class DownloadController {
   private preparedContext: string | null = null;
   private preparedBatchContexts: DownloadContext[] = [];
   private cancellation: Promise<void> = Promise.resolve();
+  private submissionTail: Promise<void> = Promise.resolve();
+  private pendingSubmissions = new Map<string, number>();
   constructor(adapter: DownloadAdapter) {
     this.adapter = adapter;
   }
@@ -754,6 +803,243 @@ export class DownloadController {
       }
     })();
     return this.readPromise;
+  }
+  /** The click is the approval. Each submitted work still passes the native
+   * prepare/confirm or revision-bound retry gate with its original context. */
+  enqueueSelection(
+    contexts: DownloadContexts,
+    inputs: DownloadSelectionInput[],
+    currentContexts: () => DownloadContexts = () => contexts,
+  ): Promise<DownloadSubmissionResult> {
+    const seenInputs = new Set<string>();
+    const requested = inputs
+      .filter((item) => {
+        const key = downloadSubmissionKey(item.source, item.input);
+        if (seenInputs.has(key)) return false;
+        seenInputs.add(key);
+        return true;
+      })
+      .map((item) => ({
+        source: item.source,
+        input: item.input.trim(),
+        workId: downloadInputWorkId(item.source, item.input),
+      }));
+    const failedResult = (code: string): DownloadSubmissionResult => ({
+      accepted: [],
+      failed: requested.map((item) => ({
+        ...item,
+        errorCode: code,
+        message: downloadErrorMessage(code),
+      })),
+    });
+    if (!requested.length || inputs.length > downloadSelectionLimit)
+      return Promise.resolve(failedResult("DOWNLOAD_BATCH_LIMIT"));
+    const bound: DownloadContexts = {
+      JM: contexts.JM
+        ? { ...contexts.JM, scope: { ...contexts.JM.scope } }
+        : null,
+      Pica: contexts.Pica
+        ? { ...contexts.Pica, scope: { ...contexts.Pica.scope } }
+        : null,
+    };
+    const epoch = this.epoch;
+    for (const item of requested) {
+      const key = downloadSubmissionKey(item.source, item.input);
+      this.pendingSubmissions.set(
+        key,
+        (this.pendingSubmissions.get(key) ?? 0) + 1,
+      );
+    }
+    this.publish({ submittingKeys: [...this.pendingSubmissions.keys()] });
+    const finish = (item: DownloadSelectionInput) => {
+      if (epoch !== this.epoch) return;
+      const key = downloadSubmissionKey(item.source, item.input);
+      const count = this.pendingSubmissions.get(key) ?? 0;
+      if (count <= 1) this.pendingSubmissions.delete(key);
+      else this.pendingSubmissions.set(key, count - 1);
+      this.publish({ submittingKeys: [...this.pendingSubmissions.keys()] });
+    };
+    const checkContext = (source: DownloadSource): DownloadContext => {
+      const original = bound[source],
+        current = currentContexts()[source];
+      if (epoch !== this.epoch)
+        throw new DownloadError("DOWNLOAD_REQUEST_CANCELLED");
+      if (!original || !current)
+        throw new DownloadError("DOWNLOAD_SESSION_REQUIRED");
+      if (contextKey(original) !== contextKey(current))
+        throw new DownloadError("DOWNLOAD_PLAN_STALE");
+      return original;
+    };
+    const run = async (): Promise<DownloadSubmissionResult> => {
+      if (epoch !== this.epoch)
+        return failedResult("DOWNLOAD_REQUEST_CANCELLED");
+      while (this.state.busy && epoch === this.epoch)
+        await new Promise<void>((resolve) => {
+          const unsubscribe = this.subscribe((state) => {
+            if (!state.busy || epoch !== this.epoch) {
+              unsubscribe();
+              resolve();
+            }
+          });
+        });
+      if (epoch !== this.epoch)
+        return failedResult("DOWNLOAD_REQUEST_CANCELLED");
+      this.publish({ busy: true, error: "", submissionIssues: [] });
+      clearTimeout(this.timer);
+      const result: DownloadSubmissionResult = { accepted: [], failed: [] };
+      let refreshError: unknown = null;
+      try {
+        await this.readPromise;
+        await this.cancellation;
+        if (epoch !== this.epoch)
+          return failedResult("DOWNLOAD_REQUEST_CANCELLED");
+        try {
+          const next = await this.adapter.read(true);
+          if (epoch === this.epoch) this.accept(next);
+        } catch (cause) {
+          refreshError = cause;
+        }
+        for (const item of requested) {
+          if (epoch !== this.epoch)
+            return failedResult("DOWNLOAD_REQUEST_CANCELLED");
+          try {
+            if (refreshError) throw refreshError;
+            const context = checkContext(item.source);
+            const matching = this.state.snapshot.tasks.filter(
+              (task) =>
+                task.source === item.source &&
+                task.workId === item.workId &&
+                (!task.rootId || task.rootId === context.rootId),
+            );
+            const existing =
+              matching.find((task) => task.phase !== "downloaded") ??
+              matching.find(isDownloadPresent);
+            if (existing) {
+              if (isDownloadPresent(existing)) {
+                result.accepted.push({
+                  ...item,
+                  taskId: existing.id,
+                  outcome: "present",
+                });
+                continue;
+              }
+              if (
+                ["queued", "downloading", "verifying", "saving"].includes(
+                  existing.phase,
+                )
+              ) {
+                result.accepted.push({
+                  ...item,
+                  taskId: existing.id,
+                  outcome: "existing",
+                });
+                continue;
+              }
+              const action = existing.phase === "error" ? "retry" : "resume";
+              if (!canControlDownload(existing, action, context.scope))
+                throw new DownloadError("DOWNLOAD_WORKER_BUSY");
+              checkContext(item.source);
+              const next = await this.adapter.control(
+                context.scope,
+                existing.id,
+                existing.revision,
+                action,
+              );
+              if (epoch !== this.epoch)
+                return failedResult("DOWNLOAD_REQUEST_CANCELLED");
+              if (
+                !next.tasks.some(
+                  (task) =>
+                    task.id === existing.id &&
+                    task.source === item.source &&
+                    task.workId === item.workId,
+                )
+              )
+                throw new DownloadError("DOWNLOAD_RESPONSE_INVALID");
+              this.accept(next);
+              result.accepted.push({
+                ...item,
+                taskId: existing.id,
+                outcome: action === "retry" ? "retried" : "resumed",
+              });
+              continue;
+            }
+            const plan = await this.adapter.prepare(context, item.input);
+            checkContext(item.source);
+            if (
+              plan.source !== item.source ||
+              plan.rootId !== context.rootId ||
+              plan.generation !== context.generation ||
+              (item.workId !== null && plan.workId !== item.workId)
+            )
+              throw new DownloadError("DOWNLOAD_PLAN_STALE");
+            const next = await this.adapter.confirm(plan.planId, plan.revision);
+            if (epoch !== this.epoch)
+              return failedResult("DOWNLOAD_REQUEST_CANCELLED");
+            if (
+              !next.tasks.some(
+                (task) =>
+                  task.id === plan.planId &&
+                  task.source === plan.source &&
+                  task.workId === plan.workId,
+              )
+            )
+              throw new DownloadError("DOWNLOAD_RESPONSE_INVALID");
+            this.accept(next);
+            result.accepted.push({
+              ...item,
+              workId: plan.workId,
+              taskId: plan.planId,
+              outcome: "queued",
+            });
+          } catch (cause) {
+            const rawCode = (cause as { code?: unknown })?.code;
+            const code =
+              typeof rawCode === "string" && /^[A-Z0-9_]{1,100}$/.test(rawCode)
+                ? rawCode
+                : "DOWNLOAD_UNAVAILABLE";
+            if (code === "DOWNLOAD_ALREADY_PRESENT" && item.workId) {
+              result.accepted.push({
+                ...item,
+                taskId: null,
+                outcome: "present",
+              });
+            } else
+              result.failed.push({
+                ...item,
+                errorCode: code,
+                message: downloadErrorMessage(code),
+              });
+          } finally {
+            finish(item);
+          }
+        }
+        if (epoch === this.epoch) {
+          this.rememberBatch([
+            ...new Set(
+              result.accepted.flatMap((item) =>
+                item.taskId ? [item.taskId] : [],
+              ),
+            ),
+          ]);
+          // Per-item failures are separate from queue-read health: a bad input
+          // must not stop polling successful work from this same batch.
+          this.publish({ submissionIssues: result.failed });
+        }
+        return result;
+      } finally {
+        if (epoch === this.epoch) {
+          this.publish({ busy: false });
+          this.schedule();
+        }
+      }
+    };
+    const result = this.submissionTail.then(run, run);
+    this.submissionTail = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
   }
   async prepare(context: DownloadContext, input: string): Promise<void> {
     if (this.state.busy) return;
@@ -1134,7 +1420,7 @@ export class DownloadController {
     this.readPromise = null;
     this.readingFiles = false;
     this.pendingRecheck = false;
-    this.listeners.clear();
+    this.pendingSubmissions.clear();
     this.state = {
       ...this.state,
       reading: false,
@@ -1142,6 +1428,9 @@ export class DownloadController {
       plan: null,
       batchPlan: null,
       preparation: null,
+      submittingKeys: [],
     };
+    for (const listener of this.listeners) listener(this.state);
+    this.listeners.clear();
   }
 }

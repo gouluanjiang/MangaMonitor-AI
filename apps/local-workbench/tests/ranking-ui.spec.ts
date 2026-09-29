@@ -1,3 +1,4 @@
+import { openUnifiedSearch } from "./browse-ui-helpers.ts";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { initialPreferences } from "../src/preferences.ts";
@@ -218,7 +219,7 @@ async function install(page: Page, languageTags?: string[][]) {
     },
   );
   await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
 }
 
 test("both rankings show explicit languages while a manga category remains unknown and selection stays reachable", async ({
@@ -244,12 +245,13 @@ test("both rankings show explicit languages while a manga category remains unkno
       await expect(badge).toHaveText(label);
       await expect(badge).toHaveAttribute("data-language-context", "source");
     }
+    await page.getByRole("button", { name: "多选", exact: true }).click();
     const selectedId = source === "JM" ? "2" : "2".padStart(24, "0");
     await page
       .getByTestId(`rank-work-${source}:${selectedId}`)
       .getByRole("checkbox")
       .check();
-    await expect(page.getByTestId("ranking-panel")).toContainText("已选 1 部");
+    await expect(page.getByTestId("ranking-panel")).toContainText("已选 1 本");
     await page
       .getByTestId(`rank-work-${source}:${selectedId}`)
       .scrollIntoViewIfNeeded();
@@ -335,10 +337,10 @@ test("weekly and Pica ranks share receipt filters while details preserve the sel
   await page
     .getByTestId("rank-work-JM:2")
     .getByRole("button", { name: /打开《/ })
-    .click();
+    .click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();

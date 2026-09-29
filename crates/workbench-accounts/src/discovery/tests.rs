@@ -58,6 +58,7 @@ fn work(source: Source, id: &str, authors: &[&str]) -> SourceWork {
         authors: authors.iter().map(|author| (*author).into()).collect(),
         description: Some("合成元数据".into()),
         tags: vec!["中文".into()],
+        categories: None,
         favorite: None,
         chapter_count: Some(1),
         page_count: Some(20),
@@ -798,6 +799,22 @@ fn discovery_language_merge_preserves_conflicts_and_fresh_tags_when_authors_are_
         .work
         .tags
         .is_empty());
+}
+
+#[test]
+fn saved_author_catalog_keeps_bl_evidence_when_list_metadata_omits_tags() {
+    let mut source_work = work(Source::Jm, "123", &["Author A"]);
+    source_work.tags = vec!["BL".into(), "中文".into()];
+    let existing = DiscoveryRecord {
+        work: discovery_work_from_source(source_work), matched_authors: vec!["Author A".into()],
+        author_verified: true, observed_at: 100, scan_id: "a".repeat(64), first_discovered_run_id: None,
+    };
+    let mut incoming = existing.clone();
+    incoming.work.tags.clear();
+    incoming.work.authors.clear();
+    let merged = merged_record(Some(&existing), incoming);
+    assert_eq!(merged.work.tags, ["中文", "BL"]);
+    assert!(merged.work.is_valid());
 }
 
 #[test]

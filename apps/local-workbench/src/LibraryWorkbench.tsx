@@ -1,4 +1,8 @@
-import { useReaderAccess } from "./reader-access.tsx";
+import { CoverInteraction, useReaderAccess } from "./reader-access.tsx";
+import { AuthorLinks } from "./AuthorLinks.tsx";
+import { useTagSearch } from "./TagSearch.tsx";
+import { browseScope } from "./browse-session.ts";
+import { useBrowseSession, useBrowseSessionState } from "./useBrowseSession.ts";
 import type { ReactNode } from "react";
 import {
   useCallback,
@@ -7,6 +11,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   LibraryAdapter,
@@ -33,6 +38,13 @@ import type { SourceWork } from "./source-types.ts";
 import type { SourceGridHandle, GridAnchor } from "./VirtualSourceGrid.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
+import {
+  getContentFilterRevision,
+  isBlTagged,
+  isContentHidden,
+  rememberContentWork,
+  subscribeContentFilter,
+} from "./content-filter.ts";
 import "./library-workbench.css";
 import {
   libraryFilterLabels,
@@ -340,6 +352,7 @@ function LibraryDetail({
   onBack(): void;
 }) {
   const readerAccess = useReaderAccess();
+  const searchTag = useTagSearch();
   const [opening, setOpening] = useState(false);
   const [locationMessage, setLocationMessage] = useState("");
   const request = useRef(0);
@@ -397,14 +410,22 @@ function LibraryDetail({
               : item.format.toUpperCase()}
           </p>
           <h1>{item.title}</h1>
-          <p>
-            {item.authors.length ? item.authors.join("、") : "作者资料未取得"}
-          </p>
+          <AuthorLinks authors={item.authors} />
           <div className="source-tags">
             <SourceLanguageBadge tags={item.tags} localVersion inline />
-            {item.tags.map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
+            {item.tags.map((tag) =>
+              item.sourceRef && searchTag ? (
+                <button
+                  className="tag-search"
+                  key={tag}
+                  onClick={() => searchTag(item.sourceRef!.source, tag)}
+                >
+                  {tag}
+                </button>
+              ) : (
+                <span key={tag}>{tag}</span>
+              ),
+            )}
           </div>
           <dl className="source-facts">
             <div>
@@ -517,20 +538,13 @@ export function LibraryWorkbench({
   requestKey?: number;
   searchControl?: ReactNode;
 }) {
-  const readerAccess = useReaderAccess();
-  const choose = (item: LibraryItem) => {
-    const { rootId, generation } = library.snapshot;
-    if (!rootId) return open(item);
-    readerAccess.choose(
-      { kind: "library", rootId, generation, entryId: item.id },
-      item.title,
-      () => open(item),
-    );
-  };
   const [sort, setSort] = useState<LibrarySort>(() =>
       readSortPreference("library", librarySorts, "added-desc"),
     ),
-    [filter, setFilter] = useState<LibraryFilter>("all"),
+    [filter, setFilter] = useBrowseSessionState<LibraryFilter>(
+      browseScope("library-filter", library.snapshot.rootId),
+      "all",
+    ),
     [detailId, setDetailId] = useState<string | null>(null),
     [densitySaving, setDensitySaving] = useState(false);
   const grid = useRef<SourceGridHandle>(null),
@@ -539,18 +553,59 @@ export function LibraryWorkbench({
     densityAnchor = useRef<{
       density: 5 | 7 | 9;
       anchor: GridAnchor | null;
-    } | null>(null),
-    scroll = useRef(0),
-    activeRef = useRef(active);
-  activeRef.current = active;
-  const items = useMemo(
-    () => filterLibraryItems(library.snapshot.items, query, sort, filter),
-    [library.snapshot.items, query, sort, filter],
+    } | null>(null);
+  const contentRevision = useSyncExternalStore(
+    subscribeContentFilter,
+    getContentFilterRevision,
+    getContentFilterRevision,
   );
-  const detail = library.snapshot.items.find((item) => item.id === detailId);
+  useEffect(() => {
+    for (const item of library.snapshot.items) {
+      if (!isBlTagged(item.tags)) continue;
+      if (item.sourceRef)
+        rememberContentWork({ ...item.sourceRef, tags: item.tags });
+      for (const link of item.links ?? [])
+        rememberContentWork({ ...link.reference, tags: item.tags });
+    }
+  }, [library.snapshot.items]);
+  const visibleItems = useMemo(
+    () =>
+      library.snapshot.items.filter(
+        (item) =>
+          !isBlTagged(item.tags) &&
+          !(item.sourceRef && isContentHidden(item.sourceRef)) &&
+          !(item.links ?? []).some((link) => isContentHidden(link.reference)),
+      ),
+    [library.snapshot.items, contentRevision],
+  );
+  const items = useMemo(
+    () => filterLibraryItems(visibleItems, query, sort, filter),
+    [visibleItems, query, sort, filter],
+  );
+  const detail = visibleItems.find((item) => item.id === detailId);
+  const itemKeys = useMemo(() => items.map((item) => item.id), [items]);
+  useBrowseSession({
+    scope: browseScope("library", library.snapshot.rootId, query, filter, sort),
+    active,
+    enabled: !detail,
+    root,
+    grid,
+    itemKeys,
+  });
+  useBrowseSession({
+    scope: browseScope(
+      "library-detail",
+      library.snapshot.rootId,
+      detail?.id ?? null,
+    ),
+    active,
+    enabled: Boolean(detail),
+    root,
+    itemKeys: [],
+  });
   const searchedItems = useMemo(
-    () => filterLibraryItems(library.snapshot.items, query),
-    [library.snapshot.items, query],
+    () => filterLibraryItems(visibleItems, query),
+    [visibleItems, query],
   );
   useEffect(() => {
     setDetailId(null);
@@ -572,24 +627,6 @@ export function LibraryWorkbench({
       densityAnchor.current = null;
     }
   }, [density]);
-  useLayoutEffect(() => {
-    const main = root.current?.closest("main");
-    if (!main) return;
-    const remember = () => {
-      if (activeRef.current) scroll.current = main.scrollTop;
-    };
-    main.addEventListener("scroll", remember, { passive: true });
-    return () => main.removeEventListener("scroll", remember);
-  }, []);
-  useLayoutEffect(() => {
-    if (active) {
-      const frame = requestAnimationFrame(() => {
-        const main = root.current?.closest("main");
-        if (main) main.scrollTop = scroll.current;
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [active]);
   function open(item: LibraryItem) {
     anchor.current = grid.current?.capture(item.id) ?? null;
     setDetailId(item.id);
@@ -758,19 +795,21 @@ export function LibraryWorkbench({
                     data-library-id={item.id}
                   >
                     <div className="source-card-cover">
-                      <div
+                      <CoverInteraction
                         className="library-cover-open source-language-cover"
-                        role="button"
-                        tabIndex={0}
-                        aria-label={"打开《" + item.title + "》"}
-                        data-testid={"library-open-" + item.id}
-                        onClick={() => choose(item)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            choose(item);
-                          }
-                        }}
+                        title={item.title}
+                        testId={"library-open-" + item.id}
+                        request={
+                          library.snapshot.rootId
+                            ? {
+                                kind: "library",
+                                rootId: library.snapshot.rootId,
+                                generation: library.snapshot.generation,
+                                entryId: item.id,
+                              }
+                            : null
+                        }
+                        onDetails={() => open(item)}
                       >
                         <LibraryCover
                           adapter={library.controller.adapter}
@@ -778,16 +817,15 @@ export function LibraryWorkbench({
                           item={item}
                         />
                         <SourceLanguageBadge tags={item.tags} localVersion />
-                      </div>
+                      </CoverInteraction>
                     </div>
                     <h3>
                       <button onClick={() => open(item)}>{item.title}</button>
                     </h3>
-                    <p>
-                      {item.authors.length
-                        ? item.authors.join("、")
-                        : item.fileName}
-                    </p>
+                    <AuthorLinks
+                      authors={item.authors}
+                      fallback={item.fileName}
+                    />
                     <p className="source-card-state">
                       {library.error ? "文件待核对" : libraryItemStatus(item)}
                       {item.state !== "indexed"

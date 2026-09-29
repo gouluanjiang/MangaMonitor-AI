@@ -1,10 +1,13 @@
-import type { RecentUpdatesReader } from "./recent-updates.ts";
+interface ScrollContinuation {
+  readonly state: { phase: string; snapshot?: { hasMore: boolean } | null };
+  loadNext(): Promise<unknown>;
+}
 
 /** One user-directed continuation; layout changes and request completion are not inputs. */
 export function bindRecentUpdatesScroll(
   main: HTMLElement,
   sentinel: HTMLElement,
-  reader: RecentUpdatesReader,
+  reader: ScrollContinuation,
 ) {
   let frame = 0;
   let lastScroll = main.scrollTop;

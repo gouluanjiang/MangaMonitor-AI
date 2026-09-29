@@ -232,6 +232,12 @@ export function validateSourceWork(
     !nullableText(value.description) ||
     !Array.isArray(value.tags) ||
     !value.tags.every((item) => text(item, 2000)) ||
+    !(
+      value.categories === undefined ||
+      (Array.isArray(value.categories) &&
+        value.categories.length <= 64 &&
+        value.categories.every((item) => text(item, 2000) && item.trim()))
+    ) ||
     !(value.favorite === null || typeof value.favorite === "boolean") ||
     !nullableInteger(value.chapterCount) ||
     !nullableInteger(value.pageCount) ||
@@ -246,6 +252,9 @@ export function validateSourceWork(
     authors: [...value.authors] as string[],
     description: value.description as string | null,
     tags: [...value.tags] as string[],
+    ...(value.categories === undefined
+      ? {}
+      : { categories: [...value.categories] as string[] }),
     favorite: value.favorite as boolean | null,
     chapterCount: value.chapterCount as number | null,
     pageCount: value.pageCount as number | null,
@@ -734,9 +743,15 @@ export function createSourceAdapter(
     async query(scope, query) {
       checkScope(scope);
       if (
-        !["favorites", "search", "detail", "ranking", "recent"].includes(
-          query.kind,
-        ) ||
+        ![
+          "favorites",
+          "search",
+          "tag",
+          "category",
+          "detail",
+          "ranking",
+          "recent",
+        ].includes(query.kind) ||
         !text(query.query, 4096) ||
         !integer(query.page) ||
         query.page < 1 ||
@@ -744,6 +759,11 @@ export function createSourceAdapter(
         (scope.source === "Pica" && query.folderId !== null) ||
         (query.kind === "ranking" &&
           (query.page !== 1 || query.reverse === true)) ||
+        ((query.kind === "tag" || query.kind === "category") &&
+          (!query.query.trim() ||
+            query.folderId !== null ||
+            query.reverse === true)) ||
+        (query.kind === "category" && scope.source !== "Pica") ||
         (query.kind === "recent" &&
           (query.query !== "" ||
             query.folderId !== null ||
@@ -763,7 +783,7 @@ export function createSourceAdapter(
         scope,
         query.kind === "favorites",
         false,
-        query.kind === "search",
+        query.kind === "search" || query.kind === "tag",
       );
       if (
         result.page !== query.page ||

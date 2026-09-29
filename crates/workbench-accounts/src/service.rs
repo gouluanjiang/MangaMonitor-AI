@@ -15,7 +15,7 @@ use std::{
 };
 use tokio::sync::{Mutex, OnceCell, Semaphore};
 use workbench_credentials::{CredentialKind, StoredCredential, Vault};
-use workbench_sources::{inherit_language_tags, FavoritePageRequest};
+use workbench_sources::{inherit_content_tags, FavoritePageRequest};
 use zeroize::Zeroizing;
 
 const MAX_QUERY_ITEMS: usize = 1000;
@@ -767,6 +767,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if matches!(kind, QueryKind::Recent) && (!query.is_empty() || folder_id.is_some()) {
             return Err(AccountError::new("QUERY_INVALID"));
         }
+        if matches!(kind, QueryKind::Tag | QueryKind::Category) && (query.trim().is_empty() || folder_id.is_some()) {
+            return Err(AccountError::new("QUERY_INVALID"));
+        }
+        if matches!(kind, QueryKind::Category) && source != Source::Pica {
+            return Err(AccountError::new("QUERY_INVALID"));
+        }
         if !(1..=1000).contains(&page)
             || query.len() > 2048
             || query.chars().any(char::is_control)
@@ -796,6 +802,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     .await
             }
             QueryKind::Search => self.backend.search(session, query.trim(), page).await,
+            QueryKind::Tag => self.backend.tag(session, query.trim(), page).await,
+            QueryKind::Category => self.backend.category(session, query.trim(), page).await,
             QueryKind::Recent => self.backend.recent(session, page).await,
             QueryKind::Ranking => {
                 if page != 1 {
@@ -827,7 +835,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             || result.items.iter().any(|work| work.source != source)
             || (result.jm_search_boundary.is_some()
                 && (source != Source::Jm
-                    || !matches!(kind, QueryKind::Search)
+                    || !matches!(kind, QueryKind::Search | QueryKind::Tag)
                     || !jm_search_boundary_is_valid(&result)))
             || (matches!(kind, QueryKind::Detail) && !result.issues.is_empty())
             || result.issues.iter().any(|issue| {
@@ -860,7 +868,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 if work.source_updated_at.is_none() {
                     work.source_updated_at = known.source_updated_at.clone();
                 }
-                let tags = inherit_language_tags(&work.tags, &known.tags);
+                let tags = inherit_content_tags(&work.tags, &known.tags);
                 if tags != work.tags {
                     let original_tags = std::mem::replace(&mut work.tags, tags);
                     if cache::validate_work(source, work).is_err() {

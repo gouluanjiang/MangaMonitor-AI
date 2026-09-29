@@ -165,8 +165,8 @@ async function openLibrary(page: Page, pageCount = 10000) {
   await page.getByTestId("nav-library").click();
   await page
     .getByRole("button", { name: "打开《已保存作品》", exact: true })
-    .click();
-  await page.getByRole("button", { name: "程序内阅读", exact: true }).click();
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
   await expect(page.getByLabel("当前页码")).toContainText(String(pageCount));
 }
@@ -178,8 +178,8 @@ async function openOnline(page: Page) {
   await page
     .getByTestId("author-update-JM:102")
     .getByRole("button", { name: /打开/ })
-    .click();
-  await page.getByRole("button", { name: "程序内阅读", exact: true }).click();
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
 }
 async function jump(page: Page, number: number, count = 10000) {
@@ -200,8 +200,10 @@ test("local cover offers reading and details; large chapters stay virtual and re
   page,
 }) => {
   await page.getByTestId("nav-library").click();
-  await page.getByRole("button", { name: "打开《已保存作品》" }).click();
-  await page.getByRole("button", { name: "漫画详细", exact: true }).click();
+  await page
+    .getByRole("button", { name: "打开《已保存作品》" })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "作品详细", exact: true }).click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
   await openLibrary(page);
@@ -749,8 +751,8 @@ test("closing during open cancels its token and closes a late obsolete book with
   await page.getByTestId("nav-library").click();
   await page
     .getByRole("button", { name: "打开《已保存作品》", exact: true })
-    .click();
-  await page.getByRole("button", { name: "程序内阅读", exact: true }).click();
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => typeof window.readerTest.releaseOpen))
     .toBe("function");

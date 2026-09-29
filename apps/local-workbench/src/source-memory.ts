@@ -1,5 +1,5 @@
 import type { CatalogSnapshot, SourceWork } from "./source-types.ts";
-import { retainedLanguageTags } from "./source-language.ts";
+import { retainedContentTags } from "./content-filter.ts";
 export const SOURCE_MEMORY_BYTES = 32 * 1024 * 1024;
 const sizes = new WeakMap<object, number>();
 export function jsonBytes(value: object): number {
@@ -10,12 +10,21 @@ export function jsonBytes(value: object): number {
   return bytes;
 }
 export function compactWork(work: SourceWork): SourceWork {
-  const tags = retainedLanguageTags(work.tags);
+  const tags = retainedContentTags(work.tags);
+  const categories = work.categories?.filter((category) =>
+    tags.includes(category),
+  );
   return work.description === null &&
+    categories?.length === work.categories?.length &&
     work.tags.length === tags.length &&
     work.tags.every((tag, i) => tag === tags[i])
     ? work
-    : { ...work, description: null, tags };
+    : {
+        ...work,
+        description: null,
+        tags,
+        ...(categories === undefined ? {} : { categories }),
+      };
 }
 export function catalogBytes(snapshot: CatalogSnapshot): number {
   return (
@@ -57,6 +66,7 @@ export function sameSourceWork(a: SourceWork, b: SourceWork): boolean {
     a.authors.length === b.authors.length &&
     a.authors.every((author, i) => author === b.authors[i]) &&
     a.tags.length === b.tags.length &&
-    a.tags.every((tag, i) => tag === b.tags[i])
+    a.tags.every((tag, i) => tag === b.tags[i]) &&
+    JSON.stringify(a.categories ?? []) === JSON.stringify(b.categories ?? [])
   );
 }

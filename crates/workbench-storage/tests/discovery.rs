@@ -161,7 +161,7 @@ fn invalid_summary_or_discovery_marker_cannot_advance_the_manifest() {
 }
 
 #[test]
-fn language_supplements_fit_beside_all_sixty_four_source_tags() {
+fn category_supplements_fit_beside_all_sixty_four_source_tags() {
     let mut work = record(Source::Jm, "123").work;
     work.tags = (0..64).map(|i| format!("Tag {i}")).collect();
     work.tags.extend(["中文".into(), "生肉".into()]);
@@ -169,6 +169,8 @@ fn language_supplements_fit_beside_all_sixty_four_source_tags() {
     let encoded = serde_json::to_vec(&work).unwrap();
     let decoded: DiscoveryWork = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(decoded.tags, work.tags);
+    work.tags.extend((66..128).map(|i| format!("Category {i}")));
+    assert!(work.is_valid());
     work.tags.push("Overflow".into());
     assert!(!work.is_valid());
     work.tags.pop();

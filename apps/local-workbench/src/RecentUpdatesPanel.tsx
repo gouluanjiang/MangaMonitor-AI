@@ -29,6 +29,13 @@ import { formatWorkDate } from "./work-dates.ts";
 import { RecentUpdatesReader } from "./recent-updates.ts";
 import type { RecentUpdatesState } from "./recent-updates.ts";
 import { bindRecentUpdatesScroll } from "./recent-scroll.ts";
+import { CoverInteraction } from "./reader-access.tsx";
+import { AuthorLinks } from "./AuthorLinks.tsx";
+import { FloatingSelection } from "./FloatingSelection.tsx";
+import { useBrowseSession, useBrowseSessionState } from "./useBrowseSession.ts";
+import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
+import { isContentHidden, rememberContentWork } from "./content-filter.ts";
+import { useAuthorCatalogMembership } from "./author-catalog-membership.ts";
 
 export function RecentUpdatesPanel({
   active,
@@ -54,10 +61,12 @@ export function RecentUpdatesPanel({
   navigation: ReactNode;
   onOpen(work: SourceWork): void;
   onDownload(work: SourceWork): void;
-  onDownloadMany(works: SourceWork[]): void;
+  onDownloadMany(works: SourceWork[]): Promise<string[]> | void;
   onAccounts(): void;
 }) {
   const readerAccess = useReaderAccess();
+  const root = useRef<HTMLElement>(null);
+  const membership = useAuthorCatalogMembership(accounts, active);
   const [source, setSource] = useState<Source>("Pica");
   const scope = accountScope(
     accounts.find((account) => account.source === source),
@@ -77,17 +86,23 @@ export function RecentUpdatesPanel({
   const state = current?.state ?? null;
   const data = state?.snapshot ?? null;
   const busy = state?.phase === "reading";
-  const [filter, setFilter] = useState<InventoryFilter>("all");
-  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useBrowseSessionState<InventoryFilter>(
+    "recent-filter:" + scopeKey,
+    "all",
+  );
+  const [query, setQuery] = useBrowseSessionState(
+    "recent-query:" + scopeKey,
+    "",
+  );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const sentinel = useRef<HTMLDivElement>(null);
   const grid = useRef<SourceGridHandle>(null);
+  const readers = useRef(
+    new Map<string, { adapter: SourceAdapter; reader: RecentUpdatesReader }>(),
+  );
   const currentView = useRef({ active, scopeKey });
   currentView.current = { active, scopeKey };
-  useLayoutEffect(() => {
-    grid.current?.restore(null);
-  }, [active, scopeKey, query, filter]);
   useEffect(() => {
     setSelection([]);
     setSelectionMode(false);
@@ -97,10 +112,17 @@ export function RecentUpdatesPanel({
     }
     // Create inside the effect: StrictMode cleanup must not permanently dispose
     // the memoized reader reused by its second setup.
-    const next = new RecentUpdatesReader(adapter, scope);
+    let retained = readers.current.get(scopeKey);
+    if (retained && retained.adapter !== adapter) {
+      retained.reader.dispose();
+      retained = undefined;
+    }
+    const next = retained?.reader ?? new RecentUpdatesReader(adapter, scope);
+    readers.current.set(scopeKey, { adapter, reader: next });
     let previous: RecentUpdatesState["snapshot"] = null;
     const unsubscribe = next.subscribe((state) => {
       const snapshot = state.snapshot;
+      snapshot?.items.forEach(rememberContentWork);
       if (
         currentView.current.active &&
         currentView.current.scopeKey === scopeKey &&
@@ -123,9 +145,15 @@ export function RecentUpdatesPanel({
     });
     return () => {
       unsubscribe();
-      next.dispose();
     };
   }, [adapter, scopeKey]);
+  useEffect(
+    () => () => {
+      for (const value of readers.current.values()) value.reader.dispose();
+      readers.current.clear();
+    },
+    [],
+  );
   useEffect(() => {
     if (active) void reader?.start();
     else setSelection([]);
@@ -136,13 +164,18 @@ export function RecentUpdatesPanel({
     [library, inventorySnapshot, inventoryReady],
   );
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
-  const searched = (data?.items ?? []).filter((work) =>
-    [work.title, ...work.authors]
-      .join(" ")
-      .normalize("NFKC")
-      .toLocaleLowerCase()
-      .includes(terms),
-  );
+  const searched = (data?.items ?? [])
+    .filter(
+      (work) =>
+        !isContentHidden(work) && !membership.known.has(sourceWorkKey(work)),
+    )
+    .filter((work) =>
+      [work.title, ...work.authors]
+        .join(" ")
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .includes(terms),
+    );
   const visible = searched.filter((work) =>
     inventoryFilterMatches(inventory(work), filter),
   );
@@ -158,12 +191,18 @@ export function RecentUpdatesPanel({
       selection.includes(sourceWorkKey(work)) &&
       inventory(work).kind !== "owned",
   );
+  useBrowseSession({
+    scope: JSON.stringify(["recent", scopeKey, query, filter]),
+    active,
+    root,
+    grid,
+    itemKeys: visible.map(sourceWorkKey),
+  });
 
   useEffect(() => {
     const target = sentinel.current;
     const main = target?.closest("main");
-    if (!active || !reader || !target || !main || terms || filter !== "all")
-      return;
+    if (!active || !reader || !target || !main) return;
     return bindRecentUpdatesScroll(main, target, reader);
   }, [active, reader, terms, filter]);
   const clearSelection = () => {
@@ -173,6 +212,7 @@ export function RecentUpdatesPanel({
   const error = state?.error ? sourceErrorMessage(state.error) : "";
   return (
     <section
+      ref={root}
       className={
         "source-workbench recent-updates" +
         (selected.length ? " has-source-selection" : "")
@@ -293,16 +333,6 @@ export function RecentUpdatesPanel({
           {visible.length > 0 && (
             <div className="source-toolbar">
               <div className="source-toolbar-leading">
-                <button
-                  className="text-button"
-                  aria-pressed={selectionMode}
-                  onClick={() => {
-                    setSelectionMode(!selectionMode);
-                    setSelection([]);
-                  }}
-                >
-                  {selectionMode ? "退出多选" : "多选"}
-                </button>
                 {selectionMode && (
                   <button
                     className="text-button"
@@ -332,16 +362,23 @@ export function RecentUpdatesPanel({
                 data-testid={"recent-work-" + sourceWorkKey(work)}
               >
                 <div className="source-card-cover">
-                  <button
+                  <CoverInteraction
                     className="source-cover-button source-language-cover"
-                    aria-label={"打开《" + work.title + "》"}
-                    onClick={() =>
-                      readerAccess.choose(
-                        sourceReaderRequest(scope, work),
-                        work.title,
-                        () => onOpen(work),
-                      )
-                    }
+                    title={work.title}
+                    request={sourceReaderRequest(scope, work)}
+                    onDetails={() => onOpen(work)}
+                    selectionMode={selectionMode}
+                    selected={selection.includes(sourceWorkKey(work))}
+                    onToggleSelection={() => {
+                      if (inventory(work).kind !== "owned")
+                        setSelection((previous) =>
+                          previous.includes(sourceWorkKey(work))
+                            ? previous.filter(
+                                (key) => key !== sourceWorkKey(work),
+                              )
+                            : [...previous, sourceWorkKey(work)],
+                        );
+                    }}
                   >
                     <SourceCover adapter={adapter} scope={scope} work={work} />
                     <SourceLanguageBadge
@@ -349,7 +386,7 @@ export function RecentUpdatesPanel({
                       work={work}
                       scope={scope}
                     />
-                  </button>
+                  </CoverInteraction>
                   {selectionMode && (
                     <input
                       type="checkbox"
@@ -371,7 +408,7 @@ export function RecentUpdatesPanel({
                 <h3>
                   <button onClick={() => onOpen(work)}>{work.title}</button>
                 </h3>
-                <p>{work.authors.join("、") || "作者资料未取得"}</p>
+                <AuthorLinks authors={work.authors} />
                 <p className="source-card-state">
                   {inventoryLabel(inventory(work))}
                 </p>
@@ -385,13 +422,12 @@ export function RecentUpdatesPanel({
                     ? `更新：${formatWorkDate(work.sourceUpdatedAt)}`
                     : "更新时间未知"}
                 </p>
-                <button
-                  className="text-button"
-                  disabled={inventory(work).kind === "owned" || !library.rootId}
+                <DownloadWorkButton
+                  work={work}
+                  owned={inventory(work).kind === "owned"}
+                  ready={!!library.rootId}
                   onClick={() => onDownload(work)}
-                >
-                  下载到漫画库
-                </button>
+                />
               </article>
             )}
           />
@@ -448,29 +484,29 @@ export function RecentUpdatesPanel({
               )
             )}
           </div>
-          {selected.length > 0 && (
-            <div
-              className="source-selection-bar"
-              data-testid="recent-selection-bar"
-            >
-              <strong>已选 {selected.length} 部</strong>
-              <span>仅限已读取的当前筛选范围</span>
-              <button
-                className="button primary"
-                disabled={
-                  !library.rootId || selected.length > downloadSelectionLimit
-                }
-                onClick={() => onDownloadMany(selected)}
-              >
-                准备下载所选作品
-              </button>
-              {selected.length > downloadSelectionLimit && (
-                <span>一次最多选择 500 本，请缩小范围。</span>
-              )}
-              <button className="text-button" onClick={clearSelection}>
-                取消选择
-              </button>
-            </div>
+          <FloatingSelection
+            active={selectionMode}
+            selectedCount={selected.length}
+            onEnter={() => setSelectionMode(true)}
+            onCancel={clearSelection}
+            disabled={
+              !library.rootId || selected.length > downloadSelectionLimit
+            }
+            onDownload={() => {
+              void Promise.resolve(onDownloadMany(selected)).then((keys) => {
+                if (keys)
+                  setSelection((previous) =>
+                    previous.filter((key) => !keys.includes(key)),
+                  );
+              });
+            }}
+          >
+            <span>当前已读取范围</span>
+          </FloatingSelection>
+          {membership.failed && (
+            <p className="source-muted">
+              作者更新目录暂未读到，当前去重范围可能不完整。
+            </p>
           )}
         </>
       )}

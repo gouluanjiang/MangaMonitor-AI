@@ -153,6 +153,8 @@ export async function readCompleteSearch(
     recordsRead?: number;
     issues?: SourceItemIssue[];
     pagination?: SearchPagination;
+    requestKind?: "search" | "tag" | "category";
+    pageLimit?: number;
   },
 ): Promise<void> {
   let items = options.items ?? [],
@@ -160,6 +162,11 @@ export async function readCompleteSearch(
     recordsRead = options.recordsRead ?? 0,
     pagination = options.pagination;
   let rawFetched = pagination?.rawFetched ?? recordsRead;
+  if (
+    options.pageLimit !== undefined &&
+    (!Number.isSafeInteger(options.pageLimit) || options.pageLimit < 1)
+  )
+    throw new SourceError("INVALID_INPUT");
   // A resumed page cannot establish a new baseline for already displayed rows.
   if ((options.fromPage ?? 1) > 1 && !pagination)
     throw new SourceError("SEARCH_INCOMPLETE");
@@ -175,7 +182,7 @@ export async function readCompleteSearch(
     page++
   ) {
     const result = await adapter.query(scope, {
-      kind: "search",
+      kind: options.requestKind ?? "search",
       query,
       folderId: null,
       page,
@@ -302,5 +309,10 @@ export async function readCompleteSearch(
     if (contradictory || stalled || repeated || short)
       throw new SourceError("SEARCH_INCOMPLETE");
     if (page === 1000) throw new SourceError("SEARCH_LIMIT_REACHED");
+    if (
+      options.pageLimit !== undefined &&
+      page - (options.fromPage ?? 1) + 1 >= options.pageLimit
+    )
+      return;
   }
 }

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="560" viewBox="0 0 400 560" role="img" aria-labelledby="title desc">
+  <title id="title">月面花园</title>
+  <desc id="desc">原创虚构漫画封面。浅蓝色月球温室里，细长的白花朝向一颗悬浮的地球。</desc>
+  <defs>
+    <linearGradient id="sky" x2=".6" y2="1"><stop stop-color="#dce8e7"/><stop offset="1" stop-color="#9fbdc7"/></linearGradient>
+    <linearGradient id="dome" x2="1" y2="1"><stop stop-color="#eff4e8" stop-opacity=".8"/><stop offset="1" stop-color="#94b5b5" stop-opacity=".2"/></linearGradient>
+    <pattern id="dust" width="19" height="17" patternUnits="userSpaceOnUse"><circle cx="3" cy="5" r=".6" fill="#507a88" opacity=".2"/><circle cx="13" cy="12" r=".5" fill="#fbf9e8" opacity=".6"/></pattern>
+    <clipPath id="earth"><circle cx="301" cy="183" r="36"/></clipPath>
+  </defs>
+  <rect width="400" height="560" fill="url(#sky)"/>
+  <g fill="#f7f7e7"><circle cx="55" cy="181" r="1.2"/><circle cx="156" cy="154" r="1"/><circle cx="239" cy="127" r="1.2"/><circle cx="356" cy="254" r="1"/><circle cx="40" cy="289" r="1.4"/><circle cx="223" cy="218" r="1"/><circle cx="337" cy="126" r="1.5"/></g>
+  <circle cx="301" cy="183" r="46" fill="none" stroke="#f0f3e3" opacity=".5"/>
+  <circle cx="301" cy="183" r="36" fill="#487e99"/>
+  <g clip-path="url(#earth)" fill="#b1d1c2"><path d="m263 158 21-3 7 16 15 9-5 16-17-4-4-14-14-3zm45 45 12-8 21 6-10 20-17-3zm2-58 17 9-8 12-12-4z"/><path d="m260 184 90-18-2 5-87 20zm11 23 73-21-1 4-70 21z" fill="#e6ebe0" opacity=".7"/></g>
+  <path d="M0 400q65-38 129-3t271-31v194H0Z" fill="#abc1c3"/>
+  <path d="M0 463q131-55 249-23t151-1v121H0Z" fill="#ced9d2"/>
+  <path d="M0 493q146-39 302-11t98-4" fill="none" stroke="#8babb1" stroke-width="1.1"/>
+  <ellipse cx="332" cy="414" rx="32" ry="10" fill="#8caaaf" opacity=".5"/><ellipse cx="332" cy="412" rx="23" ry="5" fill="#b9cccc"/>
+  <ellipse cx="61" cy="471" rx="26" ry="7" fill="#a7bcb9"/>
+  <path d="M67 416V319a114 114 0 0 1 228 0v97q-112 40-228 0Z" fill="url(#dome)" stroke="#f1f3e5" stroke-width="2"/>
+  <path d="M181 205v244M67 319h228M79 268h204M69 369h224M122 221q-28 108-14 209m134-209q28 108 14 209" fill="none" stroke="#f1f3e5" stroke-width="1" opacity=".85"/>
+  <path d="M73 415q110 31 216-1" fill="none" stroke="#547c79" stroke-width="5"/>
+  <path d="M122 427q-1-78 40-133m11 137q26-45 48-58m-73 55q5-48-19-78m69 82q-7-96 19-132" fill="none" stroke="#668d75" stroke-width="2.6"/>
+  <g fill="#769e84"><path d="M131 370q-43-6-37-35 29 1 37 35zm9-15q-4-29 25-44 0 28-25 44zm15 61q-21-37-45-26 11 28 45 26zm39-13q14-29 42-19-8 27-42 19zm8-44q-30-13-24-39 27 10 24 39zm5-22q12-31 30-23-5 19-30 23z"/></g>
+  <g fill="#f9f7df" stroke="#b3c8b5" stroke-width=".6">
+    <path d="M163 303q-27-6-20-20 14-5 20 10-1-29 12-23 12 9-4 26 27-12 29 2-4 13-26 8 16 19 3 24-14 0-14-22-18 19-25 8-3-13 25-13Z"/>
+    <path d="M219 302q-20-2-18-14 11-6 18 7 2-22 12-17 7 10-7 18 22-5 21 7-7 9-20 2 10 16-1 19-10-3-5-17-16 12-19 3 1-9 19-8Z"/>
+    <path d="M220 376q-14-4-11-13 8-3 12 5 3-15 10-10 5 7-6 12 16 0 12 8-6 5-13-3 3 15-5 13-6-5 1-12Z"/>
+  </g>
+  <g fill="#c3a66c"><circle cx="167" cy="302" r="4"/><circle cx="221" cy="301" r="3"/><circle cx="221" cy="374" r="2.5"/></g>
+  <path d="M93 417h42l-5 22H99zM173 423h66l-8 22h-51z" fill="#728d81"/><path d="M96 423h36m47 6h54" stroke="#b6c8b6"/>
+  <rect width="400" height="560" fill="url(#dust)"/>
+  <g fill="#345b6b" font-family="'Noto Serif SC','Source Han Serif SC','Songti SC',SimSun,serif">
+    <text x="35" y="77" font-size="44" letter-spacing="5">月面花园</text>
+    <text x="37" y="108" font-size="10" letter-spacing="2.5">把春天种在没有风的地方</text>
+    <text x="37" y="137" font-family="Georgia,serif" font-size="10" letter-spacing="2.1">A GARDEN ON THE MOON</text>
+    <text x="35" y="521" font-size="14" letter-spacing="5">藤白眠</text>
+  </g>
+  <text x="365" y="522" text-anchor="end" fill="#6a9397" font-family="Georgia,serif" font-size="28">01</text>
+  <text x="37" y="542" fill="#6b8c8a" font-family="sans-serif" font-size="7" letter-spacing="2.6">FICTIONAL COVER / ORIGINAL ART</text>
+</svg>

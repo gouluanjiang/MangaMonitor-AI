@@ -5,6 +5,7 @@
 pub mod media_descriptors;
 #[cfg(test)]
 mod media_fetch;
+pub mod reader;
 
 use aes::{
     cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit},
@@ -43,7 +44,9 @@ fn checked_metadata_len(current: usize, incoming: usize) -> Result<usize, String
     Ok(next)
 }
 
-pub(crate) async fn read_bounded_response(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
+pub(crate) async fn read_bounded_response(
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, String> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_METADATA_BYTES)
@@ -73,13 +76,46 @@ pub struct JmPreflightChapter {
     pub chapter_order: u64,
 }
 
+#[derive(Clone, Copy)]
+enum MetadataPacing {
+    Monitor,
+    AuthorizedDownload,
+    InteractiveReader,
+}
+
+impl MetadataPacing {
+    fn delay_range(self, path: &str) -> std::ops::RangeInclusive<u64> {
+        match (self, path) {
+            (Self::AuthorizedDownload | Self::InteractiveReader, "/album" | "/chapter") => 0..=0,
+            _ => 1000..=3000,
+        }
+    }
+}
+
 pub struct JmClient {
     client: reqwest::Client,
     domains: Vec<String>,
+    pacing: MetadataPacing,
     pub traces: Vec<RequestTrace>,
 }
 impl JmClient {
     pub fn new(domain: &str) -> Result<Self, String> {
+        Self::with_pacing(domain, MetadataPacing::Monitor)
+    }
+
+    /// For explicitly authorized manual downloads: only album/chapter metadata
+    /// skips monitor pacing. The caller still owns the current approval gate.
+    pub fn new_for_download(domain: &str) -> Result<Self, String> {
+        Self::with_pacing(domain, MetadataPacing::AuthorizedDownload)
+    }
+
+    /// Interactive metadata only. The reader owns its own revocable session;
+    /// this constructor grants no download, staging or library authority.
+    pub fn new_for_reader() -> Result<Self, String> {
+        Self::with_pacing(DEFAULT_DOMAIN, MetadataPacing::InteractiveReader)
+    }
+
+    fn with_pacing(domain: &str, pacing: MetadataPacing) -> Result<Self, String> {
         if !BASELINE_DOMAINS.contains(&domain) {
             return Err("DOMAIN_NOT_IN_PINNED_BASELINE".into());
         }
@@ -92,6 +128,7 @@ impl JmClient {
         Ok(Self {
             client,
             domains: ordered_domains(domain),
+            pacing,
             traces: vec![],
         })
     }
@@ -104,12 +141,33 @@ impl JmClient {
         query: &[(&str, String)],
         page: Option<u64>,
     ) -> Result<Value, String> {
+        self.request_with_guard(path, query, page, || Ok(())).await
+    }
+
+    async fn request_with_guard<Guard>(
+        &mut self,
+        path: &str,
+        query: &[(&str, String)],
+        page: Option<u64>,
+        mut before_request: Guard,
+    ) -> Result<Value, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
+        if matches!(self.pacing, MetadataPacing::InteractiveReader)
+            && std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+        {
+            return Err("READER_GITHUB_ACTIONS_FORBIDDEN".into());
+        }
         let domains = self.domains.clone();
         let mut last_retryable_error = None;
 
         for domain in domains {
-            let delay_ms = rand::thread_rng().gen_range(1000..=3000);
-            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            let delay_ms = rand::thread_rng().gen_range(self.pacing.delay_range(path));
+            if delay_ms != 0 {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+            before_request()?;
             let started = Instant::now();
             let ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -228,7 +286,10 @@ impl JmClient {
     /// This mirrors the upstream chapter construction rule, including the
     /// single-chapter fallback when `series` is empty, but fails closed instead
     /// of silently dropping malformed series IDs.
-    pub async fn preflight_chapters(&mut self, id: &str) -> Result<Vec<JmPreflightChapter>, String> {
+    pub async fn preflight_chapters(
+        &mut self,
+        id: &str,
+    ) -> Result<Vec<JmPreflightChapter>, String> {
         if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
             return Err("INVALID_JM_ID".into());
         }
@@ -259,7 +320,12 @@ impl JmClient {
 
 fn ordered_domains(primary: &str) -> Vec<String> {
     std::iter::once(primary)
-        .chain(BASELINE_DOMAINS.iter().copied().filter(|domain| *domain != primary))
+        .chain(
+            BASELINE_DOMAINS
+                .iter()
+                .copied()
+                .filter(|domain| *domain != primary),
+        )
         .map(str::to_owned)
         .collect()
 }
@@ -395,6 +461,62 @@ fn decode(ts: u64, data: &str) -> Result<Value, String> {
 mod tests {
     use super::*;
     #[test]
+    fn default_client_retains_monitor_delay_for_every_metadata_route() {
+        let client = JmClient::new(DEFAULT_DOMAIN).unwrap();
+        for path in [
+            "/album",
+            "/chapter",
+            "/search",
+            "/chapter_view_template",
+            "/unknown",
+        ] {
+            assert_eq!(client.pacing.delay_range(path), 1000..=3000, "{path}");
+        }
+    }
+
+    #[test]
+    fn authorized_download_pacing_is_immediate_only_for_exact_album_and_chapter_routes() {
+        let client = JmClient::new_for_download(DEFAULT_DOMAIN).unwrap();
+        for path in ["/album", "/chapter"] {
+            assert_eq!(client.pacing.delay_range(path), 0..=0, "{path}");
+        }
+        for path in [
+            "/search",
+            "/chapter_view_template",
+            "/album/",
+            "/chapter/",
+            "/album?id=1",
+            "/ALBUM",
+            "/login",
+            "",
+        ] {
+            assert_eq!(client.pacing.delay_range(path), 1000..=3000, "{path}");
+        }
+    }
+
+    #[test]
+    fn both_pacing_constructors_keep_the_same_pinned_domain_boundary() {
+        for create in [JmClient::new, JmClient::new_for_download] {
+            for domain in [
+                "",
+                "example.invalid",
+                "https://www.cdnhth.cc",
+                "www.cdnhth.cc:443",
+                "WWW.CDNHTH.CC",
+                "www.cdnhth.cc/album",
+            ] {
+                assert!(
+                    matches!(create(domain), Err(code) if code == "DOMAIN_NOT_IN_PINNED_BASELINE")
+                );
+            }
+            let client = create("www.cdnzack.cc").unwrap();
+            assert_eq!(client.domain(), "www.cdnzack.cc");
+            assert_eq!(client.domains, ordered_domains("www.cdnzack.cc"));
+            assert!(client.traces.is_empty());
+        }
+    }
+
+    #[test]
     fn identity_is_namespaced_and_checked() {
         let record = parse_record(&serde_json::json!({"id":123,"name":"title","author":["one","two"],"thumb":"secret-image-url"})).unwrap();
         assert_eq!(record.source, "jm");
@@ -451,7 +573,13 @@ mod tests {
         assert_eq!(chapters[1].chapter_order, 2);
 
         let fallback = parse_preflight_chapters(&serde_json::json!({"series":[]}), "99").unwrap();
-        assert_eq!(fallback, vec![JmPreflightChapter { chapter_id: "99".into(), chapter_order: 1 }]);
+        assert_eq!(
+            fallback,
+            vec![JmPreflightChapter {
+                chapter_id: "99".into(),
+                chapter_order: 1
+            }]
+        );
 
         assert!(parse_preflight_chapters(
             &serde_json::json!({"series":[{"id":"101"},{"id":"101"}]}),

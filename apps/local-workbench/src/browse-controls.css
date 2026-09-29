@@ -107,7 +107,7 @@
     right: 18px;
   }
   .floating-selection-bar {
-    left: 82px;
+    left: calc(var(--sidebar-width, 68px) + 16px);
     right: 16px;
     gap: 9px;
     padding: 12px;

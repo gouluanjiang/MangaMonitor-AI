@@ -184,9 +184,11 @@ function CoverActions({
         8,
         Math.min(point.y, window.innerHeight - element.offsetHeight - 8),
       ) + "px";
+  }, [point, busy, error]);
+  useLayoutEffect(() => {
     if (point.keyboard)
-      element
-        .querySelector<HTMLButtonElement>("[role=menuitem]")
+      menu.current
+        ?.querySelector<HTMLButtonElement>("[role=menuitem]")
         ?.focus({ preventScroll: true });
   }, [point]);
   useEffect(() => {

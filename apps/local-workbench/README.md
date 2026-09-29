@@ -1,6 +1,6 @@
 # MangaMonitor desktop workbench
 
-The current React/Tauri desktop implements PC ZIP-library browsing, connected JM/Pica favorites, author search and manual followed-author discovery, recent feeds/rankings, a native download queue, in-app reading and independent reader windows. See the [user guide](../../docs/USER_GUIDE.md), [current handoff](../../docs/DEVELOPMENT_HANDOFF.md) and [candidate release record](../../docs/RELEASE_CANDIDATE_2026-09-27.md).
+The current React/Tauri desktop implements PC ZIP-library browsing, connected JM/Pica favorites, author search and manual followed-author discovery, recent feeds/rankings, a native download queue, in-app reading and independent reader windows. See the [user guide](../../docs/USER_GUIDE.md), [current handoff](../../docs/DEVELOPMENT_HANDOFF.md) and [1.0.0 release record](../../docs/RELEASE_1.0.0_2026-09-29.md).
 
 The browser preview uses labeled synthetic fixtures. It does not provide real accounts, native filesystem access or real downloads. The Windows application uses scoped native IPC; native failures never silently switch to a demo implementation.
 
@@ -24,7 +24,7 @@ node scripts/collect-release-licenses.mjs
 
 The generated `src-tauri/release-resources/licenses` directory is ignored by Git. Missing license material fails candidate packaging instead of producing an empty notice bundle.
 
-Formal tests/builds run in the existing CI under [AGENTS.md](../../AGENTS.md). The frontend workflow runs formatting, logic tests, TypeScript/Vite and Chromium tests. Windows CI runs storage/source/download tests, isolated credentials, native IPC tests, Clippy and actual WebView startup/restart/reader-window lifecycle checks. Release-candidate packaging adds isolated installer checks and a verifiable artifact manifest. These are not authorization to scan websites or download real media.
+Formal tests/builds run in the existing CI under [AGENTS.md](../../AGENTS.md). The frontend workflow runs formatting, logic tests, TypeScript/Vite and Chromium tests. Windows CI runs storage/source/download tests, isolated credentials, native IPC tests, Clippy and actual WebView startup/restart/reader-window lifecycle checks. Stable and release-candidate packaging add isolated installer checks and a verifiable artifact manifest. These are not authorization to scan websites or download real media.
 
 ## Runtime contracts
 

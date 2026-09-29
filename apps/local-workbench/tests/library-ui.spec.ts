@@ -567,16 +567,16 @@ test("native diagnostics show real snapshot states, omit private data and link t
   await installMock(page, {
     pcCount: 4,
     usability: true,
-    workbenchVersion: "1.0.0-rc.1",
+    workbenchVersion: "1.0.0",
   });
   await expect(page.getByTestId("demo-label")).toContainText("桌面应用");
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-network").click();
   await expect(page.getByTestId("diagnostics-version")).toHaveText(
-    "MangaMonitor 1.0.0-rc.1 · bbbbbbb",
+    "MangaMonitor 1.0.0 · bbbbbbb",
   );
   const report = await page.getByTestId("diagnostic-summary").inputValue();
-  expect(report).toContain("版本：1.0.0-rc.1 · bbbbbbb · windows");
+  expect(report).toContain("版本：1.0.0 · bbbbbbb · windows");
   expect(report).toContain("目录记录：4 · 文件待核对：1");
   expect(report).toContain("JM 会话：未连接");
   expect(report).not.toMatch(

@@ -1,5 +1,5 @@
 # Run only on a fresh GitHub-hosted Windows runner. This verifies the current
-# candidate, not migration from an unavailable historical 0.3.4 installer.
+# release package, not migration from an unavailable historical 0.3.4 installer.
 [CmdletBinding()]
 param()
 
@@ -11,7 +11,7 @@ if (-not $IsWindows -or $env:CI -cne 'true' -or $env:GITHUB_ACTIONS -cne 'true' 
 }
 if ($env:MANGAMONITOR_BUILD_REVISION -cnotmatch '^[0-9a-fA-F]{40}$' -or
     $env:GITHUB_SHA -cnotmatch '^[0-9a-fA-F]{40}$') {
-    throw 'Candidate evidence requires exact source and checkout revisions.'
+    throw 'Release evidence requires exact source and checkout revisions.'
 }
 $appDirectory = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $repository = [IO.Path]::GetFullPath((Join-Path $appDirectory '../..'))
@@ -47,12 +47,12 @@ if ((Test-Path -LiteralPath $appDataDirectory) -or (Test-Path -LiteralPath $unin
     throw 'The CI runner already contains this application or its data.'
 }
 foreach ($shortcut in $shortcuts) {
-    if (Test-Path -LiteralPath $shortcut) { throw 'A candidate shortcut already exists on the CI runner.' }
+    if (Test-Path -LiteralPath $shortcut) { throw 'An application shortcut already exists on the CI runner.' }
 }
 if ($env:MANGAMONITOR_SMOKE_EXECUTABLE) { throw 'Unexpected inherited smoke executable.' }
 $outputDirectory = Join-Path $appDirectory 'native-smoke-results'
 $candidateDirectory = Join-Path $appDirectory 'release-candidate'
-if (Test-Path -LiteralPath $candidateDirectory) { throw 'Candidate staging directory must be fresh.' }
+if (Test-Path -LiteralPath $candidateDirectory) { throw 'Release staging directory must be fresh.' }
 [IO.Directory]::CreateDirectory($testDirectory) | Out-Null
 [IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
 $evidence = [ordered]@{
@@ -60,7 +60,7 @@ $evidence = [ordered]@{
     sourceRevision = $env:MANGAMONITOR_BUILD_REVISION
     checkoutRevision = $env:GITHUB_SHA
     workflowRun = $env:GITHUB_RUN_ID
-    scope = 'fresh install, installed WebView startup/restart, same-candidate reinstall, uninstall preserving synthetic data, install again'
+    scope = 'fresh install, installed WebView startup/restart, same-version reinstall, uninstall preserving synthetic data, install again'
     historical034Upgrade = 'not tested'
     interactiveInstallerPages = 'not tested; silent current-user installation'
     binary = $null
@@ -71,7 +71,7 @@ $resources = [ordered]@{
     'LICENSE.txt' = Join-Path $repository 'LICENSE'
     'THIRD_PARTY_NOTICES.md' = Join-Path $repository 'THIRD_PARTY_NOTICES.md'
     'USER_GUIDE.md' = Join-Path $repository 'docs/USER_GUIDE.md'
-    'RELEASE_NOTES.md' = Join-Path $repository 'docs/RELEASE_NOTES_1.0.0-rc.1.md'
+    'RELEASE_NOTES.md' = Join-Path $repository ('docs/RELEASE_NOTES_{0}.md' -f $config.version)
     'licenses/THIRD_PARTY_LICENSES.txt' = Join-Path $appDirectory 'src-tauri/release-resources/licenses/THIRD_PARTY_LICENSES.txt'
     'licenses/inventory.json' = Join-Path $appDirectory 'src-tauri/release-resources/licenses/inventory.json'
 }
@@ -104,7 +104,7 @@ function Assert-Installed {
     if ($registration.DisplayVersion -cne $config.version -or
         $registration.MainBinaryName -cne $binaryName -or
         $registration.InstallLocation.Trim('"') -ine $installDirectory) {
-        throw 'Installed version, binary name or location did not match the candidate.'
+        throw 'Installed version, binary name or location did not match the release package.'
     }
     # The pinned Tauri NSIS template creates both links during silent installs
     # when /NS is absent and startMenuFolder is unset (as in our config).
@@ -165,7 +165,7 @@ try {
     Invoke-InstallerProcess $installerPath "/S /D=$installDirectory"
     Assert-Installed
     Assert-Retained
-    $evidence.steps.Add('same-candidate-reinstall-preserved-synthetic-documents')
+    $evidence.steps.Add('same-version-reinstall-preserved-synthetic-documents')
 
     # _?= keeps this process synchronous; the silent uninstall leaves the
     # Delete app data checkbox unselected. No recursive shell deletion is used.
@@ -174,7 +174,7 @@ try {
         throw 'Uninstall left the executable or its registration behind.'
     }
     foreach ($shortcut in $shortcuts) {
-        if (Test-Path -LiteralPath $shortcut) { throw 'Uninstall left a candidate shortcut behind.' }
+        if (Test-Path -LiteralPath $shortcut) { throw 'Uninstall left an application shortcut behind.' }
     }
     Assert-Retained
     $evidence.steps.Add('uninstall-removed-executable-registration-shortcuts-and-retained-documents')
@@ -216,7 +216,7 @@ try {
         artifacts = $artifacts
     }
     $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $candidateDirectory 'manifest.json') -Encoding utf8
-    Write-Output 'INSTALLER_SMOKE_PASSED: current candidate only; historical 0.3.4 upgrade remains unverified.'
+    Write-Output 'INSTALLER_SMOKE_PASSED: current release package only; historical 0.3.4 upgrade remains unverified.'
 } finally {
     $evidence | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $outputDirectory 'installer-lifecycle.json') -Encoding utf8
 }

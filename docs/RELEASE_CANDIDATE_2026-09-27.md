@@ -1,8 +1,47 @@
-# V1 release-candidate preparation
+# V1 release candidate delivered — user installation acceptance pending
 
-The user accepted all four project-review corrections at `2493fb5` and authorized
-the next planned step. Reader and UI work is accepted; the current next step is
-formal distribution preparation, not a new product-feature batch.
+Update 2026-09-29: the user reported acceptance complete and authorized formal 1.0.0 release closure, followed by agent-operated all-author change-summary acceptance. The pending installation statements in this historical delivery record are superseded by that user confirmation; no new agent-observed upgrade trace is implied. See [the current release record](RELEASE_1.0.0_2026-09-29.md).
+
+Implementation, independent review, final CI, candidate verification and local
+delivery are complete for `1.0.0-rc.1`. The user accepted the preceding reader,
+UI and four project-review corrections at `2493fb5`; the remaining step for this
+candidate is user installation acceptance against the existing environment.
+
+Final head: `b487657be1f28565e07ab05256059d870e897c65`; test merge:
+`6b9b9a6bd39a4231ee6ede5b27c1eb576d2b553e`.
+[Frontend CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36329598153)
+passed 239 logic tests and 213 Chromium cases.
+[Baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36329598149)
+passed both jobs.
+[Windows CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36329598229)
+passed 23 license/NSIS cases, collected 357 dependency components, and passed
+49 native tests, Clippy, the five-step isolated installation lifecycle and
+installed-application WebView checks. Formal suites and builds ran only in CI.
+
+The independently verified candidate was extracted to
+`Documents/Codex/MangaMonitor-RC-1.0.0-rc.1-b487657`. ZIP CRC, each manifest file's
+hash, lockfile/license inventory, version/revision, x64 application PE and the
+reverse restoration of the documented NSIS marker to the build hash all passed.
+The NSIS bootstrapper is correctly x86; its installed application is x64.
+
+| Verified item | SHA-256 |
+| --- | --- |
+| Candidate artifact ZIP | `3e2e1d2da718d2e3092851a33020a91791ad76e71fbd158ddce18f43958c2663` |
+| Installer | `2010b77728b9b74094114dac19f31c2ad3c325d0cd4ee395bf1c83f92d2fd8f5` |
+| Installed executable | `9e7ed3a5e4a450cb3e9f8eb2a729aa6f638b9d0b64d5aff7932963886ac1379d` |
+
+The two native screenshots show synthetic missing-book placeholders and support
+the window-lifecycle evidence, not real manga reading. No user app was started or
+closed, no installer was run on the user's computer, and no shortcut or library
+was changed. The existing Dev delivery remains `2493fb5`; leave that environment
+for the user's installation check. The candidate is unsigned. Interactive
+installation and an old `0.3.4` to RC upgrade have not been demonstrated.
+
+Private reports, acceptance material and verification receipts are under
+`Documents/Codex/MangaMonitor-release-candidate-20260927`. No public release,
+tag, PR merge or production enablement occurred; A6 all-author acceptance stays
+deferred. These final evidence-only document updates remain local until the next
+necessary push and do not change the verified candidate revision.
 
 ## Candidate contract
 
@@ -35,7 +74,7 @@ part of this preparation. `production_enabled=false` remains unchanged. Public
 tag/release and PR merge are separate final actions, not implied by candidate
 generation. This document does not authorize them.
 
-## Verification status
+## Preparation and verification history
 
 Implementation and independent review are complete. The first Windows run at
 `c2bed62fad0339b596e0444af1ac42a7fd995f0d` correctly stopped before packaging:
@@ -71,7 +110,8 @@ accept unrelated differences. The delivered executable remains the installed
 copy that the native WebView suite actually exercises. This failed validation
 did not publish a candidate artifact.
 
-CI packaging/lifecycle checks and candidate artifact verification are in
-progress. No candidate-installation acceptance or public-release completion is
-claimed. Prior functional acceptance remains valid; the deferred all-author
-summary acceptance is not automatically restarted for release paperwork.
+The final revision and completed candidate verification are recorded at the top
+of this document. Earlier failed validations remain diagnostic history, not
+delivery artifacts. User installation acceptance and public release remain
+separate; prior functional acceptance is retained and the deferred all-author
+summary acceptance is not restarted for release paperwork.

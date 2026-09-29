@@ -194,6 +194,12 @@ function CoverActions({
       if (!menu.current?.contains(event.target as Node)) close.current();
     };
     const dismiss = () => close.current();
+    const main = document.querySelector("main");
+    const openedAtScroll = main?.scrollTop;
+    const scrolled = () => {
+      // A scroll event queued before the menu opened is not a new movement.
+      if (main && main.scrollTop !== openedAtScroll) close.current();
+    };
     const keyboard = (event: KeyboardEvent) => {
       if (event.key === "Escape" || event.key === "Tab") {
         if (event.key === "Escape") event.preventDefault();
@@ -222,14 +228,12 @@ function CoverActions({
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("keydown", keyboard, true);
     window.addEventListener("resize", dismiss);
-    document
-      .querySelector("main")
-      ?.addEventListener("scroll", dismiss, { passive: true });
+    main?.addEventListener("scroll", scrolled, { passive: true });
     return () => {
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("keydown", keyboard, true);
       window.removeEventListener("resize", dismiss);
-      document.querySelector("main")?.removeEventListener("scroll", dismiss);
+      main?.removeEventListener("scroll", scrolled);
     };
   }, []);
   return createPortal(

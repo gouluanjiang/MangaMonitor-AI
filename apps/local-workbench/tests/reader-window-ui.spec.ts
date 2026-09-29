@@ -7,7 +7,9 @@ import {
 } from "./reader-window-fixture.ts";
 
 const harnesses = new WeakMap<Page, ReaderWindowHarness>();
+const authorizedDownloads = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ context, page }) => {
+  authorizedDownloads.set(page, []);
   await page.setViewportSize({ width: 1280, height: 900 });
   harnesses.set(page, await installReaderWindows(context, page));
 });
@@ -18,15 +20,24 @@ test.afterEach(async ({ page }) => {
   expect(
     await page.evaluate(() => window.workflowTest.unexpectedCommands),
   ).toEqual([]);
-  expect(await page.evaluate(() => window.workflowTest.queue.tasks)).toEqual(
-    [],
-  );
+  const authorized = authorizedDownloads.get(page) ?? [];
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.queue.tasks.map((task) => task.workId),
+    ),
+  ).toEqual(authorized);
+  expect(
+    await page.evaluate(
+      () =>
+        window.workflowTest.calls.filter(
+          ({ command }) => command === "jm_download_confirm",
+        ).length,
+    ),
+  ).toBe(authorized.length);
   expect(
     await page.evaluate(() =>
       window.workflowTest.calls.filter(({ command }) =>
-        /confirm|source_(follow|favorite)$|delete|promote|replace/.test(
-          command,
-        ),
+        /source_(follow|favorite)$|delete|promote|replace/.test(command),
       ),
     ),
   ).toEqual([]);
@@ -402,37 +413,47 @@ test("small-window controls remain usable; a main-close request does not end rea
   await expect(child.getByTestId("comic-reader")).toBeVisible();
   await harness.emit("main", "reader-main-close-requested");
   await expect.poll(() => harness.mainHidden).toBe(true);
+  authorizedDownloads.set(page, ["102"]);
   await child.getByRole("button", { name: "下载这本", exact: true }).click();
   await expect.poll(() => harness.mainHidden).toBe(false);
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-confirmation")).toContainText(
-    "本次选择的 JM 作品",
-  );
-  await expect(page.getByTestId("download-plan-destination")).toContainText(
-    ".zip",
-  );
-  expect(
-    await page.evaluate(() =>
-      window.workflowTest.calls.filter(
-        ({ command }) => command === "jm_download_prepare",
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.workflowTest.queue.tasks.map((task) => task.workId),
       ),
+    )
+    .toEqual(["102"]);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  expect(
+    await page.evaluate(
+      () => window.workflowTest.queue.tasks[0].destinationDisplay,
     ),
-  ).toHaveLength(1);
+  ).toContain(".zip");
+  const reads = await page.evaluate(
+    () =>
+      window.workflowTest.calls.filter(
+        ({ command }) => command === "jm_download_read",
+      ).length,
+  );
   await child.getByRole("button", { name: "下载这本", exact: true }).click();
-  await expect(
-    page.getByText("请先处理主界面中已有的下载确认，再准备其他作品。", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workflowTest.calls.filter(
+            ({ command }) => command === "jm_download_read",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(reads);
   expect(
     await page.evaluate(() =>
-      window.workflowTest.calls.filter(
-        ({ command }) => command === "jm_download_prepare",
-      ),
+      window.workflowTest.calls
+        .filter(({ command }) => command === "jm_download_prepare")
+        .map(({ args }) => args.input),
     ),
-  ).toHaveLength(1);
-  await page.getByTestId("download-cancel").click();
+  ).toEqual(["102"]);
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   await expect(child.getByLabel("当前页码")).toHaveText("2 / 6");
   await harness.emit("main", "reader-main-close-requested");
@@ -444,7 +465,7 @@ test("small-window controls remain usable; a main-close request does not end rea
   // process exit is covered separately by the Windows WebView/IPC smoke.
 });
 
-test("simultaneous reader download handoffs keep one preparation while the queue recheck is pending", async ({
+test("simultaneous reader download requests wait for the queue recheck and enqueue both authorized books once", async ({
   page,
 }) => {
   const harness = harnesses.get(page)!;
@@ -457,6 +478,7 @@ test("simultaneous reader download handoffs keep one preparation while the queue
   await page.evaluate(() => {
     window.readerWindowHarness.holdQueueRead = true;
   });
+  authorizedDownloads.set(page, ["102", "103"]);
   await first.getByRole("button", { name: "下载这本", exact: true }).click();
   await expect
     .poll(() =>
@@ -464,9 +486,6 @@ test("simultaneous reader download handoffs keep one preparation while the queue
     )
     .toBe(true);
   await second.getByRole("button", { name: "下载这本", exact: true }).click();
-  await expect(
-    page.getByText("其他下载正在准备，请稍后再试。", { exact: true }),
-  ).toBeVisible();
   expect(
     await page.evaluate(() =>
       window.workflowTest.calls.filter(
@@ -475,20 +494,20 @@ test("simultaneous reader download handoffs keep one preparation while the queue
     ),
   ).toEqual([]);
   await page.evaluate(() => window.readerWindowHarness.releaseQueueRead());
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-confirmation")).toContainText(
-    "本次选择的 JM 作品",
-  );
   await expect
     .poll(() =>
       page.evaluate(() =>
-        window.workflowTest.calls
-          .filter(({ command }) => command === "jm_download_prepare")
-          .map(({ args }) => args.input),
+        window.workflowTest.queue.tasks.map((task) => task.workId),
       ),
     )
-    .toEqual(["102"]);
-  await page.getByTestId("download-cancel").click();
+    .toEqual(["102", "103"]);
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.calls
+        .filter(({ command }) => command === "jm_download_prepare")
+        .map(({ args }) => args.input),
+    ),
+  ).toEqual(["102", "103"]);
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   await expect(first.getByLabel("当前页码")).toHaveText("1 / 6");
   await expect(second.getByLabel("当前页码")).toHaveText("1 / 6");

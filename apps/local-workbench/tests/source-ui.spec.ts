@@ -329,11 +329,9 @@ test("cached 2000-work catalog uses bounded rows, full-data selection and stable
   await expect(
     page.getByTestId("source-cover-JM:2000").locator("img"),
   ).toBeVisible();
-  await page.getByTestId("source-open-JM:2000").click({ button: "right" });
-  await page
-    .getByTestId("reader-cover-actions")
-    .getByRole("menuitem", { name: "作品详细", exact: true })
-    .click();
+  // Multi-select keeps cover gestures reserved for selection; the title still
+  // opens details without discarding the complete offscreen selection.
+  await page.getByTestId("source-card-JM:2000").locator("h3 button").click();
   await expect(page.getByTestId("source-detail")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await page.mouse.move(1200, 700);
@@ -1757,7 +1755,10 @@ test("both source lists show tag-only language badges without detail requests an
     await page.screenshot({
       path: `visual-evidence/source-language-${source.toLowerCase()}-selection.png`,
     });
-    await page.getByRole("button", { name: "多选", exact: true }).click();
+    await page
+      .getByRole("toolbar", { name: "批量下载操作", exact: true })
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
     if (source === "JM")
       await page.setViewportSize({ width: 1280, height: 900 });
   }
@@ -2559,7 +2560,9 @@ test("source search stays in its page toolbar and detail content fits wide and n
       };
     });
   for (const navigation of ["nav-favorites", "nav-discovery", "nav-authors"]) {
-    await page.getByTestId(navigation).click();
+    if (navigation === "nav-discovery")
+      await openUnifiedSearch(page, "作品关键词");
+    else await page.getByTestId(navigation).click();
     await expect(search).toBeVisible();
     await expect
       .poll(async () => (await geometry()).width)
@@ -2715,7 +2718,7 @@ test("source search date order is stable, unknown-last, persistent and independe
   await page.getByTestId("source-filter-missing").click();
   await expect(cards).toHaveCount(5);
   await expect(page.getByTestId("source-date-sort-scope")).toContainText(
-    "已读取完整范围",
+    "按已读取内容的网站更新时间排序",
   );
   await page.getByTestId("source-open-JM:201").click({ button: "right" });
   await page
@@ -2946,7 +2949,7 @@ test("keyword results remain distinct from author results and changing search mo
     "当前显示 5 部",
   );
   await expect(page.getByTestId("source-keyword-scope")).toContainText(
-    "不代表这些作品属于同一作者",
+    "不代表同一作者的作品",
   );
   await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("source-select-all").click();

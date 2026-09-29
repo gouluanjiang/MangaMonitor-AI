@@ -431,7 +431,6 @@ export default function App() {
       );
   }, [page, discoveryPane]);
   const [embeddedSourceDetail, setEmbeddedSourceDetail] = useState(false);
-  const embeddedScroll = useRef(0);
   const downloadLibrary = useDownloadInventory(
     downloadAdapter,
     persistence.native,
@@ -598,7 +597,6 @@ export default function App() {
     creditContext?: AuthorCreditContext,
   ) {
     setRequestedAuthorContext(creditContext);
-    embeddedScroll.current = contentRef.current?.scrollTop ?? 0;
     setRequestedSource(ref.source);
     setRequestedWork(ref);
     setSourceRequestKey((value) => value + 1);
@@ -607,9 +605,6 @@ export default function App() {
   function returnFromEmbeddedDetail() {
     setEmbeddedSourceDetail(false);
     setRequestedAuthorContext(undefined);
-    requestAnimationFrame(() =>
-      contentRef.current?.scrollTo(0, embeddedScroll.current),
-    );
   }
   function openSourceWork(
     ref: WorkReference,
@@ -1076,7 +1071,7 @@ export default function App() {
       const origin = settingsOrigin.current;
       setPage(next);
       setDetail(origin.detail);
-      restoreAnchor(origin.anchor);
+      if (!persistence.native) restoreAnchor(origin.anchor);
       settingsOrigin.current = null;
       return;
     }
@@ -2240,7 +2235,10 @@ export default function App() {
             : pageNames[page];
   function navigateUi(destination: UiDestination) {
     if (destination === "settings") return openSettings();
-    if (destination === "discovery" || destination === "author-search") {
+    if (
+      persistence.native &&
+      (destination === "discovery" || destination === "author-search")
+    ) {
       chooseSearchMode(unifiedSearchMode);
       return;
     }

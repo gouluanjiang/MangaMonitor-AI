@@ -21,6 +21,9 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   workers: 1,
   retries: 0,
+  // A failing batch should emit its traces promptly; a green run still executes
+  // every scenario. This does not retry or hide any failed assertion.
+  maxFailures: process.env.CI ? 10 : 0,
   timeout: 30_000,
   expect: { timeout: 5_000 },
   reporter: [["list"], ["html", { open: "never" }]],

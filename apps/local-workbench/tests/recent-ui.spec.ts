@@ -856,7 +856,7 @@ test("a delayed continuation preserves the user's newer reading position rather 
   expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
 });
 
-test("programmatic position changes, resizing, detail return and hidden or filtered feeds never supply browse intent", async ({
+test("programmatic changes and hidden feeds never supply browse intent, while an explicitly scrolled filtered feed can continue", async ({
   page,
 }) => {
   await page.clock.install();
@@ -888,13 +888,14 @@ test("programmatic position changes, resizing, detail return and hidden or filte
     .getByLabel("最近更新入库筛选")
     .getByRole("button", { name: "已入库 0", exact: true })
     .click();
+  // A deliberate downward input can advance even when the current ownership filter hides every card.
   await main.hover();
   await page.mouse.wheel(0, 10000);
   await page.clock.runFor(500);
-  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
   await page
     .getByLabel("最近更新入库筛选")
-    .getByRole("button", { name: "全部 20", exact: true })
+    .getByRole("button", { name: "全部 39", exact: true })
     .click();
   await page
     .locator(".source-tabs")
@@ -904,14 +905,14 @@ test("programmatic position changes, resizing, detail return and hidden or filte
   await main.hover();
   await page.mouse.wheel(0, 10000);
   await page.clock.runFor(1000);
-  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
   await page
     .locator(".source-tabs")
     .getByRole("button", { name: "最近更新", exact: true })
     .click();
-  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
   await page.clock.runFor(1000);
-  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1]);
+  expect((await recentCalls(page)).map((args) => args.page)).toEqual([1, 2]);
 });
 
 test("context-menu scrolling and focused-input keys cannot continue the background recent feed", async ({

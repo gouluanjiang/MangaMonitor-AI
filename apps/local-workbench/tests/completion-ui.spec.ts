@@ -37,9 +37,11 @@ declare global {
 }
 test.use({ storageState: { cookies: [], origins: [] } });
 const errors = new WeakMap<Page, string[]>();
+const authorizedDownloads = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
   const captured: string[] = [];
   errors.set(page, captured);
+  authorizedDownloads.set(page, []);
   page.on("pageerror", (error) => captured.push(error.message));
   await page.setViewportSize({ width: 1672, height: 1020 });
 });
@@ -47,8 +49,23 @@ test.afterEach(async ({ page }) => {
   expect(errors.get(page) ?? []).toEqual([]);
   expect(
     await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "jm_download_prepare")
+        .map((call) => call.args.input),
+    ),
+  ).toEqual(authorizedDownloads.get(page) ?? []);
+  expect(
+    await page.evaluate(
+      () =>
+        window.authorTest.calls.filter(
+          (call) => call.command === "jm_download_confirm",
+        ).length,
+    ),
+  ).toBe((authorizedDownloads.get(page) ?? []).length);
+  expect(
+    await page.evaluate(() =>
       window.authorTest.calls.filter((call) =>
-        /download_(prepare|confirm|control)|completeness_|source_matches_|phone_library_|source_follow$|source_favorite$/.test(
+        /download_control|completeness_|source_matches_|phone_library_|source_follow$|source_favorite$/.test(
           call.command,
         ),
       ),
@@ -171,6 +188,7 @@ async function install(page: Page) {
       }
       let queue: DownloadSnapshot = { revision: 0, tasks: [] };
       const batches = new Map<string, DownloadPlan[]>();
+      const plansById = new Map<string, DownloadPlan>();
       const clone = (value: unknown) => structuredClone(value);
       Object.defineProperty(window, "__TAURI_INTERNALS__", {
         configurable: true,
@@ -209,6 +227,55 @@ async function install(page: Page) {
               };
             }
             if (command === "jm_download_read") return clone(queue);
+            if (command === "jm_download_prepare") {
+              const source = (args.scope as { source: DownloadPlan["source"] })
+                .source;
+              const work = works.find(
+                (item) => item.source === source && item.workId === args.input,
+              )!;
+              const plan: DownloadPlan = {
+                planId: (source === "JM" ? "c" : "d").repeat(64),
+                revision: queue.revision,
+                source,
+                workId: work.workId,
+                title: work.title,
+                authors: work.authors,
+                rootId: library.rootId!,
+                generation: library.generation,
+                destinationDisplay: "C:\\Synthetic\\" + work.title + ".zip",
+              };
+              plansById.set(plan.planId, plan);
+              return clone(plan);
+            }
+            if (command === "jm_download_confirm") {
+              const plan = plansById.get(String(args.planId));
+              if (!plan || plan.revision !== queue.revision)
+                throw { code: "DOWNLOAD_PLAN_STALE" };
+              queue = {
+                revision: queue.revision + 1,
+                tasks: [
+                  ...queue.tasks,
+                  {
+                    id: plan.planId,
+                    revision: 1,
+                    source: plan.source,
+                    workId: plan.workId,
+                    title: plan.title,
+                    destinationDisplay: plan.destinationDisplay,
+                    phase: "queued",
+                    filesDone: 0,
+                    filesTotal: null,
+                    bytesDone: 0,
+                    errorCode: null,
+                    allowedActions: ["pause"],
+                    libraryEntryId: null,
+                    localFiles: null,
+                    updatedAt: 1800000000000,
+                  },
+                ],
+              };
+              return clone(queue);
+            }
             if (command === "jm_download_batch_cancel") return null;
             if (command === "jm_download_batch_prepare") {
               const source = (args.scope as { source: DownloadPlan["source"] })
@@ -1576,11 +1643,14 @@ for (const entry of ["saved updates", "author search"] as const) {
     await page.screenshot({
       path: `visual-evidence/language-${entry === "saved updates" ? "author-updates" : "author-search"}.png`,
     });
-    await page.getByRole("button", { name: "退出多选", exact: true }).click();
+    await page
+      .getByRole("toolbar", { name: "批量下载操作" })
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
     const unknown = page.getByTestId(
       "author-update-Pica:0123456789abcdef01234567",
     );
-    await unknown.locator(".source-card-open").click();
+    await unknown.locator(".source-card-open").click({ button: "right" });
     await page
       .getByTestId("reader-cover-actions")
       .getByRole("menuitem", { name: "作品详细", exact: true })
@@ -1864,23 +1934,24 @@ test("full author selection includes circle members but never other keyword hits
     page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
   ).toContainText("已选 2 本");
   await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
+  authorizedDownloads.set(page, ["456", "0123456789abcdef01234567"]);
   await page.getByRole("button", { name: "下载", exact: true }).click();
   await expect
     .poll(() =>
       page.evaluate(
         () =>
           window.authorTest.calls.filter(
-            (call) => call.command === "jm_download_selection_confirm",
+            (call) => call.command === "jm_download_confirm",
           ).length,
       ),
     )
-    .toBe(1);
+    .toBe(2);
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
   await expect(page.getByTestId("completion-panel")).toBeVisible();
   const inputs = await page.evaluate(() =>
     window.authorTest.calls
-      .filter((call) => call.command === "jm_download_batch_prepare")
-      .flatMap((call) => call.args.inputs as string[]),
+      .filter((call) => call.command === "jm_download_prepare")
+      .map((call) => call.args.input as string),
   );
   expect(inputs.sort()).toEqual(["456", "0123456789abcdef01234567"].sort());
 });
@@ -1925,24 +1996,25 @@ test("a metadata placeholder stays inspectable outside complete author counts an
   await expect(
     page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
   ).toContainText("已选 2 本");
+  authorizedDownloads.set(page, ["456", "0123456789abcdef01234567"]);
   await page.getByRole("button", { name: "下载", exact: true }).click();
   await expect
     .poll(() =>
       page.evaluate(
         () =>
           window.authorTest.calls.filter(
-            (call) => call.command === "jm_download_selection_confirm",
+            (call) => call.command === "jm_download_confirm",
           ).length,
       ),
     )
-    .toBe(1);
+    .toBe(2);
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
   await expect(page.getByTestId("completion-panel")).toBeVisible();
   expect(
     await page.evaluate(() =>
       window.authorTest.calls
-        .filter((call) => call.command === "jm_download_batch_prepare")
-        .flatMap((call) => call.args.inputs as string[])
+        .filter((call) => call.command === "jm_download_prepare")
+        .map((call) => call.args.input as string)
         .sort(),
     ),
   ).toEqual(["456", "0123456789abcdef01234567"].sort());
@@ -2119,11 +2191,8 @@ for (const mode of ["updates", "search"] as const) {
       "title",
       "已按本作品核对署名。来源原署名：Wrong Credit",
     );
-    await correct.locator(".source-card-open").click();
-    await page
-      .getByTestId("reader-cover-actions")
-      .getByRole("menuitem", { name: "作品详细", exact: true })
-      .click();
+    // Multiselect cover gestures only change selection; the title remains the detail link.
+    await correct.locator("h3 button").click();
     const detail = page.getByTestId("source-detail");
     await expect(detail.getByTestId("author-credit-reviewed")).toHaveAttribute(
       "title",
@@ -2459,12 +2528,7 @@ test("a new author is searched across every page of both sources without requiri
   await page.screenshot({
     path: "visual-evidence/dual-source-author-search.png",
   });
-  await page
-    .getByTestId("author-update-JM:456")
-    .getByRole("button")
-    .first()
-    .click();
-  await page.getByRole("menuitem", { name: "作品详细", exact: true }).click();
+  await page.getByTestId("author-update-JM:456").locator("h3 button").click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
@@ -2508,6 +2572,7 @@ test("full-range author selection waits for completion, excludes owned works and
   ).toContainText("已选 2 本");
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({ path: "visual-evidence/author-full-selection.png" });
+  authorizedDownloads.set(page, ["456", "0123456789abcdef01234567"]);
   await page
     .getByRole("toolbar", { name: "批量下载操作", exact: true })
     .getByRole("button", { name: "下载", exact: true })
@@ -2517,20 +2582,20 @@ test("full-range author selection waits for completion, excludes owned works and
       page.evaluate(
         () =>
           window.authorTest.calls.filter(
-            (call) => call.command === "jm_download_selection_confirm",
+            (call) => call.command === "jm_download_confirm",
           ).length,
       ),
     )
-    .toBe(1);
+    .toBe(2);
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
   await expect(page.getByTestId("completion-panel")).toBeVisible();
   expect(
     await page.evaluate(() =>
       window.authorTest.calls
-        .filter((call) => call.command === "jm_download_batch_prepare")
+        .filter((call) => call.command === "jm_download_prepare")
         .map((call) => [
           (call.args.scope as { source: string }).source,
-          call.args.inputs,
+          [call.args.input],
         ]),
     ),
   ).toEqual([

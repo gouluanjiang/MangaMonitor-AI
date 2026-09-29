@@ -21,9 +21,11 @@ declare global {
   }
 }
 const faults = new WeakMap<Page, string[]>();
+const authorizedDownloads = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
   faults.set(page, errors);
+  authorizedDownloads.set(page, []);
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/*", (route) =>
     new URL(route.request().url()).hostname === "127.0.0.1"
@@ -142,13 +144,27 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }) => {
   expect(faults.get(page)).toEqual([]);
+  const authorized = authorizedDownloads.get(page) ?? [];
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.queue.tasks.map((task) => task.workId),
+    ),
+  ).toEqual(authorized);
+  expect(
+    await page.evaluate(
+      () =>
+        window.workflowTest.calls.filter(
+          ({ command }) => command === "jm_download_confirm",
+        ).length,
+    ),
+  ).toBe(authorized.length);
   expect(
     await page.evaluate(() => window.workflowTest.unexpectedCommands),
   ).toEqual([]);
   expect(
     await page.evaluate(() =>
       window.workflowTest.calls.filter(({ command }) =>
-        /confirm|favorite|follow$|delete|promote|replace/.test(command),
+        /favorite|follow$|delete|promote|replace/.test(command),
       ),
     ),
   ).toEqual([]);
@@ -844,7 +860,7 @@ test("a temporarily unavailable saved online chapter keeps the directory usable 
   ).toBe(true);
 });
 
-test("online read does not download; download button uses the existing confirmation and reader keys leave that dialog alone", async ({
+test("online reading only downloads after an explicit click and preserves the reader while repeated requests stay idempotent", async ({
   page,
 }) => {
   await openOnline(page);
@@ -859,25 +875,41 @@ test("online read does not download; download button uses the existing confirmat
       ),
     ),
   ).toEqual([]);
+  authorizedDownloads.set(page, ["102"]);
   await showToolbar(page);
   await page.getByRole("button", { name: "下载这本", exact: true }).click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.workflowTest.queue.tasks.map((task) => task.workId),
+      ),
+    )
+    .toEqual(["102"]);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("comic-reader")).toBeVisible();
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  await page.getByLabel("阅读模式").selectOption("single");
+  await page.getByTestId("reader-viewport").focus();
   await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("F11");
+  await expect(page.getByLabel("当前页码")).toHaveText("2 / 10000");
+  await showToolbar(page);
+  await page.getByRole("button", { name: "下载这本", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workflowTest.calls.filter(
+            ({ command }) => command === "jm_download_read",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(1);
   expect(
     await page.evaluate(() =>
-      window.readerTest.calls.filter(
-        ({ command }) => command === "reader_fullscreen",
-      ),
+      window.workflowTest.calls
+        .filter(({ command }) => command === "jm_download_prepare")
+        .map(({ args }) => args.input),
     ),
-  ).toEqual([]);
-  await expect(page.getByLabel("当前页码")).toHaveText("1 / 10000");
-  await page
-    .getByTestId("download-confirmation")
-    .getByRole("button", { name: "关闭下载确认", exact: true })
-    .click();
-  await expect(page.getByTestId("comic-reader")).toBeVisible();
-  expect(await page.evaluate(() => window.workflowTest.queue.tasks)).toEqual(
-    [],
-  );
+  ).toEqual(["102"]);
+  await expect(page.getByLabel("当前页码")).toHaveText("2 / 10000");
 });

@@ -84,12 +84,22 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
     .getByRole("button", { name: "下载", exact: true })
     .click();
   await expect
-    .poll(
-      async () => (await calls(page, "jm_download_selection_confirm")).length,
-    )
-    .toBe(1);
+    .poll(async () => (await calls(page, "jm_download_confirm")).length)
+    .toBe(2);
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
-  expect(await calls(page, "jm_download_selection_confirm")).toHaveLength(1);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  expect(
+    (await calls(page, "jm_download_prepare")).map(({ args }) => [
+      (args.scope as { source: string }).source,
+      args.input,
+    ]),
+  ).toEqual([
+    ["JM", "102"],
+    ["Pica", String(201).padStart(24, "0")],
+  ]);
+  expect(await calls(page, "jm_download_selection_confirm")).toHaveLength(0);
+  expect(await calls(page, "jm_download_batch_prepare")).toHaveLength(0);
   await expect(page.getByTestId("completion-panel")).toBeVisible();
   await expect(counts(page)).toContainText("已入库 1 条 · 未入库 4 条");
   await page.evaluate(() => window.workflowTest.finishDownloads());
@@ -190,18 +200,11 @@ test("floating selection enqueues successful items and retains only failed items
     const previous = target.__TAURI_INTERNALS__.invoke;
     target.__TAURI_INTERNALS__.invoke = async (command, args = {}) => {
       if (
-        command === "jm_download_batch_prepare" &&
+        command === "jm_download_prepare" &&
         (args.scope as { source?: string })?.source === "Pica"
       ) {
         window.workflowTest.calls.push({ command, args });
-        return {
-          batchId: null,
-          plans: [],
-          issues: (args.inputs as string[]).map((input) => ({
-            input,
-            errorCode: "SOURCE_TIMEOUT",
-          })),
-        };
+        throw { code: "SOURCE_TIMEOUT" };
       }
       return previous(command, args);
     };
@@ -220,8 +223,16 @@ test("floating selection enqueues successful items and retains only failed items
   await expect(bar).toContainText("已选 1 本");
   await expect(card(page, "JM:102").getByRole("checkbox")).not.toBeChecked();
   await expect(card(page, pica(201)).getByRole("checkbox")).toBeChecked();
+  expect(await calls(page, "jm_download_prepare")).toHaveLength(2);
+  expect(await calls(page, "jm_download_confirm")).toHaveLength(1);
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.queue.tasks.map((task) => [task.source, task.workId]),
+    ),
+  ).toEqual([["JM", "102"]]);
   await expect(page.getByTestId("completion-panel")).toBeVisible();
   await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   await expect(page.getByTestId("native-downloads")).toBeHidden();
 });
 

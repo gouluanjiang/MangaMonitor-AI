@@ -1517,6 +1517,9 @@ export function SourceWorkbench({
       query,
       queryMode,
       sort,
+      view === "favorites" && sort === "source-reverse"
+        ? collectionState.displaySnapshot?.complete === true
+        : null,
       inventoryFilter,
       followingTab,
     ]),

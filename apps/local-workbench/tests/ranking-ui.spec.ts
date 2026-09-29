@@ -253,7 +253,9 @@ test("both rankings show explicit languages while a manga category remains unkno
       .getByTestId(`rank-work-${source}:${selectedId}`)
       .getByRole("checkbox")
       .check();
-    await expect(rankingPanel(page)).toContainText("已选 1 本");
+    await expect(
+      page.getByRole("toolbar", { name: "批量下载操作" }),
+    ).toContainText("已选 1 本");
     await page
       .getByTestId(`rank-work-${source}:${selectedId}`)
       .scrollIntoViewIfNeeded();

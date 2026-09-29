@@ -103,8 +103,13 @@ export function CoverInteraction({
       tabIndex={0}
       className={`${className} cover-interaction`}
       data-testid={testId}
-      aria-label={
-        canRetry && !selectionMode ? `重试《${title}》封面` : `打开《${title}》`
+      aria-label={`打开《${title}》`}
+      aria-description={
+        selectionMode
+          ? "单击选择作品"
+          : canRetry
+            ? "单击重试封面；右键打开漫画菜单"
+            : "双击小窗阅读；右键打开漫画菜单"
       }
       data-cover-retry={canRetry && !selectionMode ? true : undefined}
       aria-haspopup={selectionMode ? undefined : "menu"}

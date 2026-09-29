@@ -112,28 +112,46 @@ test("a long cover-menu title wraps in full and its final characters remain read
     name: `打开《${title}》`,
     exact: true,
   });
-  await cover.dispatchEvent("contextmenu", {
-    clientX: 380,
-    clientY: 630,
-    bubbles: true,
+  await cover.evaluate((element) => {
+    // A generic contextmenu Event has no mouse coordinates. Use a MouseEvent
+    // to exercise the same viewport-edge anchor as a real right click.
+    element.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        clientX: 380,
+        clientY: 630,
+        button: 2,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
   });
   const menu = page.getByRole("menu", { name: "打开漫画" });
   await expect(menu).toBeVisible();
+  await expect(menu).toHaveAttribute("style", /left:.*top:/);
   await expect(menu.locator("p").first()).toHaveText(title);
   await expect
     .poll(async () =>
       menu.evaluate((element) => {
         const bounds = element.getBoundingClientRect();
-        return (
-          bounds.x >= 7 &&
-          bounds.y >= 7 &&
-          bounds.right <= innerWidth - 7 &&
-          bounds.bottom <= innerHeight - 7 &&
-          element.scrollWidth <= element.clientWidth + 1
-        );
+        return {
+          leftOverflow: Math.max(0, 7 - bounds.left),
+          topOverflow: Math.max(0, 7 - bounds.top),
+          rightOverflow: Math.max(0, bounds.right - innerWidth + 7),
+          bottomOverflow: Math.max(0, bounds.bottom - innerHeight + 7),
+          horizontalOverflow: Math.max(
+            0,
+            element.scrollWidth - element.clientWidth - 1,
+          ),
+        };
       }),
     )
-    .toBe(true);
+    .toEqual({
+      leftOverflow: 0,
+      topOverflow: 0,
+      rightOverflow: 0,
+      bottomOverflow: 0,
+      horizontalOverflow: 0,
+    });
   await expect
     .poll(async () =>
       menu.evaluate((element) => {

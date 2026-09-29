@@ -5,6 +5,7 @@ Windows 桌面漫画库、JM／哔咔浏览与下载工具。你手动检查关�
 当前正式版为 **[1.0.1](https://github.com/gouluanjiang/MangaMonitor-AI/releases/tag/v1.0.1)**，约定的 V1 开发、验收、合并、发布及本机升级已完成。V1 使用体验、阅读器、界面和项目审查修复已由用户验收；全部关注作者检查摘要及本补丁的 JM 分页边界修复已完成代理实机核验。最终 CI、安装、完整退出重开与数据保留检查均已通过；没有启用云端自动监控。
 
 - [使用指南](docs/USER_GUIDE.md)
+- [文档导航](docs/README.md)
 - [1.0.1 版本说明](docs/RELEASE_NOTES_1.0.1.md)
 - [项目当前进度与后续范围](docs/PROJECT_STATUS.md)
 - [当前开发与验证状态](docs/DEVELOPMENT_HANDOFF.md)
@@ -40,7 +41,7 @@ Windows 桌面漫画库、JM／哔咔浏览与下载工具。你手动检查关�
 
 前端位于 [apps/local-workbench](apps/local-workbench/README.md)，Tauri 原生工作区位于其 `src-tauri` 目录。使用 Node 24、pnpm 11.19.0、Rust 1.98.1；依赖由锁文件固定。
 
-正式检查与构建在 GitHub Actions 执行：前端逻辑／Chromium、Rust 基线、Windows 原生／WebView 和安装验证。本地不重复执行同一套正式检查。具体开发约束见 [AGENTS.md](AGENTS.md)。
+正式检查与构建在 GitHub Actions 执行：前端逻辑／Chromium、Rust 基线、Windows 原生／WebView 和安装验证。本地不重复执行同一套正式检查。贡献与问题反馈见 [CONTRIBUTING.md](CONTRIBUTING.md)，具体开发约束见 [AGENTS.md](AGENTS.md)。
 
 浏览器预览是合成数据样例；真实账号、电脑漫画库及下载由 Windows 桌面端提供。测试通过、用户验收、公开发行是不同状态。
 
@@ -48,4 +49,4 @@ Windows 桌面漫画库、JM／哔咔浏览与下载工具。你手动检查关�
 
 项目依现有 Cargo 声明使用 [MIT 许可](LICENSE)。手工参考与适配代码见 [第三方通知](THIRD_PARTY_NOTICES.md)；安装包同时携带锁定依赖的许可清单和文本。
 
-[原始云端架构记录](README-CLOUD-HISTORY.md)仅保留历史依据，不是当前开发路线。自动匹配、手机名单、分类书单等已取消的功能不会因历史文档重新加入；内置更新器仍待后续讨论。`production_enabled=false` 保持原执行边界。
+[历史文档](docs/archive/README.md)保留原始云端、助手、匹配器与阶段验收依据，不是当前开发路线。自动匹配、手机名单、分类书单等已取消的功能不会因历史文档重新加入；内置更新器仍待后续讨论。`production_enabled=false` 保持原执行边界。

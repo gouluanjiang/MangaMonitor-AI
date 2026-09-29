@@ -14,8 +14,8 @@ The authorization is intentionally narrow. It permits the existing guarded local
   - `AGENTS.md`
   - `docs/DOWNLOAD_EXECUTOR_THAW_GATE.md`
   - `docs/upstream-source-reference.md`
-  - `ASSISTANT_A6_15_RESULTS.md`
-  - `ASSISTANT_V1_6_RESULTS.md`
+  - [ASSISTANT_A6_15_RESULTS.md](archive/early-engineering/ASSISTANT_A6_15_RESULTS.md)
+  - [ASSISTANT_V1_6_RESULTS.md](archive/early-engineering/ASSISTANT_V1_6_RESULTS.md)
 - Current local execution path reviewed:
   - `local_execution_orchestrator.rs`
   - `source_preflight_authorization.rs`

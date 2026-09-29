@@ -803,20 +803,28 @@ export function CompletionPanel({
               <button
                 disabled={busy}
                 onClick={() =>
-                  void perform(async () => {
+                  void perform(async (isCurrent) => {
                     const cancels: Promise<unknown>[] = [];
                     if (authorRunning && view?.run)
                       cancels.push(adapter.cancel(view.run.id));
                     if (recentRunning && recentRun && adapter.cancelRecentCheck)
                       cancels.push(adapter.cancelRecentCheck(recentRun.id));
                     const outcomes = await Promise.allSettled(cancels);
-                    if (outcomes.some((result) => result.status === "rejected"))
-                      setRecentError("停止操作尚未完全确认，请刷新进度核对。");
+                    const failure = outcomes.find(
+                      (result) => result.status === "rejected",
+                    );
                     if (adapter.recentCheckProgress) {
-                      const recent = await adapter.recentCheckProgress();
-                      if (recent)
-                        setRecentCheck({ key: scopeKey, run: recent });
+                      try {
+                        const recent = await adapter.recentCheckProgress();
+                        if (isCurrent() && recent)
+                          setRecentCheck({ key: scopeKey, run: recent });
+                      } catch (cause) {
+                        if (!failure) throw cause;
+                      }
                     }
+                    // Progress success must not erase a failed stop action or
+                    // imply either backend run has already stopped.
+                    if (failure?.status === "rejected") throw failure.reason;
                   })
                 }
               >

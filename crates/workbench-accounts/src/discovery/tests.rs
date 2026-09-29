@@ -197,6 +197,114 @@ async fn observation_ingest_coauthors_is_idempotent_and_never_changes_query_cove
 }
 
 #[tokio::test]
+async fn nonfollowed_recent_works_stay_in_pool_and_replay_when_the_author_is_followed() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        1,
+        page(
+            1,
+            3,
+            vec![
+                work(Source::Jm, "100", &["Author A"]),
+                work(Source::Jm, "101", &["Unfollowed Writer"]),
+                work(Source::Jm, "102", &[]),
+            ],
+        ),
+    );
+    service
+        .query(
+            Source::Jm,
+            &scopes[0].session_id,
+            QueryKind::Recent,
+            "",
+            None,
+            1,
+        )
+        .await
+        .unwrap();
+    let store = WorkbenchStore::open(root.path()).unwrap();
+    let before = store.read_discovery().unwrap();
+    assert_eq!(before.value.accounts[0].records.len(), 1);
+    assert_eq!(before.value.accounts[0].records[0].work.work_id, "100");
+    let history = service
+        .source_recent_history(Source::Jm, &scopes[0].session_id)
+        .await
+        .unwrap();
+    assert_eq!(history.items.len(), 3);
+    assert!(history.items.iter().any(|item| item.work_id == "101"));
+    assert!(history.items.iter().any(|item| item.work_id == "102"));
+    let observations = store.read_observed_works().unwrap();
+    assert_eq!(observations.value.accounts[0].records.len(), 3);
+    follow(&service, &scopes[1], "Unfollowed Writer", true).await;
+    let visible = service.discovery_read_view(scopes, false).await.unwrap();
+    assert_eq!(visible.records.len(), 2);
+    assert!(visible.records.iter().any(|row| row.work.work_id == "101"));
+    assert!(visible.records.iter().all(|row| row.work.work_id != "102"));
+    let after = store.read_discovery().unwrap();
+    assert_eq!(after.value.accounts[0].records.len(), 2);
+    assert_eq!(store.read_observed_works().unwrap(), observations);
+    assert!(visible.last_check.is_none());
+    assert!(visible
+        .authors
+        .iter()
+        .all(|range| range.state == DiscoveryRangeState::Idle));
+    assert_eq!(backend.0.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn existing_observed_record_accepts_detail_correction_to_a_nonfollowed_author() {
+    let (root, backend, service, scopes) = setup().await;
+    follow(&service, &scopes[0], "Author A", true).await;
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
+    service
+        .query(
+            Source::Jm,
+            &scopes[0].session_id,
+            QueryKind::Recent,
+            "",
+            None,
+            1,
+        )
+        .await
+        .unwrap();
+    backend.0.details.lock().unwrap().insert(
+        "100".into(),
+        Ok(work(Source::Jm, "100", &["Actual Unfollowed Writer"])),
+    );
+    service
+        .query(
+            Source::Jm,
+            &scopes[0].session_id,
+            QueryKind::Detail,
+            "100",
+            None,
+            1,
+        )
+        .await
+        .unwrap();
+    let visible = service.discovery_read_view(scopes, false).await.unwrap();
+    assert!(visible.records.is_empty());
+    let raw = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    let records = &raw.value.accounts[0].records;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].work.work_id, "100");
+    assert_eq!(records[0].work.authors, ["Actual Unfollowed Writer"]);
+    assert!(records[0].metadata_detail_at.is_some());
+    assert!(visible.last_check.is_none());
+}
+
+#[tokio::test]
 async fn active_author_scan_defers_observations_without_losing_or_fabricating_commits() {
     let (root, backend, service, scopes) = setup().await;
     follow(&service, &scopes[0], "Author A", true).await;

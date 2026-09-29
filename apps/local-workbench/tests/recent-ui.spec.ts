@@ -65,6 +65,7 @@ async function install(
     aiIds?: number[];
     catalogIds?: number[];
     catalogOtherIds?: number[];
+    holdPage?: number;
   } = {},
 ) {
   await page.addInitScript(
@@ -82,7 +83,7 @@ async function install(
         })),
         version: 0,
         failPage: null,
-        holdPage: null,
+        holdPage: options.holdPage ?? null,
         total: 40,
         blIds: options.blIds ?? [],
         aiIds: options.aiIds ?? [],
@@ -466,6 +467,7 @@ test("an entire page hidden by BL, AI categories and confirmed author-update mem
     aiIds: Array.from({ length: 5 }, (_, i) => i * 4 + 3),
     catalogIds: Array.from({ length: 10 }, (_, i) => i * 2 + 2),
     catalogOtherIds: [21],
+    holdPage: 2,
   });
   await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
   await expect(page.getByTestId("recent-grid")).toHaveAttribute(
@@ -475,10 +477,21 @@ test("an entire page hidden by BL, AI categories and confirmed author-update mem
   await expect(page.getByTestId("recent-progress")).not.toContainText(
     "分页已读完",
   );
-  const main = page.getByRole("main");
-  await main.hover();
-  await page.mouse.wheel(0, 10000);
+  // No wheel or button is needed when the whole source page was filtered out.
+  // Hold the next response to verify both the empty intermediate view and the
+  // automatic request before its unrelated, eligible works become visible.
+  await expect
+    .poll(async () => (await recentCalls(page)).map((value) => value.page))
+    .toEqual([1, 2]);
+  await expect
+    .poll(() => page.evaluate(() => typeof window.recentTest.release))
+    .toBe("function");
+  await page.evaluate(() => window.recentTest.release?.());
   await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  await expect(page.getByTestId("recent-grid")).toHaveAttribute(
+    "data-total-items",
+    "19",
+  );
   await expect(recentCard(page, "Pica", 21)).toBeVisible();
   expect((await recentCalls(page)).map((value) => value.page)).toEqual([1, 2]);
   expect(

@@ -3,7 +3,10 @@ import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { initialPreferences } from "../src/preferences.ts";
 import { emptyLibrary } from "../src/library-types.ts";
-import type { DiscoverySnapshot } from "../src/completion-types.ts";
+import type {
+  DiscoverySnapshot,
+  RecentCheckRun,
+} from "../src/completion-types.ts";
 import type {
   DownloadInventorySnapshot,
   DownloadSnapshot,
@@ -31,6 +34,8 @@ declare global {
       release?: () => void;
       readFailure: string | null;
       cancelFailure: string | null;
+      recentRun: RecentCheckRun | null;
+      recentCancelFailure: string | null;
       inventoryFailure: boolean;
     };
   }
@@ -177,6 +182,8 @@ async function install(page: Page) {
         hold: false,
         readFailure: null,
         cancelFailure: null,
+        recentRun: null,
+        recentCancelFailure: null,
         inventoryFailure: false,
       } as Window["authorTest"]);
       // Opt-in saved IPC state for reload coverage, never a real account store.
@@ -234,7 +241,16 @@ async function install(page: Page) {
                   errorCode: null,
                 },
               };
-            if (command === "recent_check_progress") return null;
+            if (command === "recent_check_progress")
+              return clone(hooks.recentRun);
+            if (command === "recent_check_cancel" && hooks.recentCancelFailure)
+              throw { code: hooks.recentCancelFailure };
+            if (command === "recent_check_cancel" && hooks.recentRun) {
+              hooks.recentRun.phase = "cancelled";
+              return clone(hooks.recentRun);
+            }
+            if (command === "recent_check_start" && hooks.recentRun)
+              return clone(hooks.recentRun);
             if (
               command === "recent_check_start" ||
               command === "recent_check_cancel"
@@ -1223,6 +1239,64 @@ test("failed cancellation keeps its action error while independent progress read
   expect(await discoveryCalls(page, "discovery_start")).toBe(1);
 });
 
+for (const failedRun of ["author", "recent"] as const) {
+  test(`one ${failedRun} cancellation failure preserves its run and still cancels the independent run`, async ({
+    page,
+  }) => {
+    await installWithPausedClock(page);
+    await open(page);
+    await page.evaluate((failedRun) => {
+      window.authorTest.recentRun = {
+        id: "synthetic-active-recent",
+        phase: "checking",
+        currentSource: "JM",
+        currentPage: 3,
+        pagesRead: 2,
+        recordsRead: 40,
+        errorCode: null,
+        results: [],
+      };
+      if (failedRun === "author") window.authorTest.cancelFailure = "BUSY";
+      else window.authorTest.recentCancelFailure = "BUSY";
+    }, failedRun);
+    await page.getByTestId("completion-start").click();
+    await expect(page.getByTestId("completion-recent-check")).toContainText(
+      "正在读取",
+    );
+    const stop = page.getByRole("button", { name: "停止本次检查" });
+    await stop.click();
+    await expect(
+      page.getByText(
+        "本次检查未完成，已读取的结果会保留。请查看检查范围后重试。",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(stop).toBeEnabled();
+    await expect(page.getByTestId("completion-start")).toBeDisabled();
+    await expect(page.getByTestId("completion-progress")).toHaveCount(
+      failedRun === "author" ? 1 : 0,
+    );
+    await expect(page.getByTestId("completion-recent-check")).toContainText(
+      failedRun === "recent" ? "正在读取" : "已停止，范围未完成",
+    );
+    expect(await discoveryCalls(page, "discovery_cancel")).toBe(1);
+    expect(await discoveryCalls(page, "recent_check_cancel")).toBe(1);
+    await page.evaluate(() => {
+      window.authorTest.cancelFailure = null;
+      window.authorTest.recentCancelFailure = null;
+    });
+    await stop.click();
+    await expect(stop).toHaveCount(0);
+    await expect(page.getByTestId("completion-start")).toBeEnabled();
+    expect(await discoveryCalls(page, "discovery_cancel")).toBe(
+      failedRun === "author" ? 2 : 1,
+    );
+    expect(await discoveryCalls(page, "recent_check_cancel")).toBe(
+      failedRun === "recent" ? 2 : 1,
+    );
+  });
+}
+
 for (const code of [
   "DISCOVERY_INVALID",
   "STALE_SESSION",
@@ -1879,7 +1953,10 @@ test("explicit circle membership remains selectable without literal equality and
   await open(page);
   await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
   await expect(page.getByTestId("completion-query-scope")).toContainText(
-    "作者关键词",
+    "已取得作品按明确署名归属，发现入口不限制作者归属",
+  );
+  await expect(page.getByTestId("completion-query-scope")).toContainText(
+    "作者作品包含明确列出的合著者和“社团（作者）”",
   );
   await expect(page.getByTestId("completion-counts")).toContainText(
     "未入库 2 条",

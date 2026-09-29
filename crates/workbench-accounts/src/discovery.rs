@@ -1206,6 +1206,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     observation.metadata_detail_at,
                 );
                 let merged = merged_record(prior, incoming);
+                // Unfollowed or unknown works stay in the source observation
+                // pool. A later follow replays that evidence into this catalog.
+                // Existing entries still accept reliable attribution corrections.
+                if prior.is_none() && !captured.record_matches(&merged) {
+                    continue;
+                }
                 if prior != Some(&merged) {
                     changed.insert(key, merged);
                 }

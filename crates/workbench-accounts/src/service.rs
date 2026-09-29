@@ -20,6 +20,43 @@ use zeroize::Zeroizing;
 
 const MAX_QUERY_ITEMS: usize = 1000;
 
+/// Boundary evidence refers to raw slots, before an isolated issue is removed
+/// from `items`. It is never evidence for a favorites or Pica traversal.
+pub(crate) fn jm_search_boundary_is_valid(page: &SourcePage) -> bool {
+    let Some(boundary) = &page.jm_search_boundary else {
+        return false;
+    };
+    page.total.is_some()
+        && page.items.iter().all(|work| work.source == Source::Jm)
+        && (page.record_count() != 1 || boundary.first == boundary.last)
+        && [
+            (boundary.first.as_ref(), page.items.first(), 1),
+            (
+                boundary.last.as_ref(),
+                page.items.last(),
+                page.record_count() as u64,
+            ),
+        ]
+        .into_iter()
+        .all(|(edge, work, raw_index)| {
+            let raw_work =
+                work.filter(|_| !page.issues.iter().any(|issue| issue.index == raw_index));
+            match (edge, raw_work) {
+                (None, None) => true,
+                (Some(edge), Some(work)) => {
+                    work.work_id == edge.work_id
+                        && cache::validate_work(Source::Jm, work).is_ok()
+                        && edge.fingerprint.len() == 64
+                        && edge
+                            .fingerprint
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }
+                _ => false,
+            }
+        })
+}
+
 /// An in-process account generation check, never a transferable download permit.
 /// No credential or session identifier is exposed to the download worker.
 #[derive(Clone)]
@@ -780,6 +817,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     has_more: Some(false),
                     folders: vec![],
                     issues: vec![],
+                    jm_search_boundary: None,
                 }),
         };
         let mut result = self.finish(&mut slot, result)?;
@@ -787,6 +825,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let mut previous_issue = 0;
         if result.record_count() > MAX_QUERY_ITEMS
             || result.items.iter().any(|work| work.source != source)
+            || (result.jm_search_boundary.is_some()
+                && (source != Source::Jm
+                    || !matches!(kind, QueryKind::Search)
+                    || !jm_search_boundary_is_valid(&result)))
             || (matches!(kind, QueryKind::Detail) && !result.issues.is_empty())
             || result.issues.iter().any(|issue| {
                 let out_of_order = issue.index <= previous_issue;

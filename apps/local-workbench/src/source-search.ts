@@ -5,8 +5,10 @@ import type {
   SourceWork,
   SourceItemIssue,
   AuthorQueryPolicy,
+  JmSearchBoundary,
 } from "./source-types.ts";
 import { mergeSourceWorks } from "./source-types.ts";
+import { sameSourceWork } from "./source-memory.ts";
 import { SourceError, validateAuthorQueryPolicy } from "./source-runtime.ts";
 import { authorQueryError } from "./author-query.ts";
 
@@ -16,6 +18,14 @@ export const jmSearchScopeNote =
 export interface SearchPagination {
   total: number | null;
   pages: number | null;
+  /** Raw rows still consume the traversal budget when one boundary row overlaps. */
+  rawFetched?: number;
+  previousPage?: {
+    page: number;
+    query: string;
+    boundary: JmSearchBoundary;
+    lastWork: SourceWork | null;
+  };
 }
 
 export interface SearchProgress {
@@ -149,8 +159,15 @@ export async function readCompleteSearch(
     issues = options.issues ?? [],
     recordsRead = options.recordsRead ?? 0,
     pagination = options.pagination;
+  let rawFetched = pagination?.rawFetched ?? recordsRead;
   // A resumed page cannot establish a new baseline for already displayed rows.
   if ((options.fromPage ?? 1) > 1 && !pagination)
+    throw new SourceError("SEARCH_INCOMPLETE");
+  if (
+    !Number.isSafeInteger(rawFetched) ||
+    rawFetched < recordsRead ||
+    rawFetched > 20000
+  )
     throw new SourceError("SEARCH_INCOMPLETE");
   for (
     let page = options.fromPage ?? 1;
@@ -180,7 +197,7 @@ export async function readCompleteSearch(
     pagination ??= { total: result.total, pages: result.pages };
     const incomingIssues = result.issues ?? [];
     const rawCount = result.items.length + incomingIssues.length;
-    if (recordsRead + rawCount > 20000)
+    if (rawFetched + rawCount > 20000)
       throw new SourceError("SEARCH_LIMIT_REACHED");
     const merged = mergeSourceWorks(items, result.items);
     const knownIds = new Set([
@@ -189,15 +206,41 @@ export async function readCompleteSearch(
         issue.workId === null ? [] : [issue.workId],
       ),
     ]);
+    const previousPage = pagination.previousPage;
+    const first = result.jmSearchBoundary?.first;
+    const previousLast = previousPage?.boundary.last;
+    const repeatedItems = result.items.filter((work) =>
+      knownIds.has(work.workId),
+    );
+    const boundaryOverlap =
+      scope.source === "JM" &&
+      result.total !== null &&
+      previousPage?.page === page - 1 &&
+      previousPage.query === query &&
+      first !== null &&
+      first !== undefined &&
+      previousLast !== null &&
+      previousLast !== undefined &&
+      first.workId === previousLast.workId &&
+      first.fingerprint === previousLast.fingerprint &&
+      result.items[0]?.workId === first.workId &&
+      previousPage.lastWork !== null &&
+      sameSourceWork(previousPage.lastWork, result.items[0]) &&
+      repeatedItems.length === 1 &&
+      repeatedItems[0] === result.items[0] &&
+      result.items.some((work) => !knownIds.has(work.workId)) &&
+      !incomingIssues.some((issue) => issue.index === 1);
     const issueCollision =
       incomingIssues.some(
         (issue) => issue.workId !== null && knownIds.has(issue.workId),
-      ) || result.items.some((work) => knownIds.has(work.workId));
+      ) ||
+      (repeatedItems.length > 0 && !boundaryOverlap);
+    const effectiveCount = rawCount - (boundaryOverlap ? 1 : 0);
     const terminal =
       result.hasMore === false ||
       (result.pages !== null && page === Math.max(1, result.pages)) ||
       (result.total !== null &&
-        recordsRead + rawCount === result.total &&
+        recordsRead + effectiveCount === result.total &&
         result.hasMore !== true &&
         result.pages === null);
     const contradictory =
@@ -207,11 +250,14 @@ export async function readCompleteSearch(
       (result.hasMore === false &&
         result.pages !== null &&
         page < result.pages) ||
-      (result.total !== null && recordsRead + rawCount > result.total);
-    recordsRead += rawCount;
+      (result.total !== null && recordsRead + effectiveCount > result.total);
+    recordsRead += effectiveCount;
+    rawFetched += rawCount;
     const stalled = rawCount === 0 && !terminal;
     const repeated =
       issueCollision ||
+      new Set(result.items.map((work) => work.workId)).size !==
+        result.items.length ||
       (page > 1 &&
         rawCount > 0 &&
         incomingIssues.length === 0 &&
@@ -221,6 +267,29 @@ export async function readCompleteSearch(
     const complete = terminal && !contradictory && !short && !repeated;
     items = merged;
     issues = [...issues, ...incomingIssues];
+    if (
+      result.jmSearchBoundary !== undefined ||
+      pagination.rawFetched !== undefined
+    ) {
+      pagination = {
+        total: pagination.total,
+        pages: pagination.pages,
+        rawFetched,
+        ...(result.jmSearchBoundary === undefined
+          ? {}
+          : {
+              previousPage: {
+                page,
+                query,
+                boundary: result.jmSearchBoundary,
+                lastWork:
+                  result.jmSearchBoundary.last === null
+                    ? null
+                    : (result.items.at(-1) ?? null),
+              },
+            }),
+      };
+    }
     options.onPage({
       items,
       page: { ...result, items: [] },

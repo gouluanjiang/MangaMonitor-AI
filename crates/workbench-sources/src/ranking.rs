@@ -162,6 +162,7 @@ impl WorkbenchSources {
             folders: vec![],
             items: parsed.items,
             issues: parsed.issues,
+            jm_search_boundary: None,
         })
     }
 }

@@ -9,6 +9,8 @@ use tokio::sync::Notify;
 use workbench_credentials::{test_support::MemoryVault, CredentialKind, StoredCredential};
 use workbench_sources::{FavoritePageRequest, FavoriteUpdate};
 
+mod jm_search_boundary;
+
 type TestService = AccountService<FakeBackend, MemoryVault>;
 type QueryKey = (String, String, u64);
 
@@ -45,6 +47,7 @@ fn empty() -> SourcePage {
         folders: vec![],
         items: vec![],
         issues: vec![],
+        jm_search_boundary: None,
     }
 }
 fn work(source: Source, id: &str, authors: &[&str]) -> SourceWork {
@@ -403,6 +406,7 @@ fn page(number: u64, total: u64, items: Vec<SourceWork>) -> SourcePage {
         folders: vec![],
         items,
         issues: vec![],
+        jm_search_boundary: None,
     }
 }
 
@@ -660,7 +664,7 @@ fn isolated_slots_do_not_hide_duplicate_ids_or_invalid_page_envelopes() {
     let mut first = page(1, 3, vec![work(Source::Jm, "100", &["Author A"])]);
     first.issues = vec![issue(1, 2, Some("101"))];
     let mut traversal = Traversal::default();
-    assert!(!traversal.append(&first).unwrap());
+    assert!(!traversal.append(&first).unwrap().complete);
     let duplicate = page(2, 3, vec![work(Source::Jm, "101", &["Author A"])]);
     assert_eq!(
         traversal.append(&duplicate).unwrap_err().code,
@@ -1872,7 +1876,7 @@ fn pagination_does_not_treat_unknown_totals_or_a_short_page_as_complete() {
     let mut traversal = Traversal::default();
     let mut response = page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]);
     response.total = None;
-    assert!(!traversal.append(&response).unwrap());
+    assert!(!traversal.append(&response).unwrap().complete);
     response = page(2, 2, vec![work(Source::Jm, "101", &["Author A"])]);
     assert!(traversal.append(&response).is_err());
 }
@@ -2382,7 +2386,7 @@ fn incremental_boundary_requires_a_current_successful_baseline_and_known_totals(
             .collect(),
     );
     response.total = None;
-    assert!(!boundary.append(&response));
+    assert!(!boundary.append(&response, 0));
     assert!(!boundary.viable);
     assert!(IncrementalBoundary::new(DiscoveryMode::Full, &range, &ids).is_none());
     for state in [

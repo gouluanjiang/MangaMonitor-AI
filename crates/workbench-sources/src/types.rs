@@ -92,6 +92,23 @@ pub struct SourceItemIssue {
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct JmSearchBoundaryItem {
+    pub work_id: String,
+    /// SHA-256 of the complete source row with recursively sorted object keys.
+    pub fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct JmSearchBoundary {
+    /// The raw first slot, only when that slot decoded as a valid work.
+    pub first: Option<JmSearchBoundaryItem>,
+    /// The raw last slot, never the last valid work before an isolated issue.
+    pub last: Option<JmSearchBoundaryItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourcePage {
     pub page: u64,
     pub total: Option<u64>,
@@ -101,6 +118,9 @@ pub struct SourcePage {
     pub items: Vec<SourceWork>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issues: Vec<SourceItemIssue>,
+    /// Bounded evidence only for ordinary JM search pages with a known total.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jm_search_boundary: Option<JmSearchBoundary>,
 }
 
 impl SourcePage {

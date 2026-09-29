@@ -56,6 +56,7 @@ struct FakeState {
     favorite: AtomicBool,
     unknown_write: AtomicBool,
     query_failure: Mutex<Option<&'static str>>,
+    query_boundary: Mutex<Option<JmSearchBoundary>>,
     restore_failure: Mutex<Option<&'static str>>,
     work_title: Mutex<Option<String>>,
     source_updated_at: Mutex<Option<String>>,
@@ -118,6 +119,7 @@ fn page(source: Source, favorite: bool) -> SourcePage {
         has_more: None,
         folders: vec![],
         issues: vec![],
+        jm_search_boundary: None,
     }
 }
 
@@ -212,6 +214,7 @@ impl SourceBackend for FakeBackend {
             return Err(AccountError::new(code));
         }
         let mut result = page(session.source, self.0.favorite.load(Ordering::SeqCst));
+        result.jm_search_boundary = self.0.query_boundary.lock().unwrap().clone();
         result.items[0].source_updated_at = self.0.source_updated_at.lock().unwrap().clone();
         result.items[0].tags = self.0.work_tags.lock().unwrap().clone();
         if let Some(title) = self.0.work_title.lock().unwrap().clone() {
@@ -594,6 +597,48 @@ async fn query_retains_language_only_for_the_exact_current_session_work_without_
     );
     assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 7);
     assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn query_boundary_evidence_is_forwarded_only_for_jm_search() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let jm = login(&service, Source::Jm, "fixture-jm", false).await;
+    let pica = login(&service, Source::Pica, "fixture-pica", false).await;
+    let edge = JmSearchBoundaryItem {
+        work_id: "123".into(),
+        fingerprint: "a".repeat(64),
+    };
+    let boundary = JmSearchBoundary {
+        first: Some(edge.clone()),
+        last: Some(edge),
+    };
+    *backend.0.query_boundary.lock().unwrap() = Some(boundary.clone());
+    let result = service
+        .query(Source::Jm, &jm, QueryKind::Search, "Author", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(result.page.jm_search_boundary, Some(boundary));
+    let dto = serde_json::to_value(&result).unwrap();
+    assert_eq!(dto["jmSearchBoundary"]["first"]["workId"], "123");
+    assert_eq!(dto["jmSearchBoundary"]["first"]["fingerprint"], "a".repeat(64));
+    for (source, session, kind) in [
+        (Source::Jm, &jm, QueryKind::Favorites),
+        (Source::Jm, &jm, QueryKind::Recent),
+        (Source::Pica, &pica, QueryKind::Search),
+        (Source::Pica, &pica, QueryKind::Favorites),
+    ] {
+        assert_eq!(
+            service
+                .query(source, session, kind, "", None, 1)
+                .await
+                .err()
+                .unwrap()
+                .code,
+            "SOURCE_RESPONSE_INVALID"
+        );
+    }
 }
 
 #[tokio::test]

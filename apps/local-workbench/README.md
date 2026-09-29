@@ -1,6 +1,6 @@
 # MangaMonitor desktop workbench
 
-The current React/Tauri desktop implements PC ZIP-library browsing, connected JM/Pica favorites, author search and manual followed-author discovery, recent feeds/rankings, a native download queue, in-app reading and independent reader windows. See the [user guide](../../docs/USER_GUIDE.md), [current handoff](../../docs/DEVELOPMENT_HANDOFF.md) and [1.0.0 release record](../../docs/RELEASE_1.0.0_2026-09-29.md).
+The current React/Tauri desktop implements PC ZIP-library browsing, connected JM/Pica favorites, author search and manual followed-author discovery, recent feeds/rankings, a native download queue, in-app reading and independent reader windows. See the [user guide](../../docs/USER_GUIDE.md), [current handoff](../../docs/DEVELOPMENT_HANDOFF.md) and [1.0.1 release record](../../docs/RELEASE_1.0.1_2026-09-29.md).
 
 The browser preview uses labeled synthetic fixtures. It does not provide real accounts, native filesystem access or real downloads. The Windows application uses scoped native IPC; native failures never silently switch to a demo implementation.
 

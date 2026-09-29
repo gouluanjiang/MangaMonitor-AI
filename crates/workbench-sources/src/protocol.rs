@@ -7,11 +7,11 @@ use chrono::{DateTime, Datelike, NaiveDate, SecondsFormat, Utc};
 use hmac::{Hmac, Mac};
 use reqwest::Url;
 use serde_json::Value;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 use crate::{
-    Source, SourceAccount, SourceError, SourceFolder, SourceItemIssue, SourceItemIssueCode,
-    SourcePage, SourceResult, SourceWork,
+    JmSearchBoundary, JmSearchBoundaryItem, Source, SourceAccount, SourceError, SourceFolder,
+    SourceItemIssue, SourceItemIssueCode, SourcePage, SourceResult, SourceWork,
 };
 
 pub(crate) const JM_HOST: &str = "www.cdnhth.cc";
@@ -587,9 +587,58 @@ pub(crate) fn page(
             folders,
             items: parsed.items,
             issues: parsed.issues,
+            jm_search_boundary: None,
         },
         parsed.covers,
     ))
+}
+
+/// Search-only evidence does not relax parsing or remove any source rows.
+pub(crate) fn search_page(
+    source: Source,
+    data: &Value,
+    requested: u64,
+) -> SourceResult<(SourcePage, CoverDescriptors)> {
+    let (mut result, covers) = page(source, data, requested, false)?;
+    if source == Source::Jm && result.total.is_some() {
+        let records = data["content"]
+            .as_array()
+            .ok_or(error("SOURCE_RESPONSE_INVALID"))?;
+        let first = result
+            .items
+            .first()
+            .filter(|_| !result.issues.iter().any(|issue| issue.index == 1));
+        let last = result.items.last().filter(|_| {
+            !result
+                .issues
+                .iter()
+                .any(|issue| issue.index == records.len() as u64)
+        });
+        result.jm_search_boundary = Some(JmSearchBoundary {
+            first: jm_search_boundary_item(records.first(), first)?,
+            last: jm_search_boundary_item(records.last(), last)?,
+        });
+    }
+    Ok((result, covers))
+}
+
+fn jm_search_boundary_item(
+    record: Option<&Value>,
+    item: Option<&SourceWork>,
+) -> SourceResult<Option<JmSearchBoundaryItem>> {
+    let Some((record, item)) = record.zip(item) else {
+        return Ok(None);
+    };
+    // Explicit recursive sorting is required even when serde_json's
+    // preserve_order feature is enabled by another workspace dependency.
+    // Arrays and all raw fields remain part of the equality evidence.
+    let mut canonical = record.clone();
+    canonical.sort_all_objects();
+    let bytes = serde_json::to_vec(&canonical).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
+    Ok(Some(JmSearchBoundaryItem {
+        work_id: item.work_id.clone(),
+        fingerprint: format!("{:x}", Sha256::digest(bytes)),
+    }))
 }
 
 pub(crate) fn validate_folder(folder: &str) -> SourceResult<()> {

@@ -408,9 +408,10 @@ impl WorkbenchSources {
                 folders: vec![],
                 items: vec![work],
                 issues: vec![],
+                jm_search_boundary: None,
             });
         }
-        let (page, covers) = protocol::page(session.source, &data, page, false)?;
+        let (page, covers) = protocol::search_page(session.source, &data, page)?;
         session.remember_covers(covers)?;
         Ok(page)
     }

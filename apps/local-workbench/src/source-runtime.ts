@@ -290,6 +290,7 @@ export function validateSourcePage(
   scope: SourceScope,
   favoriteEntries = false,
   accumulated = false,
+  searchEntries = false,
 ): SourceQueryResult {
   scoped(value, scope);
   if (
@@ -357,6 +358,58 @@ export function validateSourcePage(
       issueIds.add(issue.workId);
     }
   }
+  let jmSearchBoundary: SourcePage["jmSearchBoundary"];
+  if (value.jmSearchBoundary !== undefined) {
+    const boundary = value.jmSearchBoundary;
+    if (
+      scope.source !== "JM" ||
+      value.total === null ||
+      !searchEntries ||
+      favoriteEntries ||
+      accumulated ||
+      !object(boundary) ||
+      Object.keys(boundary).length !== 2 ||
+      !Object.hasOwn(boundary, "first") ||
+      !Object.hasOwn(boundary, "last")
+    )
+      invalid();
+    const edge = (
+      value: unknown,
+      index: number,
+      item: SourceWork | undefined,
+    ) => {
+      const expected =
+        rawCount > 0 && !issues.some((issue) => issue.index === index)
+          ? item?.workId
+          : undefined;
+      if (expected === undefined) {
+        if (value !== null) invalid();
+        return null;
+      }
+      if (
+        !object(value) ||
+        Object.keys(value).length !== 2 ||
+        !Object.hasOwn(value, "workId") ||
+        !Object.hasOwn(value, "fingerprint") ||
+        value.workId !== expected ||
+        typeof value.workId !== "string" ||
+        !/^[1-9][0-9]{0,18}$/.test(value.workId) ||
+        typeof value.fingerprint !== "string" ||
+        !/^[a-f0-9]{64}$/.test(value.fingerprint)
+      )
+        invalid();
+      return { workId: value.workId, fingerprint: value.fingerprint };
+    };
+    jmSearchBoundary = {
+      first: edge(boundary.first, 1, items[0]),
+      last: edge(boundary.last, rawCount, items.at(-1)),
+    };
+    if (
+      rawCount === 1 &&
+      jmSearchBoundary.first?.fingerprint !== jmSearchBoundary.last?.fingerprint
+    )
+      invalid();
+  }
   return {
     ...scope,
     items,
@@ -366,6 +419,7 @@ export function validateSourcePage(
     pages: value.pages as number | null,
     hasMore: value.hasMore as boolean | null,
     folders,
+    ...(jmSearchBoundary === undefined ? {} : { jmSearchBoundary }),
   };
 }
 /** Only bounded diagnostic DTOs cross IPC; no raw source values or actions. */
@@ -708,6 +762,8 @@ export function createSourceAdapter(
         }),
         scope,
         query.kind === "favorites",
+        false,
+        query.kind === "search",
       );
       if (
         result.page !== query.page ||

@@ -52,6 +52,12 @@ export interface SourcePage {
   pages: number | null;
   hasMore: boolean | null;
   folders: SourceFolder[];
+  /** Raw first/last slot evidence, emitted only by the JM search endpoint. */
+  jmSearchBoundary?: JmSearchBoundary;
+}
+export interface JmSearchBoundary {
+  first: { workId: string; fingerprint: string } | null;
+  last: { workId: string; fingerprint: string } | null;
 }
 export interface SourceItemIssue {
   query?: string;

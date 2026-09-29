@@ -1766,8 +1766,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                             break;
                         }
                     };
-                    let complete = match traversal.append(&response) {
-                        Ok(complete) => complete,
+                    let accepted = match traversal.append(&response) {
+                        Ok(accepted) => accepted,
                         Err(error) => {
                             let range = &mut document.value.accounts[index].authors[range_index];
                             range.state = DiscoveryRangeState::Partial;
@@ -1787,6 +1787,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                             break;
                         }
                     };
+                    let complete = accepted.complete;
                     // An isolated source slot is not a safe incremental anchor.
                     // Revisit the tail and keep the scope incomplete until a later
                     // clean traversal actually obtains those missing records.
@@ -1800,9 +1801,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                             .retain(|completed| completed != query);
                         self.discovery.strategy(run_id, DiscoveryMode::Full);
                     }
-                    let incremental_complete = boundary
-                        .as_mut()
-                        .is_some_and(|boundary| boundary.append(&response));
+                    let incremental_complete = boundary.as_mut().is_some_and(|boundary| {
+                        boundary.append(&response, accepted.skipped_leading_work)
+                    });
                     if complete || boundary.as_ref().is_some_and(|boundary| !boundary.viable) {
                         self.discovery.strategy(run_id, DiscoveryMode::Full);
                     }
@@ -1813,7 +1814,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     let mut other_record_count = state.other_record_count;
                     let mut confirmed_count = state.confirmed_count;
                     let mut added = 0usize;
-                    for work in response.items {
+                    let works = response.items.into_iter().skip(accepted.skipped_leading_work);
+                    for work in works {
                         let verified = work.authors.iter().any(|name| name.trim() == author.trim());
                         let incoming = DiscoveryRecord {
                             work: discovery_work_from_source(work),
@@ -2159,7 +2161,7 @@ impl IncrementalBoundary {
         })
     }
 
-    fn append(&mut self, page: &SourcePage) -> bool {
+    fn append(&mut self, page: &SourcePage, skipped_leading_work: usize) -> bool {
         if !self.viable
             || !page.issues.is_empty()
             || page.total.is_none_or(|total| total < self.baseline.total)
@@ -2167,7 +2169,7 @@ impl IncrementalBoundary {
             self.viable = false;
             return false;
         }
-        for work in &page.items {
+        for work in page.items.iter().skip(skipped_leading_work) {
             let id = &work.work_id;
             if self.matched_head == self.baseline.head_ids.len() {
                 // Inspect the rest of the boundary page too: a new ID here is
@@ -2202,11 +2204,23 @@ struct Traversal {
     pages: Option<u64>,
     ids: HashSet<String>,
     head_ids: Vec<String>,
+    /// Effective source slots, excluding only verified JM boundary overlaps.
     record_count: usize,
+    /// Every raw slot still consumes the unchanged request budget.
+    raw_record_count: usize,
+    last_jm_boundary: Option<(SourceWork, crate::JmSearchBoundaryItem)>,
+}
+
+#[derive(Debug)]
+struct TraversedPage {
+    complete: bool,
+    /// The original page and issue positions stay intact. Every consumer uses
+    /// this same filtered work view after the whole page has been validated.
+    skipped_leading_work: usize,
 }
 
 impl Traversal {
-    fn append(&mut self, page: &SourcePage) -> Result<bool> {
+    fn append(&mut self, page: &SourcePage) -> Result<TraversedPage> {
         let invalid = || AccountError::new("DISCOVERY_PAGINATION_CHANGED");
         if page.page != self.page + 1
             || page.page > MAX_DISCOVERY_PAGES
@@ -2220,10 +2234,36 @@ impl Traversal {
         {
             return Err(invalid());
         }
+        let boundary_valid = crate::service::jm_search_boundary_is_valid(page);
+        let skipped_leading_work = usize::from(
+            self.page > 0
+                && self.total.is_some()
+                && boundary_valid
+                && self.last_jm_boundary.as_ref().is_some_and(|(prior, edge)| {
+                    page.items.first().is_some_and(|work| work == prior)
+                        && page
+                            .jm_search_boundary
+                            .as_ref()
+                            .and_then(|boundary| boundary.first.as_ref())
+                            == Some(edge)
+                }),
+        );
+        // An issue is not progress. A repeated singleton or a full repeated page
+        // must not advance pagination by consuming only the exception itself.
+        if skipped_leading_work > 0
+            && !page
+                .items
+                .iter()
+                .skip(skipped_leading_work)
+                .any(|work| !self.ids.contains(&work.work_id))
+        {
+            return Err(invalid());
+        }
         let mut current = HashSet::new();
         if page
             .items
             .iter()
+            .skip(skipped_leading_work)
             .map(|work| &work.work_id)
             .chain(
                 page.issues
@@ -2234,8 +2274,9 @@ impl Traversal {
         {
             return Err(invalid());
         }
-        let count = self.record_count + page.record_count();
-        if count > MAX_DISCOVERY_RECORDS {
+        let raw_count = self.raw_record_count + page.record_count();
+        let count = self.record_count + page.record_count() - skipped_leading_work;
+        if raw_count > MAX_DISCOVERY_RECORDS {
             return Err(AccountError::new("DISCOVERY_LIMIT"));
         }
         let terminal = page.pages.is_some_and(|pages| page.page == pages.max(1));
@@ -2253,21 +2294,33 @@ impl Traversal {
         }) {
             return Err(invalid());
         }
-        if !complete && (count == MAX_DISCOVERY_RECORDS || page.page == MAX_DISCOVERY_PAGES) {
+        if !complete && (raw_count == MAX_DISCOVERY_RECORDS || page.page == MAX_DISCOVERY_PAGES) {
             return Err(AccountError::new("DISCOVERY_LIMIT"));
         }
         self.head_ids.extend(
             page.items
                 .iter()
+                .skip(skipped_leading_work)
                 .take(MAX_DISCOVERY_HEAD_IDS.saturating_sub(self.head_ids.len()))
                 .map(|work| work.work_id.clone()),
         );
         self.ids.extend(current);
         self.record_count = count;
+        self.raw_record_count = raw_count;
+        self.last_jm_boundary = page
+            .jm_search_boundary
+            .as_ref()
+            .filter(|_| boundary_valid)
+            .and_then(|boundary| boundary.last.as_ref())
+            .zip(page.items.last())
+            .map(|(edge, work)| (work.clone(), edge.clone()));
         self.page = page.page;
         self.total = page.total;
         self.pages = page.pages;
-        Ok(complete)
+        Ok(TraversedPage {
+            complete,
+            skipped_leading_work,
+        })
     }
 }
 

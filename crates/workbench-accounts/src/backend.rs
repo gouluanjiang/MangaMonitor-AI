@@ -63,12 +63,18 @@ pub trait SourceBackend: Send + Sync + 'static {
         input: &str,
     ) -> impl Future<Output = Result<SourceWork>> + Send;
     fn tag(
-        &self, _session: &Self::Session, _query: &str, _page: u64,
+        &self,
+        _session: &Self::Session,
+        _query: &str,
+        _page: u64,
     ) -> impl Future<Output = Result<SourcePage>> + Send {
         std::future::ready(Err(AccountError::new("SOURCE_TAG_UNSUPPORTED")))
     }
     fn category(
-        &self, _session: &Self::Session, _query: &str, _page: u64,
+        &self,
+        _session: &Self::Session,
+        _query: &str,
+        _page: u64,
     ) -> impl Future<Output = Result<SourcePage>> + Send {
         std::future::ready(Err(AccountError::new("SOURCE_CATEGORY_UNSUPPORTED")))
     }
@@ -210,11 +216,18 @@ impl SourceBackend for WorkbenchSources {
     }
     async fn tag(&self, session: &Self::Session, query: &str, page: u64) -> Result<SourcePage> {
         WorkbenchSources::tag(self, session, query, page)
-            .await.map_err(|error| AccountError::new(error.code))
+            .await
+            .map_err(|error| AccountError::new(error.code))
     }
-    async fn category(&self, session: &Self::Session, query: &str, page: u64) -> Result<SourcePage> {
+    async fn category(
+        &self,
+        session: &Self::Session,
+        query: &str,
+        page: u64,
+    ) -> Result<SourcePage> {
         WorkbenchSources::category(self, session, query, page)
-            .await.map_err(|error| AccountError::new(error.code))
+            .await
+            .map_err(|error| AccountError::new(error.code))
     }
     async fn favorite(
         &self,

@@ -14,7 +14,9 @@ pub use discovery::{
     discovery_work_from_source, DiscoveryMode, DiscoveryPhase, DiscoveryProgress, DiscoveryRun,
     DiscoveryScope, DiscoverySnapshot, DiscoveryStart,
 };
-pub use observations::{KnownAuthorWorksResult, RecentCheckRun, RecentCheckResult, RecentHistoryResult};
+pub use observations::{
+    KnownAuthorWorksResult, RecentCheckResult, RecentCheckRun, RecentHistoryResult,
+};
 pub use service::{AccountService, DownloadSession, SessionLease};
 pub use workbench_credentials::Source;
 pub use workbench_sources::{

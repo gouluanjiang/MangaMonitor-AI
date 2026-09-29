@@ -11,6 +11,10 @@ import {
 } from "./content-filter.ts";
 import { useSyncExternalStore } from "react";
 import { rememberAuthorCatalog } from "./author-catalog-membership.ts";
+import {
+  subscribeAuthorCatalogChanges,
+  notifyAuthorCatalogChanged,
+} from "./author-catalog-events.ts";
 import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
@@ -31,6 +35,7 @@ import type {
   CompletionAdapter,
   DiscoveryMode,
   DiscoverySnapshot,
+  RecentCheckRun,
 } from "./completion-types.ts";
 import {
   completionError,
@@ -161,6 +166,14 @@ export function CompletionPanel({
   const [busy, setBusy] = useState(false),
     [actionError, setActionError] = useState("");
   const [reading, setReading] = useState(false);
+  const [recentCheck, setRecentCheck] = useState<{
+    key: string;
+    run: RecentCheckRun;
+  } | null>(null);
+  const [recentError, setRecentError] = useState("");
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentRun = recentCheck?.key === scopeKey ? recentCheck.run : null;
+  const recentRunning = recentRun?.phase === "checking";
   const [readFailure, setReadFailure] = useState<CompletionReadFailure | null>(
     null,
   );
@@ -198,7 +211,8 @@ export function CompletionPanel({
     setNewOnly(false);
   }, [scopeKey, mode, checkSummary?.id]);
   const connected = scopes.length === 2;
-  const running = view?.run?.phase === "checking";
+  const authorRunning = view?.run?.phase === "checking";
+  const running = authorRunning || recentRunning;
   const inventory = useMemo(
     () => createInventoryMatcher(library, inventorySnapshot, inventoryReady),
     [library, inventorySnapshot, inventoryReady],
@@ -209,12 +223,23 @@ export function CompletionPanel({
       author,
       source,
       view?.authorPolicies,
+      view?.followedAuthors ??
+        (view?.authors.length
+          ? [...new Set(view.authors.map((range) => range.author))]
+          : undefined),
     );
     return {
       confirmed: uniqueDiscoveryRecords(partition.confirmed),
       other: uniqueDiscoveryRecords(partition.other),
     };
-  }, [view?.records, view?.authorPolicies, author, source]);
+  }, [
+    view?.records,
+    view?.authorPolicies,
+    view?.followedAuthors,
+    view?.authors,
+    author,
+    source,
+  ]);
   const load = useCallback(
     async (
       resetRetries = false,
@@ -309,6 +334,8 @@ export function CompletionPanel({
     setSource("all");
     setFilter("missing");
     setShowOther(false);
+    setRecentCheck(null);
+    setRecentError("");
     // Invalidate the previous session's in-flight search, including logout.
     // Reading this in-memory adapter never starts a source request.
     if (mode === "search") void searchAdapter.read(current.current.scopes);
@@ -326,10 +353,30 @@ export function CompletionPanel({
     };
   }, [load, scopeKey, active, mode]);
   useEffect(() => {
+    if (!active || mode !== "updates") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = subscribeAuthorCatalogChanges((change) => {
+      if (
+        !current.current.scopes.some(
+          (scope) =>
+            scope.source === change.source &&
+            scope.sessionId === change.sessionId,
+        )
+      )
+        return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void load(false), 250);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [active, mode, scopeKey, load]);
+  useEffect(() => {
     if (!active || !connected || busy || reading) return;
     const delay = readFailure
       ? readFailure.retryAfterMs
-      : running
+      : authorRunning
         ? 1500
         : null;
     if (delay === null) return;
@@ -338,7 +385,61 @@ export function CompletionPanel({
       : { kind: "progress", includeOther: false };
     const timer = setTimeout(() => void load(false, request), delay);
     return () => clearTimeout(timer);
-  }, [load, running, busy, reading, readFailure, view, active, connected]);
+  }, [
+    load,
+    authorRunning,
+    busy,
+    reading,
+    readFailure,
+    view,
+    active,
+    connected,
+  ]);
+  useEffect(() => {
+    if (
+      !active ||
+      !connected ||
+      mode !== "updates" ||
+      !adapter.recentCheckProgress
+    )
+      return;
+    let alive = true,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    const captured = current.current;
+    const poll = async () => {
+      try {
+        const next = await adapter.recentCheckProgress!();
+        if (!alive || current.current.key !== captured.key) return;
+        setRecentError("");
+        if (next) {
+          setRecentCheck({ key: captured.key, run: next });
+          if (next.phase === "checking")
+            timer = setTimeout(() => void poll(), 1500);
+          else if (recentRunning)
+            for (const scope of captured.scopes)
+              notifyAuthorCatalogChanged(scope);
+        }
+      } catch {
+        if (alive)
+          setRecentError(
+            "近期补漏进度暂未读取，请刷新显示后重试；不代表后台检查已经停止。",
+          );
+      }
+    };
+    void poll();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [
+    adapter,
+    active,
+    connected,
+    mode,
+    scopeKey,
+    recentRunning,
+    recentRefresh,
+  ]);
   async function perform(
     action: (current: () => boolean) => Promise<DiscoverySnapshot | void>,
   ) {
@@ -401,11 +502,26 @@ export function CompletionPanel({
       if (!isCurrent()) return;
       if (unfinishedOnly)
         return adapter.startUnfinished(captured.scopes, selected);
-      return adapter.start(
+      const next = await adapter.start(
         captured.scopes,
         selected,
         mode === "search" ? "full" : checkMode,
       );
+      if (mode === "updates" && adapter.startRecentCheck) {
+        try {
+          const recent = await adapter.startRecentCheck(captured.scopes);
+          if (isCurrent()) {
+            setRecentError("");
+            setRecentCheck({ key: captured.key, run: recent });
+          }
+        } catch {
+          if (isCurrent())
+            setRecentError(
+              "作者查询已开始，但近期交叉补漏未能启动；本次不包含近期连续范围，请重试检查。",
+            );
+        }
+      }
+      return next;
     });
   }
   useEffect(() => {
@@ -432,7 +548,7 @@ export function CompletionPanel({
     view.records.forEach((record) => rememberContentWork(record.work));
     if (mode === "updates") rememberAuthorCatalog(view);
   }, [view?.records, view?.authorPolicies, scopeKey, mode]);
-  const authors = [
+  const authors = view?.followedAuthors ?? [
     ...new Set(view?.authors.map((range) => range.author) ?? []),
   ];
   const ranges = (view?.authors ?? []).filter(
@@ -449,6 +565,7 @@ export function CompletionPanel({
     !running &&
     !actionError &&
     !readFailure &&
+    !view?.observationErrorCode &&
     ranges.length > 0 &&
     ranges.every((range) => range.state === "complete");
   const includesIncremental =
@@ -468,7 +585,8 @@ export function CompletionPanel({
         range.pagesComplete ??
         (range.state === "complete" && range.lastCheckMode !== "incremental"),
     );
-  const fullRangeChecked = complete && !includesIncremental;
+  const fullRangeChecked =
+    complete && !includesIncremental && !view?.historicalReadError;
   const catalogScopes = ranges.filter(
     (range) => authorCatalogAt(range, view?.authorPolicies) !== null,
   ).length;
@@ -686,7 +804,19 @@ export function CompletionPanel({
                 disabled={busy}
                 onClick={() =>
                   void perform(async () => {
-                    if (view?.run) await adapter.cancel(view.run.id);
+                    const cancels: Promise<unknown>[] = [];
+                    if (authorRunning && view?.run)
+                      cancels.push(adapter.cancel(view.run.id));
+                    if (recentRunning && recentRun && adapter.cancelRecentCheck)
+                      cancels.push(adapter.cancelRecentCheck(recentRun.id));
+                    const outcomes = await Promise.allSettled(cancels);
+                    if (outcomes.some((result) => result.status === "rejected"))
+                      setRecentError("停止操作尚未完全确认，请刷新进度核对。");
+                    if (adapter.recentCheckProgress) {
+                      const recent = await adapter.recentCheckProgress();
+                      if (recent)
+                        setRecentCheck({ key: scopeKey, run: recent });
+                    }
                   })
                 }
               >
@@ -697,11 +827,12 @@ export function CompletionPanel({
               disabled={busy}
               onClick={() =>
                 void perform(async () => {
+                  setRecentRefresh((value) => value + 1);
                   await onRefreshInventory?.();
                 })
               }
             >
-              刷新结果与入库状态
+              刷新显示与入库状态
             </button>
           </div>
           {mode === "updates" && view && !authors.length && (
@@ -715,7 +846,7 @@ export function CompletionPanel({
               <button onClick={onOpenLibrary}>设置漫画库</button>
             </p>
           )}
-          {running && (
+          {authorRunning && (
             <p
               className="page-summary"
               role="status"
@@ -746,14 +877,72 @@ export function CompletionPanel({
               className="source-muted"
               data-testid="completion-saved-results-note"
             >
-              检查进行中，列表为最近读取结果；结束后自动刷新，也可点击“刷新结果与入库状态”。
+              检查进行中，列表为最近读取结果；结束后自动刷新。“刷新显示与入库状态”仅读取本机目录，不重新检查网站。
             </p>
+          )}
+          {mode === "updates" && (recentRun || recentError) && (
+            <div className="source-muted" data-testid="completion-recent-check">
+              {recentRun && (
+                <p>
+                  近期交叉补漏：
+                  {recentRun.phase === "checking"
+                    ? "正在读取"
+                    : recentRun.phase === "complete"
+                      ? "本次范围已保存"
+                      : recentRun.phase === "cancelled"
+                        ? "已停止，范围未完成"
+                        : "范围未完成"}
+                  {recentRun.currentSource
+                    ? ` · ${sourceLabel(recentRun.currentSource)} 第 ${recentRun.currentPage} 页`
+                    : ""}
+                  {` · 已读取 ${recentRun.pagesRead} 页 / ${recentRun.recordsRead} 条`}
+                </p>
+              )}
+              {recentRun?.results.map((result) => (
+                <p key={result.source}>
+                  {sourceLabel(result.source)}：{result.pagesRead} 页，
+                  {result.errorCode
+                    ? "读取未完成"
+                    : result.reachedEnd
+                      ? "来源入口分页已读完"
+                      : result.joinedPrevious
+                        ? "已衔接上次范围"
+                        : result.initialWindow
+                          ? "初始窗口已保存，更早历史未覆盖"
+                          : "已保存部分范围"}
+                  。
+                </p>
+              ))}
+              {recentError && <p role="alert">{recentError}</p>}
+            </div>
           )}
           {actionError && (
             <p role="alert" className="source-notice">
               {actionError}
             </p>
           )}
+          {view?.observationErrorCode && (
+            <p className="source-notice" role="alert">
+              跨入口补录未完成，已保存结果保留；新读取作品尚未全部纳入作者目录，请刷新显示后核对。
+            </p>
+          )}
+          {mode === "search" &&
+            ((view?.historicalSupplementCount ?? 0) > 0 ||
+              view?.historicalReadError) && (
+              <p
+                className="source-muted"
+                data-testid="completion-search-history"
+              >
+                已知作者目录补充 {view?.historicalSupplementCount ?? 0}{" "}
+                条；不计入本次来源分页和读取进度。
+                {view?.historicalSupplementAt
+                  ? ` 目录最近核验：${new Date(view.historicalSupplementAt).toLocaleString()}。`
+                  : ""}
+                {view?.historicalReadError
+                  ? " 已保存目录暂未读取成功，当前统计未覆盖这部分，请重试搜索。"
+                  : ""}
+              </p>
+            )}
           {view?.run?.storageWarningCode && (
             <p
               className="source-notice"
@@ -772,7 +961,7 @@ export function CompletionPanel({
               错误代码：{readFailure.code}。
               {readFailure.retryAfterMs !== null
                 ? ` ${readFailure.retryAfterMs / 1000} 秒后重试读取（${readFailure.failures} / 3）。`
-                : " 进度刷新已暂停，请点击“刷新结果与入库状态”重试。"}
+                : " 进度刷新已暂停，请点击“刷新显示与入库状态”重试。"}
             </p>
           )}
           {inventoryError && (
@@ -781,7 +970,7 @@ export function CompletionPanel({
               className="source-notice"
               data-testid="completion-inventory-error"
             >
-              入库状态暂未核对完成，当前不能判断已入库或未入库。请点击“刷新结果与入库状态”重试。
+              入库状态暂未核对完成，当前不能判断已入库或未入库。请点击“刷新显示与入库状态”重试。
             </p>
           )}
           <div className="completion-controls source-page-tools">
@@ -1018,7 +1207,7 @@ export function CompletionPanel({
               ? `完整目录 ${catalogScopes} / ${ranges.length} 个来源范围 · `
               : "本次 JM 与哔咔分别计数 · "}
             {lastCheck > 0
-              ? `最近检查 ${new Date(lastCheck).toLocaleString()}`
+              ? `所示范围中最近一次检查 ${new Date(lastCheck).toLocaleString()}（不代表全部范围均在此时检查）`
               : "尚未完成检查"}
           </p>
           <details
@@ -1034,6 +1223,8 @@ export function CompletionPanel({
                 首次检查会读取完整目录；之后优先检查新增作品并复用历史目录。
                 “完整复核”会重新读取所选作者在两站的所有分页，用于核对旧作补录等变化。
                 “仅补查未完成”只读取未完成的作者与来源，已完成来源保持原样。
+                主按钮始终检查当前选择的全部作者，不沿用“仅补查未完成”的范围。
+                “刷新显示与入库状态”只读取本机记录，不发送作者查询。
               </p>
             )}
             {mode === "updates" && undatedCount > 0 && (
@@ -1041,7 +1232,7 @@ export function CompletionPanel({
                 className="source-muted"
                 data-testid="completion-date-refresh-help"
               >
-                旧目录可能未保存日期。可在上方选择一位作者，再点击“完整复核”重新读取该作者在两站的所有分页；来源未提供的日期仍显示未知。“刷新结果与入库状态”仅读取本机记录，不会补查网站日期。
+                旧目录可能未保存日期。可在上方选择一位作者，再点击“完整复核”重新读取该作者在两站的所有分页；来源未提供的日期仍显示未知。“刷新显示与入库状态”仅读取本机记录，不会补查网站日期。
               </p>
             )}
             <p className="source-muted">
@@ -1067,10 +1258,29 @@ export function CompletionPanel({
             )}
             <p className="source-muted" data-testid="completion-query-scope">
               {mode === "search"
-                ? "读完来源的作者关键词查询，再按作者字段区分结果。"
-                : "来源的作者关键词查询结果按作者字段区分，历史记录会保留。"}
+                ? "读取来源作者查询，并合并已知的署名明确作品；分页进度只统计本次查询。"
+                : "已取得作品按明确署名归属，发现入口不限制作者归属；历史记录会保留。"}
               作者作品包含明确列出的合著者和“社团（作者）”；名称不同或信息缺失的记录保留在其他关键词结果中。
+              查询分页读完不代表网站未返回的历史作品不存在。
             </p>
+            {(author || mode === "search") &&
+              ranges.map((range) => (
+                <p
+                  className="source-muted"
+                  key={range.source + range.author}
+                  data-testid="completion-author-check-time"
+                >
+                  {range.author} · {sourceLabel(range.source)} · 最后实际检查：
+                  {range.lastCheckedAt
+                    ? new Date(range.lastCheckedAt).toLocaleString()
+                    : "尚无成功检查"}
+                  {range.lastCheckMode === "incremental"
+                    ? "（增量，未重读全部历史页）"
+                    : range.lastCheckMode === "full"
+                      ? "（完整查询）"
+                      : ""}
+                </p>
+              ))}
             {source !== "Pica" && (
               <p className="source-muted">{jmSearchScopeNote}</p>
             )}

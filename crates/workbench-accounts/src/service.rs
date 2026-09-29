@@ -472,12 +472,21 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
 
     /// Captures both verified identities together. It performs no remote IO.
     pub(crate) async fn observation_identity(
-        &self, source: Source, session_id: &str,
+        &self,
+        source: Source,
+        session_id: &str,
     ) -> Result<(String, PathBuf, SessionLease)> {
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
-        let account = slot.account.as_ref().ok_or(AccountError::new("AUTH_REQUIRED"))?;
-        Ok((account_key(source, &account.account_id), self.root.clone(), slot.lease.clone()))
+        let account = slot
+            .account
+            .as_ref()
+            .ok_or(AccountError::new("AUTH_REQUIRED"))?;
+        Ok((
+            account_key(source, &account.account_id),
+            self.root.clone(),
+            slot.lease.clone(),
+        ))
     }
 
     pub(crate) async fn current_discovery_scopes(&self) -> Result<Vec<crate::DiscoveryScope>> {
@@ -485,7 +494,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         for source in [Source::Jm, Source::Pica] {
             let mut slot = self.slot(source).lock().await;
             self.check_saved(&mut slot)?;
-            let session_id = slot.session_id.clone().ok_or(AccountError::new("AUTH_REQUIRED"))?;
+            let session_id = slot
+                .session_id
+                .clone()
+                .ok_or(AccountError::new("AUTH_REQUIRED"))?;
             result.push(crate::DiscoveryScope { source, session_id });
         }
         Ok(result)
@@ -784,8 +796,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         reverse: bool,
     ) -> Result<QueryResult> {
         let observed_at = cache::now_ms()?;
-        let mut result = self.query_ordered_unobserved(source, session_id, kind, query, folder_id, page, reverse).await?;
-        match self.observe_query(source, session_id, kind, &result.page, observed_at).await {
+        let mut result = self
+            .query_ordered_unobserved(source, session_id, kind, query, folder_id, page, reverse)
+            .await?;
+        match self
+            .observe_query(source, session_id, kind, &result.page, observed_at)
+            .await
+        {
             Ok(revision) => result.discovery_revision = revision,
             Err(error) => result.observation_error_code = Some(error.code.into()),
         }
@@ -795,16 +812,28 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     /// A discovery scan already owns its page transaction. Do not double-ingest
     /// its query replies through the independent observed-work inbox.
     pub(crate) async fn query_unobserved(
-        &self, source: Source, session_id: &str, kind: QueryKind, query: &str,
-        folder_id: Option<String>, page: u64,
+        &self,
+        source: Source,
+        session_id: &str,
+        kind: QueryKind,
+        query: &str,
+        folder_id: Option<String>,
+        page: u64,
     ) -> Result<QueryResult> {
-        self.query_ordered_unobserved(source, session_id, kind, query, folder_id, page, false).await
+        self.query_ordered_unobserved(source, session_id, kind, query, folder_id, page, false)
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
     async fn query_ordered_unobserved(
-        &self, source: Source, session_id: &str, kind: QueryKind, query: &str,
-        folder_id: Option<String>, page: u64, reverse: bool,
+        &self,
+        source: Source,
+        session_id: &str,
+        kind: QueryKind,
+        query: &str,
+        folder_id: Option<String>,
+        page: u64,
+        reverse: bool,
     ) -> Result<QueryResult> {
         if reverse && !matches!(kind, QueryKind::Favorites) {
             return Err(AccountError::new("QUERY_INVALID"));
@@ -812,7 +841,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if matches!(kind, QueryKind::Recent) && (!query.is_empty() || folder_id.is_some()) {
             return Err(AccountError::new("QUERY_INVALID"));
         }
-        if matches!(kind, QueryKind::Author | QueryKind::Tag | QueryKind::Category) && (query.trim().is_empty() || folder_id.is_some()) {
+        if matches!(
+            kind,
+            QueryKind::Author | QueryKind::Tag | QueryKind::Category
+        ) && (query.trim().is_empty() || folder_id.is_some())
+        {
             return Err(AccountError::new("QUERY_INVALID"));
         }
         if matches!(kind, QueryKind::Category) && source != Source::Pica {
@@ -881,7 +914,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             || result.items.iter().any(|work| work.source != source)
             || (result.jm_search_boundary.is_some()
                 && (source != Source::Jm
-                    || !matches!(kind, QueryKind::Search | QueryKind::Author | QueryKind::Tag | QueryKind::Recent)
+                    || !matches!(
+                        kind,
+                        QueryKind::Search | QueryKind::Author | QueryKind::Tag | QueryKind::Recent
+                    )
                     || !jm_search_boundary_is_valid(&result)))
             || (matches!(kind, QueryKind::Detail) && !result.issues.is_empty())
             || result.issues.iter().any(|issue| {
@@ -1054,9 +1090,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             // An explicit failed-cover retry refreshes even a retained stale URL
             // or cached missing descriptor. Ordinary loading keeps the fast path;
             // this read does not populate the favorite/follow authority cache.
-            if refresh_metadata
-                || (!known && !self.backend.has_cover_metadata(&session, work_id))
-            {
+            if refresh_metadata || (!known && !self.backend.has_cover_metadata(&session, work_id)) {
                 let work = self.backend.detail(&session, work_id).await?;
                 cache::validate_work(source, &work)?;
                 if work.work_id != work_id {

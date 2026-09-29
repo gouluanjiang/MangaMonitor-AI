@@ -81,11 +81,14 @@ export function isBlTagged(tags?: readonly string[]): boolean {
 export function isBlockedTagged(tags?: readonly string[]): boolean {
   return tags?.some(isBlockedTag) ?? false;
 }
+export function isJmEnglishCategory(tag: string): boolean {
+  return normalizedLabel(tag) === "english manga";
+}
 
 /** Compact catalogs keep at most two language labels and one label per blocked kind. */
 export function retainedContentTags(tags: readonly string[]): string[] {
   const retained = retainedLanguageTags(tags);
-  for (const matches of [isBlTag, isAiTag]) {
+  for (const matches of [isBlTag, isAiTag, isJmEnglishCategory]) {
     const label = tags.find(matches);
     if (label) retained.push(label.trim());
   }
@@ -98,13 +101,16 @@ export function inheritContentTags(
   previous: readonly string[],
 ): string[] {
   let tags = inheritLanguageTags(incoming, previous);
-  for (const matches of [isBlTag, isAiTag]) {
+  for (const matches of [isBlTag, isAiTag, isJmEnglishCategory]) {
     const prior = !tags.some(matches) && previous.find(matches);
     if (!prior) continue;
     if (tags === incoming) tags = [...tags];
     if (tags.length >= 128) {
       const removable = tags.findLastIndex(
-        (tag) => !languageTagKind(tag) && !isBlockedTag(tag),
+        (tag) =>
+          !languageTagKind(tag) &&
+          !isBlockedTag(tag) &&
+          !isJmEnglishCategory(tag),
       );
       // A saturated list consisting only of evidence can be compacted safely.
       tags =
@@ -130,12 +136,14 @@ const listeners = new Set<() => void>();
 let revision = 0,
   notificationQueued = false;
 const key = (work: ContentWork) => JSON.stringify([work.source, work.workId]);
+const excludedByMetadata = (work: ContentWork) =>
+  isBlockedTagged(work.tags) || isBlockedTagged(work.categories);
+/** The accepted JM author/search scope is narrower than general browsing. */
+export const isOutsideJmAuthorScope = (work: ContentWork) =>
+  work.source === "JM" &&
+  [...(work.tags ?? []), ...(work.categories ?? [])].some(isJmEnglishCategory);
 export function rememberContentWork(work: ContentWork): void {
-  if (
-    (!isBlockedTagged(work.tags) && !isBlockedTagged(work.categories)) ||
-    known.has(key(work))
-  )
-    return;
+  if (!excludedByMetadata(work) || known.has(key(work))) return;
   known.add(key(work));
   revision++;
   if (!notificationQueued) {
@@ -147,11 +155,7 @@ export function rememberContentWork(work: ContentWork): void {
   }
 }
 export function isContentHidden(work: ContentWork): boolean {
-  return (
-    isBlockedTagged(work.tags) ||
-    isBlockedTagged(work.categories) ||
-    known.has(key(work))
-  );
+  return excludedByMetadata(work) || known.has(key(work));
 }
 export function subscribeContentFilter(listener: () => void): () => void {
   listeners.add(listener);

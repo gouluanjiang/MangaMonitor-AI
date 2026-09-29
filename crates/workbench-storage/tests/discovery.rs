@@ -72,13 +72,20 @@ fn observations_without_query_hits_roundtrip_but_future_detail_evidence_is_rejec
     observed.matched_authors.clear();
     observed.author_verified = false;
     observed.metadata_detail_at = Some(observed.observed_at);
-    store.apply_discovery_patch_for_following(0, 0, patch(vec![observed.clone()])).unwrap();
+    store
+        .apply_discovery_patch_for_following(0, 0, patch(vec![observed.clone()]))
+        .unwrap();
     let saved = store.read_discovery().unwrap();
     assert_eq!(saved.value.accounts[0].records[0], observed);
     assert!(saved.value.accounts[0].last_check.is_none());
     observed.metadata_detail_at = Some(observed.observed_at + 1);
-    assert_eq!(store.apply_discovery_patch_for_following(1, 0, patch(vec![observed])).unwrap_err().code,
-        "VALIDATION_FAILED");
+    assert_eq!(
+        store
+            .apply_discovery_patch_for_following(1, 0, patch(vec![observed]))
+            .unwrap_err()
+            .code,
+        "VALIDATION_FAILED"
+    );
     assert_eq!(store.read_discovery().unwrap(), saved);
 }
 

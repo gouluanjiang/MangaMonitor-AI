@@ -446,16 +446,26 @@ fn decode_catalog(source: Source, bytes: Option<Vec<u8>>, now: u64) -> Result<Ca
 }
 
 /// Read existing favorite metadata without pretending a new website read occurred.
-pub(crate) fn observed_catalog_works(root: &Path, account: &str, source: Source) -> Result<Vec<(SourceWork, u64)>> {
+pub(crate) fn observed_catalog_works(
+    root: &Path,
+    account: &str,
+    source: Source,
+) -> Result<Vec<(SourceWork, u64)>> {
     let store = WorkbenchStore::open(root).map_err(|e| err(e.code))?;
-    let bytes = store.with_account_cache(account, |cache| cache.read(CacheEntry::Catalog)).map_err(|e| err(e.code))?;
+    let bytes = store
+        .with_account_cache(account, |cache| cache.read(CacheEntry::Catalog))
+        .map_err(|e| err(e.code))?;
     let catalog = decode_catalog(source, bytes, now_ms()?)?;
     let mut works = std::collections::HashMap::new();
     for entry in catalog.entries {
         for snapshot in std::iter::once(entry.snapshot).chain(entry.complete_snapshot) {
             for work in snapshot.items {
-                let saved = works.entry(work.work_id.clone()).or_insert((work.clone(), snapshot.updated_at));
-                if snapshot.updated_at > saved.1 { *saved = (work, snapshot.updated_at); }
+                let saved = works
+                    .entry(work.work_id.clone())
+                    .or_insert((work.clone(), snapshot.updated_at));
+                if snapshot.updated_at > saved.1 {
+                    *saved = (work, snapshot.updated_at);
+                }
             }
         }
     }

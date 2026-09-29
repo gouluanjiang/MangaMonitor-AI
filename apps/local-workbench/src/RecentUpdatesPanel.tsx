@@ -36,6 +36,7 @@ import { useBrowseSession, useBrowseSessionState } from "./useBrowseSession.ts";
 import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
 import { isContentHidden, rememberContentWork } from "./content-filter.ts";
 import { useAuthorCatalogMembership } from "./author-catalog-membership.ts";
+import { subscribeAuthorCatalogChanges } from "./author-catalog-events.ts";
 
 export function RecentUpdatesPanel({
   active,
@@ -158,24 +159,48 @@ export function RecentUpdatesPanel({
     if (active) void reader?.start();
     else setSelection([]);
   }, [reader, active]);
+  useEffect(() => {
+    if (!active || !reader || !scope) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = subscribeAuthorCatalogChanges((change) => {
+      if (
+        change.source !== scope.source ||
+        change.sessionId !== scope.sessionId
+      )
+        return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void reader.refreshHistory(), 500);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [reader, active, scopeKey]);
 
   const inventory = useMemo(
     () => createInventoryMatcher(library, inventorySnapshot, inventoryReady),
     [library, inventorySnapshot, inventoryReady],
   );
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
-  const searched = (data?.items ?? [])
-    .filter(
-      (work) =>
-        !isContentHidden(work) && !membership.known.has(sourceWorkKey(work)),
-    )
-    .filter((work) =>
-      [work.title, ...work.authors]
-        .join(" ")
-        .normalize("NFKC")
-        .toLocaleLowerCase()
-        .includes(terms),
-    );
+  const liveKeys = new Set(data?.items.map(sourceWorkKey) ?? []);
+  const retained = (state?.retainedItems ?? []).filter(
+    (work) => !liveKeys.has(sourceWorkKey(work)),
+  );
+  const displayItems = [...(data?.items ?? []), ...retained];
+  const uncommitted = new Set(state?.uncommittedIds ?? []);
+  const eligible = displayItems.filter(
+    (work) =>
+      !isContentHidden(work) &&
+      (uncommitted.has(sourceWorkKey(work)) ||
+        !membership.known.has(sourceWorkKey(work))),
+  );
+  const searched = eligible.filter((work) =>
+    [work.title, ...work.authors]
+      .join(" ")
+      .normalize("NFKC")
+      .toLocaleLowerCase()
+      .includes(terms),
+  );
   const visible = searched.filter((work) =>
     inventoryFilterMatches(inventory(work), filter),
   );
@@ -205,6 +230,30 @@ export function RecentUpdatesPanel({
     if (!active || !reader || !target || !main) return;
     return bindRecentUpdatesScroll(main, target, reader);
   }, [active, reader, terms, filter]);
+  useEffect(() => {
+    // A suppressed source page is not an end-of-feed signal. Continue only when
+    // no browseable record exists; text/inventory filters never trigger a crawl.
+    if (
+      active &&
+      reader &&
+      state?.phase === "ready" &&
+      data?.hasMore === true &&
+      !eligible.length &&
+      !terms &&
+      filter === "all"
+    ) {
+      const timer = setTimeout(() => void reader.loadNext(), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [
+    active,
+    reader,
+    state?.phase,
+    data?.page,
+    eligible.length,
+    terms,
+    filter,
+  ]);
   const clearSelection = () => {
     setSelection([]);
     setSelectionMode(false);
@@ -279,6 +328,20 @@ export function RecentUpdatesPanel({
               {error} {data ? "已读取列表保留。" : "请点击重试读取。"}
             </p>
           )}
+          {state?.observationErrorCode && (
+            <p
+              role="alert"
+              className="source-notice"
+              data-testid="recent-unsaved"
+            >
+              本页已经读取，但作者目录补录尚未保存；作品继续保留在此处。请重试读取，保存成功后才会移入作者更新。
+            </p>
+          )}
+          {state?.historyError && (
+            <p role="alert" className="source-notice">
+              近期补漏历史暂未读取成功；当前来源结果保留，可刷新最近更新重试。
+            </p>
+          )}
           <div
             className="source-tabs"
             role="group"
@@ -309,6 +372,9 @@ export function RecentUpdatesPanel({
             {(data?.duplicates ?? 0) > 0
               ? `已合并 ${data!.duplicates} 条重复记录。`
               : ""}
+            {retained.length > 0
+              ? ` 另有已保存近期作品 ${retained.length} 部，未计入本次网站分页。`
+              : ""}
           </p>
           <SourceIssues
             source={source}
@@ -325,6 +391,27 @@ export function RecentUpdatesPanel({
               <p className="source-muted">
                 最近读取：{new Date(data.updatedAt).toLocaleString()} ·{" "}
                 {inventoryScopeNote}
+              </p>
+            )}
+            {state?.retainedCoverage && (
+              <p
+                className="source-muted"
+                data-testid="recent-retained-coverage"
+              >
+                已保存近期补漏范围：{state.retainedCoverage.pagesRead} 页
+                {state.retainedCoverage.checkedAt
+                  ? ` · ${new Date(state.retainedCoverage.checkedAt).toLocaleString()}`
+                  : ""}
+                {state.retainedCoverage.errorCode
+                  ? " · 范围未完成，已有记录保留。"
+                  : state.retainedCoverage.reachedEnd
+                    ? " · 本次入口分页已读完。"
+                    : state.retainedCoverage.joinedPrevious
+                      ? " · 已衔接上次已确认范围。"
+                      : state.retainedCoverage.initialWindow
+                        ? " · 已建立初始窗口，更早历史未覆盖。"
+                        : " · 已保存部分范围，未证明完整。"}
+                不代表全站历史作品均已覆盖。
               </p>
             )}
           </details>

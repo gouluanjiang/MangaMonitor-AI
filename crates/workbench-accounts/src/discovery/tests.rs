@@ -86,24 +86,46 @@ async fn saved_credits_reproject_for_new_follow_without_query_provenance_or_remo
     let context = service.discovery_context(scopes.clone()).await.unwrap();
     let mut record = historical_record("100", &["Circle (Author B, Author C)"]);
     record.author_verified = false;
-    WorkbenchStore::open(root.path()).unwrap().write_discovery(0, DiscoveryDocument {
-        version: 1,
-        accounts: vec![DiscoveryAccount {
-            account_key: context.account_key, authors: vec![], records: vec![record.clone()], last_check: None,
-        }],
-    }).unwrap();
-    assert!(service.discovery_read_view(scopes.clone(), false).await.unwrap().records.is_empty());
+    WorkbenchStore::open(root.path())
+        .unwrap()
+        .write_discovery(
+            0,
+            DiscoveryDocument {
+                version: 1,
+                accounts: vec![DiscoveryAccount {
+                    account_key: context.account_key,
+                    authors: vec![],
+                    records: vec![record.clone()],
+                    last_check: None,
+                }],
+            },
+        )
+        .unwrap();
+    assert!(service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap()
+        .records
+        .is_empty());
     follow(&service, &scopes[0], "Author B", true).await;
     follow(&service, &scopes[1], "Author C", true).await;
     follow(&service, &scopes[0], "Author A", false).await;
-    let visible = service.discovery_read_view(scopes.clone(), false).await.unwrap();
+    let visible = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
     assert_eq!(visible.records, vec![record]);
     assert_eq!(visible.followed_authors, ["Author B", "Author C"]);
     assert!(visible.last_check.is_none());
-    assert!(visible.authors.iter().all(|range| range.state == DiscoveryRangeState::Idle));
+    assert!(visible
+        .authors
+        .iter()
+        .all(|range| range.state == DiscoveryRangeState::Idle));
     let current = service.discovery_context(scopes).await.unwrap();
-    assert_eq!(current.confirmed_authors(&visible.records[0]),
-        BTreeSet::from(["Author B".into(), "Author C".into()]));
+    assert_eq!(
+        current.confirmed_authors(&visible.records[0]),
+        BTreeSet::from(["Author B".into(), "Author C".into()])
+    );
     assert!(backend.0.calls.lock().unwrap().is_empty());
 }
 
@@ -112,30 +134,65 @@ async fn observation_ingest_coauthors_is_idempotent_and_never_changes_query_cove
     let (root, backend, service, scopes) = setup().await;
     follow(&service, &scopes[0], "Author A", true).await;
     follow(&service, &scopes[1], "Author B", true).await;
-    service.discovery_start(scopes.clone(), vec![]).await.unwrap();
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
     let initial = finish(&service, &scopes).await;
     let source = work(Source::Jm, "100", &["Circle (Author A, Author B)"]);
-    let saved = service.discovery_observe(scopes.clone(), vec![source.clone(), source.clone()], true, 100)
-        .await.unwrap().unwrap();
-    let duplicate = service.discovery_observe(scopes.clone(), vec![source], true, 100)
-        .await.unwrap().unwrap();
+    let saved = service
+        .discovery_observe(
+            scopes.clone(),
+            vec![source.clone(), source.clone()],
+            true,
+            100,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let duplicate = service
+        .discovery_observe(scopes.clone(), vec![source], true, 100)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(saved, duplicate);
-    let visible = service.discovery_read_view(scopes.clone(), false).await.unwrap();
+    let visible = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
     assert_eq!(visible.records.len(), 1);
     assert!(visible.records[0].matched_authors.is_empty());
     assert_eq!(visible.records[0].metadata_detail_at, Some(100));
     assert_eq!(visible.authors, initial.authors);
     assert_eq!(visible.last_check, initial.last_check);
     let context = service.discovery_context(scopes.clone()).await.unwrap();
-    assert_eq!(context.confirmed_authors(&visible.records[0]),
-        BTreeSet::from(["Author A".into(), "Author B".into()]));
-    let reopened = WorkbenchStore::open(root.path()).unwrap().read_discovery().unwrap();
+    assert_eq!(
+        context.confirmed_authors(&visible.records[0]),
+        BTreeSet::from(["Author A".into(), "Author B".into()])
+    );
+    let reopened = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
     assert_eq!(reopened.value.accounts[0].records.len(), 1);
     let mut wrong = scopes;
     wrong[0].session_id = "obsolete-session".into();
-    assert!(service.discovery_observe(wrong, vec![work(Source::Jm, "101", &["Author A"])], true, 101)
-        .await.is_err());
-    assert_eq!(WorkbenchStore::open(root.path()).unwrap().read_discovery().unwrap(), reopened);
+    assert!(service
+        .discovery_observe(
+            wrong,
+            vec![work(Source::Jm, "101", &["Author A"])],
+            true,
+            101
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        WorkbenchStore::open(root.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap(),
+        reopened
+    );
     assert_eq!(backend.0.calls.lock().unwrap().len(), 4);
 }
 
@@ -144,19 +201,45 @@ async fn active_author_scan_defers_observations_without_losing_or_fabricating_co
     let (root, backend, service, scopes) = setup().await;
     follow(&service, &scopes[0], "Author A", true).await;
     backend.0.block_call.store(1, Ordering::SeqCst);
-    let run = service.discovery_start(scopes.clone(), vec![]).await.unwrap();
+    let run = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
     backend.0.started.notified().await;
-    let before = WorkbenchStore::open(root.path()).unwrap().read_discovery().unwrap();
+    let before = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
     let record = work(Source::Jm, "101", &["Author A"]);
-    assert!(service.discovery_observe(scopes.clone(), vec![record.clone()], true, 10)
-        .await.unwrap().is_none());
-    assert_eq!(WorkbenchStore::open(root.path()).unwrap().read_discovery().unwrap(), before);
+    assert!(service
+        .discovery_observe(scopes.clone(), vec![record.clone()], true, 10)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        WorkbenchStore::open(root.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap(),
+        before
+    );
     service.discovery_cancel(&run.run_id).unwrap();
     backend.0.release.notify_one();
     finish(&service, &scopes).await;
-    assert!(service.discovery_observe(scopes.clone(), vec![record], true, 10)
-        .await.unwrap().is_some());
-    assert_eq!(service.discovery_read_view(scopes, false).await.unwrap().records.len(), 1);
+    assert!(service
+        .discovery_observe(scopes.clone(), vec![record], true, 10)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        service
+            .discovery_read_view(scopes, false)
+            .await
+            .unwrap()
+            .records
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -180,7 +263,10 @@ fn later_lists_and_out_of_order_details_cannot_erase_verified_credit_or_rich_met
     stale.observed_at = 10;
     stale.metadata_detail_at = Some(10);
     stale.work.authors = vec!["Obsolete Author".into()];
-    assert_eq!(merged_record(Some(&merged), stale).work.authors, ["Author A"]);
+    assert_eq!(
+        merged_record(Some(&merged), stale).work.authors,
+        ["Author A"]
+    );
     let mut corrected = detail;
     corrected.observed_at = 40;
     corrected.metadata_detail_at = Some(40);
@@ -195,21 +281,30 @@ fn later_lists_and_out_of_order_details_cannot_erase_verified_credit_or_rich_met
 fn legacy_jm_query_semantics_invalidate_while_pica_and_unstarted_rows_remain_compatible() {
     let policies = AuthorQueryDocument::default();
     let jm_policy = policies.resolve(workbench_storage::Source::Jm, &"a".repeat(64), "Author A");
-    let pica_policy = policies.resolve(workbench_storage::Source::Pica, &"a".repeat(64), "Author A");
+    let pica_policy =
+        policies.resolve(workbench_storage::Source::Pica, &"a".repeat(64), "Author A");
     let mut fresh = idle("Author A", Source::Jm);
     invalidate_changed_query(&mut fresh, &jm_policy);
     assert_eq!(fresh.state, DiscoveryRangeState::Idle);
     let mut jm = fresh;
     jm.state = DiscoveryRangeState::Complete;
     jm.last_complete_at = Some(10);
-    jm.baseline = Some(DiscoveryBaseline { query_version: DISCOVERY_QUERY_VERSION, head_ids: vec!["100".into()], total: 1, established_at: 10 });
+    jm.baseline = Some(DiscoveryBaseline {
+        query_version: DISCOVERY_QUERY_VERSION,
+        head_ids: vec!["100".into()],
+        total: 1,
+        established_at: 10,
+    });
     let mut pica = jm.clone();
     pica.source = workbench_storage::Source::Pica;
     let old_pica = pica.clone();
     invalidate_changed_query(&mut jm, &jm_policy);
     invalidate_changed_query(&mut pica, &pica_policy);
     assert_eq!(jm.state, DiscoveryRangeState::Partial);
-    assert_eq!(jm.error_code.as_deref(), Some("AUTHOR_QUERY_POLICY_CHANGED"));
+    assert_eq!(
+        jm.error_code.as_deref(),
+        Some("AUTHOR_QUERY_POLICY_CHANGED")
+    );
     assert!(jm.baseline.is_none());
     assert_eq!(jm.last_complete_at, Some(10));
     assert_eq!(pica, old_pica);
@@ -219,41 +314,101 @@ async fn finish_recent(service: &TestService) -> crate::observations::RecentChec
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let run = service.recent_check_progress().unwrap().unwrap();
-            if run.phase != "checking" && !run.results.is_empty() { return run; }
+            if run.phase != "checking" && !run.results.is_empty() {
+                return run;
+            }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
-    }).await.expect("synthetic recent traversal finishes")
+    })
+    .await
+    .expect("synthetic recent traversal finishes")
 }
 
 #[tokio::test]
 async fn recent_windows_join_continuously_and_failures_preserve_checkpoint_and_nonfollowed_works() {
     let (_root, backend, service, scopes) = setup().await;
-    backend.put(Source::Jm, "__recent__", 1, page(1, 4, vec![work(Source::Jm, "100", &["Unfollowed A"])]));
-    backend.put(Source::Jm, "__recent__", 2, page(2, 4, vec![work(Source::Jm, "101", &["Unfollowed B"])]));
-    service.recent_check_start(scopes.clone(), Some(2)).await.unwrap();
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        1,
+        page(1, 4, vec![work(Source::Jm, "100", &["Unfollowed A"])]),
+    );
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        2,
+        page(2, 4, vec![work(Source::Jm, "101", &["Unfollowed B"])]),
+    );
+    service
+        .recent_check_start(scopes.clone(), Some(2))
+        .await
+        .unwrap();
     let initial = finish_recent(&service).await;
     assert_eq!(initial.phase, "complete");
     assert!(initial.results[0].initial_window);
     assert!(!initial.results[0].reached_end);
-    let history = service.source_recent_history(Source::Jm, &scopes[0].session_id).await.unwrap();
+    let history = service
+        .source_recent_history(Source::Jm, &scopes[0].session_id)
+        .await
+        .unwrap();
     assert_eq!(history.coverage.head_ids, ["100", "101"]);
     assert_eq!(history.items.len(), 2);
-    backend.put(Source::Jm, "__recent__", 1, page(1, 5, vec![work(Source::Jm, "102", &["Unfollowed C"]), work(Source::Jm, "100", &["Unfollowed A"])]));
-    backend.put(Source::Jm, "__recent__", 2, page(2, 5, vec![work(Source::Jm, "101", &["Unfollowed B"])]));
-    service.recent_check_start(scopes.clone(), Some(2)).await.unwrap();
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        1,
+        page(
+            1,
+            5,
+            vec![
+                work(Source::Jm, "102", &["Unfollowed C"]),
+                work(Source::Jm, "100", &["Unfollowed A"]),
+            ],
+        ),
+    );
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        2,
+        page(2, 5, vec![work(Source::Jm, "101", &["Unfollowed B"])]),
+    );
+    service
+        .recent_check_start(scopes.clone(), Some(2))
+        .await
+        .unwrap();
     let joined = finish_recent(&service).await;
     assert!(joined.results[0].joined_previous);
     assert!(!joined.results[0].initial_window);
     assert_eq!(joined.results[0].pages_read, 2);
-    let previous = service.source_recent_history(Source::Jm, &scopes[0].session_id).await.unwrap();
+    let previous = service
+        .source_recent_history(Source::Jm, &scopes[0].session_id)
+        .await
+        .unwrap();
     assert_eq!(previous.items.len(), 3);
-    backend.put(Source::Jm, "__recent__", 1, page(1, 6, vec![work(Source::Jm, "103", &["Unfollowed D"])]));
-    backend.0.pages.lock().unwrap().insert(key(Source::Jm, "__recent__", 2), Err(AccountError::new("SOURCE_TIMEOUT")));
-    service.recent_check_start(scopes.clone(), Some(2)).await.unwrap();
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        1,
+        page(1, 6, vec![work(Source::Jm, "103", &["Unfollowed D"])]),
+    );
+    backend.0.pages.lock().unwrap().insert(
+        key(Source::Jm, "__recent__", 2),
+        Err(AccountError::new("SOURCE_TIMEOUT")),
+    );
+    service
+        .recent_check_start(scopes.clone(), Some(2))
+        .await
+        .unwrap();
     let failed = finish_recent(&service).await;
     assert_eq!(failed.phase, "partial");
-    assert_eq!(failed.results[0].error_code.as_deref(), Some("SOURCE_TIMEOUT"));
-    let retained = service.source_recent_history(Source::Jm, &scopes[0].session_id).await.unwrap();
+    assert_eq!(
+        failed.results[0].error_code.as_deref(),
+        Some("SOURCE_TIMEOUT")
+    );
+    let retained = service
+        .source_recent_history(Source::Jm, &scopes[0].session_id)
+        .await
+        .unwrap();
     assert_eq!(retained.coverage, previous.coverage);
     assert_eq!(retained.items.len(), 4);
     assert!(retained.items.iter().any(|item| item.work_id == "103"));
@@ -262,16 +417,30 @@ async fn recent_windows_join_continuously_and_failures_preserve_checkpoint_and_n
 #[tokio::test]
 async fn recent_cancellation_keeps_observed_page_without_claiming_coverage() {
     let (_root, backend, service, scopes) = setup().await;
-    backend.put(Source::Jm, "__recent__", 1, page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]));
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
     backend.0.block_call.store(1, Ordering::SeqCst);
-    let run = service.recent_check_start(scopes.clone(), Some(2)).await.unwrap();
+    let run = service
+        .recent_check_start(scopes.clone(), Some(2))
+        .await
+        .unwrap();
     backend.0.started.notified().await;
     service.recent_check_cancel(&run.id).unwrap();
     backend.0.release.notify_one();
     let done = finish_recent(&service).await;
     assert_eq!(done.phase, "cancelled");
-    assert_eq!(done.results[0].error_code.as_deref(), Some("CHECK_CANCELLED"));
-    let history = service.source_recent_history(Source::Jm, &scopes[0].session_id).await.unwrap();
+    assert_eq!(
+        done.results[0].error_code.as_deref(),
+        Some("CHECK_CANCELLED")
+    );
+    let history = service
+        .source_recent_history(Source::Jm, &scopes[0].session_id)
+        .await
+        .unwrap();
     assert!(history.coverage.checked_at.is_none());
     assert_eq!(history.items.len(), 1);
 }
@@ -281,24 +450,67 @@ async fn unrelated_source_browsing_saves_pending_observations_during_author_scan
     let (root, backend, service, scopes) = setup().await;
     follow(&service, &scopes[0], "Author A", true).await;
     backend.0.block_call.store(1, Ordering::SeqCst);
-    let run = service.discovery_start(scopes.clone(), vec![]).await.unwrap();
+    let run = service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
     backend.0.started.notified().await;
     let id = "123456789012345678901234";
-    backend.put(Source::Pica, "__recent__", 1, page(1, 1, vec![work(Source::Pica, id, &["Author A"])]));
-    let result = tokio::time::timeout(std::time::Duration::from_secs(1),
-        service.query(Source::Pica, &scopes[1].session_id, QueryKind::Recent, "", None, 1))
-        .await.expect("Pica metadata does not wait behind the blocked JM request").unwrap();
+    backend.put(
+        Source::Pica,
+        "__recent__",
+        1,
+        page(1, 1, vec![work(Source::Pica, id, &["Author A"])]),
+    );
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        service.query(
+            Source::Pica,
+            &scopes[1].session_id,
+            QueryKind::Recent,
+            "",
+            None,
+            1,
+        ),
+    )
+    .await
+    .expect("Pica metadata does not wait behind the blocked JM request")
+    .unwrap();
     assert!(result.discovery_revision.is_none());
     assert!(result.observation_error_code.is_none());
     let store = WorkbenchStore::open(root.path()).unwrap();
-    assert!(store.read_observed_works().unwrap().value.accounts.iter().any(|account| account.records.iter().any(|record| record.work.work_id == id)));
-    assert!(!store.read_discovery().unwrap().value.accounts.iter().any(|account| account.records.iter().any(|record| record.work.work_id == id)));
+    assert!(store
+        .read_observed_works()
+        .unwrap()
+        .value
+        .accounts
+        .iter()
+        .any(|account| account
+            .records
+            .iter()
+            .any(|record| record.work.work_id == id)));
+    assert!(!store
+        .read_discovery()
+        .unwrap()
+        .value
+        .accounts
+        .iter()
+        .any(|account| account
+            .records
+            .iter()
+            .any(|record| record.work.work_id == id)));
     service.discovery_cancel(&run.run_id).unwrap();
     backend.0.release.notify_one();
     finish(&service, &scopes).await;
     let visible = service.discovery_read_view(scopes, false).await.unwrap();
-    assert!(visible.records.iter().any(|record| record.work.work_id == id));
-    assert!(visible.last_check.as_ref().is_some_and(|check| check.phase != DiscoveryCheckPhase::Complete));
+    assert!(visible
+        .records
+        .iter()
+        .any(|record| record.work.work_id == id));
+    assert!(visible
+        .last_check
+        .as_ref()
+        .is_some_and(|check| check.phase != DiscoveryCheckPhase::Complete));
 }
 
 #[tokio::test]
@@ -310,15 +522,40 @@ async fn arbitrary_author_history_reads_raw_current_pair_and_never_another_accou
     saved.matched_authors = vec!["Former Query".into()];
     let mut foreign = saved.clone();
     foreign.work.work_id = "101".into();
-    WorkbenchStore::open(root.path()).unwrap().write_discovery(0, DiscoveryDocument {
-        version: 1, accounts: vec![
-            DiscoveryAccount { account_key: context.account_key, authors: vec![], records: vec![saved], last_check: None },
-            DiscoveryAccount { account_key: "f".repeat(64), authors: vec![], records: vec![foreign], last_check: None },
-        ],
-    }).unwrap();
+    WorkbenchStore::open(root.path())
+        .unwrap()
+        .write_discovery(
+            0,
+            DiscoveryDocument {
+                version: 1,
+                accounts: vec![
+                    DiscoveryAccount {
+                        account_key: context.account_key,
+                        authors: vec![],
+                        records: vec![saved],
+                        last_check: None,
+                    },
+                    DiscoveryAccount {
+                        account_key: "f".repeat(64),
+                        authors: vec![],
+                        records: vec![foreign],
+                        last_check: None,
+                    },
+                ],
+            },
+        )
+        .unwrap();
     follow(&service, &scopes[0], "Former Query", false).await;
-    assert!(service.discovery_read_view(scopes.clone(), true).await.unwrap().records.is_empty());
-    let known = service.source_author_known_works(Source::Jm, &scopes[0].session_id, "Unfollowed Writer").await.unwrap();
+    assert!(service
+        .discovery_read_view(scopes.clone(), true)
+        .await
+        .unwrap()
+        .records
+        .is_empty());
+    let known = service
+        .source_author_known_works(Source::Jm, &scopes[0].session_id, "Unfollowed Writer")
+        .await
+        .unwrap();
     assert!(known.history_complete);
     assert_eq!(known.items.len(), 1);
     assert_eq!(known.items[0].work_id, "100");
@@ -327,13 +564,35 @@ async fn arbitrary_author_history_reads_raw_current_pair_and_never_another_accou
 #[tokio::test]
 async fn recent_progress_and_cancel_reject_a_replaced_account_generation() {
     let (_root, backend, service, scopes) = setup().await;
-    backend.put(Source::Jm, "__recent__", 1, page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]));
-    service.recent_check_start(scopes.clone(), Some(2)).await.unwrap();
+    backend.put(
+        Source::Jm,
+        "__recent__",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
+    service
+        .recent_check_start(scopes.clone(), Some(2))
+        .await
+        .unwrap();
     let previous = finish_recent(&service).await;
-    let replacement = service.login(Source::Jm, "replacement-fixture".into(), "fixture-only".into(), false).await.unwrap();
+    let replacement = service
+        .login(
+            Source::Jm,
+            "replacement-fixture".into(),
+            "fixture-only".into(),
+            false,
+        )
+        .await
+        .unwrap();
     assert!(service.recent_check_progress().unwrap().is_none());
     assert!(service.recent_check_cancel(&previous.id).is_err());
-    let scopes = vec![DiscoveryScope { source: Source::Jm, session_id: replacement.session_id.unwrap() }, scopes[1].clone()];
+    let scopes = vec![
+        DiscoveryScope {
+            source: Source::Jm,
+            session_id: replacement.session_id.unwrap(),
+        },
+        scopes[1].clone(),
+    ];
     assert!(service.recent_check_start(scopes, Some(2)).await.is_ok());
     assert_eq!(finish_recent(&service).await.phase, "complete");
 }
@@ -342,15 +601,35 @@ async fn recent_progress_and_cancel_reject_a_replaced_account_generation() {
 async fn unreadable_observation_pool_preserves_saved_catalog_with_an_explicit_warning() {
     let (root, backend, service, scopes) = setup().await;
     follow(&service, &scopes[0], "Author A", true).await;
-    backend.put(Source::Jm, "Author A", 1, page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]));
-    service.discovery_start(scopes.clone(), vec![]).await.unwrap();
+    backend.put(
+        Source::Jm,
+        "Author A",
+        1,
+        page(1, 1, vec![work(Source::Jm, "100", &["Author A"])]),
+    );
+    service
+        .discovery_start(scopes.clone(), vec![])
+        .await
+        .unwrap();
     let previous = finish(&service, &scopes).await;
-    std::fs::write(root.path().join(workbench_storage::PRIVATE_DIRECTORY).join("observed-works.json"), b"invalid-json").unwrap();
-    let retained = service.discovery_read_view(scopes.clone(), false).await.unwrap();
+    std::fs::write(
+        root.path()
+            .join(workbench_storage::PRIVATE_DIRECTORY)
+            .join("observed-works.json"),
+        b"invalid-json",
+    )
+    .unwrap();
+    let retained = service
+        .discovery_read_view(scopes.clone(), false)
+        .await
+        .unwrap();
     assert_eq!(retained.records, previous.records);
     assert_eq!(retained.last_check, previous.last_check);
     assert!(retained.observation_error_code.is_some());
-    let known = service.source_author_known_works(Source::Jm, &scopes[0].session_id, "Author A").await.unwrap();
+    let known = service
+        .source_author_known_works(Source::Jm, &scopes[0].session_id, "Author A")
+        .await
+        .unwrap();
     assert_eq!(known.items.len(), 1);
     assert_eq!(known.items[0].work_id, "100");
     assert!(!known.history_complete);
@@ -1091,8 +1370,13 @@ fn saved_author_catalog_keeps_bl_and_ai_evidence_when_list_metadata_omits_tags()
     source_work.tags = vec!["BL".into(), "中文".into()];
     source_work.categories = Some(vec!["AI漫畫".into()]);
     let existing = DiscoveryRecord {
-        work: discovery_work_from_source(source_work), matched_authors: vec!["Author A".into()],
-        author_verified: true, observed_at: 100, metadata_detail_at: None, scan_id: "a".repeat(64), first_discovered_run_id: None,
+        work: discovery_work_from_source(source_work),
+        matched_authors: vec!["Author A".into()],
+        author_verified: true,
+        observed_at: 100,
+        metadata_detail_at: None,
+        scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     };
     let mut incoming = existing.clone();
     incoming.work.tags.clear();
@@ -1107,8 +1391,13 @@ fn inherited_content_evidence_survives_the_saved_work_byte_boundary() {
     let mut source_work = work(Source::Jm, "123", &["Author A"]);
     source_work.tags = vec!["耽美花園".into(), "AI".into()];
     let existing = DiscoveryRecord {
-        work: discovery_work_from_source(source_work), matched_authors: vec!["Author A".into()],
-        author_verified: true, observed_at: 100, metadata_detail_at: None, scan_id: "a".repeat(64), first_discovered_run_id: None,
+        work: discovery_work_from_source(source_work),
+        matched_authors: vec!["Author A".into()],
+        author_verified: true,
+        observed_at: 100,
+        metadata_detail_at: None,
+        scan_id: "a".repeat(64),
+        first_discovered_run_id: None,
     };
     let mut incoming = existing.clone();
     incoming.work.tags = vec!["t".repeat(2000); 32];
@@ -2158,7 +2447,10 @@ async fn unfollow_filters_records_without_erasing_stored_evidence_and_verified_i
     assert_eq!(remaining.records.len(), 1);
     // Query provenance is retained; the current followed-author projection is
     // derived separately from the unchanged coauthor credits.
-    assert_eq!(remaining.records[0].matched_authors, ["Author B", "Author A"]);
+    assert_eq!(
+        remaining.records[0].matched_authors,
+        ["Author B", "Author A"]
+    );
     follow(&service, &scopes[1], "Author B", false).await;
     assert!(service
         .discovery_read(scopes)

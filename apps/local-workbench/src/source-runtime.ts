@@ -19,6 +19,7 @@ import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
 import { authorQueryMessage } from "./author-query.ts";
 import { normalizedWorkDate } from "./work-dates.ts";
+import { notifyAuthorCatalogChanged } from "./author-catalog-events.ts";
 
 export class SourceError extends Error {
   readonly code: string;
@@ -740,12 +741,101 @@ export function createSourceAdapter(
       if (!object(value) || !integer(value.revision)) invalid();
       return { ...policy, ...scope, revision: value.revision as number };
     },
+    async knownAuthorWorks(scope, author) {
+      checkScope(scope);
+      if (!policyName(author)) throw new SourceError("INVALID_INPUT");
+      const value = await call("source_author_known_works", {
+        ...scope,
+        author,
+      });
+      scoped(value, scope);
+      if (
+        !Array.isArray(value.items) ||
+        value.items.length > 500000 ||
+        !nullableInteger(value.checkedAt) ||
+        !integer(value.discoveryRevision) ||
+        (value.historyComplete !== undefined &&
+          typeof value.historyComplete !== "boolean") ||
+        (value.observationErrorCode != null &&
+          (typeof value.observationErrorCode !== "string" ||
+            !/^[A-Z0-9_]{1,100}$/.test(value.observationErrorCode)))
+      )
+        invalid();
+      const items = value.items.map((work) =>
+        validateSourceWork(work, scope.source),
+      );
+      if (new Set(items.map((work) => work.workId)).size !== items.length)
+        invalid();
+      return {
+        ...scope,
+        items,
+        checkedAt: value.checkedAt as number | null,
+        discoveryRevision: value.discoveryRevision as number,
+        ...(value.historyComplete === undefined
+          ? {}
+          : { historyComplete: value.historyComplete as boolean }),
+        ...(value.observationErrorCode === undefined
+          ? {}
+          : {
+              observationErrorCode: value.observationErrorCode as string | null,
+            }),
+      };
+    },
+    async recentHistory(scope) {
+      checkScope(scope);
+      const value = await call("source_recent_history", { ...scope });
+      scoped(value, scope);
+      const coverage = value.coverage;
+      if (
+        !Array.isArray(value.items) ||
+        value.items.length > 20000 ||
+        !integer(value.revision) ||
+        !object(coverage) ||
+        !Array.isArray(coverage.headIds) ||
+        coverage.headIds.length > 1000 ||
+        !coverage.headIds.every(identity) ||
+        !nullableInteger(coverage.checkedAt) ||
+        !integer(coverage.pagesRead) ||
+        typeof coverage.reachedEnd !== "boolean" ||
+        typeof coverage.joinedPrevious !== "boolean" ||
+        (coverage.initialWindow !== undefined &&
+          typeof coverage.initialWindow !== "boolean") ||
+        !(
+          coverage.errorCode === null ||
+          (typeof coverage.errorCode === "string" &&
+            /^[A-Z_0-9]{1,100}$/.test(coverage.errorCode))
+        )
+      )
+        invalid();
+      const items = value.items.map((work) =>
+        validateSourceWork(work, scope.source),
+      );
+      if (new Set(items.map((work) => work.workId)).size !== items.length)
+        invalid();
+      return {
+        ...scope,
+        items,
+        revision: value.revision as number,
+        coverage: {
+          headIds: [...coverage.headIds] as string[],
+          checkedAt: coverage.checkedAt as number | null,
+          pagesRead: coverage.pagesRead as number,
+          reachedEnd: coverage.reachedEnd,
+          joinedPrevious: coverage.joinedPrevious,
+          errorCode: coverage.errorCode as string | null,
+          ...(coverage.initialWindow === undefined
+            ? {}
+            : { initialWindow: coverage.initialWindow as boolean }),
+        },
+      };
+    },
     async query(scope, query) {
       checkScope(scope);
       if (
         ![
           "favorites",
           "search",
+          "author",
           "tag",
           "category",
           "detail",
@@ -759,7 +849,9 @@ export function createSourceAdapter(
         (scope.source === "Pica" && query.folderId !== null) ||
         (query.kind === "ranking" &&
           (query.page !== 1 || query.reverse === true)) ||
-        ((query.kind === "tag" || query.kind === "category") &&
+        ((query.kind === "author" ||
+          query.kind === "tag" ||
+          query.kind === "category") &&
           (!query.query.trim() ||
             query.folderId !== null ||
             query.reverse === true)) ||
@@ -772,18 +864,19 @@ export function createSourceAdapter(
         (query.reverse !== undefined && typeof query.reverse !== "boolean")
       )
         throw new SourceError("INVALID_INPUT");
+      const raw = await call("source_query", {
+        ...scope,
+        ...query,
+        ...(query.kind === "recent" ? {} : { reverse: query.reverse ?? false }),
+      });
       const result = validateSourcePage(
-        await call("source_query", {
-          ...scope,
-          ...query,
-          ...(query.kind === "recent"
-            ? {}
-            : { reverse: query.reverse ?? false }),
-        }),
+        raw,
         scope,
         query.kind === "favorites",
         false,
-        query.kind === "search" || query.kind === "tag",
+        query.kind === "search" ||
+          query.kind === "author" ||
+          query.kind === "tag",
       );
       if (
         result.page !== query.page ||
@@ -791,7 +884,25 @@ export function createSourceAdapter(
         (query.kind === "detail" && (result.issues?.length ?? 0) > 0)
       )
         invalid();
-      return result;
+      if (
+        !object(raw) ||
+        (raw.discoveryRevision != null && !integer(raw.discoveryRevision)) ||
+        (raw.observationErrorCode != null &&
+          (typeof raw.observationErrorCode !== "string" ||
+            !/^[A-Z0-9_]{1,100}$/.test(raw.observationErrorCode)))
+      )
+        invalid();
+      const discoveryRevision = raw.discoveryRevision as
+        number | null | undefined;
+      const observationErrorCode = raw.observationErrorCode as
+        string | null | undefined;
+      if (discoveryRevision != null && !observationErrorCode)
+        notifyAuthorCatalogChanged({ ...scope, revision: discoveryRevision });
+      return {
+        ...result,
+        ...(discoveryRevision === undefined ? {} : { discoveryRevision }),
+        ...(observationErrorCode === undefined ? {} : { observationErrorCode }),
+      };
     },
     async rankingOptions(scope) {
       checkScope(scope);
@@ -922,10 +1033,16 @@ export function createSourceAdapter(
         !integer(mutation.expectedRevision)
       )
         throw new SourceError("INVALID_INPUT");
-      return validateFollowing(
+      const result = validateFollowing(
         await call("source_follow", { ...scope, ...mutation }),
         scope,
       );
+      if (mutation.kind === "author")
+        notifyAuthorCatalogChanged({
+          ...scope,
+          followingRevision: result.revision,
+        });
+      return result;
     },
   };
 }

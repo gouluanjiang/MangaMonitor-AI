@@ -16,13 +16,13 @@ use workbench_credentials::Vault;
 use workbench_sources::{inherit_content_tags, retained_content_tags};
 pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
-    discovery_author_is_valid, discovery_record_matches_author, AuthorQueryDocument,
-    AuthorCreditIndex, AuthorQueryPolicy, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline,
-    DiscoveryCheckPhase, DiscoveryCheckSummary, DiscoveryDocument, DiscoveryItemIssue,
-    DiscoveryItemIssueCode, DiscoveryPagePatch, DiscoveryQueryBaseline, DiscoveryRangeState,
-    DiscoveryRecord, DiscoveryWork, Document, WorkbenchStore, MAX_DISCOVERY_AUTHORS,
-    MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_ISSUE_SAMPLES, MAX_DISCOVERY_PAGES,
-    MAX_DISCOVERY_RAW_RECORDS, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
+    discovery_author_is_valid, discovery_record_matches_author, AuthorCreditIndex,
+    AuthorQueryDocument, AuthorQueryPolicy, DiscoveryAccount, DiscoveryAuthorRange,
+    DiscoveryBaseline, DiscoveryCheckPhase, DiscoveryCheckSummary, DiscoveryDocument,
+    DiscoveryItemIssue, DiscoveryItemIssueCode, DiscoveryPagePatch, DiscoveryQueryBaseline,
+    DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, Document, WorkbenchStore,
+    MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_ISSUE_SAMPLES,
+    MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RAW_RECORDS, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
 };
 
 const DISCOVERY_QUERY_VERSION: u32 = 1;
@@ -284,7 +284,11 @@ impl DiscoveryContext {
             let mut credits = AuthorCreditIndex::default();
             for policy in self.policies[&source].values() {
                 if author_query_error(&policy.author) != Some("AUTHOR_QUERY_PLACEHOLDER") {
-                    credits.insert(&policy.author, &policy.verified_aliases, &policy.exact_credits);
+                    credits.insert(
+                        &policy.author,
+                        &policy.verified_aliases,
+                        &policy.exact_credits,
+                    );
                 }
             }
             self.credit_indexes.insert(source, credits);
@@ -323,15 +327,22 @@ impl DiscoveryContext {
         // This previously agreed category scope applies to author results, not
         // pagination accounting. Unknown categories are not guessed from titles.
         if record.work.source == workbench_storage::Source::Jm
-            && record.work.tags.iter().any(|tag| workbench_sources::is_jm_english_category(tag))
+            && record
+                .work
+                .tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
         {
             return BTreeSet::new();
         }
-        let credits = self.work_credits
+        let credits = self
+            .work_credits
             .get(&record.work.source)
             .and_then(|rules| rules.get(&record.work.work_id))
             .filter(|rule| rule.matches_expected(&record.work.authors))
-            .map_or(record.work.authors.as_slice(), |rule| rule.corrected_authors.as_slice());
+            .map_or(record.work.authors.as_slice(), |rule| {
+                rule.corrected_authors.as_slice()
+            });
         self.credit_indexes
             .get(&record.work.source)
             .map(|index| index.matching_authors(credits))
@@ -427,14 +438,16 @@ fn invalidate_changed_query(range: &mut DiscoveryAuthorRange, policy: &AuthorQue
         // A legacy JM checkpoint predates the dedicated author endpoint even
         // when the literal query did not change. Pica's protocol is unchanged.
         // A genuinely unstarted row still remains Idle, not a failed check.
-        None => policy.is_original_query()
-            && (range.source == workbench_storage::Source::Pica
-                || (range.state == DiscoveryRangeState::Idle
-                    && range.last_attempt_at.is_none()
-                    && range.last_complete_at.is_none()
-                    && range.last_checked_at.is_none()
-                    && range.baseline.is_none()
-                    && range.query_baselines.is_empty())),
+        None => {
+            policy.is_original_query()
+                && (range.source == workbench_storage::Source::Pica
+                    || (range.state == DiscoveryRangeState::Idle
+                        && range.last_attempt_at.is_none()
+                        && range.last_complete_at.is_none()
+                        && range.last_checked_at.is_none()
+                        && range.baseline.is_none()
+                        && range.query_baselines.is_empty()))
+        }
     };
     if !unchanged {
         range.state = DiscoveryRangeState::Partial;
@@ -860,7 +873,12 @@ impl DiscoveryControl {
 
 impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     pub(crate) fn discovery_is_active(&self) -> Result<bool> {
-        Ok(self.discovery.memory.lock().map_err(|_| unavailable())?.active)
+        Ok(self
+            .discovery
+            .memory
+            .lock()
+            .map_err(|_| unavailable())?
+            .active)
     }
 
     /// Fast verification uses native identity leases and saved credential fingerprints.
@@ -958,8 +976,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         scopes: Vec<DiscoveryScope>,
         include_other: bool,
     ) -> Result<DiscoverySnapshot> {
-        let observation_error = self.discovery_replay_observations(scopes.clone()).await.err();
-        let mut snapshot = self.discovery_read_view_inner(scopes, include_other).await?;
+        let observation_error = self
+            .discovery_replay_observations(scopes.clone())
+            .await
+            .err();
+        let mut snapshot = self
+            .discovery_read_view_inner(scopes, include_other)
+            .await?;
         snapshot.observation_error_code = observation_error.map(|error| error.code.into());
         if let Ok(mut memory) = self.discovery.memory.lock() {
             if let Some(cached) = memory.snapshot.as_mut().filter(|cached| {
@@ -1107,13 +1130,16 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if works.len() > 1000 || observed_at > MAX_SAFE_INTEGER {
             return Err(AccountError::new("INVALID_INPUT"));
         }
-        let observations = works.into_iter().map(|work| workbench_storage::ObservedWork {
-            categories: work.categories.clone(),
-            work: discovery_work_from_source(work),
-            observed_at,
-            metadata_detail_at: detail.then_some(observed_at),
-            via: vec![if detail { "detail" } else { "search" }.into()],
-        }).collect();
+        let observations = works
+            .into_iter()
+            .map(|work| workbench_storage::ObservedWork {
+                categories: work.categories.clone(),
+                work: discovery_work_from_source(work),
+                observed_at,
+                metadata_detail_at: detail.then_some(observed_at),
+                via: vec![if detail { "detail" } else { "search" }.into()],
+            })
+            .collect();
         self.discovery_observe_records(scopes, observations).await
     }
 
@@ -1127,7 +1153,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         if observations.len() > workbench_storage::MAX_OBSERVED_WORKS {
             return Err(AccountError::new("INVALID_INPUT"));
         }
-        if self.discovery.memory.lock().map_err(|_| unavailable())?.active {
+        if self
+            .discovery
+            .memory
+            .lock()
+            .map_err(|_| unavailable())?
+            .active
+        {
             return Ok(None);
         }
         let context = self.discovery_context(scopes).await?;
@@ -1144,7 +1176,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
             let store = WorkbenchStore::open(&captured.root).map_err(store_error)?;
             let document = store.read_discovery().map_err(store_error)?;
-            let saved: HashMap<_, _> = document.value.accounts.iter()
+            let saved: HashMap<_, _> = document
+                .value
+                .accounts
+                .iter()
                 .find(|account| account.account_key == captured.account_key)
                 .into_iter()
                 .flat_map(|account| &account.records)
@@ -1154,14 +1189,22 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             for observation in observations {
                 let work = observation.work;
                 let observed_at = observation.observed_at;
-                if !work.is_valid() || observed_at > MAX_SAFE_INTEGER
-                    || observation.metadata_detail_at.is_some_and(|at| at > observed_at)
+                if !work.is_valid()
+                    || observed_at > MAX_SAFE_INTEGER
+                    || observation
+                        .metadata_detail_at
+                        .is_some_and(|at| at > observed_at)
                 {
                     return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
                 }
                 let key = (work.source, work.work_id.clone());
                 let prior = changed.get(&key).or_else(|| saved.get(&key).copied());
-                let incoming = observation_record(&captured.account_key, work, observed_at, observation.metadata_detail_at);
+                let incoming = observation_record(
+                    &captured.account_key,
+                    work,
+                    observed_at,
+                    observation.metadata_detail_at,
+                );
                 let merged = merged_record(prior, incoming);
                 if prior != Some(&merged) {
                     changed.insert(key, merged);
@@ -1176,18 +1219,20 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 for identity in &captured.identities {
                     identity.lease.require_current()?;
                 }
-                revision = store.apply_discovery_patch_for_policy(
-                    revision,
-                    captured.following_revision,
-                    Some(captured.policy_revision),
-                    DiscoveryPagePatch {
-                        account_key: captured.account_key.clone(),
-                        authors: vec![],
-                        records: records.to_vec(),
-                        retain_authors: None,
-                        last_check: None,
-                    },
-                ).map_err(store_error)?;
+                revision = store
+                    .apply_discovery_patch_for_policy(
+                        revision,
+                        captured.following_revision,
+                        Some(captured.policy_revision),
+                        DiscoveryPagePatch {
+                            account_key: captured.account_key.clone(),
+                            authors: vec![],
+                            records: records.to_vec(),
+                            retain_authors: None,
+                            last_check: None,
+                        },
+                    )
+                    .map_err(store_error)?;
                 memory.snapshot = None;
             }
             // Invalidate counts only after durable success. No run, range or
@@ -1195,7 +1240,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             memory.context = Some(captured);
             memory.snapshot = None;
             Ok(Some(revision))
-        }).await.map_err(|_| unavailable())?;
+        })
+        .await
+        .map_err(|_| unavailable())?;
         self.discovery_validate_context(&context)?;
         outcome
     }
@@ -1971,7 +2018,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     let mut other_record_count = state.other_record_count;
                     let mut confirmed_count = state.confirmed_count;
                     let mut added = 0usize;
-                    let works = response.items.into_iter().skip(accepted.skipped_leading_work);
+                    let works = response
+                        .items
+                        .into_iter()
+                        .skip(accepted.skipped_leading_work);
                     for work in works {
                         let verified = work.authors.iter().any(|name| name.trim() == author.trim());
                         let incoming = DiscoveryRecord {
@@ -2196,9 +2246,16 @@ fn clean_text(text: String) -> String {
 /// Stable metadata projection used when comparing a later source detail read.
 pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
     let mut tags = inherit_content_tags(&work.tags, work.categories.as_deref().unwrap_or_default());
-    if work.source == Source::Jm && work.categories.as_deref().unwrap_or_default().iter()
-        .any(|label| workbench_sources::is_jm_english_category(label))
-        && !tags.iter().any(|label| workbench_sources::is_jm_english_category(label))
+    if work.source == Source::Jm
+        && work
+            .categories
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|label| workbench_sources::is_jm_english_category(label))
+        && !tags
+            .iter()
+            .any(|label| workbench_sources::is_jm_english_category(label))
     {
         tags.push("English Manga".into());
     }
@@ -2260,7 +2317,9 @@ pub(crate) fn merged_record(
         incoming.first_discovered_run_id = existing.first_discovered_run_id.clone();
         let older = incoming.observed_at < existing.observed_at;
         let preserve_detail = existing.metadata_detail_at.is_some_and(|saved| {
-            incoming.metadata_detail_at.is_none_or(|fresh| fresh < saved)
+            incoming
+                .metadata_detail_at
+                .is_none_or(|fresh| fresh < saved)
         });
         // Evidence rank and request observation time are separate. A slow old
         // detail reply may enrich a list, but can never overwrite a newer detail;
@@ -2274,10 +2333,11 @@ pub(crate) fn merged_record(
                 incoming.work.source_updated_at = incoming_date;
             }
         }
-        incoming.metadata_detail_at = match (existing.metadata_detail_at, incoming.metadata_detail_at) {
-            (Some(saved), Some(fresh)) => Some(saved.max(fresh)),
-            (saved, fresh) => saved.or(fresh),
-        };
+        incoming.metadata_detail_at =
+            match (existing.metadata_detail_at, incoming.metadata_detail_at) {
+                (Some(saved), Some(fresh)) => Some(saved.max(fresh)),
+                (saved, fresh) => saved.or(fresh),
+            };
         if older {
             incoming.observed_at = existing.observed_at;
             incoming.scan_id = existing.scan_id.clone();
@@ -2285,14 +2345,24 @@ pub(crate) fn merged_record(
         let fresh_content_tags = retained_content_tags(&incoming.work.tags);
         let mut tags = inherit_content_tags(&incoming.work.tags, &existing.work.tags);
         if existing.work.source == workbench_storage::Source::Jm
-            && existing.work.tags.iter().any(|tag| workbench_sources::is_jm_english_category(tag))
-            && !tags.iter().any(|tag| workbench_sources::is_jm_english_category(tag))
+            && existing
+                .work
+                .tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
+            && !tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
         {
             tags.push("English Manga".into());
         }
         let mut compact_content_tags = retained_content_tags(&tags);
-        if tags.iter().any(|tag| workbench_sources::is_jm_english_category(tag))
-            && !compact_content_tags.iter().any(|tag| workbench_sources::is_jm_english_category(tag))
+        if tags
+            .iter()
+            .any(|tag| workbench_sources::is_jm_english_category(tag))
+            && !compact_content_tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
         {
             compact_content_tags.push("English Manga".into());
         }
@@ -2313,7 +2383,10 @@ pub(crate) fn merged_record(
         let original_tags = std::mem::replace(&mut incoming.work.tags, tags);
         if !incoming.work.is_valid() {
             if fresh_content_tags.is_empty()
-                && !compact_content_tags.iter().any(|tag| workbench_sources::is_blocked_tag(tag)) {
+                && !compact_content_tags
+                    .iter()
+                    .any(|tag| workbench_sources::is_blocked_tag(tag))
+            {
                 // Optional inheritance can yield to the existing work budget.
                 incoming.work.tags = original_tags;
             } else {
@@ -2337,13 +2410,14 @@ pub(crate) fn merged_record(
             }
         }
         // This legacy evidence flag remains strict; it is not a display filter.
-        incoming.author_verified = !incoming.matched_authors.is_empty() && incoming.matched_authors.iter().all(|author| {
-            incoming
-                .work
-                .authors
-                .iter()
-                .any(|name| name.trim() == author.trim())
-        });
+        incoming.author_verified = !incoming.matched_authors.is_empty()
+            && incoming.matched_authors.iter().all(|author| {
+                incoming
+                    .work
+                    .authors
+                    .iter()
+                    .any(|name| name.trim() == author.trim())
+            });
     }
     incoming
 }

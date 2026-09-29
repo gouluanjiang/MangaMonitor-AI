@@ -132,7 +132,7 @@ test("a clicked author opens the unified two-source search and a clicked tag sea
     ...new Set(
       window.sourceTest.calls
         .filter(
-          (call) => call.command === "source_query" && call.kind === "search",
+          (call) => call.command === "source_query" && call.kind === "author",
         )
         .map((call) => call.source),
     ),
@@ -1242,6 +1242,48 @@ async function installMock(page: Page, options: MockOptions = {}) {
             return clone(next);
           }
           const scope = { source, sessionId: raw.sessionId as string };
+          if (command === "source_author_known_works")
+            return {
+              source: raw.source,
+              sessionId: raw.sessionId,
+              items: [],
+              checkedAt: null,
+              discoveryRevision: 0,
+              historyComplete: true,
+            };
+          if (command === "source_recent_history")
+            return {
+              source: raw.source,
+              sessionId: raw.sessionId,
+              items: [],
+              revision: 0,
+              coverage: {
+                headIds: [],
+                checkedAt: null,
+                pagesRead: 0,
+                reachedEnd: false,
+                joinedPrevious: false,
+                initialWindow: false,
+                errorCode: null,
+              },
+            };
+          if (command === "recent_check_progress") return null;
+          if (
+            command === "recent_check_start" ||
+            command === "recent_check_cancel"
+          )
+            return {
+              id: "synthetic-recent",
+              phase:
+                command === "recent_check_cancel" ? "cancelled" : "complete",
+              currentSource: null,
+              currentPage: 0,
+              pagesRead: 0,
+              recordsRead: 0,
+              errorCode: null,
+              results: [],
+            };
+
           if (command === "source_author_policy")
             return {
               ...scope,
@@ -1345,7 +1387,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
             const pageNumber = raw.page as number;
             if (
               options.twoPageSearch &&
-              ["search", "tag"].includes(raw.kind as string)
+              ["search", "author", "tag"].includes(raw.kind as string)
             ) {
               return {
                 ...scope,
@@ -1381,7 +1423,7 @@ async function installMock(page: Page, options: MockOptions = {}) {
             }
             if (
               options.isolatedListing &&
-              ["search", "favorites"].includes(raw.kind as string)
+              ["search", "author", "favorites"].includes(raw.kind as string)
             ) {
               return {
                 ...scope,
@@ -1407,7 +1449,10 @@ async function installMock(page: Page, options: MockOptions = {}) {
                 folders: [],
               };
             }
-            if (options.authorSearchResults && raw.kind === "search") {
+            if (
+              options.authorSearchResults &&
+              ["search", "author"].includes(raw.kind as string)
+            ) {
               if (
                 options.workDates &&
                 options.partial &&
@@ -2765,7 +2810,7 @@ test("unified author search separates keyword hits across both sources and compl
             .filter(
               (call) =>
                 call.command === "source_query" &&
-                call.kind === "search" &&
+                call.kind === "author" &&
                 call.source === target,
             )
             .map((call) => call.page),
@@ -3173,7 +3218,7 @@ for (const reviewed of [false, true]) {
                 .filter(
                   (call) =>
                     call.command === "source_query" &&
-                    call.kind === "search" &&
+                    call.kind === "author" &&
                     call.source === target,
                 )
                 .map((call) => [call.query, call.page]),

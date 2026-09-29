@@ -7,7 +7,8 @@ import type {
   AuthorQueryPolicy,
   JmSearchBoundary,
 } from "./source-types.ts";
-import { mergeSourceWorks } from "./source-types.ts";
+import { mergeSourceWorks, sourceWorkKey } from "./source-types.ts";
+import { partitionAuthorWorks } from "./author-evidence.ts";
 import { sameSourceWork } from "./source-memory.ts";
 import { SourceError, validateAuthorQueryPolicy } from "./source-runtime.ts";
 import { authorQueryError } from "./author-query.ts";
@@ -40,6 +41,12 @@ export interface SearchProgress {
   queryIndex?: number;
   queryCount?: number;
   queryPage?: number;
+  /** Saved confirmations supplement display only, never raw pagination counts. */
+  historicalItems?: SourceWork[];
+  historicalReadAt?: number | null;
+  historicalReadError?: boolean;
+  historicalObservationErrorCode?: string | null;
+  metadataOnly?: boolean;
 }
 
 /** Each approved query has an independent traversal; only work IDs are unioned. */
@@ -50,6 +57,12 @@ export async function readCompleteAuthorSearch(
   options: {
     current(): boolean;
     onPolicy?(policy: AuthorQueryPolicy): void;
+    onHistory?(history: {
+      items: SourceWork[];
+      checkedAt: number | null;
+      complete: boolean;
+      observationErrorCode?: string | null;
+    }): void;
     onPage(value: SearchProgress): void;
   },
 ): Promise<void> {
@@ -64,6 +77,32 @@ export async function readCompleteAuthorSearch(
   )
     throw new SourceError("STALE_SESSION");
   options.onPolicy?.(policy);
+  let historical: SourceWork[] = [],
+    historicalReadAt: number | null = null,
+    historicalReadError = false,
+    historicalObservationErrorCode: string | null = null;
+  if (adapter.knownAuthorWorks) {
+    try {
+      const known = await adapter.knownAuthorWorks(scope, author);
+      if (!options.current()) return;
+      if (known.source !== scope.source || known.sessionId !== scope.sessionId)
+        throw new SourceError("STALE_SESSION");
+      historical = partitionAuthorWorks(known.items, author, policy).confirmed;
+      historicalReadAt = known.checkedAt;
+      historicalObservationErrorCode = known.observationErrorCode ?? null;
+      historicalReadError =
+        known.historyComplete === false || !!historicalObservationErrorCode;
+    } catch {
+      if (!options.current()) return;
+      historicalReadError = true;
+    }
+    options.onHistory?.({
+      items: historical,
+      checkedAt: historicalReadAt,
+      complete: !historicalReadError,
+      observationErrorCode: historicalObservationErrorCode,
+    });
+  }
   for (const query of policy.queries) {
     const error = authorQueryError(query);
     if (error) throw new SourceError(error);
@@ -72,6 +111,7 @@ export async function readCompleteAuthorSearch(
     issues: SourceItemIssue[] = [],
     recordsRead = 0,
     pagesRead = 0;
+  let lastPublished: SearchProgress | undefined;
   const mergeQueries = (previous: SourceWork[], incoming: SourceWork[]) => {
     const known = new Map(previous.map((work) => [work.workId, work]));
     return mergeSourceWorks(
@@ -93,13 +133,22 @@ export async function readCompleteAuthorSearch(
     const query = policy.queries[index];
     let last: SearchProgress | undefined;
     await readCompleteSearch(adapter, scope, query, {
+      requestKind: "author",
       current: options.current,
       onPage(progress) {
         last = progress;
         const complete =
           progress.complete && index === policy.queries.length - 1;
-        options.onPage({
-          items: mergeQueries(items, progress.items),
+        const currentItems = mergeQueries(items, progress.items);
+        const currentKeys = new Set(currentItems.map(sourceWorkKey));
+        lastPublished = {
+          items: currentItems,
+          historicalItems: historical.filter(
+            (work) => !currentKeys.has(sourceWorkKey(work)),
+          ),
+          historicalReadAt,
+          historicalReadError,
+          historicalObservationErrorCode,
           page:
             policy.queries.length === 1
               ? progress.page
@@ -123,7 +172,8 @@ export async function readCompleteAuthorSearch(
           queryIndex: index + 1,
           queryCount: policy.queries.length,
           queryPage: progress.page.page,
-        });
+        };
+        options.onPage(lastPublished);
       },
     });
     if (!options.current()) return;
@@ -137,6 +187,65 @@ export async function readCompleteAuthorSearch(
     ];
     recordsRead += last.recordsRead;
     pagesRead += last.page.page;
+  }
+  // Observations have now committed. Read the narrow local projection again so
+  // a lightweight list credit cannot replace a stronger saved detail signature.
+  if (options.current() && lastPublished && adapter.knownAuthorWorks) {
+    try {
+      const known = await adapter.knownAuthorWorks(scope, author);
+      if (!options.current()) return;
+      if (known.source !== scope.source || known.sessionId !== scope.sessionId)
+        throw new SourceError("STALE_SESSION");
+      const returned = partitionAuthorWorks(
+        known.items,
+        author,
+        policy,
+      ).confirmed;
+      const incomplete =
+        known.historyComplete === false || !!known.observationErrorCode;
+      const confirmed = incomplete
+        ? mergeSourceWorks(historical, returned)
+        : returned;
+      const knownById = new Map(
+        confirmed.map((work) => [sourceWorkKey(work), work]),
+      );
+      const liveKeys = new Set(lastPublished.items.map(sourceWorkKey));
+      const updated: SearchProgress = {
+        ...lastPublished,
+        items: lastPublished.items.map(
+          (work) => knownById.get(sourceWorkKey(work)) ?? work,
+        ),
+        historicalItems: confirmed.filter(
+          (work) => !liveKeys.has(sourceWorkKey(work)),
+        ),
+        historicalReadAt: known.checkedAt,
+        historicalReadError: incomplete,
+        historicalObservationErrorCode: known.observationErrorCode ?? null,
+        metadataOnly: true,
+      };
+      const sameWorks = (a: SourceWork[], b: SourceWork[]) =>
+        a.length === b.length &&
+        a.every((work, index) => sameSourceWork(work, b[index]));
+      if (
+        !sameWorks(updated.items, lastPublished.items) ||
+        !sameWorks(
+          updated.historicalItems ?? [],
+          lastPublished.historicalItems ?? [],
+        ) ||
+        updated.historicalReadAt !== lastPublished.historicalReadAt ||
+        updated.historicalReadError !== lastPublished.historicalReadError ||
+        updated.historicalObservationErrorCode !==
+          lastPublished.historicalObservationErrorCode
+      )
+        options.onPage(updated);
+    } catch {
+      if (options.current() && !lastPublished.historicalReadError)
+        options.onPage({
+          ...lastPublished,
+          historicalReadError: true,
+          metadataOnly: true,
+        });
+    }
   }
 }
 
@@ -153,7 +262,7 @@ export async function readCompleteSearch(
     recordsRead?: number;
     issues?: SourceItemIssue[];
     pagination?: SearchPagination;
-    requestKind?: "search" | "tag" | "category";
+    requestKind?: "search" | "author" | "tag" | "category";
     pageLimit?: number;
   },
 ): Promise<void> {

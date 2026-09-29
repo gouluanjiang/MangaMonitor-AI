@@ -12,7 +12,8 @@ import { readCompleteAuthorSearch } from "./source-search.ts";
 import { workHasAuthor } from "./author-evidence.ts";
 import { authorQueryError } from "./author-query.ts";
 
-/** Ad-hoc author searches never change following, stored update results, or the queue. */
+/** Ad-hoc searches do not change follows or downloads. Source reads persist known
+ * works independently; historical supplementation is not pagination evidence. */
 export function createAuthorSearchAdapter(
   adapter: SourceAdapter,
 ): CompletionAdapter {
@@ -59,6 +60,8 @@ export function createAuthorSearchAdapter(
         author = authors[0].trim(),
         now = Date.now();
       const runId = "author-search-" + request;
+      const supplements = new Map<string, number>();
+      const historyErrors = new Map<string, boolean>();
       snapshot = {
         scopes,
         revision: snapshot.revision + 1,
@@ -110,13 +113,12 @@ export function createAuthorSearchAdapter(
                 snapshot.authorPolicies!.push(value);
                 range.queryFingerprint = value.queryFingerprint;
               },
-              onPage: (progress) => {
-                const other = snapshot.records.filter(
-                  (record) => record.work.source !== scope.source,
-                );
+              onHistory(history) {
                 snapshot.records = [
-                  ...other,
-                  ...progress.items.map((work) => ({
+                  ...snapshot.records.filter(
+                    (record) => record.work.source !== scope.source,
+                  ),
+                  ...history.items.map((work) => ({
                     work,
                     matchedAuthors: [author],
                     authorVerified: workHasAuthor(work, author, policy),
@@ -124,6 +126,58 @@ export function createAuthorSearchAdapter(
                     scanId: runId,
                   })),
                 ];
+                supplements.set(scope.source, history.items.length);
+                snapshot.historicalSupplementCount = [
+                  ...supplements.values(),
+                ].reduce((sum, count) => sum + count, 0);
+                snapshot.historicalSupplementAt =
+                  Math.max(
+                    snapshot.historicalSupplementAt ?? 0,
+                    history.checkedAt ?? 0,
+                  ) || null;
+                historyErrors.set(scope.source, !history.complete);
+                snapshot.historicalReadError = [...historyErrors.values()].some(
+                  Boolean,
+                );
+                snapshot.observationErrorCode ||= history.observationErrorCode;
+                snapshot.revision++;
+              },
+              onPage: (progress) => {
+                const other = snapshot.records.filter(
+                  (record) => record.work.source !== scope.source,
+                );
+                snapshot.records = [
+                  ...other,
+                  ...[
+                    ...progress.items,
+                    ...(progress.historicalItems ?? []),
+                  ].map((work) => ({
+                    work,
+                    matchedAuthors: [author],
+                    authorVerified: workHasAuthor(work, author, policy),
+                    observedAt: now,
+                    scanId: runId,
+                  })),
+                ];
+                supplements.set(
+                  scope.source,
+                  progress.historicalItems?.length ?? 0,
+                );
+                snapshot.historicalSupplementCount = [
+                  ...supplements.values(),
+                ].reduce((sum, count) => sum + count, 0);
+                snapshot.historicalSupplementAt =
+                  Math.max(
+                    snapshot.historicalSupplementAt ?? 0,
+                    progress.historicalReadAt ?? 0,
+                  ) || null;
+                historyErrors.set(scope.source, !!progress.historicalReadError);
+                snapshot.historicalReadError = [...historyErrors.values()].some(
+                  Boolean,
+                );
+                snapshot.observationErrorCode ||=
+                  progress.page.observationErrorCode ??
+                  progress.historicalObservationErrorCode;
                 range.pagesRead = progress.page.page;
                 range.observedCount = progress.items.length;
                 range.issueCount = progress.issues.length;
@@ -146,7 +200,7 @@ export function createAuthorSearchAdapter(
                   progress.queryPage ?? progress.page.page;
                 snapshot.run!.currentQueryIndex = progress.queryIndex ?? null;
                 snapshot.run!.currentQueryCount = progress.queryCount ?? null;
-                snapshot.run!.requestsUsed++;
+                if (!progress.metadataOnly) snapshot.run!.requestsUsed++;
                 snapshot.revision++;
               },
             });

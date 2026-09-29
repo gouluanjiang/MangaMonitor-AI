@@ -17,7 +17,9 @@ mod reader_window;
 mod store;
 mod work_date;
 
-pub use author_evidence::{author_credit_matches, discovery_record_matches_author, AuthorCreditIndex};
+pub use author_evidence::{
+    author_credit_matches, discovery_record_matches_author, AuthorCreditIndex,
+};
 pub use author_query::*;
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
 pub use cache::{AccountCache, CacheEntry};
@@ -31,7 +33,10 @@ pub use model::{
     MAX_FOLLOWED_ACCOUNTS, MAX_FOLLOWED_AUTHORS_PER_ACCOUNT, MAX_FOLLOWED_WORKS_PER_ACCOUNT,
     MAX_FOLLOWING_NAME_CHARACTERS, MAX_SAFE_INTEGER,
 };
-pub use observations::{ObservedAccount, ObservedDocument, ObservedWork, RecentCoverage, MAX_OBSERVED_WORKS, MAX_RECENT_HISTORY};
+pub use observations::{
+    ObservedAccount, ObservedDocument, ObservedWork, RecentCoverage, MAX_OBSERVED_WORKS,
+    MAX_RECENT_HISTORY,
+};
 pub use phone::{
     phone_library_from_path, phone_library_mark, phone_library_read, phone_library_unmark,
     PhoneLibraryDocument, PhoneLibraryEntry, PhoneLibrarySnapshot,

@@ -8,6 +8,7 @@ import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
 import { bindRecentUpdatesScroll } from "./recent-scroll.ts";
 import {
   isContentHidden,
+  isOutsideJmAuthorScope,
   rememberContentWork,
   retainedContentTags,
   inheritContentTags,
@@ -459,6 +460,11 @@ export function SourceWorkbench({
     page: number;
   }>();
   const [searchReadAt, setSearchReadAt] = useState<number | null>(null);
+  const [searchSupplement, setSearchSupplement] = useState({
+    count: 0,
+    checkedAt: null as number | null,
+    failed: false,
+  });
   const searchRecords = useRef(0);
   const searchIssues = useRef<SourceItemIssue[]>([]);
   const searchPagination = useRef<SearchPagination | undefined>(undefined);
@@ -588,6 +594,7 @@ export function SourceWorkbench({
         searchPolicy: AuthorQueryPolicy | undefined;
         following: FollowingSnapshot | null;
         readAt: number | null;
+        supplement: typeof searchSupplement;
         records: number;
         issues: SourceItemIssue[];
         pagination: SearchPagination | undefined;
@@ -609,6 +616,7 @@ export function SourceWorkbench({
     searchPolicy,
     following,
     readAt: searchReadAt,
+    supplement: searchSupplement,
     records: searchRecords.current,
     issues: searchIssues.current,
     pagination: searchPagination.current,
@@ -628,6 +636,7 @@ export function SourceWorkbench({
     searchPolicy,
     following,
     readAt: searchReadAt,
+    supplement: searchSupplement,
     records: searchRecords.current,
     issues: searchIssues.current,
     pagination: searchPagination.current,
@@ -656,6 +665,7 @@ export function SourceWorkbench({
     setItems([]);
     setSearchComplete(false);
     setSearchPolicy(undefined);
+    setSearchSupplement({ count: 0, checkedAt: null, failed: false });
     setShowOtherAuthorResults(false);
     setPageInfo(null);
     setDetailRef(null);
@@ -687,6 +697,7 @@ export function SourceWorkbench({
       setSearchPolicy(remembered.searchPolicy);
       setFollowing(remembered.following);
       setSearchReadAt(remembered.readAt);
+      setSearchSupplement(remembered.supplement);
       searchRecords.current = remembered.records;
       searchIssues.current = remembered.issues;
       setSearchIssueView(remembered.issues);
@@ -964,9 +975,18 @@ export function SourceWorkbench({
         searchIssues.current = progress.issues;
         searchPagination.current = progress.pagination;
         setSearchIssueView(progress.issues);
-        progress.items.forEach(rememberContentWork);
-        itemsRef.current = progress.items;
-        setItems(progress.items);
+        const displayItems = [
+          ...progress.items,
+          ...(progress.historicalItems ?? []),
+        ];
+        displayItems.forEach(rememberContentWork);
+        itemsRef.current = displayItems;
+        setItems(displayItems);
+        setSearchSupplement({
+          count: progress.historicalItems?.length ?? 0,
+          checkedAt: progress.historicalReadAt ?? null,
+          failed: !!progress.historicalReadError,
+        });
         setPageInfo(progress.page);
         setSearchComplete(progress.complete);
         setSearchReadAt(Date.now());
@@ -986,12 +1006,33 @@ export function SourceWorkbench({
           page: asAuthor ? 1 : progress.page.page + 1,
           append: !asAuthor,
         };
-        notifyWorks.current(captured, progress.items.slice(-1000));
+        notifyWorks.current(captured, displayItems.slice(-1000));
+        if (
+          progress.page.observationErrorCode ||
+          progress.historicalObservationErrorCode
+        )
+          setError(
+            "来源作品已读取，但补入作者目录尚未保存；当前结果保留，请重试读取。",
+          );
       };
       if (asAuthor)
         await readCompleteAuthorSearch(adapter, captured, value, {
           current,
           onPolicy: setSearchPolicy,
+          onHistory(history) {
+            history.items.forEach(rememberContentWork);
+            itemsRef.current = history.items;
+            setItems(history.items);
+            setSearchSupplement({
+              count: history.items.length,
+              checkedAt: history.checkedAt,
+              failed: !history.complete,
+            });
+            if (history.observationErrorCode)
+              setError(
+                "历史目录补录尚未完成，可靠的已保存作品继续显示；请重试读取核对。",
+              );
+          },
           onPage,
         });
       else
@@ -1321,7 +1362,10 @@ export function SourceWorkbench({
           : authorResults.confirmed
         : items;
   const searchedWorks = browsingWorks
-    .filter((work) => !isContentHidden(work))
+    .filter(
+      (work) =>
+        !isContentHidden(work) && !(searching && isOutsideJmAuthorScope(work)),
+    )
     .filter(
       (work) =>
         searching ||
@@ -2320,7 +2364,7 @@ export function SourceWorkbench({
                     {view === "following" && !authorSearch
                       ? "已关注作品 " + followedWorks.length + " 部"
                       : "已读取 " +
-                        items.length +
+                        (items.length - searchSupplement.count) +
                         " 部" +
                         (totalKnown
                           ? " / 来源报告 " + pageInfo!.total + " 部"
@@ -2458,6 +2502,22 @@ export function SourceWorkbench({
                     结果；按浏览续页，筛选与统计只覆盖已读取内容。
                   </p>
                 )}
+                {authorQuery &&
+                  (searchSupplement.count > 0 || searchSupplement.failed) && (
+                    <p
+                      className="source-muted"
+                      data-testid="source-author-history"
+                    >
+                      已知作者目录补充 {searchSupplement.count}{" "}
+                      部；这部分不计入本次网站分页条数。
+                      {searchSupplement.checkedAt
+                        ? ` 目录最近核验：${new Date(searchSupplement.checkedAt).toLocaleString()}。`
+                        : ""}
+                      {searchSupplement.failed
+                        ? " 历史目录补充未全部读取，可靠的已保存作品继续显示；请重试搜索核对。"
+                        : ""}
+                    </p>
+                  )}
                 <div
                   className="result-filters"
                   role="group"

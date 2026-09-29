@@ -98,7 +98,31 @@ export interface CatalogRequest {
   action: "read" | "write";
   snapshot?: CatalogSnapshot;
 }
-export interface SourceQueryResult extends SourceScope, SourcePage {}
+export interface SourceQueryResult extends SourceScope, SourcePage {
+  /** Present only after the observed records were committed to the author catalog. */
+  discoveryRevision?: number | null;
+  observationErrorCode?: string | null;
+}
+export interface KnownAuthorWorks extends SourceScope {
+  items: SourceWork[];
+  checkedAt: number | null;
+  discoveryRevision: number;
+  historyComplete?: boolean;
+  observationErrorCode?: string | null;
+}
+export interface RecentHistoryResult extends SourceScope {
+  items: SourceWork[];
+  revision: number;
+  coverage: {
+    headIds: string[];
+    checkedAt: number | null;
+    pagesRead: number;
+    reachedEnd: boolean;
+    joinedPrevious: boolean;
+    initialWindow?: boolean;
+    errorCode: string | null;
+  };
+}
 export interface AccountSummary {
   source: Source;
   sessionId: string | null;
@@ -113,6 +137,7 @@ export interface SourceQuery {
   kind:
     | "favorites"
     | "search"
+    | "author"
     | "tag"
     | "category"
     | "detail"
@@ -156,6 +181,11 @@ export interface SourceAdapter {
     sessionId: string | null;
   }): Promise<AccountSummary>;
   query(scope: SourceScope, query: SourceQuery): Promise<SourceQueryResult>;
+  knownAuthorWorks?(
+    scope: SourceScope,
+    author: string,
+  ): Promise<KnownAuthorWorks>;
+  recentHistory?(scope: SourceScope): Promise<RecentHistoryResult>;
   authorPolicy(
     scope: SourceScope,
     author: string,

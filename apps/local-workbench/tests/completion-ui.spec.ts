@@ -209,6 +209,48 @@ async function install(page: Page) {
               return clone(hooks.inventory);
             }
             if (command === "source_accounts") return clone(hooks.accounts);
+            if (command === "source_author_known_works")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                checkedAt: null,
+                discoveryRevision: 0,
+                historyComplete: true,
+              };
+            if (command === "source_recent_history")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                revision: 0,
+                coverage: {
+                  headIds: [],
+                  checkedAt: null,
+                  pagesRead: 0,
+                  reachedEnd: false,
+                  joinedPrevious: false,
+                  initialWindow: false,
+                  errorCode: null,
+                },
+              };
+            if (command === "recent_check_progress") return null;
+            if (
+              command === "recent_check_start" ||
+              command === "recent_check_cancel"
+            )
+              return {
+                id: "synthetic-recent",
+                phase:
+                  command === "recent_check_cancel" ? "cancelled" : "complete",
+                currentSource: null,
+                currentPage: 0,
+                pagesRead: 0,
+                recordsRead: 0,
+                errorCode: null,
+                results: [],
+              };
+
             if (command === "source_author_policy") {
               const policy = hooks.authorPolicies.find(
                 (item) =>
@@ -597,7 +639,7 @@ test("change summary uses first discovery identities, keeps historical omissions
     });
     h.inventory.revision++;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(counts).toContainText("本次首次发现 4 条");
   await expect(counts).toContainText(
     "未入库 1 条 · 已入库 2 条 · 状态待核实 1 条",
@@ -725,7 +767,7 @@ test("running summaries withhold final counts and partial or interrupted checks 
     window.authorTest.view.run = null;
     window.authorTest.view.lastCheck!.phase = "interrupted";
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(summary).toContainText(
     "仅统计本批已读取范围，未完成范围仍需补查",
   );
@@ -752,7 +794,7 @@ test("legacy catalogs get no invented summary, first collection is explicit and 
     for (const record of view.records)
       record.firstDiscoveredRunId = view.lastCheck!.id;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-change-summary")).toContainText(
     "首次收录不代表网站新发布",
   );
@@ -1079,7 +1121,7 @@ test("repeated busy reads stop at a bounded retry budget and manual refresh resu
     window.authorTest.readFailure = null;
     window.authorTest.view.run!.currentPage = 42;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
   await expect(page.getByTestId("completion-progress")).toContainText(
     "第 42 页",
@@ -1162,7 +1204,7 @@ test("failed cancellation keeps its action error while independent progress read
     window.authorTest.view.revision++;
   });
   const refreshButton = page.getByRole("button", {
-    name: "刷新结果与入库状态",
+    name: "刷新显示与入库状态",
   });
   await refreshButton.click();
   // Clearing the action error exposes the previous terminal snapshot before
@@ -1356,7 +1398,7 @@ test("inventory contention displays an actionable unknown state and refresh rest
     window.authorTest.inventoryFailure = true;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-inventory-error")).toContainText(
     "当前不能判断已入库或未入库",
@@ -1368,7 +1410,7 @@ test("inventory contention displays an actionable unknown state and refresh rest
     window.authorTest.inventoryFailure = false;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-inventory-error")).toHaveCount(0);
   await expect(page.getByTestId("completion-counts")).toContainText(
@@ -1458,7 +1500,7 @@ test("date coverage follows visible filters and saved date arrivals immediately 
     window.authorTest.view.revision++;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-date-coverage")).toHaveText(
     "当前显示作品：有更新时间 1 条 · 更新时间未知 1 条。",
@@ -1480,7 +1522,7 @@ test("date coverage follows visible filters and saved date arrivals immediately 
     window.authorTest.view.revision++;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-sort")).toHaveValue("updated-asc");
   await expect(page.getByTestId("completion-date-coverage")).toHaveText(
@@ -1806,7 +1848,7 @@ test("incremental completion retains old omissions and never claims a new full c
     }));
     h.inventory.revision++;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-counts")).toContainText(
     "已入库 3 条 · 未入库 0 条 · 当前显示 0 条",
   );
@@ -1821,7 +1863,7 @@ test("incremental completion retains old omissions and never claims a new full c
       range.lastCheckedAt = 1800000002000;
     }
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-all-owned")).toBeVisible();
 });
 
@@ -2048,7 +2090,7 @@ test("a placeholder prevents an all-owned author claim and has no download contr
   });
   await page.getByTestId("nav-completion").click();
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完 · 已记录 2 条 · 已入库 2 条 · 未入库 0 条",
@@ -2222,7 +2264,7 @@ for (const mode of ["updates", "search"] as const) {
     const searchCalls = await page.evaluate(() =>
       window.authorTest.calls.filter(
         (call) =>
-          call.command === "source_query" && call.args.kind === "search",
+          call.command === "source_query" && call.args.kind === "author",
       ),
     );
     expect(searchCalls.length).toBe(mode === "updates" ? 0 : 3);
@@ -2470,7 +2512,7 @@ test("valid new receipts refresh counts, but all-owned is withheld until both so
     }));
     h.inventory.revision++;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-counts")).toContainText(
     "已入库 3 条 · 未入库 0 条",
   );
@@ -2482,7 +2524,7 @@ test("valid new receipts refresh counts, but all-owned is withheld until both so
       range.lastCompleteAt = 1800000001000;
     }
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-all-owned")).toContainText(
     "JM 与哔咔",
   );
@@ -2542,7 +2584,7 @@ test("a new author is searched across every page of both sources without requiri
       () =>
         window.authorTest.calls.filter(
           (call) =>
-            call.command === "source_query" && call.args.kind === "search",
+            call.command === "source_query" && call.args.kind === "author",
         ).length,
     ),
   ).toBe(3);
@@ -2565,7 +2607,7 @@ test("full-range author selection waits for completion, excludes owned works and
       }),
     );
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await page.getByTestId("completion-select-all").click();
   await expect(
     page.getByRole("toolbar", { name: "批量下载操作", exact: true }),

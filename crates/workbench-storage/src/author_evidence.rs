@@ -203,26 +203,55 @@ mod tests {
 
     #[test]
     fn indexed_followed_credits_equal_existing_exact_component_rules() {
-        let authors = ["Writer", "Circle (Writer)", "Coauthor", "が", "P", "Author Name"];
+        let authors = [
+            "Writer",
+            "Circle (Writer)",
+            "Coauthor",
+            "が",
+            "P",
+            "Author Name",
+        ];
         let mut index = AuthorCreditIndex::default();
         for author in authors {
             index.insert(author, &[], &[]);
         }
         for credit in [
-            "Ｃｉｒｃｌｅ（ＷＲＩＴＥＲ）", "Circle [Writer, Coauthor]", "Writer & Coauthor",
-            "Writer/Coauthor", "Circle (Writer", "Circle (Writer...)", "Writer Two",
-            "Writer", "Circle", "か\u{3099}", "か", "Author\u{3000} Name", "P", "Painter",
+            "Ｃｉｒｃｌｅ（ＷＲＩＴＥＲ）",
+            "Circle [Writer, Coauthor]",
+            "Writer & Coauthor",
+            "Writer/Coauthor",
+            "Circle (Writer",
+            "Circle (Writer...)",
+            "Writer Two",
+            "Writer",
+            "Circle",
+            "か\u{3099}",
+            "か",
+            "Author\u{3000} Name",
+            "P",
+            "Painter",
         ] {
-            let expected: BTreeSet<_> = authors.iter()
+            let expected: BTreeSet<_> = authors
+                .iter()
                 .filter(|author| author_credit_matches(author, credit))
                 .map(|author| (*author).to_owned())
                 .collect();
-            assert_eq!(index.matching_authors(&[credit.to_owned()]), expected, "{credit}");
+            assert_eq!(
+                index.matching_authors(&[credit.to_owned()]),
+                expected,
+                "{credit}"
+            );
         }
         index.insert("Verified", &["Alias".into()], &["Combined Credit".into()]);
-        assert!(index.matching_authors(&["Circle (Alias)".into()]).contains("Verified"));
-        assert!(index.matching_authors(&["Combined Credit".into()]).contains("Verified"));
-        assert!(!index.matching_authors(&["Combined Credit Extra".into()]).contains("Verified"));
+        assert!(index
+            .matching_authors(&["Circle (Alias)".into()])
+            .contains("Verified"));
+        assert!(index
+            .matching_authors(&["Combined Credit".into()])
+            .contains("Verified"));
+        assert!(!index
+            .matching_authors(&["Combined Credit Extra".into()])
+            .contains("Verified"));
     }
 
     #[test]

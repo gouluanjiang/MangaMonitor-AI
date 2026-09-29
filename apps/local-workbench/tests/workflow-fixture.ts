@@ -285,6 +285,48 @@ export async function installWorkflow(
             args: Record<string, unknown> = {},
           ) => {
             hooks.calls.push({ command, args: clone(args) });
+            if (command === "source_author_known_works")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                checkedAt: null,
+                discoveryRevision: 0,
+                historyComplete: true,
+              };
+            if (command === "source_recent_history")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                revision: 0,
+                coverage: {
+                  headIds: [],
+                  checkedAt: null,
+                  pagesRead: 0,
+                  reachedEnd: false,
+                  joinedPrevious: false,
+                  initialWindow: false,
+                  errorCode: null,
+                },
+              };
+            if (command === "recent_check_progress") return null;
+            if (
+              command === "recent_check_start" ||
+              command === "recent_check_cancel"
+            )
+              return {
+                id: "synthetic-recent",
+                phase:
+                  command === "recent_check_cancel" ? "cancelled" : "complete",
+                currentSource: null,
+                currentPage: 0,
+                pagesRead: 0,
+                recordsRead: 0,
+                errorCode: null,
+                results: [],
+              };
+
             switch (command) {
               case "read_preferences":
                 return { revision: 0, value: preferences };
@@ -339,11 +381,12 @@ export async function installWorkflow(
                         (w) =>
                           w.source === args.source && w.workId === args.query,
                       )
-                    : (args.kind === "search" ? search : updates).filter(
-                        (w) => w.source === args.source,
-                      );
+                    : (["search", "author"].includes(args.kind as string)
+                        ? search
+                        : updates
+                      ).filter((w) => w.source === args.source);
                 const page = Number(args.page ?? 1);
-                if (args.kind === "search") {
+                if (["search", "author"].includes(args.kind as string)) {
                   if (
                     (hooks.searchFault === "hold-first" &&
                       args.source === "JM" &&
@@ -362,11 +405,12 @@ export async function installWorkflow(
                   )
                     throw { code: "SOURCE_UNAVAILABLE" };
                 }
-                const items =
-                  args.kind === "search"
-                    ? candidates.slice(page - 1, page)
-                    : candidates;
-                const pages = args.kind === "search" ? candidates.length : 1;
+                const items = ["search", "author"].includes(args.kind as string)
+                  ? candidates.slice(page - 1, page)
+                  : candidates;
+                const pages = ["search", "author"].includes(args.kind as string)
+                  ? candidates.length
+                  : 1;
                 return clone({
                   source: args.source,
                   sessionId: args.sessionId,

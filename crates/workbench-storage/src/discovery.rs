@@ -418,7 +418,9 @@ impl ValidatedDocument for DiscoveryDocument {
                 if !record.work.is_valid()
                     || !keys.insert((record.work.source, &record.work.work_id))
                     || record.observed_at > MAX_SAFE_INTEGER
-                    || record.metadata_detail_at.is_some_and(|time| time > record.observed_at)
+                    || record
+                        .metadata_detail_at
+                        .is_some_and(|time| time > record.observed_at)
                     || !library_hash_is_valid(&record.scan_id)
                     || record
                         .first_discovered_run_id

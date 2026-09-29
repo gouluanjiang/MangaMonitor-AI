@@ -160,7 +160,12 @@ fn work_categories(source: Source, data: &Value) -> Option<Vec<String>> {
                     .is_some_and(|text| !text.trim().is_empty() && within_text_limit(text, 2000))
             })
     })?;
-    Some(categories.iter().map(|value| value.as_str().unwrap().trim().to_owned()).collect())
+    Some(
+        categories
+            .iter()
+            .map(|value| value.as_str().unwrap().trim().to_owned())
+            .collect(),
+    )
 }
 
 fn work_tags(raw_tags: &[String], categories: Option<&[String]>) -> Vec<String> {
@@ -169,7 +174,8 @@ fn work_tags(raw_tags: &[String], categories: Option<&[String]>) -> Vec<String> 
     let mut tags = raw_tags.to_vec();
     for text in categories.unwrap_or_default() {
         let exists = if let Some(kind) = crate::language_tag_kind(text) {
-            tags.iter().any(|tag| crate::language_tag_kind(tag) == Some(kind))
+            tags.iter()
+                .any(|tag| crate::language_tag_kind(tag) == Some(kind))
         } else {
             tags.iter().any(|tag| tag.trim() == text.trim())
         };
@@ -417,26 +423,28 @@ pub(crate) fn work(
             let added_ai = work.tags.iter().any(|tag| crate::is_ai_tag(tag))
                 && !raw_tags.iter().any(|tag| crate::is_ai_tag(tag));
             let added_english_scope = source == Source::Jm
-                && work.tags.iter().any(|tag| crate::is_jm_english_category(tag))
-                && !raw_tags.iter().any(|tag| crate::is_jm_english_category(tag));
+                && work
+                    .tags
+                    .iter()
+                    .any(|tag| crate::is_jm_english_category(tag))
+                && !raw_tags
+                    .iter()
+                    .any(|tag| crate::is_jm_english_category(tag));
             if category_conflict || added_bl || added_ai || added_english_scope {
                 // An extreme byte-boundary record must not turn a known
                 // conflict into a single language by dropping its categories.
                 while serialized.len() > MAX_WORK_JSON_BYTES {
-                    let Some(index) = work
-                        .tags
-                        .iter()
-                        .rposition(|tag| {
-                            crate::language_tag_kind(tag).is_none()
-                                && !crate::is_blocked_tag(tag)
-                                && !crate::is_jm_english_category(tag)
-                        })
-                    else {
+                    let Some(index) = work.tags.iter().rposition(|tag| {
+                        crate::language_tag_kind(tag).is_none()
+                            && !crate::is_blocked_tag(tag)
+                            && !crate::is_jm_english_category(tag)
+                    }) else {
                         break;
                     };
                     work.tags.remove(index);
                     if let Some(categories) = &mut work.categories {
-                        categories.retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
+                        categories
+                            .retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
                     }
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
@@ -444,7 +452,8 @@ pub(crate) fn work(
                 if serialized.len() > MAX_WORK_JSON_BYTES {
                     work.tags = crate::retained_content_tags(&work.tags);
                     if let Some(categories) = &mut work.categories {
-                        categories.retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
+                        categories
+                            .retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
                     }
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;

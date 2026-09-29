@@ -1,4 +1,10 @@
-import type { SourceAdapter, SourcePage, SourceScope } from "./source-types.ts";
+import type {
+  SourceAdapter,
+  SourcePage,
+  SourceScope,
+  SourceWork,
+  RecentHistoryResult,
+} from "./source-types.ts";
 import { mergeSourceWorks, sourceWorkKey } from "./source-types.ts";
 import { SourceError } from "./source-runtime.ts";
 import {
@@ -19,6 +25,11 @@ export interface RecentUpdatesState {
   snapshot: RecentUpdatesSnapshot | null;
   phase: "idle" | "reading" | "ready" | "complete" | "limited" | "error";
   error: unknown;
+  retainedItems?: SourceWork[];
+  retainedCoverage?: RecentHistoryResult["coverage"];
+  historyError?: boolean;
+  observationErrorCode?: string | null;
+  uncommittedIds?: string[];
 }
 
 /** A live feed can move between requests: retain first-seen order and merge IDs. */
@@ -92,12 +103,13 @@ export function appendRecentUpdates(
   return snapshot;
 }
 
-/** One explicit page at a time. No source writes, catalog persistence or loops. */
+/** Live pagination and persisted supplementary records are deliberately separate. */
 export class RecentUpdatesReader {
   state: RecentUpdatesState = { snapshot: null, phase: "idle", error: null };
   private disposed = false;
   private task: Promise<void> | null = null;
   private retryPage = 1;
+  private historyTask: Promise<void> | null = null;
   private listeners = new Set<(state: RecentUpdatesState) => void>();
   private adapter: SourceAdapter;
   readonly scope: SourceScope;
@@ -121,11 +133,38 @@ export class RecentUpdatesReader {
     this.state = { ...this.state, ...change };
     for (const listener of this.listeners) listener(this.state);
   }
-  start(): Promise<void> {
-    return this.state.phase === "idle" ? this.read(1) : Promise.resolve();
+  async start(): Promise<void> {
+    if (this.state.phase !== "idle") return;
+    await this.refreshHistory();
+    if (!this.disposed && this.state.phase === "idle") await this.read(1);
   }
-  refresh(): Promise<void> {
-    return this.read(1);
+  refreshHistory(): Promise<void> {
+    if (!this.adapter.recentHistory || this.disposed) return Promise.resolve();
+    if (this.historyTask) return this.historyTask;
+    this.historyTask = this.adapter
+      .recentHistory(this.scope)
+      .then((history) => {
+        if (
+          history.source !== this.scope.source ||
+          history.sessionId !== this.scope.sessionId
+        )
+          throw new SourceError("STALE_SESSION");
+        this.publish({
+          retainedItems: history.items,
+          retainedCoverage: history.coverage,
+          historyError: false,
+        });
+      })
+      .catch(() => {
+        this.publish({ historyError: true });
+      })
+      .finally(() => {
+        this.historyTask = null;
+      });
+    return this.historyTask;
+  }
+  async refresh(): Promise<void> {
+    await Promise.all([this.refreshHistory(), this.read(1)]);
   }
   retry(): Promise<void> {
     return this.state.phase === "error"
@@ -164,8 +203,16 @@ export class RecentUpdatesReader {
         number === 1 ? null : this.state.snapshot,
         page,
       );
+      const uncommitted = new Set(this.state.uncommittedIds ?? []);
+      for (const work of page.items) {
+        if (page.observationErrorCode) uncommitted.add(sourceWorkKey(work));
+        else if (page.discoveryRevision != null)
+          uncommitted.delete(sourceWorkKey(work));
+      }
       this.publish({
         snapshot,
+        observationErrorCode: page.observationErrorCode ?? null,
+        uncommittedIds: [...uncommitted],
         phase: snapshot.limited
           ? "limited"
           : snapshot.hasMore === false

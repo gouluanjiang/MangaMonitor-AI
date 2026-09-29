@@ -126,6 +126,22 @@ async function install(
             args: Record<string, unknown> = {},
           ) => {
             hooks.calls.push({ command, args: structuredClone(args) });
+            if (command === "source_recent_history")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                revision: 0,
+                coverage: {
+                  headIds: [],
+                  checkedAt: null,
+                  pagesRead: 0,
+                  reachedEnd: false,
+                  joinedPrevious: false,
+                  initialWindow: false,
+                  errorCode: null,
+                },
+              };
             if (command === "read_preferences")
               return { revision: 0, value: preferences };
             if (command === "library_read") return structuredClone(library);

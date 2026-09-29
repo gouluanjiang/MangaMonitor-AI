@@ -13,6 +13,7 @@ import type {
   DiscoveryProgress,
   DiscoveryRun,
   DiscoverySnapshot,
+  RecentCheckRun,
 } from "./completion-types.ts";
 import { discoveryRecordLimit } from "./completion-types.ts";
 import { authorQueryMessage } from "./author-query.ts";
@@ -175,6 +176,9 @@ export function validateDiscoverySnapshot(
         ...(q.firstDiscoveredRunId == null
           ? {}
           : { firstDiscoveredRunId: runIdentifier(q.firstDiscoveredRunId) }),
+        ...(q.metadataDetailAt == null
+          ? {}
+          : { metadataDetailAt: integer(q.metadataDetailAt) }),
       };
     },
     discoveryRecordLimit,
@@ -223,6 +227,18 @@ export function validateDiscoveryProgress(
     scopes,
     authorPolicies,
     revision: integer(r.revision),
+    ...(r.observationErrorCode === undefined
+      ? {}
+      : { observationErrorCode: code(r.observationErrorCode) }),
+    ...(r.followingRevision === undefined
+      ? {}
+      : { followingRevision: integer(r.followingRevision) }),
+    ...(r.policyRevision === undefined
+      ? {}
+      : { policyRevision: integer(r.policyRevision) }),
+    ...(r.followedAuthors === undefined
+      ? {}
+      : { followedAuthors: array(r.followedAuthors, str, 2000) }),
     run: nullable(r.run, runValue),
     lastCheck: r.lastCheck == null ? null : checkSummaryValue(r.lastCheck),
     recordCount: integer(r.recordCount),
@@ -344,6 +360,36 @@ type Invoke = <T>(
   command: string,
   args?: Record<string, unknown>,
 ) => Promise<T>;
+export function validateRecentCheckRun(value: unknown): RecentCheckRun {
+  const r = object(value);
+  return {
+    id: str(r.id, 128),
+    phase: choice(r.phase, ["checking", "complete", "partial", "cancelled"]),
+    currentSource: nullable(r.currentSource, source),
+    currentPage: integer(r.currentPage),
+    pagesRead: integer(r.pagesRead),
+    recordsRead: integer(r.recordsRead),
+    errorCode: code(r.errorCode),
+    results: array(
+      r.results,
+      (value) => {
+        const item = object(value);
+        return {
+          source: source(item.source),
+          pagesRead: integer(item.pagesRead),
+          recordsRead: integer(item.recordsRead),
+          reachedEnd: boolean(item.reachedEnd),
+          joinedPrevious: boolean(item.joinedPrevious),
+          ...(item.initialWindow === undefined
+            ? {}
+            : { initialWindow: boolean(item.initialWindow) }),
+          errorCode: code(item.errorCode),
+        };
+      },
+      2,
+    ),
+  };
+}
 export function createCompletionAdapter(
   options: { native?: boolean; invoke?: Invoke } = {},
 ): CompletionAdapter {
@@ -366,6 +412,21 @@ export function createCompletionAdapter(
     }
   };
   return {
+    startRecentCheck: async (scopes, maxPages) =>
+      validateRecentCheckRun(
+        await call("recent_check_start", {
+          scopes: scopesValue(scopes),
+          ...(maxPages === undefined ? {} : { maxPages: integer(maxPages) }),
+        }),
+      ),
+    recentCheckProgress: async () => {
+      const value = await call("recent_check_progress", {});
+      return value === null ? null : validateRecentCheckRun(value);
+    },
+    cancelRecentCheck: async (runId) =>
+      validateRecentCheckRun(
+        await call("recent_check_cancel", { runId: str(runId, 128) }),
+      ),
     read: async (scopes, includeOther = false) =>
       validateDiscoverySnapshot(
         await call("discovery_read", {

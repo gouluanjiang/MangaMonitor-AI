@@ -2,6 +2,7 @@ import { partitionAuthorRecords } from "./author-evidence.ts";
 import type { DiscoverySnapshot } from "./completion-types.ts";
 import { sourceWorkKey } from "./source-types.ts";
 import type { SourceScope } from "./source-types.ts";
+import type { AuthorCatalogChange } from "./author-catalog-events.ts";
 
 /** A local read may finish after a newer scan snapshot has already arrived. */
 export function createAuthorCatalogIndex() {
@@ -9,14 +10,49 @@ export function createAuthorCatalogIndex() {
     string,
     {
       revision: number;
+      followingRevision: number;
+      policyRevision: number;
       keys: ReadonlySet<string>;
     }
   >();
+  const minimum = new Map<string, AuthorCatalogChange>();
   return {
+    invalidate(change: AuthorCatalogChange) {
+      const key = JSON.stringify({
+        source: change.source,
+        sessionId: change.sessionId,
+      });
+      const previous = minimum.get(key);
+      minimum.set(key, {
+        ...change,
+        revision: Math.max(previous?.revision ?? 0, change.revision ?? 0),
+        followingRevision: Math.max(
+          previous?.followingRevision ?? 0,
+          change.followingRevision ?? 0,
+        ),
+        policyRevision: Math.max(
+          previous?.policyRevision ?? 0,
+          change.policyRevision ?? 0,
+        ),
+      });
+      entries.delete(key);
+    },
     remember(snapshot: DiscoverySnapshot): boolean {
       const scopes = snapshot.scopes.filter((scope) => {
-        const previous = entries.get(JSON.stringify(scope));
-        return !previous || snapshot.revision >= previous.revision;
+        const key = JSON.stringify(scope),
+          previous = entries.get(key),
+          floor = minimum.get(key);
+        return (
+          snapshot.revision >=
+            Math.max(previous?.revision ?? 0, floor?.revision ?? 0) &&
+          (snapshot.followingRevision ?? 0) >=
+            Math.max(
+              previous?.followingRevision ?? 0,
+              floor?.followingRevision ?? 0,
+            ) &&
+          (snapshot.policyRevision ?? 0) >=
+            Math.max(previous?.policyRevision ?? 0, floor?.policyRevision ?? 0)
+        );
       });
       if (!scopes.length) return false;
       const confirmed = partitionAuthorRecords(
@@ -24,10 +60,16 @@ export function createAuthorCatalogIndex() {
         "",
         "all",
         snapshot.authorPolicies,
+        snapshot.followedAuthors ??
+          (snapshot.authors.length
+            ? [...new Set(snapshot.authors.map((range) => range.author))]
+            : undefined),
       ).confirmed;
       for (const scope of scopes) {
         entries.set(JSON.stringify(scope), {
           revision: snapshot.revision,
+          followingRevision: snapshot.followingRevision ?? 0,
+          policyRevision: snapshot.policyRevision ?? 0,
           keys: new Set(
             confirmed
               .filter((record) => record.work.source === scope.source)

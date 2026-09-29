@@ -188,14 +188,21 @@ pub(super) async fn source_query<R: Runtime>(
             reverse.unwrap_or(false),
         )
         .await?;
-    if let Some(revision) = result.discovery_revision.filter(|_| result.observation_error_code.is_none()) {
+    if let Some(revision) = result
+        .discovery_revision
+        .filter(|_| result.observation_error_code.is_none())
+    {
         // A lost notification cannot roll back committed metadata. Responses and
         // subsequent local reads remain authoritative; reader windows receive no event.
-        let _ = window.emit_to("main", "author-catalog-changed", AuthorCatalogChanged {
-            source: result.source,
-            session_id: result.session_id.clone(),
-            revision,
-        });
+        let _ = window.emit_to(
+            "main",
+            "author-catalog-changed",
+            AuthorCatalogChanged {
+                source: result.source,
+                session_id: result.session_id.clone(),
+                revision,
+            },
+        );
     }
     Ok(result)
 }
@@ -335,7 +342,6 @@ pub(super) async fn source_author_policy<R: Runtime>(
         .author_query_policy(source, &session_id, &author)
         .await
 }
-
 
 #[tauri::command]
 pub(super) async fn source_recent_history<R: Runtime>(

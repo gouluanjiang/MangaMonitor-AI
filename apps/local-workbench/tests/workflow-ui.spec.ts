@@ -135,7 +135,7 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
     "当前检查范围已读完 · 已记录 4 条 · 已入库 2 条 · 未入库 2 条",
   );
   const searches = (await calls(page, "source_query")).filter(
-    (c) => c.args.kind === "search",
+    (c) => c.args.kind === "author",
   );
   expect(searches.map((c) => [c.args.source, c.args.page])).toEqual([
     ["JM", 1],
@@ -162,7 +162,7 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
     "合成新作者",
   );
   expect(
-    (await calls(page, "source_query")).filter((c) => c.args.kind === "search"),
+    (await calls(page, "source_query")).filter((c) => c.args.kind === "author"),
   ).toHaveLength(4);
   await page.screenshot({ path: "visual-evidence/v1-search-all-owned.png" });
   await page.getByTestId("nav-completion").click();

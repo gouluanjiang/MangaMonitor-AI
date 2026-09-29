@@ -79,7 +79,6 @@ pub(crate) async fn discovery_cancel<R: Runtime>(
         .discovery_cancel(&run_id)
 }
 
-
 #[tauri::command]
 pub(crate) async fn recent_check_start<R: Runtime>(
     window: WebviewWindow<R>,

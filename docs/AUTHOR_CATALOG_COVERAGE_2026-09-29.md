@@ -86,12 +86,27 @@ all published works everywhere have been found.
 
 ## Verification and delivery
 
-Implementation and synthetic regression are in progress. Required formal tests
-and builds run in CI. Real metadata verification runs locally through normal
+Application revision `81d06ed` passed the baseline, UI and Windows desktop CI,
+including isolated installation and restart checks. Helper-only revision
+`df95488` separately passed its synthetic contracts and optimized build; it does
+not change the application runtime. The original gap retests, full followed-author
+checks on both sources, bounded recent traversal, saved-data cross-check and
+targeted residual-detail investigation have completed. The final offline audit
+has no failed or unexecuted checks; local/source credit disagreements remain
+explicit review leads, not confirmed software omissions. User acceptance remains
+open. Real metadata verification runs locally through normal
 account restoration, with private plans and reports outside Git. The verification
 sequence is individual known-gap retests, all saved evidence cross-check, all
 followed creators on both sources, continuous recent-feed supplementation, and
 investigation of new discrepancies. No manga download is part of that sequence.
+
+Application CI: baseline `36713650365`, UI `36713650445`, Windows desktop
+`36713650448`. Helper-only synthetic tests and release build: `36720418443`.
+Public raw-field samples agreed with the native detail parser, including an empty
+author array, a translation-group credit and an orthographic difference. These
+samples do not establish the identity of every unresolved local credit. A saved
+work may already appear under another confirmed contributor while a local credit
+is still unresolved; neither count should be presented as a missing-work total.
 
 Preserve download history, library identities, current follows and the original
 metadata backup. A passed build is not a passed live check or user acceptance.
@@ -101,8 +116,9 @@ metadata backup. A passed build is not a passed live check or user acceptance.
 An interrupted audit may have saved its complete author ranges before finishing
 journal maintenance. Observation writes now reuse their validated catalog read
 to atomically checkpoint a journal at 256 patches or 16 MiB. This preserves the
-logical revision, raw records and pagination baselines; ordinary reads remain
-read-only, and a failed checkpoint leaves the old complete journal replayable.
+logical revision, raw records and pagination baselines; the storage-level
+`read_discovery` remains read-only, and a failed checkpoint leaves the old complete
+journal replayable. Application catalog views may still merge saved observations.
 
 The local helper retries only transient BUSY reads, never scan starts or source
 queries. An optional private `--cancel-file` marker requests cooperative

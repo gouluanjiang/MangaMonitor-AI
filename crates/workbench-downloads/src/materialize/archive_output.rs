@@ -11,19 +11,36 @@ thread_local! {
 }
 #[cfg(test)]
 #[derive(Clone, Default, Debug)]
-pub(crate) struct VerifyMetrics { pub whole_passes: u64, pub whole_bytes: u64, pub entry_passes: u64, pub entry_bytes: u64, pub elapsed_micros: u128 }
+pub(crate) struct VerifyMetrics {
+    pub whole_passes: u64,
+    pub whole_bytes: u64,
+    pub entry_passes: u64,
+    pub entry_bytes: u64,
+    pub elapsed_micros: u128,
+}
 #[cfg(test)]
 thread_local! { static METRICS: RefCell<VerifyMetrics> = RefCell::new(VerifyMetrics::default()); }
 #[cfg(test)]
-pub(crate) fn reset_verify_metrics() { METRICS.with(|v| *v.borrow_mut() = VerifyMetrics::default()); VERIFIED_LAYOUT.with(|v| *v.borrow_mut() = None); }
+pub(crate) fn reset_verify_metrics() {
+    METRICS.with(|v| *v.borrow_mut() = VerifyMetrics::default());
+    VERIFIED_LAYOUT.with(|v| *v.borrow_mut() = None);
+}
 #[cfg(test)]
-pub(crate) fn forget_verified_layout() { VERIFIED_LAYOUT.with(|value| *value.borrow_mut() = None); }
+pub(crate) fn forget_verified_layout() {
+    VERIFIED_LAYOUT.with(|value| *value.borrow_mut() = None);
+}
 #[cfg(test)]
-pub(crate) fn verify_metrics() -> VerifyMetrics { METRICS.with(|v| v.borrow().clone()) }
+pub(crate) fn verify_metrics() -> VerifyMetrics {
+    METRICS.with(|v| v.borrow().clone())
+}
 #[cfg(test)]
 struct VerifyTimer(std::time::Instant);
 #[cfg(test)]
-impl Drop for VerifyTimer { fn drop(&mut self) { METRICS.with(|v| v.borrow_mut().elapsed_micros += self.0.elapsed().as_micros()); } }
+impl Drop for VerifyTimer {
+    fn drop(&mut self) {
+        METRICS.with(|v| v.borrow_mut().elapsed_micros += self.0.elapsed().as_micros());
+    }
+}
 use std::io::{Seek, SeekFrom};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -46,7 +63,11 @@ pub(super) fn verify(record: &DownloadRecord) -> Result<()> {
     let proof = archive_proof(record)?;
     let observed = fs::digest(&mut file)?;
     #[cfg(test)]
-    METRICS.with(|v| { let mut v = v.borrow_mut(); v.whole_passes += 1; v.whole_bytes += observed.0; });
+    METRICS.with(|v| {
+        let mut v = v.borrow_mut();
+        v.whole_passes += 1;
+        v.whole_bytes += observed.0;
+    });
     if observed != (proof.size_bytes, proof.sha256.clone()) {
         return Err(error("DOWNLOAD_OUTPUT_CHANGED"));
     }
@@ -54,11 +75,18 @@ pub(super) fn verify(record: &DownloadRecord) -> Result<()> {
     if record.output_manifest_hash.as_ref() != Some(&hash(&manifest_bytes)) {
         return Err(error("DOWNLOAD_PROOF_INVALID"));
     }
-    let layout_key = hash(&serde_json::to_vec(&(
-        &record.root.id, &record.root.file_key, &record.destination,
-        &record.output_identity, proof, &record.output_manifest_hash,
-        &manifest_bytes,
-    )).map_err(|_| error("DOWNLOAD_PROOF_INVALID"))?);
+    let layout_key = hash(
+        &serde_json::to_vec(&(
+            &record.root.id,
+            &record.root.file_key,
+            &record.destination,
+            &record.output_identity,
+            proof,
+            &record.output_manifest_hash,
+            &manifest_bytes,
+        ))
+        .map_err(|_| error("DOWNLOAD_PROOF_INVALID"))?,
+    );
     if VERIFIED_LAYOUT.with(|value| value.borrow().as_ref() == Some(&layout_key)) {
         require_root(record)?;
         return Ok(());

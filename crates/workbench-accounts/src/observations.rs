@@ -166,23 +166,41 @@ struct ContentProofCache {
 }
 
 impl ContentProofCache {
-    fn observe(&mut self, key: ContentProofKey, version: Option<&str>, detail: bool, now: u64) -> Option<u64> {
+    fn observe(
+        &mut self,
+        key: ContentProofKey,
+        version: Option<&str>,
+        detail: bool,
+        now: u64,
+    ) -> Option<u64> {
         if detail {
             let until = now.checked_add(CONTENT_PROOF_TTL)?;
             if !self.entries.contains_key(&key) && self.entries.len() >= MAX_CONTENT_PROOFS {
                 self.entries.retain(|_, (_, expires)| *expires > now);
                 if self.entries.len() >= MAX_CONTENT_PROOFS {
-                    if let Some(oldest) = self.entries.iter().min_by_key(|(_, (_, expires))| *expires).map(|(key, _)| key.clone()) {
+                    if let Some(oldest) = self
+                        .entries
+                        .iter()
+                        .min_by_key(|(_, (_, expires))| *expires)
+                        .map(|(key, _)| key.clone())
+                    {
                         self.entries.remove(&oldest);
                     }
                 }
             }
-            self.entries.insert(key, (version.map(str::to_owned), until));
+            self.entries
+                .insert(key, (version.map(str::to_owned), until));
             return Some(until);
         }
-        let valid = self.entries.get(&key).filter(|(saved, until)|
-            saved.as_deref() == version && now < *until && now >= until.saturating_sub(CONTENT_PROOF_TTL)
-        ).map(|(_, until)| *until);
+        let valid = self
+            .entries
+            .get(&key)
+            .filter(|(saved, until)| {
+                saved.as_deref() == version
+                    && now < *until
+                    && now >= until.saturating_sub(CONTENT_PROOF_TTL)
+            })
+            .map(|(_, until)| *until);
         if valid.is_none() {
             self.entries.remove(&key);
         }
@@ -228,19 +246,28 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 .merge_observed_works(&key, storage_source(source), records, recent_page)
                 .map_err(|e| AccountError::new(e.code))?;
             captured.require_current()?;
-            Ok::<_, AccountError>(saved.value.accounts.into_iter()
-                .filter(|account| account.account_key == key && account.source == storage_source(source))
-                .flat_map(|account| account.records)
-                .filter(|record| wanted.contains(&record.work.work_id))
-                .collect::<Vec<_>>())
+            Ok::<_, AccountError>(
+                saved
+                    .value
+                    .accounts
+                    .into_iter()
+                    .filter(|account| {
+                        account.account_key == key && account.source == storage_source(source)
+                    })
+                    .flat_map(|account| account.records)
+                    .filter(|record| wanted.contains(&record.work.work_id))
+                    .collect::<Vec<_>>(),
+            )
         })
         .await
         .map_err(|_| unavailable())??;
         lease.require_current()?;
         // Reuse exact-ID explicit evidence before returning a light list. In
         // particular, a recent row must not erase a previously inspected tag.
-        let retained: HashMap<_, _> = retained.into_iter()
-            .map(|record| (record.work.work_id.clone(), record)).collect();
+        let retained: HashMap<_, _> = retained
+            .into_iter()
+            .map(|record| (record.work.work_id.clone(), record))
+            .collect();
         let mut verified = vec![];
         let mut verified_until: Option<u64> = None;
         for work in &mut page.items {
@@ -253,10 +280,20 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
         }
         {
-            let mut proofs = self.recent_checks.content_proofs.lock().map_err(|_| unavailable())?;
+            let mut proofs = self
+                .recent_checks
+                .content_proofs
+                .lock()
+                .map_err(|_| unavailable())?;
             for work in &page.items {
-                let key = (proof_account.clone(), session_id.to_owned(), work.work_id.clone());
-                if let Some(until) = proofs.observe(key, work.source_updated_at.as_deref(), detail, at) {
+                let key = (
+                    proof_account.clone(),
+                    session_id.to_owned(),
+                    work.work_id.clone(),
+                );
+                if let Some(until) =
+                    proofs.observe(key, work.source_updated_at.as_deref(), detail, at)
+                {
                     verified.push(work.work_id.clone());
                     verified_until = Some(verified_until.map_or(until, |prior| prior.min(until)));
                 }
@@ -269,7 +306,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             return Ok((None, verified, verified_until));
         };
         self.discovery_observe(scopes, page.items.clone(), detail, at)
-            .await.map(|revision| (revision, verified, verified_until))
+            .await
+            .map(|revision| (revision, verified, verified_until))
     }
 
     /// Import existing favorite caches once per authenticated account generation.
@@ -389,12 +427,19 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 .collect();
         }
         {
-            let mut proofs = self.recent_checks.content_proofs.lock().map_err(|_| unavailable())?;
+            let mut proofs = self
+                .recent_checks
+                .content_proofs
+                .lock()
+                .map_err(|_| unavailable())?;
             for work in &items {
                 let proof_key = (key.clone(), session_id.to_owned(), work.work_id.clone());
-                if let Some(until) = proofs.observe(proof_key, work.source_updated_at.as_deref(), false, now) {
+                if let Some(until) =
+                    proofs.observe(proof_key, work.source_updated_at.as_deref(), false, now)
+                {
                     content_verified_ids.push(work.work_id.clone());
-                    content_verified_until = Some(content_verified_until.map_or(until, |prior| prior.min(until)));
+                    content_verified_until =
+                        Some(content_verified_until.map_or(until, |prior| prior.min(until)));
                 }
             }
         }
@@ -828,22 +873,44 @@ mod tests {
         let mut proofs = ContentProofCache::default();
         // Even a saved detail timestamp cannot seed this empty session cache.
         assert_eq!(proofs.observe(key.clone(), Some("v1"), false, 10), None);
-        assert_eq!(proofs.observe(key.clone(), Some("v1"), true, 10), Some(10 + CONTENT_PROOF_TTL));
-        assert_eq!(proofs.observe(key.clone(), Some("v1"), false, 10), Some(10 + CONTENT_PROOF_TTL));
+        assert_eq!(
+            proofs.observe(key.clone(), Some("v1"), true, 10),
+            Some(10 + CONTENT_PROOF_TTL)
+        );
+        assert_eq!(
+            proofs.observe(key.clone(), Some("v1"), false, 10),
+            Some(10 + CONTENT_PROOF_TTL)
+        );
         assert_eq!(proofs.observe(key.clone(), Some("v2"), false, 10), None);
         assert_eq!(proofs.observe(key.clone(), Some("v1"), false, 10), None);
-        assert_eq!(proofs.observe(key.clone(), None, true, 20), Some(20 + CONTENT_PROOF_TTL));
-        assert_eq!(proofs.observe(key.clone(), None, false, 21), Some(20 + CONTENT_PROOF_TTL));
+        assert_eq!(
+            proofs.observe(key.clone(), None, true, 20),
+            Some(20 + CONTENT_PROOF_TTL)
+        );
+        assert_eq!(
+            proofs.observe(key.clone(), None, false, 21),
+            Some(20 + CONTENT_PROOF_TTL)
+        );
         let other_session = ("account".into(), "other-session".into(), "100".into());
         let other_account = ("other-account".into(), "session".into(), "100".into());
         assert_eq!(proofs.observe(other_session, None, false, 21), None);
         assert_eq!(proofs.observe(other_account, None, false, 21), None);
-        assert_eq!(proofs.observe(key, None, false, 20 + CONTENT_PROOF_TTL), None);
+        assert_eq!(
+            proofs.observe(key, None, false, 20 + CONTENT_PROOF_TTL),
+            None
+        );
         for id in 0..=MAX_CONTENT_PROOFS {
-            proofs.observe(("a".into(), "s".into(), id.to_string()), None, true, 30 + id as u64);
+            proofs.observe(
+                ("a".into(), "s".into(), id.to_string()),
+                None,
+                true,
+                30 + id as u64,
+            );
         }
         assert_eq!(proofs.entries.len(), MAX_CONTENT_PROOFS);
-        assert!(!proofs.entries.contains_key(&("a".into(), "s".into(), "0".into())));
+        assert!(!proofs
+            .entries
+            .contains_key(&("a".into(), "s".into(), "0".into())));
     }
 
     #[test]

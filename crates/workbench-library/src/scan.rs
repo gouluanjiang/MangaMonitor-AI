@@ -10,8 +10,8 @@ use std::{
 };
 use workbench_storage::{
     library_relative_path_is_valid, LibraryCoverFile, LibraryDocument, LibraryEvidence,
-    LibraryFormat, LibraryItem, LibraryItemState, LibraryPhase, LibraryRecord, LibraryScanSeed, Source,
-    MAX_LIBRARY_ITEMS, MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
+    LibraryFormat, LibraryItem, LibraryItemState, LibraryPhase, LibraryRecord, LibraryScanSeed,
+    Source, MAX_LIBRARY_ITEMS, MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
 };
 
 const BATCH_NODES: usize = 128;
@@ -199,9 +199,17 @@ pub(crate) fn mark_error(record: &mut LibraryRecord, code: &'static str) {
 }
 
 impl ScanJob {
-    pub fn new(root: Root, generation: u64, revision: u64, old: &[LibraryScanSeed]) -> Result<Self> {
+    pub fn new(
+        root: Root,
+        generation: u64,
+        revision: u64,
+        old: &[LibraryScanSeed],
+    ) -> Result<Self> {
         let entries = root.directory("")?.entries()?;
-        let previous = old.iter().map(|seed| (seed.id.clone(), seed.clone())).collect();
+        let previous = old
+            .iter()
+            .map(|seed| (seed.id.clone(), seed.clone()))
+            .collect();
         Ok(Self {
             root,
             generation,
@@ -353,7 +361,9 @@ impl ScanJob {
             },
             |old| old.added_at,
         );
-        if let Some(old) = old.filter(|old| old.identity.is_some() && old.identity == record.identity) {
+        if let Some(old) =
+            old.filter(|old| old.identity.is_some() && old.identity == record.identity)
+        {
             // Historical metadata is restored only onto the same verified file.
             if old.version_updated_at.is_some() {
                 record.item.version_updated_at = old.version_updated_at;
@@ -362,7 +372,11 @@ impl ScanJob {
             if old.manual_override {
                 record.manual_override = true;
                 record.item.source_ref = old.source_ref;
-                record.item.identity_evidence = record.item.source_ref.as_ref().map(|_| LibraryEvidence::Manual);
+                record.item.identity_evidence = record
+                    .item
+                    .source_ref
+                    .as_ref()
+                    .map(|_| LibraryEvidence::Manual);
                 if record.item.error_code.as_deref() == Some("LIBRARY_IDENTITY_CONFLICT") {
                     record.item.error_code = None;
                 }

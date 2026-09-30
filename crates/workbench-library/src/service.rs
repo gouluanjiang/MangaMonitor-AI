@@ -13,8 +13,8 @@ use std::{
 };
 use workbench_storage::{
     library_hash_is_valid, library_relative_path_is_valid, Document, LibraryDocument,
-    LibraryEvidence, LibraryFormat, LibraryRecord, LibraryRoot, LibraryScanSeed, WorkbenchStore, MAX_LIBRARY_ITEMS,
-    MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
+    LibraryEvidence, LibraryFormat, LibraryRecord, LibraryRoot, LibraryScanSeed, WorkbenchStore,
+    MAX_LIBRARY_ITEMS, MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
 };
 
 #[derive(Default)]
@@ -155,7 +155,12 @@ impl LibraryService {
     ) -> Result<Option<LibrarySnapshot>> {
         let previous = store.read_library()?;
         let root = Root::choose(path)?;
-        if let Some(old) = previous.value.root.as_ref().filter(|old| **old != root.saved) {
+        if let Some(old) = previous
+            .value
+            .root
+            .as_ref()
+            .filter(|old| **old != root.saved)
+        {
             if !confirm(old, &root.saved) {
                 return Ok(None);
             }

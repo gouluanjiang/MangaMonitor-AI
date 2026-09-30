@@ -179,7 +179,12 @@ impl ValidatedDocument for DownloadsDocument {
     fn migrate(&mut self) -> Result<()> {
         if self.version == 1 {
             // Version one never admitted this new state or more than 500 rows.
-            if self.tasks.len() > MAX_DOWNLOAD_TASKS || self.tasks.iter().any(|task| task.phase == DownloadPhase::Abandoned) {
+            if self.tasks.len() > MAX_DOWNLOAD_TASKS
+                || self
+                    .tasks
+                    .iter()
+                    .any(|task| task.phase == DownloadPhase::Abandoned)
+            {
                 return Err(StoreError::new("DOWNLOAD_DOCUMENT_INVALID"));
             }
             self.version = 2;
@@ -189,8 +194,18 @@ impl ValidatedDocument for DownloadsDocument {
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("DOWNLOAD_DOCUMENT_INVALID");
         if self.version != 2
-            || self.tasks.iter().filter(|task| task.phase != DownloadPhase::Abandoned).count() > MAX_DOWNLOAD_TASKS
-            || self.tasks.iter().filter(|task| task.phase == DownloadPhase::Abandoned).count() > MAX_ABANDONED_DOWNLOAD_TASKS
+            || self
+                .tasks
+                .iter()
+                .filter(|task| task.phase != DownloadPhase::Abandoned)
+                .count()
+                > MAX_DOWNLOAD_TASKS
+            || self
+                .tasks
+                .iter()
+                .filter(|task| task.phase == DownloadPhase::Abandoned)
+                .count()
+                > MAX_ABANDONED_DOWNLOAD_TASKS
             || self.history_evidence.len() > MAX_DOWNLOAD_HISTORY_EVIDENCE
         {
             return Err(invalid());

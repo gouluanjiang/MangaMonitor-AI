@@ -223,7 +223,8 @@ pub(crate) async fn library_choose<R: Runtime>(
     let picker_app = app.clone();
     let picker_window = window.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
-        picker_app.dialog()
+        picker_app
+            .dialog()
             .file()
             .set_title("选择漫画库目录")
             .set_parent(&picker_window)

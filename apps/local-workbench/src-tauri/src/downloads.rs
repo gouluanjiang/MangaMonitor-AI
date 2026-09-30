@@ -476,7 +476,9 @@ pub(crate) fn jm_download_batch_cancel<R: Runtime>(
 fn repair_interrupted_scheduler<T>(scheduler: &Mutex<Scheduler<T>>, repair: impl FnOnce()) {
     // Controls also take scheduler before service. Retire every old admission
     // before making a new explicit continue eligible to start another driver.
-    let mut state = scheduler.lock().unwrap_or_else(|poison| poison.into_inner());
+    let mut state = scheduler
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     state.pending.clear();
     repair();
     state.running = false;
@@ -516,9 +518,13 @@ fn launch(
         if !matches!(worker.await, Ok(true)) {
             tauri::async_runtime::spawn_blocking(move || {
                 repair_interrupted_scheduler(&supervisor_downloads.scheduler, || {
-                    let _ = supervisor_downloads.service.worker_interrupted(&supervisor_store);
+                    let _ = supervisor_downloads
+                        .service
+                        .worker_interrupted(&supervisor_store);
                 });
-            }).await.ok();
+            })
+            .await
+            .ok();
         }
     });
 }
@@ -937,7 +943,10 @@ mod tests {
         assert!(worker.await.is_err());
         let repaired = std::cell::Cell::new(false);
         repair_interrupted_scheduler(&scheduler, || {
-            assert!(scheduler.try_lock().is_err(), "repair remains serialized with queue controls");
+            assert!(
+                scheduler.try_lock().is_err(),
+                "repair remains serialized with queue controls"
+            );
             repaired.set(true);
         });
         assert!(repaired.get());

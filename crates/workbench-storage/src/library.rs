@@ -164,7 +164,10 @@ impl From<&LibraryRecord> for LibraryScanSeed {
             added_at: record.item.added_at,
             version_updated_at: record.item.version_updated_at.clone(),
             manual_override: record.manual_override,
-            source_ref: record.manual_override.then(|| record.item.source_ref.clone()).flatten(),
+            source_ref: record
+                .manual_override
+                .then(|| record.item.source_ref.clone())
+                .flatten(),
             links: record.item.links.clone(),
         }
     }
@@ -412,17 +415,34 @@ impl ValidatedDocument for LibraryDocument {
             }
         }
         for seed in &self.scan_baseline {
-            let references = seed.source_ref.iter().chain(seed.links.iter().map(|link| &link.reference));
+            let references = seed
+                .source_ref
+                .iter()
+                .chain(seed.links.iter().map(|link| &link.reference));
             if !library_hash_is_valid(&seed.id)
                 || !ids.insert(&seed.id)
                 || seed.added_at.is_some_and(|value| value > MAX_SAFE_INTEGER)
-                || seed.version_updated_at.as_deref().is_some_and(|value| !crate::work_date_is_valid(value))
+                || seed
+                    .version_updated_at
+                    .as_deref()
+                    .is_some_and(|value| !crate::work_date_is_valid(value))
                 || (seed.source_ref.is_some() && !seed.manual_override)
                 || (seed.manual_override && seed.identity.is_none())
-                || seed.source_ref.as_ref().is_some_and(|reference| !reference.is_valid())
+                || seed
+                    .source_ref
+                    .as_ref()
+                    .is_some_and(|reference| !reference.is_valid())
                 || seed.links.len() > 2
-                || seed.links.iter().any(|link| !link.reference.is_valid() || link.linked_at > MAX_SAFE_INTEGER)
-                || references.clone().map(|reference| reference.source).collect::<HashSet<_>>().len() != references.count()
+                || seed
+                    .links
+                    .iter()
+                    .any(|link| !link.reference.is_valid() || link.linked_at > MAX_SAFE_INTEGER)
+                || references
+                    .clone()
+                    .map(|reference| reference.source)
+                    .collect::<HashSet<_>>()
+                    .len()
+                    != references.count()
             {
                 return Err(invalid());
             }
@@ -431,7 +451,10 @@ impl ValidatedDocument for LibraryDocument {
                     || identity.bytes > MAX_SAFE_INTEGER
                     || identity.modified.is_empty()
                     || identity.modified.len() > 64
-                    || !identity.modified.bytes().all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
+                    || !identity
+                        .modified
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
                 {
                     return Err(invalid());
                 }

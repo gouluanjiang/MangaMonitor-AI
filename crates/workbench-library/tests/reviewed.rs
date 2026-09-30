@@ -248,23 +248,36 @@ fn missing_or_replaced_files_are_not_owned_even_after_a_rescan() {
     );
 }
 
-
 #[test]
 fn interrupted_same_root_scan_retains_review_evidence_without_claiming_unvisited_files() {
     let f = fixture();
     apply(&f, &manifest(&f)).unwrap();
     let original = f.store.read_library().unwrap();
     let mut service = LibraryService::new();
-    let reading = service.scan(&f.store, &original.value.root.as_ref().unwrap().id, original.value.generation, ScanAction::Start).unwrap();
+    let reading = service
+        .scan(
+            &f.store,
+            &original.value.root.as_ref().unwrap().id,
+            original.value.generation,
+            ScanAction::Start,
+        )
+        .unwrap();
     let partial = f.store.read_library().unwrap();
     assert_eq!(partial.value.reviewed_works, original.value.reviewed_works);
     assert_eq!(partial.value.relocations, original.value.relocations);
     assert!(partial.value.records.is_empty());
-    assert!(reviewed_library_presence(&partial.value).iter().all(|item| item.presence == ReviewedFilePresence::Unavailable));
+    assert!(reviewed_library_presence(&partial.value)
+        .iter()
+        .all(|item| item.presence == ReviewedFilePresence::Unavailable));
     drop(service);
     scan(&f.store, &f.root);
     let final_document = f.store.read_library().unwrap();
     assert!(final_document.value.generation > reading.generation);
-    assert_eq!(final_document.value.reviewed_works, original.value.reviewed_works);
-    assert!(reviewed_library_presence(&final_document.value).iter().all(|item| item.presence == ReviewedFilePresence::Present));
+    assert_eq!(
+        final_document.value.reviewed_works,
+        original.value.reviewed_works
+    );
+    assert!(reviewed_library_presence(&final_document.value)
+        .iter()
+        .all(|item| item.presence == ReviewedFilePresence::Present));
 }

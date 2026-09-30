@@ -462,9 +462,14 @@ pub(crate) fn work(
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
                 }
-                if serialized.len() > MAX_WORK_JSON_BYTES && work.tags.iter().any(|tag|
-                    crate::is_blocked_tag(tag) || (source == Source::Jm &&
-                    (crate::is_jm_female_tag(tag) || crate::is_jm_english_category(tag)))) {
+                if serialized.len() > MAX_WORK_JSON_BYTES
+                    && work.tags.iter().any(|tag| {
+                        crate::is_blocked_tag(tag)
+                            || (source == Source::Jm
+                                && (crate::is_jm_female_tag(tag)
+                                    || crate::is_jm_english_category(tag)))
+                    })
+                {
                     // The scope marker already lives in tags. Remove the
                     // duplicate category representation before giving up.
                     work.categories = None;

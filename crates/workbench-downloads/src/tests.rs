@@ -24,10 +24,10 @@ use std::{
 };
 use tempfile::TempDir;
 
-#[path = "maintenance_tests.rs"]
-mod maintenance_tests;
 #[path = "inventory_tests.rs"]
 mod inventory_tests;
+#[path = "maintenance_tests.rs"]
+mod maintenance_tests;
 #[path = "pica_tests.rs"]
 mod pica_tests;
 #[path = "queue_tests.rs"]

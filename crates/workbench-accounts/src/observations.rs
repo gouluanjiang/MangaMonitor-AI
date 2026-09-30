@@ -667,7 +667,7 @@ fn append_recent_page(
     }
     // Reuse the same strict source-boundary proof as author traversal. Only a
     // byte-identical raw JM boundary and equal SourceWork may skip one row.
-    let accepted = traversal.append(page)?;
+    let accepted = traversal.append_recent(page)?;
     let effective = page.items.iter().skip(accepted.skipped_leading_work);
     ids.extend(effective.clone().map(|work| work.work_id.clone()));
     if page.page <= 2 {
@@ -736,6 +736,47 @@ mod recent_sequence_tests {
             items,
             issues: vec![],
             jm_search_boundary: Some(boundary),
+        }
+    }
+
+    #[test]
+    fn jm_recent_listing_ceiling_does_not_claim_an_end_or_change_author_totals() {
+        let mut recent = crate::discovery::Traversal::default();
+        let mut author = crate::discovery::Traversal::default();
+        let (mut ids, mut head) = (vec![], vec![]);
+        for number in 1..=128 {
+            let names: Vec<_> = (0..80)
+                .map(|offset| (100_000 + (number - 1) * 80 + offset).to_string())
+                .collect();
+            let refs: Vec<_> = names.iter().map(String::as_str).collect();
+            let mut batch = page(number, 10_000, &refs, false);
+            // The real JM endpoint has no has_more flag for nonempty pages.
+            batch.has_more = None;
+            assert!(!append_recent_page(&mut recent, &batch, &mut ids, &mut head).unwrap());
+            if number <= 125 {
+                assert_eq!(author.append(&batch).unwrap().complete, number == 125);
+            }
+        }
+        assert_eq!(ids.len(), 10_240);
+        assert_eq!(head.len(), 160);
+    }
+
+    #[test]
+    fn capped_recent_total_still_rejects_changed_counts_duplicates_and_missing_proof() {
+        for kind in 0..3 {
+            let mut recent = crate::discovery::Traversal::default();
+            let first = page(1, 10_000, &["100", "101"], false);
+            recent.append_recent(&first).unwrap();
+            let mut next = page(2, 10_000, &["102", "103"], false);
+            match kind {
+                0 => next.total = Some(10_001),
+                1 => next = page(2, 10_000, &["100", "103"], false),
+                _ => {
+                    next = page(2, 10_000, &["101", "103"], false);
+                    next.jm_search_boundary = None;
+                }
+            }
+            assert!(recent.append_recent(&next).is_err());
         }
     }
 

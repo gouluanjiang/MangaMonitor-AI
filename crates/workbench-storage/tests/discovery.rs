@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::fs;
 use tempfile::TempDir;
 use workbench_storage::{
@@ -916,6 +917,180 @@ fn checkpoint_preserves_revision_and_base_then_reclaims_only_retired_pages() {
     ));
     fs::remove_file(current_checkpoint).unwrap();
     assert!(store.read_discovery().is_err());
+}
+
+#[test]
+fn observation_read_bounds_a_long_journal_without_changing_catalog_truth() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    let mut initial = checkpoint_document();
+    initial.accounts[0].last_check = Some(check_summary());
+    initial.accounts[0].records[0].metadata_detail_at = Some(10);
+    initial.accounts[0].records[0].first_discovered_run_id = Some("e".repeat(64));
+    let mut retained = record(Source::Jm, "124");
+    retained.work.authors = vec!["Unfollowed Writer".into()];
+    retained.matched_authors.clear();
+    retained.author_verified = false;
+    initial.accounts[0].records.push(retained);
+    let mut other = initial.accounts[0].clone();
+    other.account_key = "c".repeat(64);
+    initial.accounts.push(other);
+    store.write_discovery(0, initial).unwrap();
+    let legacy = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join("discovery.json");
+    let legacy_bytes = fs::read(&legacy).unwrap();
+    for revision in 1..=255 {
+        store
+            .apply_discovery_patch_for_policy(
+                revision,
+                0,
+                Some(0),
+                patch(vec![record(Source::Jm, &(1000 + revision).to_string())]),
+            )
+            .unwrap();
+    }
+    let short_manifest = manifest(&directory);
+    let before = store.read_discovery().unwrap();
+    assert_eq!(store.read_discovery_for_observation(0, 0).unwrap(), before);
+    assert_eq!(manifest(&directory), short_manifest);
+    store
+        .apply_discovery_patch_for_policy(
+            before.revision,
+            0,
+            Some(0),
+            patch(vec![record(Source::Jm, "2000")]),
+        )
+        .unwrap();
+    let long_manifest = manifest(&directory);
+    assert_eq!(long_manifest["patchCount"], 256);
+    let before = store.read_discovery().unwrap();
+    // A plain read never opts into layout maintenance, even at the threshold.
+    assert_eq!(manifest(&directory), long_manifest);
+    for (following, policy, expected) in [
+        (1, 0, "DISCOVERY_FOLLOWING_CHANGED"),
+        (0, 1, "DISCOVERY_POLICY_CHANGED"),
+    ] {
+        assert_eq!(
+            store
+                .read_discovery_for_observation(following, policy)
+                .unwrap_err()
+                .code,
+            expected
+        );
+        assert_eq!(manifest(&directory), long_manifest);
+    }
+    assert_eq!(store.read_discovery_for_observation(0, 0).unwrap(), before);
+    assert_eq!(manifest(&directory)["patchCount"], 0);
+    assert_eq!(manifest(&directory)["journalBytes"], 0);
+    assert_eq!(manifest(&directory)["revision"], before.revision);
+    assert_eq!(fs::read(&legacy).unwrap(), legacy_bytes);
+    let reopened = WorkbenchStore::open(directory.path()).unwrap();
+    assert_eq!(reopened.read_discovery().unwrap(), before);
+    // The same instance's writer index must now describe the checkpoint.
+    store
+        .apply_discovery_patch_for_policy(
+            before.revision,
+            0,
+            Some(0),
+            patch(vec![record(Source::Jm, "2001")]),
+        )
+        .unwrap();
+    assert_eq!(manifest(&directory)["patchCount"], 1);
+    let after = store.read_discovery().unwrap();
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(after.value.accounts[1], before.value.accounts[1]);
+    assert_eq!(
+        after.value.accounts[0].authors,
+        before.value.accounts[0].authors
+    );
+    assert_eq!(
+        after.value.accounts[0].last_check,
+        before.value.accounts[0].last_check
+    );
+    assert_eq!(
+        &after.value.accounts[0].records[..before.value.accounts[0].records.len()],
+        before.value.accounts[0].records.as_slice()
+    );
+    assert_eq!(reopened.read_discovery().unwrap(), after);
+    assert_eq!(
+        reopened
+            .apply_discovery_patch_for_policy(
+                before.revision,
+                0,
+                Some(0),
+                patch(vec![record(Source::Jm, "2002")]),
+            )
+            .unwrap_err()
+            .code,
+        "REVISION_CONFLICT"
+    );
+    reopened
+        .apply_discovery_patch_for_policy(
+            after.revision,
+            0,
+            Some(0),
+            patch(vec![record(Source::Jm, "2002")]),
+        )
+        .unwrap();
+    assert_eq!(store.read_discovery().unwrap().revision, after.revision + 1);
+    assert_eq!(store.read_library().unwrap().revision, 0);
+    assert_eq!(store.read_downloads().unwrap().revision, 0);
+}
+
+#[test]
+fn observation_checkpoint_failure_preserves_replay_and_revalidates_warm_pages() {
+    let directory = TempDir::new().unwrap();
+    let store = WorkbenchStore::open(directory.path()).unwrap();
+    for revision in 0..256 {
+        store
+            .apply_discovery_patch_for_policy(
+                revision,
+                0,
+                Some(0),
+                patch(vec![record(Source::Jm, "123")]),
+            )
+            .unwrap();
+    }
+    let before = store.read_discovery().unwrap();
+    let previous_manifest = manifest(&directory);
+    let current_page = page_path(&directory);
+    let valid_page = fs::read(&current_page).unwrap();
+    fs::write(&current_page, b"corrupt reachable page").unwrap();
+    assert_eq!(
+        store.read_discovery_for_observation(0, 0).unwrap_err().code,
+        "DOCUMENT_CORRUPT"
+    );
+    assert_eq!(manifest(&directory), previous_manifest);
+    fs::write(&current_page, valid_page).unwrap();
+    let checkpoint_hash = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&before).unwrap())
+    );
+    let blocked_checkpoint = directory
+        .path()
+        .join(PRIVATE_DIRECTORY)
+        .join(format!("discovery-checkpoint-{checkpoint_hash}.json"));
+    fs::create_dir(&blocked_checkpoint).unwrap();
+    assert_eq!(
+        store.read_discovery_for_observation(0, 0).unwrap_err().code,
+        "UNSAFE_PATH"
+    );
+    assert_eq!(manifest(&directory), previous_manifest);
+    assert!(current_page.exists());
+    assert_eq!(store.read_discovery().unwrap(), before);
+    fs::remove_dir(&blocked_checkpoint).unwrap();
+    assert_eq!(store.read_discovery_for_observation(0, 0).unwrap(), before);
+    assert_eq!(manifest(&directory)["patchCount"], 0);
+    assert!(!current_page.exists());
+    assert_eq!(
+        WorkbenchStore::open(directory.path())
+            .unwrap()
+            .read_discovery()
+            .unwrap(),
+        before
+    );
 }
 
 #[test]

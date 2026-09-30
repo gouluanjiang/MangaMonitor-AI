@@ -1175,7 +1175,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 identity.lease.require_current()?;
             }
             let store = WorkbenchStore::open(&captured.root).map_err(store_error)?;
-            let document = store.read_discovery().map_err(store_error)?;
+            let document = store
+                .read_discovery_for_observation(
+                    captured.following_revision,
+                    captured.policy_revision,
+                )
+                .map_err(store_error)?;
             let saved: HashMap<_, _> = document
                 .value
                 .accounts
@@ -2524,6 +2529,25 @@ pub(crate) struct TraversedPage {
 
 impl Traversal {
     pub(crate) fn append(&mut self, page: &SourcePage) -> Result<TraversedPage> {
+        self.append_with_total_policy(page, false)
+    }
+
+    pub(crate) fn append_recent(&mut self, page: &SourcePage) -> Result<TraversedPage> {
+        // JM's all-category recent endpoint reports 10,000 even while later
+        // pages keep returning new works. It is a listing ceiling, not proof
+        // that the source ended. Author/search traversal remains exact.
+        let capped_jm_total = page.total == Some(10_000)
+            && !page.items.is_empty()
+            && page.items.iter().all(|work| work.source == Source::Jm)
+            && crate::service::jm_search_boundary_is_valid(page);
+        self.append_with_total_policy(page, capped_jm_total)
+    }
+
+    fn append_with_total_policy(
+        &mut self,
+        page: &SourcePage,
+        capped_total: bool,
+    ) -> Result<TraversedPage> {
         let invalid = || AccountError::new("DISCOVERY_PAGINATION_CHANGED");
         if page.page != self.page + 1
             || page.page > MAX_DISCOVERY_PAGES
@@ -2585,12 +2609,12 @@ impl Traversal {
         let terminal = page.pages.is_some_and(|pages| page.page == pages.max(1));
         let complete = page.has_more == Some(false)
             || (terminal && page.has_more != Some(true))
-            || page.total == Some(count as u64);
-        if page.total.is_some_and(|total| {
+            || (!capped_total && page.total == Some(count as u64));
+        if (!capped_total && page.total.is_some_and(|total| {
             count as u64 > total
                 || ((page.has_more == Some(false) || terminal) && count as u64 != total)
                 || (page.has_more == Some(true) && count as u64 >= total)
-        }) || page.pages.is_some_and(|pages| {
+        })) || page.pages.is_some_and(|pages| {
             page.page > pages.max(1)
                 || (complete && pages > page.page)
                 || (terminal && page.has_more == Some(true))

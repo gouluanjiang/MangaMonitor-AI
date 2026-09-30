@@ -242,7 +242,7 @@ jobs:
         run: cargo +1.98.1 test --locked -p workbench-accounts --example author_coverage_audit
       - name: Build the local author coverage acceptance helper
         # Builds only. Live execution refuses CI and requires an explicit local plan.
-        run: cargo +1.98.1 build --locked -p workbench-accounts --example author_coverage_audit
+        run: cargo +1.98.1 build --release --locked -p workbench-accounts --example author_coverage_audit
       - name: Build the isolated catalog diagnostic
         run: cargo +1.98.1 build --locked -p workbench-storage --example discovery_catalog_probe
       - name: Build the reviewed author policy import helper
@@ -380,7 +380,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mangamonitor-author-coverage-audit-${{ github.sha }}
-          path: target/debug/examples/author_coverage_audit.exe
+          path: target/release/examples/author_coverage_audit.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload isolated catalog diagnostic

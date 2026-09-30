@@ -1,10 +1,19 @@
 //! Explicit local acceptance helper. Uses the same account/discovery service as
 //! the desktop, never direct credentials, media routes or library mutations.
 //! CI compiles/tests the helper; only an authorized local Windows run may execute it.
+//! Optional `--cancel-file` names a new absolute local path outside Git/profile.
+//! Create that empty file to request a stop, then wait for process completion and
+//! protected-after/result receipts before shutting down. Never force-kill a write.
 #[cfg(any(windows, test))]
 mod contract {
     use serde::Deserialize;
-    use std::path::PathBuf;
+    use std::{
+        fs,
+        future::Future,
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::{Duration, Instant},
+    };
     use workbench_accounts::Source;
 
     #[derive(Clone, Deserialize)]
@@ -82,6 +91,7 @@ mod contract {
         pub output: PathBuf,
         pub plan: PathBuf,
         pub mode: String,
+        pub cancel_file: Option<PathBuf>,
     }
     impl Args {
         pub fn parse(values: Vec<String>) -> Result<Self, String> {
@@ -89,6 +99,7 @@ mod contract {
             let mut output = None;
             let mut plan = None;
             let mut mode = None;
+            let mut cancel_file = None;
             let mut authorized = false;
             let mut iter = values.into_iter();
             while let Some(arg) = iter.next() {
@@ -104,6 +115,7 @@ mod contract {
                     "--output" => &mut output,
                     "--plan" => &mut plan,
                     "--mode" => &mut mode,
+                    "--cancel-file" => &mut cancel_file,
                     _ => return Err("AUDIT_ARGUMENT_INVALID".into()),
                 };
                 if slot.is_some() {
@@ -130,7 +142,128 @@ mod contract {
                 output: output.ok_or("AUDIT_OUTPUT_REQUIRED")?.into(),
                 plan: plan.ok_or("AUDIT_PLAN_REQUIRED")?.into(),
                 mode,
+                cancel_file: cancel_file.map(PathBuf::from),
             })
+        }
+    }
+
+    const READ_BUSY_DELAYS_MS: [u64; 5] = [250, 500, 1000, 2000, 4000];
+
+    // Only local reads may use this wrapper. Starting a run or querying a source
+    // must happen exactly once, even when its surrounding evidence read is busy.
+    pub async fn retry_busy_read<T, F, Fut>(read: F) -> Result<T, String>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = workbench_accounts::Result<T>>,
+    {
+        retry_busy_read_with_wait(read, tokio::time::sleep).await
+    }
+
+    async fn retry_busy_read_with_wait<T, F, Fut, W, Wait>(
+        mut read: F,
+        mut wait: W,
+    ) -> Result<T, String>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = workbench_accounts::Result<T>>,
+        W: FnMut(Duration) -> Wait,
+        Wait: Future<Output = ()>,
+    {
+        let mut delays = READ_BUSY_DELAYS_MS.into_iter().enumerate();
+        loop {
+            match read().await {
+                Err(error) if error.code == "BUSY" => {
+                    let Some((attempt, delay)) = delays.next() else {
+                        return Err(error.code.to_owned());
+                    };
+                    println!("AUDIT_READ_BUSY_RETRY attempt={}", attempt + 1);
+                    wait(Duration::from_millis(delay)).await;
+                }
+                result => return result.map_err(|error| error.code.to_owned()),
+            }
+        }
+    }
+
+    pub struct CancelFile {
+        path: PathBuf,
+    }
+
+    fn is_link(metadata: &fs::Metadata) -> bool {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            metadata.file_attributes() & 0x400 != 0
+        }
+        #[cfg(not(windows))]
+        {
+            metadata.file_type().is_symlink()
+        }
+    }
+
+    impl CancelFile {
+        pub fn new(path: &Path, profile: &Path) -> Result<Self, String> {
+            if !path.is_absolute() || path.file_name().is_none() {
+                return Err("AUDIT_CANCEL_FILE_ABSOLUTE_PATH_REQUIRED".into());
+            }
+            #[cfg(windows)]
+            if !matches!(
+                path.components().next(),
+                Some(std::path::Component::Prefix(prefix))
+                    if matches!(prefix.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_))
+            ) {
+                return Err("AUDIT_CANCEL_FILE_LOCAL_PATH_REQUIRED".into());
+            }
+            let parent = path.parent().ok_or("AUDIT_CANCEL_FILE_PARENT_REQUIRED")?;
+            for ancestor in parent.ancestors() {
+                let metadata = fs::symlink_metadata(ancestor)
+                    .map_err(|_| "AUDIT_CANCEL_FILE_PARENT_REQUIRED")?;
+                if is_link(&metadata) {
+                    return Err("AUDIT_CANCEL_FILE_LINK_NOT_ALLOWED".into());
+                }
+            }
+            let parent = parent
+                .canonicalize()
+                .map_err(|_| "AUDIT_CANCEL_FILE_PARENT_REQUIRED")?;
+            let profile = profile
+                .canonicalize()
+                .map_err(|_| "AUDIT_EXISTING_PROFILE_REQUIRED")?;
+            if parent.starts_with(&profile)
+                || parent.ancestors().any(|ancestor| ancestor.join(".git").exists())
+            {
+                return Err("AUDIT_CANCEL_FILE_MUST_BE_PRIVATE".into());
+            }
+            let path = parent.join(path.file_name().unwrap());
+            match fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self { path }),
+                Ok(_) => Err("AUDIT_CANCEL_FILE_ALREADY_EXISTS".into()),
+                Err(_) => Err("AUDIT_CANCEL_FILE_READ_FAILED".into()),
+            }
+        }
+
+        pub fn check(&self) -> Result<(), String> {
+            match fs::symlink_metadata(&self.path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Ok(metadata) if metadata.is_file() && !is_link(&metadata) => {
+                    Err("AUDIT_CANCEL_REQUESTED".into())
+                }
+                Ok(_) => Err("AUDIT_CANCEL_FILE_INVALID".into()),
+                Err(_) => Err("AUDIT_CANCEL_FILE_READ_FAILED".into()),
+            }
+        }
+    }
+
+    // This standalone helper owns the sole non-worker Arc. Both service workers
+    // retain their Arc while awaiting source calls and blocking store tasks.
+    // A cancelled phase alone is not a completion signal. Never abort a worker
+    // or add a detached owner here; cooperative settlement has no forced timeout.
+    pub async fn wait_for_workers<T>(service: &Arc<T>) {
+        let mut notice = None;
+        while Arc::strong_count(service) > 1 {
+            if notice.is_none_or(|at: Instant| at.elapsed() >= Duration::from_secs(10)) {
+                println!("AUDIT_SETTLING waiting_for_source_and_store=true");
+                notice = Some(Instant::now());
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
 
@@ -168,6 +301,20 @@ mod contract {
             assert_eq!(args.profile, PathBuf::from("profile"));
             assert_eq!(args.output, PathBuf::from("output"));
             assert_eq!(args.plan, PathBuf::from("plan"));
+            assert!(args.cancel_file.is_none());
+            let mut values: Vec<_> = [
+                "--live-author-audit", "--profile", "profile", "--output", "output",
+                "--plan", "plan", "--mode", "snapshot", "--cancel-file", "marker",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+            assert_eq!(
+                Args::parse(values.clone()).unwrap().cancel_file,
+                Some(PathBuf::from("marker"))
+            );
+            values.extend(["--cancel-file".into(), "duplicate".into()]);
+            assert!(Args::parse(values).is_err());
         }
         #[test]
         fn private_plan_is_bounded_and_ids_are_not_arbitrary_requests() {
@@ -189,12 +336,137 @@ mod contract {
                 .validate()
                 .is_err());
         }
+
+        #[tokio::test]
+        async fn local_read_retries_are_bounded_and_preserve_other_errors() {
+            use std::{cell::Cell, future::ready};
+            use workbench_accounts::AccountError;
+
+            let reads = Cell::new(0);
+            let waits = Cell::new(0);
+            let exhausted = retry_busy_read_with_wait(
+                || {
+                    reads.set(reads.get() + 1);
+                    ready(Err::<(), _>(AccountError::new("BUSY")))
+                },
+                |_| {
+                    waits.set(waits.get() + 1);
+                    ready(())
+                },
+            )
+            .await;
+            assert_eq!(exhausted.unwrap_err(), "BUSY");
+            assert_eq!(reads.get(), 6);
+            assert_eq!(waits.get(), 5);
+
+            reads.set(0);
+            let recovered = retry_busy_read_with_wait(
+                || {
+                    reads.set(reads.get() + 1);
+                    ready(if reads.get() == 1 {
+                        Err(AccountError::new("BUSY"))
+                    } else {
+                        Ok("saved fixture")
+                    })
+                },
+                |_| ready(()),
+            )
+            .await;
+            assert_eq!(recovered.unwrap(), "saved fixture");
+            assert_eq!(reads.get(), 2);
+
+            reads.set(0);
+            let rejected = retry_busy_read(|| {
+                reads.set(reads.get() + 1);
+                ready(Err::<(), _>(AccountError::new("SESSION_CHANGED")))
+            })
+            .await;
+            assert_eq!(rejected.unwrap_err(), "SESSION_CHANGED");
+            assert_eq!(reads.get(), 1);
+        }
+
+        #[test]
+        fn cancel_file_requires_a_new_absolute_private_path() {
+            let temp = tempfile::tempdir().unwrap();
+            let profile = temp.path().join("profile");
+            fs::create_dir(&profile).unwrap();
+            let path = temp.path().join("stop.request");
+            let marker = CancelFile::new(&path, &profile).unwrap();
+            assert!(marker.check().is_ok());
+            fs::write(&path, b"").unwrap();
+            assert_eq!(marker.check().unwrap_err(), "AUDIT_CANCEL_REQUESTED");
+            assert!(CancelFile::new(&path, &profile).is_err());
+            assert!(CancelFile::new(Path::new("relative.request"), &profile).is_err());
+            assert!(CancelFile::new(&profile.join("stop.request"), &profile).is_err());
+
+            let repo = temp.path().join("fixture-repo");
+            fs::create_dir(&repo).unwrap();
+            fs::write(repo.join(".git"), b"fixture git marker").unwrap();
+            assert!(CancelFile::new(&repo.join("stop.request"), &profile).is_err());
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn cancel_file_rejects_linked_parents_and_replaced_markers() {
+            let temp = tempfile::tempdir().unwrap();
+            let profile = temp.path().join("profile");
+            let private = temp.path().join("private");
+            fs::create_dir(&profile).unwrap();
+            fs::create_dir(&private).unwrap();
+            let link = temp.path().join("linked-private");
+            std::os::unix::fs::symlink(&private, &link).unwrap();
+            assert!(CancelFile::new(&link.join("stop.request"), &profile).is_err());
+            let path = private.join("stop.request");
+            let marker = CancelFile::new(&path, &profile).unwrap();
+            std::os::unix::fs::symlink(private.join("missing"), &path).unwrap();
+            assert_eq!(marker.check().unwrap_err(), "AUDIT_CANCEL_FILE_INVALID");
+        }
+
+        #[tokio::test]
+        async fn early_cancel_phase_cannot_finish_before_nested_store_work() {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            let service = Arc::new(AtomicBool::new(false));
+            let worker_service = Arc::clone(&service);
+            let (source_release, source_wait) = tokio::sync::oneshot::channel();
+            let (phase_changed, phase_wait) = tokio::sync::oneshot::channel();
+            let (store_started, store_wait) = tokio::sync::oneshot::channel();
+            let (store_release, store_gate) = std::sync::mpsc::channel();
+            let worker = tokio::spawn(async move {
+                // Service cancellation can already report terminal here.
+                worker_service.store(true, Ordering::SeqCst);
+                phase_changed.send(()).unwrap();
+                source_wait.await.unwrap();
+                tokio::task::spawn_blocking(move || {
+                    store_started.send(()).unwrap();
+                    store_gate.recv().unwrap();
+                })
+                .await
+                .unwrap();
+                drop(worker_service);
+            });
+            let settled = wait_for_workers(&service);
+            tokio::pin!(settled);
+            phase_wait.await.unwrap();
+            assert!(tokio::time::timeout(Duration::from_millis(20), &mut settled)
+                .await
+                .is_err());
+            assert!(service.load(Ordering::SeqCst));
+            source_release.send(()).unwrap();
+            store_wait.await.unwrap();
+            assert!(tokio::time::timeout(Duration::from_millis(20), &mut settled)
+                .await
+                .is_err());
+            store_release.send(()).unwrap();
+            settled.await;
+            worker.await.unwrap();
+            assert_eq!(Arc::strong_count(&service), 1);
+        }
     }
 }
 
 #[cfg(windows)]
 mod local {
-    use super::contract::{Args, Plan};
+    use super::contract::{retry_busy_read, wait_for_workers, Args, CancelFile, Plan};
     use serde::Serialize;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
@@ -218,6 +490,32 @@ mod local {
     type Result<T> = std::result::Result<T, String>;
     const MAX_PLAN_BYTES: u64 = 2 * 1024 * 1024;
     const MAX_RUN: Duration = Duration::from_secs(12 * 60 * 60);
+
+    enum ActiveRun {
+        Authors(String),
+        Recent(String),
+    }
+
+    struct Control {
+        cancel_file: Option<CancelFile>,
+        active_run: Option<ActiveRun>,
+        scopes: Vec<DiscoveryScope>,
+    }
+
+    impl Control {
+        fn check_cancel(&self) -> Result<()> {
+            self.cancel_file.as_ref().map_or(Ok(()), CancelFile::check)
+        }
+
+        fn cancel(&self, service: &Service) -> Result<()> {
+            match &self.active_run {
+                Some(ActiveRun::Authors(id)) => service.discovery_cancel(id).map(|_| ()),
+                Some(ActiveRun::Recent(id)) => service.recent_check_cancel(id).map(|_| ()),
+                None => return Ok(()),
+            }
+            .map_err(|error| error.code.to_owned())
+        }
+    }
 
     fn is_ci() -> bool {
         ["CI", "GITHUB_ACTIONS", "TF_BUILD", "BUILDKITE"]
@@ -317,12 +615,28 @@ mod local {
         output: &Path,
         name: &str,
     ) -> Result<DiscoverySnapshot> {
-        let snapshot = service
-            .discovery_read_view(scopes.to_vec(), true)
-            .await
-            .map_err(|e| e.code.to_owned())?;
+        let snapshot = read_catalog(service, scopes, true).await?;
         save(output, name, &snapshot)?;
         Ok(snapshot)
+    }
+
+    async fn read_catalog(
+        service: &Service,
+        scopes: &[DiscoveryScope],
+        include_other: bool,
+    ) -> Result<DiscoverySnapshot> {
+        retry_busy_read(|| async {
+            let snapshot = service
+                .discovery_read_view(scopes.to_vec(), include_other)
+                .await?;
+            // Observation replay reports local storage contention as a warning.
+            // It is still a read retry; no source request is repeated here.
+            if snapshot.observation_error_code.as_deref() == Some("BUSY") {
+                return Err(workbench_accounts::AccountError::new("BUSY"));
+            }
+            Ok(snapshot)
+        })
+        .await
     }
     fn unfinished(snapshot: &DiscoverySnapshot) -> Vec<&workbench_storage::DiscoveryAuthorRange> {
         snapshot
@@ -336,12 +650,14 @@ mod local {
         scopes: &[DiscoveryScope],
         plan: &Plan,
         output: &Path,
+        control: &Control,
     ) -> Result<Value> {
         if plan.works.is_empty() {
             return Err("AUDIT_EVIDENCE_WORKS_REQUIRED".into());
         }
         let mut rows = vec![];
         for work in &plan.works {
+            control.check_cancel()?;
             require_app_closed()?;
             let auth = scope(scopes, work.source)?;
             let response = service
@@ -358,12 +674,12 @@ mod local {
                 Ok(response)=>{
                     let mut memberships=vec![];
                     for author in &work.expected_authors {
-                        let result=service.source_author_known_works(work.source,&auth.session_id,author).await;
+                        let result=retry_busy_read(|| service.source_author_known_works(work.source,&auth.session_id,author)).await;
                         memberships.push(match result {
                             Ok(known)=>json!({"author":author,"present":known.items.iter().any(|item|item.work_id==work.work_id),
                                 "discoveryRevision":known.discovery_revision,"historyComplete":known.history_complete,
                                 "observationErrorCode":known.observation_error_code}),
-                            Err(error)=>json!({"author":author,"present":false,"errorCode":error.code}),
+                            Err(error)=>json!({"author":author,"present":false,"errorCode":error}),
                         });
                     }
                     let pass=response.observation_error_code.is_none() && !memberships.is_empty()
@@ -380,12 +696,10 @@ mod local {
             );
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
+        control.check_cancel()?;
         let final_snapshot =
             snapshot(service, scopes, output, "catalog-after.private.json").await?;
-        let confirmed = service
-            .discovery_read_view(scopes.to_vec(), false)
-            .await
-            .map_err(|e| e.code.to_owned())?;
+        let confirmed = read_catalog(service, scopes, false).await?;
         for row in &mut rows {
             let saved = final_snapshot.records.iter().find(|record| {
                 serde_json::to_value(record.work.source).ok().as_ref() == Some(&row["source"])
@@ -419,6 +733,7 @@ mod local {
         plan: &Plan,
         output: &Path,
         retry: bool,
+        control: &mut Control,
     ) -> Result<Value> {
         let started = if retry {
             service
@@ -434,21 +749,17 @@ mod local {
                 .await
         }
         .map_err(|e| e.code.to_owned())?;
+        control.active_run = Some(ActiveRun::Authors(started.run_id.clone()));
         let timer = Instant::now();
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            if let Err(error) = require_app_closed() {
-                let _ = service.discovery_cancel(&started.run_id);
-                return Err(error);
-            }
+            control.check_cancel()?;
+            require_app_closed()?;
             if timer.elapsed() > MAX_RUN {
-                let _ = service.discovery_cancel(&started.run_id);
                 return Err("AUDIT_RUN_TIME_LIMIT".into());
             }
-            let progress = service
-                .discovery_progress(scopes.to_vec())
-                .await
-                .map_err(|e| e.code.to_owned())?;
+            let progress = retry_busy_read(|| service.discovery_progress(scopes.to_vec())).await?;
+            control.check_cancel()?;
             save(output, "author-progress.private.json", &progress)?;
             let run = progress
                 .run
@@ -461,6 +772,7 @@ mod local {
                 "completedScopes":run.completed_scopes,"totalScopes":run.total_scopes,"errorCode":run.error_code})
             );
             if run.phase != DiscoveryPhase::Checking {
+                wait_for_workers(service).await;
                 let final_snapshot =
                     snapshot(service, scopes, output, "catalog-after.private.json").await?;
                 save(
@@ -482,25 +794,23 @@ mod local {
         scopes: &[DiscoveryScope],
         plan: &Plan,
         output: &Path,
+        control: &mut Control,
     ) -> Result<Value> {
         let started = service
             .recent_check_start(scopes.to_vec(), Some(plan.recent_max_pages))
             .await
             .map_err(|e| e.code.to_owned())?;
+        control.active_run = Some(ActiveRun::Recent(started.id.clone()));
         let timer = Instant::now();
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            if let Err(error) = require_app_closed() {
-                let _ = service.recent_check_cancel(&started.id);
-                return Err(error);
-            }
+            control.check_cancel()?;
+            require_app_closed()?;
             if timer.elapsed() > MAX_RUN {
-                let _ = service.recent_check_cancel(&started.id);
                 return Err("AUDIT_RUN_TIME_LIMIT".into());
             }
-            let run = service
-                .recent_check_progress()
-                .map_err(|e| e.code.to_owned())?
+            let run = retry_busy_read(|| std::future::ready(service.recent_check_progress()))
+                .await?
                 .filter(|run| run.id == started.id)
                 .ok_or("AUDIT_RUN_LOST")?;
             save(output, "recent-progress.private.json", &run)?;
@@ -509,11 +819,12 @@ mod local {
                 json!({"mode":"recent","phase":run.phase,"pagesRead":run.pages_read,"recordsRead":run.records_read,"errorCode":run.error_code})
             );
             if run.phase != "checking" {
+                wait_for_workers(service).await;
                 for auth in scopes {
-                    let history = service
-                        .source_recent_history(auth.source, &auth.session_id)
-                        .await
-                        .map_err(|e| e.code.to_owned())?;
+                    let history = retry_busy_read(|| {
+                        service.source_recent_history(auth.source, &auth.session_id)
+                    })
+                    .await?;
                     save(
                         output,
                         &format!("recent-{}.private.json", auth.source.as_str()),
@@ -529,7 +840,13 @@ mod local {
             }
         }
     }
-    async fn execute(service: &Arc<Service>, args: &Args, plan: &Plan) -> Result<Value> {
+    async fn execute(
+        service: &Arc<Service>,
+        args: &Args,
+        plan: &Plan,
+        control: &mut Control,
+    ) -> Result<Value> {
+        control.check_cancel()?;
         let accounts = service.accounts(false).await;
         save(
             &args.output,
@@ -557,6 +874,7 @@ mod local {
                 })
             })
             .collect::<Result<_>>()?;
+        control.scopes = scopes.clone();
         let before = snapshot(
             service,
             &scopes,
@@ -582,12 +900,10 @@ mod local {
             return Err("AUDIT_DISCOVERY_ALREADY_RUNNING".into());
         }
         let initial_warning = before.observation_error_code.clone();
+        control.check_cancel()?;
         let mut report = match args.mode.as_str() {
             "status" | "snapshot" => {
-                let projected = service
-                    .discovery_read_view(scopes.clone(), false)
-                    .await
-                    .map_err(|e| e.code.to_owned())?;
+                let projected = read_catalog(service, &scopes, false).await?;
                 save(&args.output, "confirmed-catalog.private.json", &projected)?;
                 save(
                     &args.output,
@@ -602,11 +918,11 @@ mod local {
                     "unfinishedScopes":unfinished(&before).len(),"fullSiteCoverage":false}),
                 )
             }
-            "evidence" => evidence(service, &scopes, plan, &args.output).await,
+            "evidence" => evidence(service, &scopes, plan, &args.output, control).await,
             "authors" | "retry" => {
-                authors(service, &scopes, plan, &args.output, args.mode == "retry").await
+                authors(service, &scopes, plan, &args.output, args.mode == "retry", control).await
             }
-            "recent" => recent(service, &scopes, plan, &args.output).await,
+            "recent" => recent(service, &scopes, plan, &args.output, control).await,
             _ => Err("AUDIT_MODE_INVALID".into()),
         }?;
         if let Some(warning) = initial_warning {
@@ -634,6 +950,15 @@ mod local {
             serde_json::from_slice(&fs::read(&args.plan).map_err(|_| "AUDIT_PLAN_READ_FAILED")?)
                 .map_err(|_| "AUDIT_PLAN_INVALID")?;
         plan.validate()?;
+        let mut control = Control {
+            cancel_file: args
+                .cancel_file
+                .as_ref()
+                .map(|path| CancelFile::new(path, &args.profile))
+                .transpose()?,
+            active_run: None,
+            scopes: vec![],
+        };
         require_app_closed()?;
         let lock = fs::OpenOptions::new()
             .read(true)
@@ -656,14 +981,68 @@ mod local {
             WindowsVault::new(),
             args.profile.clone(),
         ));
-        let result = execute(&service, &args, &plan).await;
-        drop(service);
-        let after = protected(&args.profile)?;
-        save(&args.output, "protected-after.private.json", &after)?;
+        let mut result = execute(&service, &args, &plan, &mut control).await;
+        if result.is_ok() {
+            if let Err(error) = control.check_cancel() {
+                result = Err(error);
+            }
+        }
+        let stop_requested = result.is_err() && control.active_run.is_some();
+        let cancel_error = if stop_requested {
+            println!("AUDIT_STOP_REQUESTED waiting_for_worker_settlement=true");
+            control.cancel(&service).err()
+        } else {
+            None
+        };
+        // Every exit after accepting a run passes through this barrier, including
+        // failed polling/report writes. Dropping the caller's Arc is not a join.
+        wait_for_workers(&service).await;
         let mut report = match result {
             Ok(report) => report,
             Err(error) => json!({"mode":args.mode,"passed":false,"errorCode":error}),
         };
+        if stop_requested {
+            report["stopRequested"] = json!(true);
+            report["cancelErrorCode"] = json!(cancel_error);
+            let saved_progress = match &control.active_run {
+                Some(ActiveRun::Authors(_)) => {
+                    match retry_busy_read(|| service.discovery_progress(control.scopes.clone())).await
+                    {
+                        Ok(progress) => save(
+                            &args.output,
+                            "author-progress-settled.private.json",
+                            &progress,
+                        ),
+                        Err(error) => Err(error),
+                    }
+                }
+                Some(ActiveRun::Recent(_)) => {
+                    match retry_busy_read(|| std::future::ready(service.recent_check_progress())).await
+                    {
+                        Ok(progress) => save(
+                            &args.output,
+                            "recent-progress-settled.private.json",
+                            &progress,
+                        ),
+                        Err(error) => Err(error),
+                    }
+                }
+                None => Ok(()),
+            };
+            report["settledProgressErrorCode"] = json!(saved_progress.err());
+            report["settledSnapshotErrorCode"] = json!(snapshot(
+                &service,
+                &control.scopes,
+                &args.output,
+                "catalog-after-stop.private.json",
+            )
+            .await
+            .err());
+        }
+        drop(service);
+        let after = protected(&args.profile)?;
+        save(&args.output, "protected-after.private.json", &after)?;
+        report["workersSettled"] = json!(true);
         report["protectedMetadataUnchanged"] = json!(before == after);
         report["nativeUiAcceptance"] = json!(false);
         let passed = report["passed"] == true && before == after;
@@ -677,19 +1056,18 @@ mod local {
 
 #[cfg(windows)]
 #[tokio::main]
-async fn main() {
-    let code = match local::run().await {
-        Ok(true) => 0,
-        Ok(false) => 2,
+async fn main() -> std::process::ExitCode {
+    match local::run().await {
+        Ok(true) => std::process::ExitCode::SUCCESS,
+        Ok(false) => std::process::ExitCode::from(2),
         Err(error) => {
             eprintln!("{error}");
-            2
+            std::process::ExitCode::from(2)
         }
-    };
-    std::process::exit(code);
+    }
 }
 #[cfg(not(windows))]
-fn main() {
+fn main() -> std::process::ExitCode {
     eprintln!("AUDIT_WINDOWS_LOCAL_RUNTIME_REQUIRED");
-    std::process::exit(2);
+    std::process::ExitCode::from(2)
 }

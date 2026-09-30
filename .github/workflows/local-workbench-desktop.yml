@@ -68,7 +68,7 @@ on:
         default: false
         required: false
       author_audit_build_only:
-        description: Build only an optimized local author audit helper from already reviewed source; never execute it in CI
+        description: Test synthetic audit contracts and build the optimized helper; never execute live audit mode in CI
         type: boolean
         default: false
         required: false
@@ -139,6 +139,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Helper source differs from the reviewed revision' }
       - name: Install the pinned compiler only
         run: rustup toolchain install 1.98.1 --profile minimal --target x86_64-pc-windows-msvc
+      - name: Restore existing native dependencies for the helper
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            apps/local-workbench/src-tauri/target
+          key: desktop-windows-rust-1.98.1-${{ hashFiles('Cargo.lock', 'apps/local-workbench/src-tauri/Cargo.lock') }}
+          restore-keys: desktop-windows-rust-1.98.1-
+      - name: Test synthetic author audit plan and projection contracts only
+        run: cargo +1.98.1 test --locked -p workbench-accounts --example author_coverage_audit
       - name: Build the optimized local author coverage helper only
         # Never run this helper in CI. Its real-data entry point refuses CI execution.
         run: cargo +1.98.1 build --release --locked -p workbench-accounts --example author_coverage_audit
@@ -170,6 +183,7 @@ jobs:
               unchangedWorkingTree = $true
             }
             helperExecutedInCi = $false
+            syntheticHelperContractsPassed = $true
             formalSuitesRepeated = $false
           } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $auditStage 'manifest.json') -Encoding utf8
       - name: Upload only the optimized helper and identity manifest

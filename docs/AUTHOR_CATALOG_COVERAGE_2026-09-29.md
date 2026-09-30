@@ -55,10 +55,13 @@ ordered head sequence is joined or the source reports its end. Unverified repeti
 isolated malformed rows, storage failure, source errors and exhausted traversal
 limits leave a partial result and preserve the last successful boundary.
 
-JM's recent all-category endpoint reports a 10,000 listing ceiling while later
-pages can still contain new works. Only this recent endpoint treats that value
-as advisory: it cannot prove the source ended or invalidate a longer bounded
-window. The same endpoint can replay an earlier, ordered fragment across several
+JM's recent all-category endpoint reports a 10,000 listing ceiling. This is not
+proof of an exact distinct-work count or of the source's historical end. A
+bounded diagnostic also observed pages beyond the available window repeating
+its last page unchanged; that repetition does not establish longer coverage.
+The audit retains the failed larger attempt and explicitly records a smaller,
+verified readable window rather than claiming the whole site was traversed.
+The same endpoint can replay an earlier, ordered fragment across several
 pages. A recent-only recovery path accepts that fragment only when every source
 row and projected work exactly match a contiguous part already read. New rows
 may follow a repeated prefix only after it reaches the known tail. Reordered,
@@ -106,3 +109,11 @@ queries. An optional private `--cancel-file` marker requests cooperative
 cancellation; final protected-file checks wait for source and storage workers to
 settle. Process termination is not a substitute for that barrier. CI builds the
 helper with optimizations; no live plans, account data or real works run in CI.
+
+The `evidence` mode retains individual author-entry checks for the original
+acceptance cases. The `details` mode is for larger residual-credit investigations:
+it queries each planned exact source ID once, then evaluates membership against
+the final native catalog and existing native author policies. Its report labels
+that evidence separately and does not claim individual author-entry verification.
+Recent-history exports are read-only supplements to a separately saved traversal
+receipt; they cannot create or extend a successful coverage boundary.

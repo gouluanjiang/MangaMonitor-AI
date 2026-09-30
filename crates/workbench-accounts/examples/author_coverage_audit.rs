@@ -14,7 +14,8 @@ mod contract {
         sync::Arc,
         time::{Duration, Instant},
     };
-    use workbench_accounts::Source;
+    use serde_json::{json, Value};
+    use workbench_accounts::{DiscoverySnapshot, QueryResult, Source};
 
     #[derive(Clone, Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -133,7 +134,7 @@ mod contract {
             let mode = mode.ok_or("AUDIT_MODE_REQUIRED")?;
             if !matches!(
                 mode.as_str(),
-                "status" | "snapshot" | "evidence" | "authors" | "retry" | "recent"
+                "status" | "snapshot" | "evidence" | "details" | "authors" | "retry" | "recent"
             ) {
                 return Err("AUDIT_MODE_INVALID".into());
             }
@@ -145,6 +146,131 @@ mod contract {
                 cancel_file: cancel_file.map(PathBuf::from),
             })
         }
+    }
+
+    pub fn detail_receipt(
+        work: &EvidenceWork,
+        response: workbench_accounts::Result<QueryResult>,
+    ) -> Value {
+        let mut row = json!({"source":work.source,"workId":work.work_id,
+            "passed":false,"detailPassed":false,"membershipFinalized":false,
+            "perAuthorEntryVerified":false,"membershipEvidence":"final-native-catalog"});
+        match response {
+            Ok(response) => {
+                let identity_verified = response.source == work.source
+                    && response.page.items.len() == 1
+                    && response.page.items[0].source == work.source
+                    && response.page.items[0].work_id == work.work_id
+                    && response.page.issues.is_empty();
+                let has_authors = identity_verified
+                    && !response.page.items[0].authors.is_empty()
+                    && response.page.items[0]
+                        .authors
+                        .iter()
+                        .all(|author| !author.trim().is_empty());
+                row["detailPassed"] = json!(identity_verified
+                    && has_authors
+                    && response.observation_error_code.is_none());
+                row["detailIdentityVerified"] = json!(identity_verified);
+                row["detailHasAuthorCredits"] = json!(has_authors);
+                row["detail"] = json!(response.page);
+                row["observationErrorCode"] = json!(response.observation_error_code);
+                row["detailDiscoveryRevision"] = json!(response.discovery_revision);
+            }
+            Err(error) => row["errorCode"] = json!(error.code),
+        }
+        row
+    }
+
+    /// Reuse the native policy matcher against a single final catalog pair.
+    /// matched_authors is query provenance, not an authorship verdict.
+    pub fn finalize_details(
+        plan: &Plan,
+        rows: &mut [Value],
+        catalog: &DiscoverySnapshot,
+        confirmed: &DiscoverySnapshot,
+    ) -> Result<(), String> {
+        use std::collections::{HashMap, HashSet};
+        if !catalog.includes_other
+            || confirmed.includes_other
+            || catalog.revision != confirmed.revision
+            || catalog.following_revision != confirmed.following_revision
+            || catalog.policy_revision != confirmed.policy_revision
+            || catalog.scopes != confirmed.scopes
+            || catalog.followed_authors != confirmed.followed_authors
+            || catalog.author_policies != confirmed.author_policies
+        {
+            return Err("AUDIT_FINAL_CATALOG_CHANGED".into());
+        }
+        if rows.len() != plan.works.len()
+            || rows.iter().zip(&plan.works).any(|(row, work)| {
+                row["source"] != json!(work.source) || row["workId"] != work.work_id
+            })
+        {
+            return Err("AUDIT_DETAIL_RECEIPT_MISMATCH".into());
+        }
+        fn index(snapshot: &DiscoverySnapshot) -> HashMap<
+            (workbench_storage::Source, &str),
+            &workbench_storage::DiscoveryRecord,
+        > {
+            snapshot.records.iter().map(|record| {
+                ((record.work.source, record.work.work_id.as_str()), record)
+            }).collect::<HashMap<_, _>>()
+        }
+        let saved = index(catalog);
+        let visible = index(confirmed);
+        if saved.len() != catalog.records.len() || visible.len() != confirmed.records.len() {
+            return Err("AUDIT_CATALOG_DUPLICATE_WORK".into());
+        }
+        let policies: HashMap<_, _> = confirmed.author_policies.iter().map(|policy| {
+            ((policy.source, policy.author.as_str()), policy)
+        }).collect();
+        let blocked: HashSet<_> = confirmed.authors.iter().filter(|range| {
+            range.error_code.as_deref() == Some("AUTHOR_QUERY_PLACEHOLDER")
+        }).map(|range| (range.source, range.author.as_str())).collect();
+        let observation_error = catalog.observation_error_code.as_ref()
+            .or(confirmed.observation_error_code.as_ref());
+        for (row, work) in rows.iter_mut().zip(&plan.works) {
+            let source = match work.source {
+                Source::Jm => workbench_storage::Source::Jm,
+                Source::Pica => workbench_storage::Source::Pica,
+            };
+            let key = (source, work.work_id.as_str());
+            let record = saved.get(&key);
+            let projected = visible.get(&key);
+            let memberships: Vec<_> = work.expected_authors.iter().map(|author| {
+                let present = projected.is_some() && record.is_some_and(|record| {
+                    !(work.source == Source::Jm && record.work.tags.iter()
+                        .any(|tag| workbench_sources::is_jm_english_category(tag)))
+                        && !blocked.contains(&(source, author.as_str()))
+                        && policies.get(&(source, author.as_str())).is_some_and(|policy| {
+                            policy.matches_work_credits(&work.work_id, &record.work.authors)
+                        })
+                });
+                json!({"author":author,"present":present,
+                    "discoveryRevision":confirmed.revision,"policyRevision":confirmed.policy_revision,
+                    "observationErrorCode":observation_error,
+                    "perAuthorEntryVerified":false,"membershipEvidence":"final-native-catalog"})
+            }).collect();
+            let memberships_passed = !memberships.is_empty()
+                && memberships.iter().all(|membership| membership["present"] == true);
+            let mut failures = vec![];
+            if row["detailPassed"] != true { failures.push("AUDIT_DETAIL_NOT_VERIFIED"); }
+            if record.is_none() { failures.push("AUDIT_WORK_NOT_IN_FINAL_CATALOG"); }
+            if projected.is_none() { failures.push("AUDIT_WORK_NOT_CONFIRMED"); }
+            if !memberships_passed { failures.push("AUDIT_EXPECTED_AUTHOR_MEMBERSHIP_MISSING"); }
+            if observation_error.is_some() { failures.push("AUDIT_FINAL_CATALOG_WARNING"); }
+            row["memberships"] = json!(memberships);
+            row["savedInCatalog"] = json!(record.is_some());
+            row["savedInCatalogEvidence"] = json!("final-native-catalog-view");
+            row["visibleInAllAuthorResults"] = json!(projected.is_some());
+            row["catalogObservationErrorCode"] = json!(catalog.observation_error_code);
+            row["projectedObservationErrorCode"] = json!(confirmed.observation_error_code);
+            row["membershipFinalized"] = json!(true);
+            row["failureCodes"] = json!(failures);
+            row["passed"] = json!(failures.is_empty());
+        }
+        Ok(())
     }
 
     const READ_BUSY_DELAYS_MS: [u64; 5] = [250, 500, 1000, 2000, 4000];
@@ -324,6 +450,8 @@ mod contract {
                 Args::parse(values.clone()).unwrap().cancel_file,
                 Some(PathBuf::from("marker"))
             );
+            values[8] = "details".into();
+            assert_eq!(Args::parse(values.clone()).unwrap().mode, "details");
             values.extend(["--cancel-file".into(), "duplicate".into()]);
             assert!(Args::parse(values).is_err());
         }
@@ -346,6 +474,152 @@ mod contract {
                 .unwrap()
                 .validate()
                 .is_err());
+        }
+
+        fn detail_response(authors: &[&str]) -> QueryResult {
+            QueryResult {
+                source: Source::Jm,
+                session_id: "synthetic-session".into(),
+                discovery_revision: Some(7),
+                observation_error_code: None,
+                page: workbench_accounts::SourcePage {
+                    page: 1, total: Some(1), pages: Some(1), has_more: Some(false),
+                    folders: vec![], issues: vec![], jm_search_boundary: None,
+                    items: vec![workbench_accounts::SourceWork {
+                        source: Source::Jm, work_id: "123".into(), title: "Synthetic work".into(),
+                        authors: authors.iter().map(|author| (*author).into()).collect(),
+                        description: None, tags: vec![], categories: None, favorite: None,
+                        chapter_count: None, page_count: None, source_updated_at: None,
+                        cover_available: false,
+                    }],
+                },
+            }
+        }
+
+        fn detail_fixture() -> (Plan, DiscoverySnapshot) {
+            let plan = serde_json::from_value(json!({"version":1,"expectedFollowedAuthors":1,
+                "works":[{"source":"JM","workId":"123","expectedAuthors":["Writer"]}]})).unwrap();
+            let policy = workbench_storage::AuthorQueryDocument::default()
+                .resolve(workbench_storage::Source::Jm, &"a".repeat(64), "Writer");
+            let catalog = DiscoverySnapshot {
+                scopes: vec![], revision: 7, followed_authors: vec!["Writer".into()],
+                following_revision: 2, policy_revision: 3, run: None, last_check: None,
+                authors: vec![], author_policies: vec![policy], other_record_count: 0,
+                includes_other: true, observation_error_code: None,
+                records: vec![workbench_storage::DiscoveryRecord {
+                    work: workbench_accounts::discovery_work_from_source(
+                        detail_response(&["Writer"]).page.items.remove(0)),
+                    matched_authors: vec!["Unrelated query".into()], author_verified: false,
+                    observed_at: 1, metadata_detail_at: Some(1), scan_id: "a".repeat(64),
+                    first_discovered_run_id: None,
+                }],
+            };
+            (plan, catalog)
+        }
+
+        #[test]
+        fn details_memberships_reuse_native_policy_and_ignore_query_provenance() {
+            for kind in 0..4 {
+                let (plan, mut catalog) = detail_fixture();
+                let credit = match kind {
+                    1 => "Reviewed alias",
+                    2 => "Reviewed complete composite label",
+                    3 => "Incorrect source credit",
+                    _ => "Writer",
+                };
+                catalog.records[0].work.authors = vec![credit.into()];
+                let policy = &mut catalog.author_policies[0];
+                match kind {
+                    1 => policy.verified_aliases.push(credit.into()),
+                    2 => policy.exact_credits.push(credit.into()),
+                    3 => policy.work_credits.push(workbench_storage::AuthorWorkCredit {
+                        work_id: "123".into(), expected_authors: vec![credit.into()],
+                        expected_author_variants: vec![], corrected_authors: vec!["Writer".into()],
+                    }),
+                    _ => {}
+                }
+                let mut confirmed = catalog.clone();
+                confirmed.includes_other = false;
+                let mut rows = vec![detail_receipt(&plan.works[0], Ok(detail_response(&[credit])))];
+                assert_eq!(rows[0]["passed"], false);
+                finalize_details(&plan, &mut rows, &catalog, &confirmed).unwrap();
+                assert_eq!(rows[0]["passed"], true);
+                assert_eq!(rows[0]["memberships"][0]["present"], true);
+                assert_eq!(rows[0]["membershipFinalized"], true);
+                assert_eq!(rows[0]["membershipEvidence"], "final-native-catalog");
+                assert_eq!(rows[0]["perAuthorEntryVerified"], false);
+                assert!(rows[0]["memberships"][0].get("historyComplete").is_none());
+            }
+        }
+
+        #[test]
+        fn details_final_catalog_never_rescues_failed_or_empty_fresh_evidence() {
+            for kind in 0..11 {
+                let (plan, mut catalog) = detail_fixture();
+                let mut confirmed = catalog.clone();
+                confirmed.includes_other = false;
+                let mut response = detail_response(&["Writer"]);
+                match kind {
+                    0 => response.page.items[0].authors.clear(),
+                    2 => catalog.records.clear(),
+                    3 => confirmed.records.clear(),
+                    4 => response.page.items[0].work_id = "999".into(),
+                    5 => response.observation_error_code = Some("STORE_UNAVAILABLE".into()),
+                    6 => confirmed.observation_error_code = Some("STORE_UNAVAILABLE".into()),
+                    7 => {
+                        catalog.records[0].work.authors = vec!["Someone else".into()];
+                        catalog.records[0].matched_authors = vec!["Writer".into()];
+                        catalog.records[0].author_verified = true;
+                        confirmed.records = catalog.records.clone();
+                    }
+                    8 => {
+                        catalog.records[0].work.tags = vec!["English Manga".into()];
+                        confirmed.records = catalog.records.clone();
+                    }
+                    9 => {
+                        catalog.author_policies[0].source = workbench_storage::Source::Pica;
+                        confirmed.author_policies = catalog.author_policies.clone();
+                    }
+                    10 => confirmed.authors.push(serde_json::from_value(json!({
+                        "author":"Writer","source":"JM","state":"partial",
+                        "lastAttemptAt":null,"lastCompleteAt":null,"observedCount":0,
+                        "pagesRead":0,"errorCode":"AUTHOR_QUERY_PLACEHOLDER"
+                    })).unwrap()),
+                    _ => {}
+                }
+                let result = if kind == 1 {
+                    Err(workbench_accounts::AccountError::new("SOURCE_UNAVAILABLE"))
+                } else { Ok(response) };
+                let mut rows = vec![detail_receipt(&plan.works[0], result)];
+                finalize_details(&plan, &mut rows, &catalog, &confirmed).unwrap();
+                assert_eq!(rows[0]["passed"], false, "case {kind}");
+                assert!(!rows[0]["failureCodes"].as_array().unwrap().is_empty());
+                if kind == 0 || kind == 1 {
+                    assert_eq!(rows[0]["memberships"][0]["present"], true);
+                    assert_eq!(rows[0]["detailPassed"], false);
+                }
+                if kind == 1 { assert_eq!(rows[0]["errorCode"], "SOURCE_UNAVAILABLE"); }
+                if kind == 2 { assert_eq!(rows[0]["savedInCatalog"], false); }
+                if kind == 3 { assert_eq!(rows[0]["visibleInAllAuthorResults"], false); }
+            }
+        }
+
+        #[test]
+        fn details_require_one_coherent_final_catalog_and_complete_receipts() {
+            for kind in 0..4 {
+                let (plan, catalog) = detail_fixture();
+                let mut confirmed = catalog.clone();
+                confirmed.includes_other = false;
+                let mut rows = vec![detail_receipt(&plan.works[0], Ok(detail_response(&["Writer"])))];
+                match kind {
+                    0 => confirmed.revision += 1,
+                    1 => confirmed.policy_revision += 1,
+                    2 => confirmed.following_revision += 1,
+                    _ => rows.clear(),
+                }
+                assert!(finalize_details(&plan, &mut rows, &catalog, &confirmed).is_err());
+                assert!(rows.iter().all(|row| row["passed"] == false));
+            }
         }
 
         #[tokio::test]
@@ -481,7 +755,9 @@ mod contract {
 
 #[cfg(windows)]
 mod local {
-    use super::contract::{retry_busy_read, wait_for_workers, Args, CancelFile, Plan};
+    use super::contract::{
+        detail_receipt, finalize_details, retry_busy_read, wait_for_workers, Args, CancelFile, Plan,
+    };
     use serde::Serialize;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
@@ -742,6 +1018,60 @@ mod local {
             "observationErrorCode":final_snapshot.observation_error_code,"projectedObservationErrorCode":confirmed.observation_error_code}),
         )
     }
+
+    async fn details(
+        service: &Arc<Service>,
+        scopes: &[DiscoveryScope],
+        plan: &Plan,
+        output: &Path,
+        control: &Control,
+    ) -> Result<Value> {
+        if plan.works.is_empty() {
+            return Err("AUDIT_EVIDENCE_WORKS_REQUIRED".into());
+        }
+        let mut rows = vec![];
+        for work in &plan.works {
+            control.check_cancel()?;
+            require_app_closed()?;
+            let auth = scope(scopes, work.source)?;
+            // Exactly one native detail request per planned identity. Local
+            // catalog retries must never repeat a completed source request.
+            let response = service.query(
+                work.source, &auth.session_id, QueryKind::Detail, &work.work_id, None, 1,
+            ).await;
+            rows.push(detail_receipt(work, response));
+            save(output, "details-progress.private.json", &rows)?;
+            println!("{}", json!({"mode":"details","checked":rows.len(),
+                "total":plan.works.len(),"membershipFinalized":false}));
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        control.check_cancel()?;
+        let final_snapshot = snapshot(service, scopes, output, "catalog-after.private.json").await?;
+        control.check_cancel()?;
+        let confirmed = read_catalog(service, scopes, false).await?;
+        save(output, "confirmed-catalog.private.json", &confirmed)?;
+        finalize_details(plan, &mut rows, &final_snapshot, &confirmed)?;
+        save(output, "details-final.private.json", &rows)?;
+        // These local history receipts let the offline audit compare preserved
+        // recent checkpoints. This mode never starts a recent traversal.
+        for auth in scopes {
+            control.check_cancel()?;
+            let history = retry_busy_read(|| {
+                service.source_recent_history(auth.source, &auth.session_id)
+            }).await?;
+            save(output, &format!("recent-{}.private.json", auth.source.as_str()), &history)?;
+        }
+        control.check_cancel()?;
+        Ok(json!({"mode":"details","passed":rows.iter().all(|row| row["passed"] == true),
+            "checked":rows.len(),"passing":rows.iter().filter(|row| row["passed"] == true).count(),
+            "detailsVerified":rows.iter().filter(|row| row["detailPassed"] == true).count(),
+            "membershipFinalized":true,"perAuthorEntryVerified":false,
+            "membershipEvidence":"final-native-catalog","recentTraversalPerformed":false,
+            "nativeUiAcceptance":false,"inventoryMutation":false,"fullSiteCoverage":false,
+            "observationErrorCode":final_snapshot.observation_error_code,
+            "projectedObservationErrorCode":confirmed.observation_error_code}))
+    }
+
     async fn authors(
         service: &Arc<Service>,
         scopes: &[DiscoveryScope],
@@ -934,6 +1264,7 @@ mod local {
                 )
             }
             "evidence" => evidence(service, &scopes, plan, &args.output, control).await,
+            "details" => details(service, &scopes, plan, &args.output, control).await,
             "authors" | "retry" => {
                 authors(
                     service,
@@ -1024,6 +1355,11 @@ mod local {
             Ok(report) => report,
             Err(error) => json!({"mode":args.mode,"passed":false,"errorCode":error}),
         };
+        if args.mode == "details" {
+            report["perAuthorEntryVerified"] = json!(false);
+            report["membershipEvidence"] = json!("final-native-catalog");
+            report["recentTraversalPerformed"] = json!(false);
+        }
         if stop_requested {
             report["stopRequested"] = json!(true);
             report["cancelErrorCode"] = json!(cancel_error);

@@ -2512,11 +2512,123 @@ pub(crate) struct Traversal {
     pages: Option<u64>,
     ids: HashSet<String>,
     head_ids: Vec<String>,
-    /// Effective source slots, excluding only verified JM boundary overlaps.
+    /// Effective source slots, excluding only verified JM overlaps/replays.
     record_count: usize,
     /// Every raw slot still consumes the unchanged request budget.
     raw_record_count: usize,
     last_jm_boundary: Option<(SourceWork, crate::JmSearchBoundaryItem)>,
+    recent_replay: RecentReplay,
+}
+
+#[derive(Default)]
+struct RecentReplay {
+    records: Vec<(SourceWork, crate::JmSearchBoundaryItem)>,
+    positions: HashMap<String, usize>,
+    pending: Option<RecentReplayCursor>,
+    full_pages: usize,
+}
+
+#[derive(Clone, Copy)]
+struct RecentReplayCursor {
+    next: usize,
+    tail: usize,
+}
+
+struct RecentReplayPage {
+    skipped: usize,
+    additions: Vec<(SourceWork, crate::JmSearchBoundaryItem)>,
+    pending: Option<RecentReplayCursor>,
+    full_pages: usize,
+}
+
+impl RecentReplay {
+    /// Native per-row evidence is deliberately unavailable after serialization.
+    /// Plan the entire page before either the common traversal or this history
+    /// changes. A replay must reach its frozen tail before any new suffix.
+    fn prepare(&self, page: &SourcePage) -> Result<RecentReplayPage> {
+        let invalid = || AccountError::new("DISCOVERY_PAGINATION_CHANGED");
+        let boundary = page.jm_search_boundary.as_ref().ok_or_else(invalid)?;
+        let proofs = boundary.recent_rows.as_ref().ok_or_else(invalid)?;
+        if !page.issues.is_empty()
+            || page.items.is_empty()
+            || page.record_count() > 1000
+            || page.pages.is_some()
+            || page.has_more.is_some()
+            || !crate::service::jm_search_boundary_is_valid(page)
+            || proofs.len() != page.items.len()
+            || boundary.first.as_ref() != proofs.first()
+            || boundary.last.as_ref() != proofs.last()
+            || proofs.iter().zip(&page.items).any(|(proof, work)| {
+                work.source != Source::Jm
+                    || proof.work_id != work.work_id
+                    || proof.fingerprint.len() != 64
+                    || !proof
+                        .fingerprint
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        {
+            return Err(invalid());
+        }
+        let mut cursor = self.pending.unwrap_or_else(|| RecentReplayCursor {
+            next: self
+                .positions
+                .get(&page.items[0].work_id)
+                .copied()
+                .unwrap_or(self.records.len()),
+            tail: self.records.len(),
+        });
+        let mut additions = vec![];
+        let mut incoming = HashSet::new();
+        let mut skipped = 0;
+        for (work, proof) in page.items.iter().zip(proofs) {
+            if let Some(position) = self.positions.get(&work.work_id) {
+                if !additions.is_empty()
+                    || cursor.next >= cursor.tail
+                    || *position != cursor.next
+                    || self
+                        .records
+                        .get(cursor.next)
+                        .is_none_or(|(saved, evidence)| saved != work || evidence != proof)
+                {
+                    return Err(invalid());
+                }
+                cursor.next += 1;
+                skipped += 1;
+            } else {
+                if cursor.next != cursor.tail || !incoming.insert(work.work_id.as_str()) {
+                    return Err(invalid());
+                }
+                additions.push((work.clone(), proof.clone()));
+            }
+        }
+        let full_pages = if additions.is_empty() {
+            self.full_pages + 1
+        } else {
+            0
+        };
+        if full_pages > 3 {
+            return Err(AccountError::new("RECENT_RANGE_INCOMPLETE"));
+        }
+        Ok(RecentReplayPage {
+            skipped,
+            // Even a replay ending exactly at the tail must show new progress
+            // before it may establish a successful bounded coverage window.
+            pending: additions.is_empty().then_some(cursor),
+            additions,
+            full_pages,
+        })
+    }
+
+    fn commit(&mut self, page: RecentReplayPage) {
+        self.pending = page.pending;
+        self.full_pages = page.full_pages;
+        for (work, proof) in page.additions {
+            self.positions
+                .insert(work.work_id.clone(), self.records.len());
+            self.records.push((work, proof));
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -2529,7 +2641,7 @@ pub(crate) struct TraversedPage {
 
 impl Traversal {
     pub(crate) fn append(&mut self, page: &SourcePage) -> Result<TraversedPage> {
-        self.append_with_total_policy(page, false)
+        self.append_with_total_policy(page, false, None)
     }
 
     pub(crate) fn append_recent(&mut self, page: &SourcePage) -> Result<TraversedPage> {
@@ -2538,15 +2650,29 @@ impl Traversal {
         // that the source ended. Author/search traversal remains exact.
         let capped_jm_total = page.total == Some(10_000)
             && !page.items.is_empty()
-            && page.items.iter().all(|work| work.source == Source::Jm)
-            && crate::service::jm_search_boundary_is_valid(page);
-        self.append_with_total_policy(page, capped_jm_total)
+            && page.items.iter().all(|work| work.source == Source::Jm);
+        if capped_jm_total {
+            let replay = self.recent_replay.prepare(page)?;
+            let accepted = self.append_with_total_policy(page, true, Some(replay.skipped))?;
+            self.recent_replay.commit(replay);
+            Ok(accepted)
+        } else {
+            if !self.recent_replay.records.is_empty() {
+                return Err(AccountError::new("DISCOVERY_PAGINATION_CHANGED"));
+            }
+            self.append_with_total_policy(page, false, None)
+        }
+    }
+
+    pub(crate) fn recent_can_checkpoint(&self) -> bool {
+        self.recent_replay.pending.is_none()
     }
 
     fn append_with_total_policy(
         &mut self,
         page: &SourcePage,
         capped_total: bool,
+        proven_recent_skip: Option<usize>,
     ) -> Result<TraversedPage> {
         let invalid = || AccountError::new("DISCOVERY_PAGINATION_CHANGED");
         if page.page != self.page + 1
@@ -2562,22 +2688,25 @@ impl Traversal {
             return Err(invalid());
         }
         let boundary_valid = crate::service::jm_search_boundary_is_valid(page);
-        let skipped_leading_work = usize::from(
-            self.page > 0
-                && self.total.is_some()
-                && boundary_valid
-                && self.last_jm_boundary.as_ref().is_some_and(|(prior, edge)| {
-                    page.items.first().is_some_and(|work| work == prior)
-                        && page
-                            .jm_search_boundary
-                            .as_ref()
-                            .and_then(|boundary| boundary.first.as_ref())
-                            == Some(edge)
-                }),
-        );
-        // An issue is not progress. A repeated singleton or a full repeated page
-        // must not advance pagination by consuming only the exception itself.
-        if skipped_leading_work > 0
+        let skipped_leading_work = proven_recent_skip.unwrap_or_else(|| {
+            usize::from(
+                self.page > 0
+                    && self.total.is_some()
+                    && boundary_valid
+                    && self.last_jm_boundary.as_ref().is_some_and(|(prior, edge)| {
+                        page.items.first().is_some_and(|work| work == prior)
+                            && page
+                                .jm_search_boundary
+                                .as_ref()
+                                .and_then(|boundary| boundary.first.as_ref())
+                                == Some(edge)
+                    }),
+            )
+        });
+        // Without native recent replay proof, a repeated singleton or a full
+        // repeated page cannot advance pagination using only the exception.
+        if proven_recent_skip.is_none()
+            && skipped_leading_work > 0
             && !page
                 .items
                 .iter()

@@ -668,7 +668,39 @@ pub(crate) fn search_page(
         result.jm_search_boundary = Some(JmSearchBoundary {
             first: jm_search_boundary_item(records.first(), first)?,
             last: jm_search_boundary_item(records.last(), last)?,
+            recent_rows: None,
         });
+    }
+    Ok((result, covers))
+}
+
+/// Recent-page replay requires complete raw-row evidence, never reconstructed
+/// work metadata. Search/author callers continue to receive edge evidence only.
+pub(crate) fn recent_page(
+    source: Source,
+    data: &Value,
+    requested: u64,
+) -> SourceResult<(SourcePage, CoverDescriptors)> {
+    let (mut result, covers) = search_page(source, data, requested)?;
+    if source == Source::Jm && result.total.is_some() && result.issues.is_empty() {
+        let records = data["content"]
+            .as_array()
+            .ok_or(error("SOURCE_RESPONSE_INVALID"))?;
+        if records.len() == result.items.len() {
+            let rows = records
+                .iter()
+                .zip(&result.items)
+                .map(|(record, item)| {
+                    jm_search_boundary_item(Some(record), Some(item))?
+                        .ok_or(error("SOURCE_RESPONSE_INVALID"))
+                })
+                .collect::<SourceResult<Vec<_>>>()?;
+            let boundary = result
+                .jm_search_boundary
+                .as_mut()
+                .ok_or(error("SOURCE_RESPONSE_INVALID"))?;
+            boundary.recent_rows = Some(rows);
+        }
     }
     Ok((result, covers))
 }

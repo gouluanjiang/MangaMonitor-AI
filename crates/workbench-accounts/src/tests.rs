@@ -760,6 +760,7 @@ async fn query_boundary_evidence_is_forwarded_only_for_jm_ordered_lists() {
     let boundary = JmSearchBoundary {
         first: Some(edge.clone()),
         last: Some(edge),
+        recent_rows: None,
     };
     *backend.0.query_boundary.lock().unwrap() = Some(boundary.clone());
     let result = service

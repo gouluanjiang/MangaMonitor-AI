@@ -178,6 +178,7 @@ async fn recent_lists_fetch_one_requested_page_and_preserve_source_order_metadat
     assert_eq!(boundary.first.as_ref().unwrap().work_id, "456");
     assert_eq!(boundary.last.as_ref().unwrap().work_id, "123");
     assert_eq!(boundary.first.as_ref().unwrap().fingerprint.len(), 64);
+    assert!(boundary.recent_rows.is_none());
     assert_eq!(page.page, 1);
     // The site total may exceed the UI's browsing budget. It is not a request
     // to fetch those pages, and must not make a small current page unreadable.
@@ -201,6 +202,7 @@ async fn recent_lists_fetch_one_requested_page_and_preserve_source_order_metadat
     assert!(!jm.has_cover_metadata("789"));
     let pica = session(Source::Pica);
     let page = sources.recent(&pica, 2).await.unwrap();
+    assert!(page.jm_search_boundary.is_none());
     assert_eq!(
         (page.page, page.pages, page.has_more),
         (2, Some(2), Some(false))
@@ -247,6 +249,10 @@ async fn recent_lists_keep_empty_unknown_dates_and_failures_distinct() {
     let empty = sources.recent(&jm, 1).await.unwrap();
     assert_eq!((empty.total, empty.has_more), (Some(0), Some(false)));
     assert!(empty.items.is_empty());
+    assert_eq!(
+        empty.jm_search_boundary.as_ref().unwrap().recent_rows,
+        Some(vec![])
+    );
     let unknown_date = sources.recent(&pica, 1).await.unwrap();
     assert_eq!(unknown_date.items[0].source_updated_at, None);
     assert_eq!(
@@ -884,6 +890,128 @@ fn jm_search_boundary_fingerprints_cover_canonical_raw_rows() {
         assert_eq!(first.items, changed.items);
         assert_ne!(first.jm_search_boundary, changed.jm_search_boundary);
     }
+}
+
+#[tokio::test]
+async fn jm_recent_attaches_every_ordered_raw_row_without_extra_requests() {
+    let sources = scripted(vec![Ok(json!({"total":3,"content":[
+        {"id":"125","name":"First fixture"},
+        {"id":"123","name":"Middle fixture","extra":{"rawOnly":true}},
+        {"id":"124","name":"Last fixture"}
+    ]}))]);
+    let jm = session(Source::Jm);
+    let page = sources.recent(&jm, 7).await.unwrap();
+    let boundary = page.jm_search_boundary.as_ref().unwrap();
+    let rows = boundary.recent_rows.as_ref().unwrap();
+    assert_eq!(rows.len(), page.items.len());
+    assert_eq!(
+        rows.iter().map(|row| row.work_id.as_str()).collect::<Vec<_>>(),
+        ["125", "123", "124"]
+    );
+    assert_eq!(rows.first(), boundary.first.as_ref());
+    assert_eq!(rows.last(), boundary.last.as_ref());
+    assert!(rows.iter().all(|row| row.fingerprint.len() == 64
+        && row.fingerprint.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))));
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        [(Source::Jm, Method::GET, "/categories/filter?page=7&order=&c=0&o=mr".into())]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[test]
+fn jm_recent_middle_row_proof_keeps_all_raw_fields_and_array_order() {
+    use sha2::{Digest, Sha256};
+
+    let raw: Value = serde_json::from_str(
+        r#"{"name":"Middle fixture","id":"124","extra":{"z":0,"a":{"y":2,"x":1}},"sequence":[{"b":2,"a":1},2]}"#,
+    )
+    .unwrap();
+    let reordered: Value = serde_json::from_str(
+        r#"{"sequence":[{"a":1,"b":2},2],"extra":{"a":{"x":1,"y":2},"z":0},"id":"124","name":"Middle fixture"}"#,
+    )
+    .unwrap();
+    let parse = |middle| {
+        protocol::recent_page(Source::Jm, &json!({"total":3,"content":[
+            {"id":"123","name":"First fixture"}, middle,
+            {"id":"125","name":"Last fixture"}
+        ]}), 1)
+        .unwrap()
+        .0
+    };
+    let first = parse(raw.clone());
+    let boundary = first.jm_search_boundary.as_ref().unwrap();
+    assert_eq!(first.jm_search_boundary, parse(reordered).jm_search_boundary);
+    let canonical = br#"{"extra":{"a":{"x":1,"y":2},"z":0},"id":"124","name":"Middle fixture","sequence":[{"a":1,"b":2},2]}"#;
+    assert_eq!(
+        boundary.recent_rows.as_ref().unwrap()[1].fingerprint,
+        format!("{:x}", Sha256::digest(canonical))
+    );
+    let mut changed_raw = raw.clone();
+    changed_raw["extra"]["a"]["x"] = json!(3);
+    let mut changed_order = raw;
+    changed_order["sequence"] = json!([2,{"a":1,"b":2}]);
+    for changed in [changed_raw, changed_order] {
+        let changed = parse(changed);
+        assert_eq!(first.items, changed.items);
+        let changed = changed.jm_search_boundary.as_ref().unwrap();
+        assert_eq!(boundary.first, changed.first);
+        assert_eq!(boundary.last, changed.last);
+        assert_ne!(
+            boundary.recent_rows.as_ref().unwrap()[1],
+            changed.recent_rows.as_ref().unwrap()[1]
+        );
+    }
+}
+
+#[test]
+fn recent_full_row_proof_requires_known_clean_jm_rows() {
+    for invalid in [
+        json!({"id":"124","name":""}),
+        json!({"id":"124","name":"Invalid fixture","author":{}}),
+        Value::Null,
+    ] {
+        let (page, _) = protocol::recent_page(Source::Jm, &json!({"total":3,"content":[
+            {"id":"123","name":"First fixture"}, invalid,
+            {"id":"125","name":"Last fixture"}
+        ]}), 1).unwrap();
+        assert_eq!((page.record_count(), page.items.len(), page.issues.len()), (3, 2, 1));
+        assert!(page.jm_search_boundary.as_ref().unwrap().recent_rows.is_none());
+    }
+    let row = json!({"id":"123","name":"Fixture"});
+    let (unknown, _) = protocol::recent_page(Source::Jm, &json!({"content":[row.clone()]}), 1).unwrap();
+    assert!(unknown.jm_search_boundary.is_none());
+    let (search, _) = protocol::search_page(Source::Jm, &json!({"total":1,"content":[row.clone()]}), 1).unwrap();
+    assert!(search.jm_search_boundary.as_ref().unwrap().recent_rows.is_none());
+    let (pica, _) = protocol::recent_page(Source::Pica, &json!({"comics":{
+        "total":1,"page":1,"pages":1,"limit":20,"docs":[{"_id":PICA_ID,"title":"Fixture"}]
+    }}), 1).unwrap();
+    assert!(pica.jm_search_boundary.is_none());
+    assert_eq!(
+        protocol::recent_page(Source::Jm, &json!({"total":2,"content":[row.clone(),row]}), 1).unwrap_err().code,
+        "SOURCE_PAGINATION_INVALID"
+    );
+}
+
+#[test]
+fn jm_recent_full_row_proof_never_crosses_the_serialized_page_boundary() {
+    let data = json!({"total":2,"content":[
+        {"id":"123","name":"First fixture"}, {"id":"124","name":"Last fixture"}
+    ]});
+    let (recent, _) = protocol::recent_page(Source::Jm, &data, 1).unwrap();
+    let (search, _) = protocol::search_page(Source::Jm, &data, 1).unwrap();
+    assert!(recent.jm_search_boundary.as_ref().unwrap().recent_rows.is_some());
+    let encoded = serde_json::to_value(&recent).unwrap();
+    assert_eq!(encoded, serde_json::to_value(&search).unwrap());
+    assert!(encoded["jmSearchBoundary"].get("recentRows").is_none());
+    let restored: SourcePage = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(restored, search);
+    assert!(restored.jm_search_boundary.as_ref().unwrap().recent_rows.is_none());
+    let mut injected = encoded;
+    injected["jmSearchBoundary"]["recentRows"] = json!([
+        {"workId":"123","fingerprint":"a".repeat(64)}
+    ]);
+    assert!(serde_json::from_value::<SourcePage>(injected).is_err());
 }
 
 #[test]

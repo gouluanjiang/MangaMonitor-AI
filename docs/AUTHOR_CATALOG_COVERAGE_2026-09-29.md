@@ -51,16 +51,31 @@ Recent coverage is separate from author coverage. The first check establishes an
 explicit bounded continuous window (eight pages by default; the local audit may
 request a larger initial window). It is labeled an initial window, never the
 source's complete historical archive. Subsequent checks continue until the prior
-ordered head sequence is joined or the source reports its end. Repetition,
+ordered head sequence is joined or the source reports its end. Unverified repetition,
 isolated malformed rows, storage failure, source errors and exhausted traversal
 limits leave a partial result and preserve the last successful boundary.
 
 JM's recent all-category endpoint reports a 10,000 listing ceiling while later
 pages can still contain new works. Only this recent endpoint treats that value
 as advisory: it cannot prove the source ended or invalidate a longer bounded
-window. Author/search total checks, changed totals, duplicate detection and raw
-boundary evidence remain strict. A source pagination change still reports an
-incomplete range; saved observations are retained for the next check.
+window. The same endpoint can replay an earlier, ordered fragment across several
+pages. A recent-only recovery path accepts that fragment only when every source
+row and projected work exactly match a contiguous part already read. New rows
+may follow a repeated prefix only after it reaches the known tail. Reordered,
+changed, unverifiable or noncontiguous repeats remain incomplete. Full replay
+pages have a bounded consecutive limit and cannot alone finish an initial
+coverage window. If the initial window ends during a proven replay, JM may use
+at most three additional recovery pages to reach the known tail and obtain new
+records. The result reports those requests separately and the coverage stores
+the actual page count. An unresolved replay remains incomplete; other sources
+and author queries receive no extra requests. Every requested row still consumes
+the unchanged overall traversal budget.
+
+This uses transient per-row raw hashes supplied only by the native JM recent
+parser; persisted or IPC-deserialized pages cannot manufacture that proof.
+Author/search traversal and Pica duplicate rules remain unchanged. A source
+pagination change still reports an incomplete range, preserving observations
+without advancing a successful coverage checkpoint.
 
 The source can still change its index, reorder results or omit records. The UI
 must show the actual check range and unresolved errors rather than claiming that

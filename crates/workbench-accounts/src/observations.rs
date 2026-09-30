@@ -13,6 +13,12 @@ use std::{
 use workbench_credentials::Vault;
 use workbench_storage::{ObservedWork, RecentCoverage, WorkbenchStore};
 
+const RECENT_REPLAY_RECOVERY_PAGES: u64 = 3;
+
+fn no_replay_recovery(pages: &u64) -> bool {
+    *pages == 0
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecentHistoryResult {
@@ -45,6 +51,10 @@ pub struct RecentCheckResult {
     pub reached_end: bool,
     pub joined_previous: bool,
     pub initial_window: bool,
+    /// Extra JM initial-window requests used only to finish a proven replay.
+    /// This is run evidence, not a change to the persisted coverage schema.
+    #[serde(skip_serializing_if = "no_replay_recovery")]
+    pub replay_recovery_pages: u64,
     pub error_code: Option<String>,
 }
 
@@ -72,6 +82,26 @@ pub(crate) struct RecentControl {
 struct RecentState {
     run: Option<RecentCheckRun>,
     context: Option<crate::discovery::DiscoveryContext>,
+}
+
+impl RecentControl {
+    fn commit_coverage_if_running(
+        &self,
+        id: &str,
+        commit: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        // Cancellation and checkpoint persistence share this linearization
+        // boundary. Store operations never acquire recent state in reverse.
+        let memory = self.state.lock().map_err(|_| unavailable())?;
+        if !memory
+            .run
+            .as_ref()
+            .is_some_and(|run| run.id == id && run.phase == "checking")
+        {
+            return Err(AccountError::new("CHECK_CANCELLED"));
+        }
+        commit()
+    }
 }
 
 fn unavailable() -> AccountError {
@@ -555,6 +585,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             reached_end: false,
             joined_previous: false,
             initial_window: false,
+            replay_recovery_pages: 0,
             error_code: None,
         };
         let outcome: Result<()> = async {
@@ -563,13 +594,19 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 .await?
                 .coverage;
             let first_window = previous.head_ids.is_empty();
-            // Initial coverage is an explicitly bounded window. Later checks must
-            // join that window; a limit never silently becomes a new checkpoint.
+            // Initial coverage is a bounded window. A pending JM replay alone
+            // may use up to three reported recovery requests. Later checks must
+            // join the old window; a limit never becomes a new checkpoint.
             let limit = if first_window { max_pages } else { 1000 };
+            let recovery_limit = if first_window && scope.source == Source::Jm {
+                limit.saturating_add(RECENT_REPLAY_RECOVERY_PAGES).min(1000)
+            } else {
+                limit
+            };
             let mut ids = Vec::new();
             let mut sequence = crate::discovery::Traversal::default();
             let mut head = Vec::new();
-            for page in 1..=limit {
+            for page in 1..=recovery_limit {
                 if !self.recent_running(id) {
                     return Err(AccountError::new("CHECK_CANCELLED"));
                 }
@@ -579,6 +616,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                         run.current_source = Some(scope.source);
                         run.current_page = page;
                     }
+                }
+                if page > limit {
+                    result.replay_recovery_pages += 1;
                 }
                 let response = self
                     .query(
@@ -607,16 +647,18 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 // counts before joining or advancing a coverage checkpoint.
                 result.reached_end =
                     append_recent_page(&mut sequence, &batch, &mut ids, &mut head)?;
-                if !first_window && page >= 2 {
+                if !first_window && page >= 2 && sequence.recent_can_checkpoint() {
                     result.joined_previous = contiguous_join(&ids, &previous.head_ids);
                 }
                 if result.reached_end || result.joined_previous {
                     break;
                 }
-                if page == limit {
-                    if first_window {
+                if page >= limit {
+                    if first_window && sequence.recent_can_checkpoint() {
                         result.initial_window = true;
-                    } else {
+                        break;
+                    }
+                    if page == recovery_limit {
                         return Err(AccountError::new("RECENT_RANGE_INCOMPLETE"));
                     }
                 }
@@ -624,6 +666,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
             if !self.recent_running(id) {
                 return Err(AccountError::new("CHECK_CANCELLED"));
+            }
+            if !sequence.recent_can_checkpoint() {
+                return Err(AccountError::new("RECENT_RANGE_INCOMPLETE"));
             }
             let (key, root, lease) = self
                 .observation_identity(scope.source, &scope.session_id)
@@ -637,12 +682,16 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 initial_window: result.initial_window,
                 error_code: None,
             };
+            let control = Arc::clone(&self.recent_checks);
+            let run_id = id.to_owned();
             tokio::task::spawn_blocking(move || {
-                lease.require_current()?;
-                WorkbenchStore::open(&root)
-                    .and_then(|store| store.set_recent_coverage(&key, coverage))
-                    .map_err(|e| AccountError::new(e.code))?;
-                lease.require_current()
+                control.commit_coverage_if_running(&run_id, || {
+                    lease.require_current()?;
+                    WorkbenchStore::open(&root)
+                        .and_then(|store| store.set_recent_coverage(&key, coverage))
+                        .map_err(|e| AccountError::new(e.code))?;
+                    lease.require_current()
+                })
             })
             .await
             .map_err(|_| unavailable())??;
@@ -665,8 +714,8 @@ fn append_recent_page(
     if !page.issues.is_empty() {
         return Err(AccountError::new("SOURCE_ITEM_ISSUES"));
     }
-    // Reuse the same strict source-boundary proof as author traversal. Only a
-    // byte-identical raw JM boundary and equal SourceWork may skip one row.
+    // Author/Pica rules remain strict. Capped JM recent pages may carry native
+    // per-row proof of a contiguous replay; only its verified new suffix counts.
     let accepted = traversal.append_recent(page)?;
     let effective = page.items.iter().skip(accepted.skipped_leading_work);
     ids.extend(effective.clone().map(|work| work.work_id.clone()));
@@ -674,7 +723,7 @@ fn append_recent_page(
         head.extend(effective.map(|work| work.work_id.clone()));
         head.truncate(200);
     }
-    Ok(accepted.complete)
+    Ok(accepted.complete && traversal.recent_can_checkpoint())
 }
 
 fn contiguous_join(ids: &[String], previous: &[String]) -> bool {
@@ -693,6 +742,66 @@ mod tests {
         ));
         assert!(contiguous_join(&ids(&["new", "a", "b"]), &ids(&["a", "b"])));
         assert!(!contiguous_join(&[], &[]));
+    }
+
+    #[test]
+    fn cancellation_before_commit_lock_preserves_persisted_coverage() {
+        let root = tempfile::TempDir::new().unwrap();
+        let store = WorkbenchStore::open(root.path()).unwrap();
+        let key = "a".repeat(64);
+        store
+            .merge_observed_works(&key, storage_source(Source::Jm), vec![], Some(1))
+            .unwrap();
+        let before = store.read_observed_works().unwrap();
+        let coverage = RecentCoverage {
+            checked_at: Some(20),
+            pages_read: 1,
+            reached_end: true,
+            ..RecentCoverage::default()
+        };
+        let control = RecentControl::default();
+        let mut memory = control.state.lock().unwrap();
+        memory.run = Some(RecentCheckRun {
+            id: "fixture".into(),
+            phase: "checking".into(),
+            current_source: Some(Source::Jm),
+            current_page: 1,
+            pages_read: 1,
+            records_read: 0,
+            error_code: None,
+            results: vec![],
+        });
+        let ready = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let commit = scope.spawn(|| {
+                ready.wait();
+                control.commit_coverage_if_running("fixture", || {
+                    store
+                        .set_recent_coverage(&key, coverage.clone())
+                        .map_err(|error| AccountError::new(error.code))
+                })
+            });
+            ready.wait();
+            // Hold the same state mutex used by recent_check_cancel until the
+            // cancellation transition is visible to the waiting commit.
+            memory.run.as_mut().unwrap().phase = "cancelled".into();
+            drop(memory);
+            assert_eq!(commit.join().unwrap().unwrap_err().code, "CHECK_CANCELLED");
+        });
+        assert_eq!(store.read_observed_works().unwrap(), before);
+
+        control.state.lock().unwrap().run.as_mut().unwrap().phase = "checking".into();
+        control
+            .commit_coverage_if_running("fixture", || {
+                // If commit wins the lock, cancellation cannot interleave
+                // between the run check and the persisted coverage update.
+                assert!(control.state.try_lock().is_err());
+                store
+                    .set_recent_coverage(&key, coverage.clone())
+                    .map_err(|error| AccountError::new(error.code))
+            })
+            .unwrap();
+        assert_eq!(store.read_observed_works().unwrap().value.accounts[0].coverage, coverage);
     }
 }
 
@@ -726,12 +835,13 @@ mod recent_sequence_tests {
         let boundary = JmSearchBoundary {
             first: items.first().map(edge),
             last: items.last().map(edge),
+            recent_rows: Some(items.iter().map(edge).collect()),
         };
         SourcePage {
             page: number,
             total: Some(total),
             pages: None,
-            has_more: Some(!end),
+            has_more: if total == 10_000 { None } else { Some(!end) },
             folders: vec![],
             items,
             issues: vec![],
@@ -778,6 +888,153 @@ mod recent_sequence_tests {
             }
             assert!(recent.append_recent(&next).is_err());
         }
+    }
+
+    #[test]
+    fn recent_contiguous_replay_rejoins_the_frozen_tail_before_new_work() {
+        let mut traversal = crate::discovery::Traversal::default();
+        let (mut ids, mut head) = (vec![], vec![]);
+        for batch in [
+            page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false),
+            page(2, 10_000, &["101", "102", "103"], false),
+        ] {
+            assert!(!append_recent_page(&mut traversal, &batch, &mut ids, &mut head).unwrap());
+        }
+        assert_eq!(ids, ["100", "101", "102", "103", "104", "105"]);
+        assert_eq!(head, ids);
+        assert!(!traversal.recent_can_checkpoint());
+        assert!(!append_recent_page(
+            &mut traversal,
+            &page(3, 10_000, &["104", "105", "106"], false),
+            &mut ids,
+            &mut head,
+        )
+        .unwrap());
+        assert!(traversal.recent_can_checkpoint());
+        assert_eq!(ids, ["100", "101", "102", "103", "104", "105", "106"]);
+        assert_eq!(head, ["100", "101", "102", "103", "104", "105"]);
+    }
+
+    #[test]
+    fn replay_proof_rejects_changed_rows_order_gaps_and_missing_native_evidence() {
+        for kind in 0..13 {
+            let mut traversal = crate::discovery::Traversal::default();
+            let (mut ids, mut head) = (vec![], vec![]);
+            append_recent_page(
+                &mut traversal,
+                &page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false),
+                &mut ids,
+                &mut head,
+            )
+            .unwrap();
+            let mut next = page(2, 10_000, &["103", "104", "105", "106"], false);
+            match kind {
+                0 => next.items[1].title = "Changed projection".into(),
+                1 => {
+                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap()[1]
+                        .fingerprint = "f".repeat(64);
+                }
+                2 => next = page(2, 10_000, &["103", "105", "104", "106"], false),
+                3 => next = page(2, 10_000, &["103", "105", "106"], false),
+                4 => next = page(2, 10_000, &["106", "105"], false),
+                5 => next = page(2, 10_000, &["103", "104", "106"], false),
+                6 => next = page(2, 10_000, &["105", "106", "104"], false),
+                7 => next.jm_search_boundary.as_mut().unwrap().recent_rows = None,
+                8 => {
+                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap().pop();
+                }
+                9 => {
+                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap()[1]
+                        .work_id = "999".into();
+                }
+                10 => {
+                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap()[1]
+                        .fingerprint = "g".repeat(64);
+                }
+                11 => {
+                    next.jm_search_boundary.as_mut().unwrap().first.as_mut().unwrap().fingerprint =
+                        "f".repeat(64);
+                }
+                _ => next = page(2, 10_000, &["105", "106", "106"], false),
+            }
+            assert!(append_recent_page(&mut traversal, &next, &mut ids, &mut head).is_err());
+            assert_eq!(ids, ["100", "101", "102", "103", "104", "105"]);
+            assert_eq!(head, ids);
+            // A rejected plan did not consume its page or leave a partial cursor.
+            append_recent_page(
+                &mut traversal,
+                &page(2, 10_000, &["105", "106"], false),
+                &mut ids,
+                &mut head,
+            )
+            .unwrap();
+            assert!(traversal.recent_can_checkpoint());
+        }
+    }
+
+    #[test]
+    fn replay_cannot_restart_or_skip_its_cross_page_cursor() {
+        for ids in [&["103", "104", "105", "106"][..], &["105", "106"], &["106"]] {
+            let mut traversal = crate::discovery::Traversal::default();
+            traversal
+                .append_recent(&page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false))
+                .unwrap();
+            traversal
+                .append_recent(&page(2, 10_000, &["101", "102", "103"], false))
+                .unwrap();
+            assert!(traversal.append_recent(&page(3, 10_000, ids, false)).is_err());
+            assert!(!traversal.recent_can_checkpoint());
+            traversal
+                .append_recent(&page(3, 10_000, &["104", "105", "106"], false))
+                .unwrap();
+            assert!(traversal.recent_can_checkpoint());
+        }
+    }
+
+    #[test]
+    fn full_replay_is_bounded_and_reaching_the_tail_alone_is_not_a_checkpoint() {
+        let mut traversal = crate::discovery::Traversal::default();
+        let names: Vec<_> = (100..112).map(|id| id.to_string()).collect();
+        let refs: Vec<_> = names.iter().map(String::as_str).collect();
+        traversal.append_recent(&page(1, 10_000, &refs, false)).unwrap();
+        for number in 2..=4 {
+            let start = (number as usize - 2) * 3;
+            traversal.append_recent(&page(number, 10_000, &refs[start..start + 3], false)).unwrap();
+            assert!(!traversal.recent_can_checkpoint());
+        }
+        assert_eq!(
+            traversal.append_recent(&page(5, 10_000, &refs[9..], false)).unwrap_err().code,
+            "RECENT_RANGE_INCOMPLETE"
+        );
+        traversal.append_recent(&page(5, 10_000, &["109", "110", "111", "112"], false)).unwrap();
+        assert!(traversal.recent_can_checkpoint());
+
+        let mut tail = crate::discovery::Traversal::default();
+        tail.append_recent(&page(1, 10_000, &["100", "101"], false)).unwrap();
+        tail.append_recent(&page(2, 10_000, &["100", "101"], false)).unwrap();
+        assert!(!tail.recent_can_checkpoint());
+        assert!(tail.append_recent(&page(3, 10_000, &["100", "101"], false)).is_err());
+        tail.append_recent(&page(3, 10_000, &["102"], false)).unwrap();
+        assert!(tail.recent_can_checkpoint());
+    }
+
+    #[test]
+    fn contiguous_recent_replay_does_not_relax_author_or_pica_traversal() {
+        let first = page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false);
+        let repeated = page(2, 10_000, &["101", "102", "103"], false);
+        let mut author = crate::discovery::Traversal::default();
+        author.append(&first).unwrap();
+        assert!(author.append(&repeated).is_err());
+        let pica = |mut page: SourcePage| {
+            for work in &mut page.items {
+                work.source = Source::Pica;
+            }
+            page.jm_search_boundary = None;
+            page
+        };
+        let mut recent = crate::discovery::Traversal::default();
+        recent.append_recent(&pica(first)).unwrap();
+        assert!(recent.append_recent(&pica(repeated)).is_err());
     }
 
     #[test]

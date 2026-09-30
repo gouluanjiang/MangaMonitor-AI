@@ -109,6 +109,10 @@ pub struct JmSearchBoundary {
     pub first: Option<JmSearchBoundaryItem>,
     /// The raw last slot, never the last valid work before an isolated issue.
     pub last: Option<JmSearchBoundaryItem>,
+    /// Complete ordered raw rows for a validated JM recent page only. This
+    /// in-process proof cannot be restored from an IPC or persisted snapshot.
+    #[serde(skip)]
+    pub recent_rows: Option<Vec<JmSearchBoundaryItem>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]

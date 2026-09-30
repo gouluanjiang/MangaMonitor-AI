@@ -17,6 +17,7 @@ fn jm_page(number: u64, total: u64, ids: &[u64]) -> SourcePage {
     response.jm_search_boundary = Some(JmSearchBoundary {
         first: response.items.first().map(edge),
         last: response.items.last().map(edge),
+        recent_rows: None,
     });
     response
 }

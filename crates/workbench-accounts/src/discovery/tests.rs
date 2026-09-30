@@ -432,6 +432,160 @@ async fn finish_recent(service: &TestService) -> crate::observations::RecentChec
     .expect("synthetic recent traversal finishes")
 }
 
+fn recent_replay_page(number: u64, ids: std::ops::Range<u64>) -> SourcePage {
+    let items: Vec<_> = ids
+        .map(|id| work(Source::Jm, &id.to_string(), &["Unfollowed writer"]))
+        .collect();
+    let proofs: Vec<_> = items
+        .iter()
+        .map(|work| crate::JmSearchBoundaryItem {
+            work_id: work.work_id.clone(),
+            fingerprint: format!("{:0>64}", work.work_id),
+        })
+        .collect();
+    let mut batch = page(number, 10_000, items);
+    batch.jm_search_boundary = Some(crate::JmSearchBoundary {
+        first: proofs.first().cloned(),
+        last: proofs.last().cloned(),
+        recent_rows: Some(proofs),
+    });
+    batch
+}
+
+#[tokio::test]
+async fn initial_eight_page_recent_window_recovers_replay_and_preserves_coverage_on_failure() {
+    for outcome in [None, Some("SOURCE_TIMEOUT"), Some("CHECK_CANCELLED")] {
+        let (_root, backend, service, scopes) = setup().await;
+        let previous = service
+            .source_recent_history(Source::Jm, &scopes[0].session_id)
+            .await
+            .unwrap();
+        for number in 1..=7 {
+            let start = 100 + (number - 1) * 6;
+            backend.put(
+                Source::Jm,
+                "__recent__",
+                number,
+                recent_replay_page(number, start..start + 6),
+            );
+        }
+        // Page eight replays the end of page six and start of page seven.
+        // Page nine finishes that exact replay, then adds two new works.
+        backend.put(Source::Jm, "__recent__", 8, recent_replay_page(8, 132..138));
+        backend.put(Source::Jm, "__recent__", 9, recent_replay_page(9, 138..144));
+        if outcome == Some("SOURCE_TIMEOUT") {
+            backend.0.pages.lock().unwrap().insert(
+                key(Source::Jm, "__recent__", 9),
+                Err(AccountError::new("SOURCE_TIMEOUT")),
+            );
+        }
+        if outcome == Some("CHECK_CANCELLED") {
+            backend.0.block_call.store(9, Ordering::SeqCst);
+        }
+        let started = service
+            .recent_check_start(scopes.clone(), Some(8))
+            .await
+            .unwrap();
+        if outcome == Some("CHECK_CANCELLED") {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                backend.0.started.notified(),
+            )
+            .await
+            .expect("recovery request reaches cancellation gate");
+            service.recent_check_cancel(&started.id).unwrap();
+            backend.0.release.notify_one();
+        }
+        let run = finish_recent(&service).await;
+        let result = &run.results[0];
+        assert_eq!(result.source, Source::Jm);
+        assert_eq!(result.replay_recovery_pages, 1);
+        assert_eq!(result.error_code.as_deref(), outcome);
+        assert!(!result.reached_end);
+        assert!(!result.joined_previous);
+        assert_eq!(
+            serde_json::to_value(result).unwrap()["replayRecoveryPages"],
+            1
+        );
+        let history = service
+            .source_recent_history(Source::Jm, &scopes[0].session_id)
+            .await
+            .unwrap();
+        if outcome.is_none() {
+            assert_eq!(run.phase, "complete");
+            assert!(result.initial_window);
+            assert_eq!(result.pages_read, 9);
+            assert_eq!(result.records_read, 54);
+            assert_eq!(history.items.len(), 44);
+            assert_eq!(history.coverage.pages_read, 9);
+            assert!(history.coverage.initial_window);
+            assert_eq!(
+                history.coverage.head_ids,
+                (100..112).map(|id| id.to_string()).collect::<Vec<_>>()
+            );
+            let pica = &run.results[1];
+            assert_eq!(pica.source, Source::Pica);
+            assert_eq!(pica.pages_read, 1);
+            assert_eq!(pica.replay_recovery_pages, 0);
+            assert!(serde_json::to_value(pica).unwrap().get("replayRecoveryPages").is_none());
+        } else {
+            assert_eq!(
+                run.phase,
+                if outcome == Some("CHECK_CANCELLED") { "cancelled" } else { "partial" }
+            );
+            assert_eq!(history.coverage, previous.coverage);
+            assert_eq!(history.items.len(), if outcome == Some("SOURCE_TIMEOUT") { 42 } else { 44 });
+        }
+        let calls = backend.0.calls.lock().unwrap();
+        let jm_pages: Vec<_> = calls
+            .iter()
+            .filter(|(source, query, _)| source == "JM" && query == "__recent__")
+            .map(|(_, _, number)| *number)
+            .collect();
+        assert_eq!(jm_pages, (1..=9).collect::<Vec<_>>());
+    }
+}
+
+#[tokio::test]
+async fn initial_recent_replay_recovery_stops_after_three_extra_requests_without_checkpoint() {
+    let (_root, backend, service, scopes) = setup().await;
+    let previous = service
+        .source_recent_history(Source::Jm, &scopes[0].session_id)
+        .await
+        .unwrap();
+    backend.put(Source::Jm, "__recent__", 1, recent_replay_page(1, 100..112));
+    for number in 2..=5 {
+        let start = 100 + (number - 2) * 3;
+        backend.put(
+            Source::Jm,
+            "__recent__",
+            number,
+            recent_replay_page(number, start..start + 3),
+        );
+    }
+    service.recent_check_start(scopes.clone(), Some(2)).await.unwrap();
+    let run = finish_recent(&service).await;
+    let result = &run.results[0];
+    assert_eq!(run.phase, "partial");
+    assert_eq!(result.replay_recovery_pages, 3);
+    assert_eq!(result.pages_read, 5);
+    assert_eq!(result.records_read, 24);
+    assert_eq!(result.error_code.as_deref(), Some("RECENT_RANGE_INCOMPLETE"));
+    assert!(!result.initial_window);
+    assert!(!result.reached_end);
+    assert!(!result.joined_previous);
+    let history = service
+        .source_recent_history(Source::Jm, &scopes[0].session_id)
+        .await
+        .unwrap();
+    assert_eq!(history.coverage, previous.coverage);
+    assert_eq!(history.items.len(), 12);
+    assert_eq!(
+        backend.0.calls.lock().unwrap().iter().filter(|(source, _, _)| source == "JM").count(),
+        5
+    );
+}
+
 #[tokio::test]
 async fn recent_windows_join_continuously_and_failures_preserve_checkpoint_and_nonfollowed_works() {
     let (_root, backend, service, scopes) = setup().await;

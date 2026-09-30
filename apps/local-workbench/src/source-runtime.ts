@@ -904,7 +904,8 @@ export function createSourceAdapter(
         false,
         query.kind === "search" ||
           query.kind === "author" ||
-          query.kind === "tag",
+          query.kind === "tag" ||
+          query.kind === "recent",
       );
       if (
         result.page !== query.page ||

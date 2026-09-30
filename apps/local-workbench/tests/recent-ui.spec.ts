@@ -136,6 +136,21 @@ async function install(
             ? null
             : new Date(1800000000000 - id * 1000).toISOString(),
       });
+      const boundaryEdge = async (item: SourceWork | undefined) =>
+        item
+          ? {
+              workId: item.workId,
+              fingerprint: Array.from(
+                new Uint8Array(
+                  await crypto.subtle.digest(
+                    "SHA-256",
+                    new TextEncoder().encode(JSON.stringify(item)),
+                  ),
+                ),
+                (byte) => byte.toString(16).padStart(2, "0"),
+              ).join(""),
+            }
+          : null;
       let plan: DownloadPlan | null = null;
       Object.defineProperty(window, "__TAURI_INTERNALS__", {
         configurable: true,
@@ -303,7 +318,17 @@ async function install(
               }
               if (args.kind === "recent" && hooks.failPage === pageNumber)
                 throw { code: "SOURCE_TIMEOUT" };
-              return response;
+              // The native JM recent endpoint includes these raw edge proofs.
+              // Keeping them in every JM fixture catches IPC contract drift.
+              return source === "JM" && args.kind === "recent"
+                ? {
+                    ...response,
+                    jmSearchBoundary: {
+                      first: await boundaryEdge(response.items[0]),
+                      last: await boundaryEdge(response.items.at(-1)),
+                    },
+                  }
+                : response;
             }
             if (command === "jm_download_prepare") {
               const scope = args.scope as { source: Source; sessionId: string };

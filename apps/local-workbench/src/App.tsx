@@ -503,15 +503,25 @@ export default function App() {
     useState<DiagnosticProblem | null>(null);
   const libraryDiagnostic = useMemo(
     () =>
-      library.error ? createDiagnosticProblem("library", library.error) : null,
-    [library.error],
+      library.error
+        ? createDiagnosticProblem(
+            "library",
+            library.failure?.cause ?? library.error,
+            library.failure?.occurredAt,
+          )
+        : null,
+    [library.error, library.failure],
   );
   const downloadDiagnostic = useMemo(
     () =>
       downloads.error
-        ? createDiagnosticProblem("downloads", downloads.error)
+        ? createDiagnosticProblem(
+            "downloads",
+            downloads.failure?.cause ?? downloads.error,
+            downloads.failure?.occurredAt,
+          )
         : null,
-    [downloads.error],
+    [downloads.error, downloads.failure],
   );
   const accountStateDiagnostics = useMemo(
     () =>

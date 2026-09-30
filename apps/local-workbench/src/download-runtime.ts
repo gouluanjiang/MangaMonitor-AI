@@ -694,6 +694,7 @@ export interface DownloadState {
   reading: boolean;
   busy: boolean;
   error: string;
+  failure?: { cause: unknown; occurredAt: number };
   plan: DownloadPlan | null;
   batchPlan: DownloadSelectionPlan | null;
   preparation: { done: number; total: number } | null;
@@ -776,8 +777,18 @@ export class DownloadController {
     };
   }
   private publish(next: Partial<DownloadState>) {
-    this.state = { ...this.state, ...next };
+    this.state = {
+      ...this.state,
+      ...next,
+      ...(next.error === "" ? { failure: undefined } : {}),
+    };
     for (const listener of this.listeners) listener(this.state);
+  }
+  private fail(cause: unknown) {
+    this.publish({
+      error: downloadErrorMessage(cause),
+      failure: { cause, occurredAt: Date.now() },
+    });
   }
   private accept(snapshot: DownloadSnapshot) {
     this.readFailures = 0;
@@ -862,7 +873,7 @@ export class DownloadController {
               code,
             );
           this.readFailures++;
-          this.publish({ error: downloadErrorMessage(cause) });
+          this.fail(cause);
         }
       } finally {
         if (epoch === this.epoch) {
@@ -1130,8 +1141,7 @@ export class DownloadController {
         this.publish({ plan });
       }
     } catch (cause) {
-      if (epoch === this.epoch && token === this.planEpoch)
-        this.publish({ error: downloadErrorMessage(cause) });
+      if (epoch === this.epoch && token === this.planEpoch) this.fail(cause);
     } finally {
       if (epoch === this.epoch) {
         this.publish({ busy: false });
@@ -1264,7 +1274,7 @@ export class DownloadController {
     } catch (cause) {
       if (epoch === this.epoch && token === this.planEpoch) {
         this.cancelPlan();
-        this.publish({ error: downloadErrorMessage(cause) });
+        this.fail(cause);
       }
     } finally {
       if (epoch === this.epoch) {
@@ -1290,7 +1300,7 @@ export class DownloadController {
       )
     ) {
       this.cancelPlan();
-      this.publish({ error: downloadErrorMessage("DOWNLOAD_PLAN_STALE") });
+      this.fail("DOWNLOAD_PLAN_STALE");
       return false;
     }
     const epoch = this.epoch;
@@ -1322,7 +1332,7 @@ export class DownloadController {
     } catch (cause) {
       if (epoch === this.epoch) {
         this.cancelPlan();
-        this.publish({ error: downloadErrorMessage(cause) });
+        this.fail(cause);
       }
       return false;
     } finally {
@@ -1347,8 +1357,7 @@ export class DownloadController {
       this.accept(next);
       return true;
     } catch (cause) {
-      if (epoch === this.epoch)
-        this.publish({ error: downloadErrorMessage(cause) });
+      if (epoch === this.epoch) this.fail(cause);
       return false;
     } finally {
       if (epoch === this.epoch) {
@@ -1450,8 +1459,7 @@ export class DownloadController {
       }
       return token === this.planEpoch;
     } catch (cause) {
-      if (epoch === this.epoch)
-        this.publish({ error: downloadErrorMessage(cause) });
+      if (epoch === this.epoch) this.fail(cause);
       return false;
     } finally {
       if (epoch === this.epoch) {
@@ -1503,7 +1511,7 @@ export class DownloadController {
     if (!plan || this.state.busy) return false;
     if (this.preparedContext !== contextKey(context)) {
       this.cancelPlan();
-      this.publish({ error: downloadErrorMessage("DOWNLOAD_PLAN_STALE") });
+      this.fail("DOWNLOAD_PLAN_STALE");
       return false;
     }
     const epoch = this.epoch;
@@ -1530,7 +1538,7 @@ export class DownloadController {
     } catch (cause) {
       if (epoch === this.epoch) {
         this.cancelPlan();
-        this.publish({ error: downloadErrorMessage(cause) });
+        this.fail(cause);
       }
       return false;
     } finally {
@@ -1547,11 +1555,9 @@ export class DownloadController {
   ): Promise<void> {
     if (this.state.busy || !task.allowedActions.includes(action)) return;
     if (!canControlDownload(task, action, current)) {
-      this.publish({
-        error: downloadErrorMessage(
-          current ? "DOWNLOAD_SOURCE_MISMATCH" : "DOWNLOAD_SESSION_REQUIRED",
-        ),
-      });
+      this.fail(
+        current ? "DOWNLOAD_SOURCE_MISMATCH" : "DOWNLOAD_SESSION_REQUIRED",
+      );
       return;
     }
     const taskScope = current ?? { source: task.source, sessionId: "" };
@@ -1580,8 +1586,7 @@ export class DownloadController {
         return invalid();
       if (epoch === this.epoch) this.accept(next);
     } catch (cause) {
-      if (epoch === this.epoch)
-        this.publish({ error: downloadErrorMessage(cause) });
+      if (epoch === this.epoch) this.fail(cause);
     } finally {
       if (epoch === this.epoch) {
         this.publish({ busy: false });

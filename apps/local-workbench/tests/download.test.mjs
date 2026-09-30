@@ -1053,4 +1053,8 @@ test("index failure reasons distinguish capacity and identity from temporary con
     downloadErrorMessage("DOWNLOAD_INDEX_DOWNLOAD_OUTPUT_CHANGED"),
     /校验记录不一致/,
   );
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_INDEX_DOWNLOAD_ROOT_CHANGED"),
+    /漫画库目录已改变/,
+  );
 });

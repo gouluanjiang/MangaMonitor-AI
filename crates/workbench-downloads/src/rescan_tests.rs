@@ -141,7 +141,10 @@ async fn rescan_between_save_and_index_reuses_exact_existing_zip_on_retry() {
         .index_failed(&f.store, &first, "DOWNLOAD_ROOT_CHANGED")
         .unwrap();
     let failed = record(&f);
-    assert_eq!(failed.error_code.as_deref(), Some("DOWNLOAD_INDEX_FAILED"));
+    assert_eq!(
+        failed.error_code.as_deref(),
+        Some("DOWNLOAD_INDEX_DOWNLOAD_ROOT_CHANGED")
+    );
     f.service
         .control(&f.store, &f.id, failed.revision, Control::Retry)
         .unwrap();

@@ -2051,6 +2051,52 @@ async fn finish(service: &TestService, scopes: &[DiscoveryScope]) -> DiscoverySn
     service.discovery_read(scopes.to_vec()).await.unwrap()
 }
 
+// This fixture performs 125 durable page/manifest commits plus a checkpoint.
+// Windows filesystem latency is not the pagination invariant under test: wait
+// for durable revision progress, while bounding both stalls and total duration.
+async fn finish_long_page_chain(
+    service: &TestService,
+    scopes: &[DiscoveryScope],
+) -> DiscoverySnapshot {
+    let mut last_revision = 0;
+    let mut last_commit_at = tokio::time::Instant::now();
+    let mut last_progress = None;
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            // A commit holds this mutex during its atomic filesystem write.
+            // Do not block the async timer or compete with that write to poll.
+            let state = match service.discovery.memory.try_lock() {
+                Ok(memory) => Some((memory.active, memory.snapshot.clone())),
+                Err(std::sync::TryLockError::WouldBlock) => None,
+                Err(std::sync::TryLockError::Poisoned(_)) => panic!("discovery memory poisoned"),
+            };
+            if let Some((active, progress)) = state {
+                if let Some(progress) = &progress {
+                    if progress.revision > last_revision {
+                        last_revision = progress.revision;
+                        last_commit_at = tokio::time::Instant::now();
+                    }
+                }
+                last_progress = progress;
+                if !active {
+                    break;
+                }
+            }
+            assert!(
+                last_commit_at.elapsed() < std::time::Duration::from_secs(10),
+                "long page chain made no durable revision progress for 10s: {last_progress:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(
+        completed.is_ok(),
+        "long page chain exceeded 60s: {last_progress:?}"
+    );
+    service.discovery_read(scopes.to_vec()).await.unwrap()
+}
+
 /// Earlier accepted imports may contain names the runtime no longer queries.
 /// Keep the old storage contract readable; bypass only the new-follow UI gate.
 async fn legacy_followed_names(
@@ -2333,7 +2379,7 @@ async fn adding_placeholders_is_rejected_but_legacy_unfollow_and_generic_search_
 
 #[tokio::test]
 async fn eligible_author_catalogs_are_not_cut_off_at_a_small_page_limit() {
-    let (_root, backend, service, scopes) = setup().await;
+    let (root, backend, service, scopes) = setup().await;
     follow(&service, &scopes[0], "Author A", true).await;
     for number in 1..=125 {
         backend.put(
@@ -2351,7 +2397,7 @@ async fn eligible_author_catalogs_are_not_cut_off_at_a_small_page_limit() {
         .discovery_start(scopes.clone(), vec![])
         .await
         .unwrap();
-    let snapshot = finish(&service, &scopes).await;
+    let snapshot = finish_long_page_chain(&service, &scopes).await;
     assert_eq!(
         snapshot.run.as_ref().unwrap().phase,
         DiscoveryPhase::Complete
@@ -2359,6 +2405,37 @@ async fn eligible_author_catalogs_are_not_cut_off_at_a_small_page_limit() {
     assert_eq!(jm_range(&snapshot).pages_read, 125);
     assert_eq!(snapshot.records.len(), 125);
     assert_eq!(backend.0.calls.lock().unwrap().len(), 126);
+
+    // A completed in-memory run is insufficient: reopening must retain every
+    // page and the terminal range, independently of the worker's writer cache.
+    let cold = WorkbenchStore::open(root.path())
+        .unwrap()
+        .read_discovery()
+        .unwrap();
+    assert_eq!(cold.revision, snapshot.revision);
+    assert_eq!(cold.value.accounts.len(), 1);
+    let account = &cold.value.accounts[0];
+    let mut ids: Vec<_> = account
+        .records
+        .iter()
+        .map(|record| {
+            assert_eq!(record.work.source, workbench_storage::Source::Jm);
+            record.work.work_id.clone()
+        })
+        .collect();
+    ids.sort();
+    assert_eq!(ids, (101..=225).map(|id| id.to_string()).collect::<Vec<_>>());
+    let range = account
+        .authors
+        .iter()
+        .find(|range| range.source == workbench_storage::Source::Jm)
+        .unwrap();
+    assert_eq!(range.state, DiscoveryRangeState::Complete);
+    assert_eq!(range.pages_read, 125);
+    assert_eq!(
+        account.last_check.as_ref().unwrap().phase,
+        DiscoveryCheckPhase::Complete
+    );
 }
 
 #[tokio::test]

@@ -8,6 +8,164 @@ import {
 } from "../src/diagnostics.ts";
 import { matchingSettingsPages } from "../src/settings-navigation.ts";
 import { emptyLibrary } from "../src/library-types.ts";
+import { emptyDownloads } from "../src/download-types.ts";
+import { LibraryController } from "../src/library-runtime.ts";
+import { DownloadController } from "../src/download-runtime.ts";
+
+const failureProblem = (operation, state) =>
+  createDiagnosticProblem(
+    operation,
+    state.failure.cause,
+    state.failure.occurredAt,
+  );
+const failureSummary = (problem) =>
+  diagnosticSummary({
+    info: null,
+    accounts: [],
+    accountsLoading: false,
+    accountsFailed: false,
+    library: emptyLibrary(),
+    libraryFailed: problem.operation === "library",
+    downloads: emptyDownloads(),
+    downloadsReady: true,
+    downloadsFailed: problem.operation === "downloads",
+    preferencesReady: true,
+    preferencesFailed: false,
+    problems: [problem],
+  });
+
+test("library read and scan preserve native diagnostic codes and occurrence time while cancel and success retain their error semantics", async (t) => {
+  let now = Date.UTC(2026, 8, 30, 3, 4, 5);
+  t.mock.method(Date, "now", () => now);
+  const cause = {
+    code: "DOCUMENT_CORRUPT",
+    message: "private-password C:/private-library",
+    account: "private-account",
+  };
+  let failRead = true,
+    scanError = "LIBRARY_ROOT_CHANGED";
+  const snapshot = {
+    ...emptyLibrary(),
+    rootId: "a".repeat(64),
+    rootPath: "C:/private-library",
+    generation: 1,
+    phase: "complete",
+    freshness: "live",
+  };
+  const controller = new LibraryController({
+    read: async () => {
+      if (failRead) throw cause;
+      return snapshot;
+    },
+    choose: async () => null,
+    scan: async (_root, generation) => ({
+      ...snapshot,
+      generation: generation + 1,
+      phase: scanError ? "error" : "complete",
+      errorCode: scanError,
+    }),
+  });
+  t.after(() => controller.dispose());
+  await controller.read();
+  const failure = controller.getState().failure;
+  assert.equal(failure.cause, cause);
+  assert.equal(failure.occurredAt, now);
+  const report = failureSummary(
+    failureProblem("library", controller.getState()),
+  );
+  assert.match(report, /DOCUMENT_CORRUPT/);
+  assert.match(report, /2026-09-30T03:04:05.000Z/);
+  assert.doesNotMatch(
+    report + controller.getState().error,
+    /private-|password|C:\//,
+  );
+  now += 60000;
+  await controller.choose();
+  assert.equal(controller.getState().failure, failure);
+  assert.equal(
+    failureSummary(failureProblem("library", controller.getState())),
+    report,
+  );
+  failRead = false;
+  await controller.read();
+  assert.equal(controller.getState().failure, undefined);
+  assert.equal(controller.getState().error, "");
+  await controller.scan("start");
+  assert.equal(controller.getState().failure.cause, scanError);
+  assert.equal(controller.getState().failure.occurredAt, now);
+  assert.equal(
+    failureProblem("library", controller.getState()).code,
+    scanError,
+  );
+  scanError = null;
+  await controller.scan("start");
+  assert.equal(controller.getState().error, "");
+  assert.equal(controller.getState().failure, undefined);
+});
+
+test("download read and control preserve distinct failure codes and fixed times without exporting private native causes", async (t) => {
+  let now = Date.UTC(2026, 8, 30, 4, 5, 6),
+    failRead = true;
+  t.mock.method(Date, "now", () => now);
+  const readCause = {
+    code: "DOWNLOAD_DISK_FULL",
+    message: "private-token C:/private-download",
+  };
+  const controlCause = {
+    code: "DOWNLOAD_INDEX_FAILED",
+    message: "private-title",
+    session: "private-session",
+  };
+  const controller = new DownloadController({
+    read: async () => {
+      if (failRead) throw readCause;
+      return emptyDownloads();
+    },
+    control: async () => {
+      throw controlCause;
+    },
+  });
+  t.after(() => controller.dispose());
+  await controller.read();
+  const readFailure = controller.getState().failure;
+  assert.equal(readFailure.cause, readCause);
+  assert.equal(readFailure.occurredAt, now);
+  const report = failureSummary(
+    failureProblem("downloads", controller.getState()),
+  );
+  assert.match(report, /DOWNLOAD_DISK_FULL/);
+  assert.match(report, /2026-09-30T04:05:06.000Z/);
+  now += 60000;
+  assert.equal(
+    failureSummary(failureProblem("downloads", controller.getState())),
+    report,
+  );
+  await controller.control(
+    { source: "JM", sessionId: "synthetic-session" },
+    {
+      id: "synthetic-task",
+      source: "JM",
+      revision: 1,
+      allowedActions: ["resume"],
+    },
+    "resume",
+  );
+  assert.equal(controller.getState().failure.cause, controlCause);
+  assert.equal(controller.getState().failure.occurredAt, now);
+  const controlReport = failureSummary(
+    failureProblem("downloads", controller.getState()),
+  );
+  assert.match(controlReport, /DOWNLOAD_INDEX_FAILED/);
+  assert.match(controlReport, /2026-09-30T04:06:06.000Z/);
+  assert.doesNotMatch(
+    report + controlReport + controller.getState().error,
+    /private-|token|C:\//,
+  );
+  failRead = false;
+  await controller.read();
+  assert.equal(controller.getState().error, "");
+  assert.equal(controller.getState().failure, undefined);
+});
 
 test("diagnostic problems keep only allowed codes, operations, source and fixed occurrence time", () => {
   const at = Date.UTC(2026, 8, 30, 3, 4, 5);

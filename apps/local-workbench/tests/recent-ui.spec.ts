@@ -394,6 +394,9 @@ test("unknown recent cards stay covered, bound details to two, reuse verdicts an
   ).toHaveCount(0);
   await expect(recentCard(page, "Pica", 1)).toContainText("正在核验内容标签");
   expect((await detailCalls(page)).length).toBe(2);
+  await page.screenshot({
+    path: "visual-evidence/recent-content-check-pending.png",
+  });
   await page.evaluate(() => {
     window.recentTest.holdDetails = false;
     window.recentTest.releaseDetails.splice(0).forEach((release) => release());
@@ -407,6 +410,9 @@ test("unknown recent cards stay covered, bound details to two, reuse verdicts an
   await expect(
     recentCard(page, "Pica", 4).getByRole("button", { name: "下载到漫画库" }),
   ).toHaveCount(0);
+  await page.screenshot({
+    path: "visual-evidence/recent-content-check-retry.png",
+  });
   const failedCalls = (await detailCalls(page)).filter(
     (call) => Number(call.args.query) === 4,
   ).length;

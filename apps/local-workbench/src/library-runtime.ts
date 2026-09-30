@@ -322,6 +322,7 @@ export function libraryErrorMessage(cause: unknown): string {
 export interface LibraryControllerState {
   snapshot: LibrarySnapshot;
   error: string;
+  failure?: { cause: unknown; occurredAt: number };
   busy: boolean;
   migrationNotice: string;
 }
@@ -351,8 +352,18 @@ export class LibraryController {
     };
   }
   private publish(value: Partial<LibraryControllerState>) {
-    this.state = { ...this.state, ...value };
+    this.state = {
+      ...this.state,
+      ...value,
+      ...(value.error === "" ? { failure: undefined } : {}),
+    };
     for (const listener of this.listeners) listener(this.state);
+  }
+  private fail(cause: unknown) {
+    this.publish({
+      error: libraryErrorMessage(cause),
+      failure: { cause, occurredAt: Date.now() },
+    });
   }
   private async run(
     operation: () => Promise<LibrarySnapshot | null>,
@@ -364,6 +375,7 @@ export class LibraryController {
     this.timer = undefined;
     const token = this.epoch;
     const previousError = this.state.error;
+    const previousFailure = this.state.failure;
     let accepted = false;
     this.publish({ busy: true, error: "" });
     try {
@@ -376,17 +388,19 @@ export class LibraryController {
           error: snapshot.errorCode
             ? libraryErrorMessage(snapshot.errorCode)
             : "",
+          failure: snapshot.errorCode
+            ? { cause: snapshot.errorCode, occurredAt: Date.now() }
+            : undefined,
         });
       } else {
         // Canceling a folder/replacement dialog must not strand an active scan.
         // Restored cached state alone never authorizes starting a scan.
         accepted =
           drive && wasDriving && this.state.snapshot.freshness === "live";
-        this.publish({ error: previousError });
+        this.publish({ error: previousError, failure: previousFailure });
       }
     } catch (cause) {
-      if (token === this.epoch)
-        this.publish({ error: libraryErrorMessage(cause) });
+      if (token === this.epoch) this.fail(cause);
     } finally {
       if (token === this.epoch) {
         this.publish({ busy: false });

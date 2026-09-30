@@ -163,6 +163,8 @@ pub struct AccountService<B: SourceBackend, V: Vault> {
     vault: Arc<V>,
     root: PathBuf,
     slots: [Mutex<Slot<B::Session>>; 2],
+    // Keep query/favorite results ordered without holding account state across I/O.
+    query_operations: [Mutex<()>; 2],
     cover_slots: Semaphore,
     // Catalog writes and explicitly requested cleanup share the fixed file lock.
     cache_io: Arc<Mutex<()>>,
@@ -181,6 +183,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             cover_slots: Semaphore::new(4),
             cache_io: Arc::new(Mutex::new(())),
             legacy_cover_cleanup: OnceCell::new(),
+            query_operations: [Mutex::new(()), Mutex::new(())],
             slots: [
                 Mutex::new(Slot::new(Source::Jm)),
                 Mutex::new(Slot::new(Source::Pica)),
@@ -212,6 +215,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
 
     fn slot(&self, source: Source) -> &Mutex<Slot<B::Session>> {
         &self.slots[match source {
+            Source::Jm => 0,
+            Source::Pica => 1,
+        }]
+    }
+
+    fn query_operation(&self, source: Source) -> &Mutex<()> {
+        &self.query_operations[match source {
             Source::Jm => 0,
             Source::Pica => 1,
         }]
@@ -864,17 +874,24 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         {
             return Err(AccountError::new("QUERY_INVALID"));
         }
-        let mut slot = self.slot(source).lock().await;
-        self.require_scope(&mut slot, session_id)?;
-        let session = slot
-            .session
-            .as_ref()
-            .ok_or(AccountError::new("AUTH_REQUIRED"))?;
+        let _operation = self.query_operation(source).lock().await;
+        let session = {
+            let mut slot = self.slot(source).lock().await;
+            self.require_scope(&mut slot, session_id)?;
+            Arc::clone(
+                slot.session
+                    .as_ref()
+                    .ok_or(AccountError::new("AUTH_REQUIRED"))?,
+            )
+        };
+        // Source requests retain their own ordering, but their network wait must
+        // not hold the account-state lock needed by covers and logout. Recheck
+        // the generation before accepting results or applying an auth failure.
         let result = match kind {
             QueryKind::Favorites => {
                 self.backend
                     .favorites(
-                        session,
+                        &session,
                         FavoritePageRequest {
                             page,
                             folder_id,
@@ -883,22 +900,22 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     )
                     .await
             }
-            QueryKind::Search => self.backend.search(session, query.trim(), page).await,
-            QueryKind::Author => self.backend.author(session, query.trim(), page).await,
-            QueryKind::Tag => self.backend.tag(session, query.trim(), page).await,
-            QueryKind::Category => self.backend.category(session, query.trim(), page).await,
-            QueryKind::Recent => self.backend.recent(session, page).await,
+            QueryKind::Search => self.backend.search(&session, query.trim(), page).await,
+            QueryKind::Author => self.backend.author(&session, query.trim(), page).await,
+            QueryKind::Tag => self.backend.tag(&session, query.trim(), page).await,
+            QueryKind::Category => self.backend.category(&session, query.trim(), page).await,
+            QueryKind::Recent => self.backend.recent(&session, page).await,
             QueryKind::Ranking => {
                 if page != 1 {
                     return Err(AccountError::new("QUERY_INVALID"));
                 }
                 self.backend
-                    .ranking(session, folder_id.as_deref(), query)
+                    .ranking(&session, folder_id.as_deref(), query)
                     .await
             }
             QueryKind::Detail => self
                 .backend
-                .detail(session, query.trim())
+                .detail(&session, query.trim())
                 .await
                 .map(|work| SourcePage {
                     items: vec![work],
@@ -911,6 +928,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     jm_search_boundary: None,
                 }),
         };
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
         let mut result = self.finish(&mut slot, result)?;
         let mut issue_slots = std::collections::HashSet::new();
         let mut previous_issue = 0;
@@ -998,6 +1017,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         work_id: &str,
         desired: bool,
     ) -> Result<FavoriteResult> {
+        let _operation = self.query_operation(source).lock().await;
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
         if !slot.works.contains_key(work_id) {

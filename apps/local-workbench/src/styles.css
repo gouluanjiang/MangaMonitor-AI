@@ -2474,22 +2474,6 @@ h1 {
   }
 }
 
-.content-check-title {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.content-check-cover {
-  aspect-ratio: 5 / 7;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border, #34313d);
-  border-radius: 8px;
-  background: var(--surface, #201e26);
-  padding: 12px;
-  text-align: center;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,

@@ -74,6 +74,8 @@ async function install(
     holdDetails?: boolean;
     detailFailIds?: number[];
     detailTags?: Record<string, string[]>;
+    covers?: boolean;
+    femaleIds?: number[];
   } = {},
 ) {
   await page.addInitScript(
@@ -120,11 +122,15 @@ async function install(
             : id % 3 === 2
               ? ["生肉"]
               : [],
-        categories: hooks.aiIds.includes(id) ? ["AI"] : undefined,
+        categories: hooks.aiIds.includes(id)
+          ? ["AI"]
+          : options.femaleIds?.includes(id)
+            ? ["女性向"]
+            : undefined,
         favorite: null,
         chapterCount: 1,
         pageCount: 20,
-        coverAvailable: false,
+        coverAvailable: options.covers ?? false,
         sourceUpdatedAt:
           id % 3 === 0
             ? null
@@ -219,6 +225,14 @@ async function install(
                         categories: [],
                         periods: [{ id: "week", label: "周榜" }],
                       },
+              };
+            if (command === "source_cover")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                workId: args.workId,
+                dataUrl:
+                  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
               };
             if (command === "source_query") {
               const source = args.source as Source;
@@ -379,94 +393,74 @@ const detailCalls = (page: Page) =>
     ),
   );
 
-test("unknown recent cards stay covered, bound details to two, reuse verdicts and retry failures explicitly", async ({
+test("unknown recent cards load covers and remain usable without any tag detail requests", async ({
   page,
 }) => {
   await install(page, {
     unverified: true,
+    covers: true,
     holdDetails: true,
     detailFailIds: [4],
-    detailTags: { "1": ["耽美花園"], "2": ["AI作畫"], "3": ["女性向"] },
   });
-  await expect.poll(async () => (await detailCalls(page)).length).toBe(2);
   await expect(
-    page.getByTestId("recent-grid").locator(".cover-interaction"),
-  ).toHaveCount(0);
-  await expect(recentCard(page, "Pica", 1)).toContainText("正在核验内容标签");
-  expect((await detailCalls(page)).length).toBe(2);
-  await page.screenshot({
-    path: "visual-evidence/recent-content-check-pending.png",
-  });
-  await page.evaluate(() => {
-    window.recentTest.holdDetails = false;
-    window.recentTest.releaseDetails.splice(0).forEach((release) => release());
-  });
-  await expect(recentCard(page, "Pica", 1)).toHaveCount(0);
-  await expect(recentCard(page, "Pica", 2)).toHaveCount(0);
-  await expect(recentCard(page, "Pica", 3)).toContainText(
-    "Pica 合成最近更新 3",
-  );
-  await expect(recentCard(page, "Pica", 4)).toContainText("标签核验失败");
+    recentCard(page, "Pica", 3).locator(".cover-interaction"),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.getByTestId("recent-grid").locator("img").count())
+    .toBeGreaterThan(0);
   await expect(
     recentCard(page, "Pica", 4).getByRole("button", { name: "下载到漫画库" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByText("核验通过后显示作品", { exact: true }),
   ).toHaveCount(0);
-  await page.screenshot({
-    path: "visual-evidence/recent-content-check-retry.png",
-  });
-  const failedCalls = (await detailCalls(page)).filter(
-    (call) => Number(call.args.query) === 4,
-  ).length;
+  expect(await detailCalls(page)).toEqual([]);
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("nav-recent").click();
-  expect(
-    (await detailCalls(page)).filter((call) => Number(call.args.query) === 4)
-      .length,
-  ).toBe(failedCalls);
-  await page.evaluate(() => {
-    window.recentTest.detailFailIds = [];
-  });
-  await recentCard(page, "Pica", 4)
-    .getByRole("button", { name: "重试核验" })
-    .click();
-  await expect(recentCard(page, "Pica", 4)).toContainText(
-    "Pica 合成最近更新 4",
-  );
-  expect(
-    (await detailCalls(page)).filter((call) => Number(call.args.query) === 3),
-  ).toHaveLength(1);
+  await expect(recentCard(page, "Pica", 3)).toBeVisible();
   await page.getByLabel("最近更新来源").selectOption("JM");
-  await expect(recentCard(page, "JM", 4)).toContainText("JM 合成最近更新 4");
-  await expect(recentCard(page, "JM", 3)).toHaveCount(0);
+  await expect(recentCard(page, "JM", 3)).toBeVisible();
+  await expect(recentCard(page, "Pica", 3)).toHaveCount(0);
+  expect(await detailCalls(page)).toEqual([]);
+  await mkdir("visual-evidence", { recursive: true });
+  await page.screenshot({ path: "visual-evidence/recent-passive-labels.png" });
 });
 
-test("source change cannot mount delayed old detail and offscreen unknown rows do not trigger full detail scans", async ({
+test("available explicit labels filter immediately while unknown labels cause no requests", async ({
   page,
 }) => {
-  await install(page, { unverified: true, holdDetails: true });
-  await expect.poll(async () => (await detailCalls(page)).length).toBe(2);
-  await page.getByLabel("最近更新来源").selectOption("JM");
-  await expect
-    .poll(
-      async () =>
-        (await detailCalls(page)).filter((c) => c.args.source === "JM").length,
-    )
-    .toBe(2);
-  await page.evaluate(() => {
-    window.recentTest.holdDetails = false;
-    window.recentTest.releaseDetails.splice(0).forEach((release) => release());
+  await install(page, {
+    unverified: true,
+    blIds: [1],
+    aiIds: [2],
+    femaleIds: [3],
   });
-  await expect(recentCard(page, "JM", 1)).toContainText("JM 合成最近更新 1");
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
   await expect(recentCard(page, "Pica", 1)).toHaveCount(0);
-  await expect
-    .poll(
-      async () =>
-        (await detailCalls(page)).filter((c) => c.args.source === "Pica")
-          .length,
-    )
-    .toBe(2);
-  expect(
-    (await detailCalls(page)).filter((c) => c.args.source === "JM").length,
-  ).toBeLessThan(20);
+  await expect(recentCard(page, "Pica", 2)).toHaveCount(0);
+  await expect(recentCard(page, "Pica", 3)).toBeVisible();
+  await page.getByLabel("最近更新来源").selectOption("JM");
+  await expect(recentCard(page, "JM", 4)).toBeVisible();
+  await expect(recentCard(page, "JM", 3)).toHaveCount(0);
+  expect(await detailCalls(page)).toEqual([]);
+});
+
+test("tags obtained by an explicit detail visit update the recent list without a verification crawl", async ({
+  page,
+}) => {
+  await install(page, { unverified: true, detailTags: { "1": ["AI作畫"] } });
+  await expect(recentCard(page, "Pica", 1)).toBeVisible();
+  expect(await detailCalls(page)).toEqual([]);
+  await recentCard(page, "Pica", 1)
+    .getByRole("button", { name: /^Pica 合成最近更新 1 ·/ })
+    .click();
+  await expect(
+    page.getByText("该作品已按内容偏好隐藏。", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "返回列表", exact: true }).click();
+  await expect(recentCard(page, "Pica", 1)).toHaveCount(0);
+  await expect(recentCard(page, "Pica", 2)).toBeVisible();
+  expect(await detailCalls(page)).toHaveLength(1);
 });
 const recentCard = (page: Page, source: Source, id: number) =>
   page.getByTestId(

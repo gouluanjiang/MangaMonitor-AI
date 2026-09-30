@@ -1076,6 +1076,77 @@ async fn uncertain_favorite_cannot_be_toggled_again_before_target_is_observed() 
 }
 
 #[tokio::test]
+async fn slow_detail_does_not_block_known_covers_and_cannot_commit_to_a_new_session() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    query(&service, Source::Jm, &session).await.unwrap();
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move {
+            service
+                .query(Source::Jm, &session, QueryKind::Detail, "456", None, 1)
+                .await
+        })
+    };
+    backend.0.detail_started.notified().await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.cover(Source::Jm, &session, "123"),
+    )
+    .await
+    .expect("A blocked detail must not hold up a known cover")
+    .unwrap();
+    let replacement = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        login(&service, Source::Jm, "replacement", false),
+    )
+    .await
+    .expect("Account switching must not wait for an old detail");
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    assert_eq!(
+        error(
+            service
+                .favorite(Source::Jm, &replacement, "456", true)
+                .await
+        ),
+        "WORK_NOT_LOADED"
+    );
+}
+
+#[tokio::test]
+async fn late_detail_auth_failure_cannot_expire_a_replacement_session() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    *backend.0.detail_failure.lock().unwrap() = Some("SESSION_EXPIRED");
+    let pending = {
+        let service = Arc::clone(&service);
+        tokio::spawn(async move {
+            service
+                .query(Source::Jm, &session, QueryKind::Detail, "123", None, 1)
+                .await
+        })
+    };
+    backend.0.detail_started.notified().await;
+    let replacement = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        login(&service, Source::Jm, "replacement", false),
+    )
+    .await
+    .unwrap();
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    query(&service, Source::Jm, &replacement).await.unwrap();
+}
+
+#[tokio::test]
 async fn slow_cover_does_not_block_logout_and_its_old_result_is_discarded() {
     let root = TempDir::new().unwrap();
     let backend = FakeBackend::default();

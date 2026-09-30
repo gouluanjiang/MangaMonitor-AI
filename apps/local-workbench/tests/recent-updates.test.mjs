@@ -224,3 +224,47 @@ test("refresh replaces only on success and a disposed or different-session reade
   await pending;
   assert.equal(reader.state, beforeDispose);
 });
+
+test("a slow saved history cannot delay live results or cause extra detail requests", async () => {
+  let releaseHistory;
+  const calls = [];
+  const reader = new RecentUpdatesReader(
+    {
+      query: async (_scope, request) => {
+        calls.push(request.kind);
+        return page(1, [1, 2]);
+      },
+      recentHistory: () =>
+        new Promise((resolve) => {
+          releaseHistory = resolve;
+        }),
+    },
+    scope,
+  );
+  const started = reader.start();
+  await Promise.resolve();
+  assert.equal(reader.state.phase, "ready");
+  assert.deepEqual(calls, ["recent"]);
+  const live = reader.state.snapshot;
+  releaseHistory({ ...scope, items: [work(3)], coverage: {}, revision: 1 });
+  await started;
+  assert.equal(reader.state.snapshot, live);
+  assert.equal(reader.state.retainedItems[0].workId, "3");
+  assert.deepEqual(calls, ["recent"]);
+});
+
+test("failed supplementary history preserves a successful live page", async () => {
+  const reader = new RecentUpdatesReader(
+    {
+      query: async () => page(1, [1, 2]),
+      recentHistory: async () => {
+        throw new SourceError("STORE_BUSY");
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  assert.equal(reader.state.historyError, true);
+  assert.equal(reader.state.phase, "ready");
+  assert.equal(reader.state.snapshot.items.length, 2);
+});

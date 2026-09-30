@@ -206,11 +206,13 @@ async function openLibrary(page: Page, pageCount = 10000) {
   await expect(page.getByTestId("comic-reader")).toBeVisible();
   await expect(page.getByLabel("当前页码")).toContainText(String(pageCount));
 }
-async function openOnline(page: Page) {
+async function openOnline(page: Page, recheckInBackground = false) {
   await page.getByTestId("nav-completion").click();
   await page.getByTestId("completion-start").click();
   await expect(page.getByTestId("completion-progress")).toBeVisible();
   await page.evaluate(() => window.workflowTest.finishCheck());
+  await expect(page.getByTestId("author-update-JM:102")).toBeVisible();
+  if (recheckInBackground) await page.getByTestId("completion-start").click();
   await page
     .getByTestId("author-update-JM:102")
     .getByRole("button", { name: /打开/ })
@@ -218,6 +220,32 @@ async function openOnline(page: Page) {
   await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
 }
+test("newly learned blocked tags never interrupt an already open online reader", async ({
+  page,
+}) => {
+  await openOnline(page, true);
+  await page.evaluate(() => {
+    window.workflowTest.finishCheck();
+    const record = window.workflowTest.discovery.records.find(
+      (record) => record.work.source === "JM" && record.work.workId === "102",
+    )!;
+    record.work.tags = ["AI作畫"];
+    window.workflowTest.discovery.revision++;
+  });
+  await expect(page.getByTestId("author-update-JM:102")).toHaveCount(0);
+  await expect(page.getByTestId("comic-reader")).toBeVisible();
+  await expect(page.locator('[data-reader-page="1"] img')).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.readerTest.calls.filter((call) => call.command === "reader_close"),
+    ),
+  ).toEqual([]);
+  await page.getByTestId("reader-viewport").focus();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  await expect(page.getByTestId("author-update-JM:102")).toHaveCount(0);
+});
+
 test("reader close exposes an unsaved position and retries before releasing its native session", async ({
   page,
 }) => {

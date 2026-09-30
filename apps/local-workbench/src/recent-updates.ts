@@ -7,7 +7,6 @@ import type {
 } from "./source-types.ts";
 import { mergeSourceWorks, sourceWorkKey } from "./source-types.ts";
 import { SourceError } from "./source-runtime.ts";
-import { ContentCheckPool } from "./content-check.ts";
 import {
   compactWork,
   jsonBytes,
@@ -114,25 +113,9 @@ export class RecentUpdatesReader {
   private listeners = new Set<(state: RecentUpdatesState) => void>();
   private adapter: SourceAdapter;
   readonly scope: SourceScope;
-  readonly contentChecks: ContentCheckPool;
   constructor(adapter: SourceAdapter, scope: SourceScope) {
     this.adapter = adapter;
     this.scope = scope;
-    this.contentChecks = new ContentCheckPool(adapter, scope, (work) => {
-      const key = sourceWorkKey(work);
-      const update = (items: SourceWork[]) =>
-        items.map((old) =>
-          sourceWorkKey(old) === key
-            ? { ...old, tags: work.tags, categories: work.categories }
-            : old,
-        );
-      this.publish({
-        snapshot: this.state.snapshot
-          ? { ...this.state.snapshot, items: update(this.state.snapshot.items) }
-          : null,
-        retainedItems: update(this.state.retainedItems ?? []),
-      });
-    });
   }
   subscribe(listener: (state: RecentUpdatesState) => void) {
     this.listeners.add(listener);
@@ -144,7 +127,6 @@ export class RecentUpdatesReader {
   dispose() {
     this.disposed = true;
     this.listeners.clear();
-    this.contentChecks.dispose();
   }
   private publish(change: Partial<RecentUpdatesState>) {
     if (this.disposed) return;
@@ -153,8 +135,9 @@ export class RecentUpdatesReader {
   }
   async start(): Promise<void> {
     if (this.state.phase !== "idle") return;
-    await this.refreshHistory();
-    if (!this.disposed && this.state.phase === "idle") await this.read(1);
+    // Saved history is supplementary. A large local catalog must not delay the
+    // first live page; either result can become visible independently.
+    await Promise.all([this.read(1), this.refreshHistory()]);
   }
   refreshHistory(): Promise<void> {
     if (!this.adapter.recentHistory || this.disposed) return Promise.resolve();
@@ -167,11 +150,6 @@ export class RecentUpdatesReader {
           history.sessionId !== this.scope.sessionId
         )
           throw new SourceError("STALE_SESSION");
-        this.contentChecks.seed(
-          history.items,
-          history.contentVerifiedIds ?? [],
-          history.contentVerifiedUntil ?? 0,
-        );
         this.publish({
           retainedItems: history.items,
           retainedCoverage: history.coverage,
@@ -225,11 +203,6 @@ export class RecentUpdatesReader {
       const snapshot = appendRecentUpdates(
         number === 1 ? null : this.state.snapshot,
         page,
-      );
-      this.contentChecks.seed(
-        page.items,
-        page.contentVerifiedIds ?? [],
-        page.contentVerifiedUntil ?? 0,
       );
       const uncommitted = new Set(this.state.uncommittedIds ?? []);
       for (const work of page.items) {

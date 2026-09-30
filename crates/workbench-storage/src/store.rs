@@ -12,7 +12,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, OnceLock, Weak,
+        Arc, Mutex, MutexGuard, OnceLock, TryLockError as MutexTryLockError, Weak,
     },
     time::{Duration, Instant},
 };
@@ -322,6 +322,33 @@ impl WorkbenchStore {
     }
 
     pub(crate) fn acquire_lock(&self) -> Result<StoreFileLock> {
+        self.acquire_lock_since(Instant::now())
+    }
+
+    /// Optional cleanup must not queue indefinitely behind an active transaction.
+    /// Local and cross-process contention consume the same two-second budget.
+    pub(crate) fn maintenance_lock(&self) -> Result<(MutexGuard<'_, ()>, StoreFileLock)> {
+        let started = Instant::now();
+        let local = loop {
+            match self.local_lock.try_lock() {
+                Ok(guard) => break guard,
+                Err(MutexTryLockError::Poisoned(_)) => {
+                    return Err(StoreError::new("CACHE_UNAVAILABLE"));
+                }
+                Err(MutexTryLockError::WouldBlock) => {
+                    let remaining = STORE_LOCK_WAIT.saturating_sub(started.elapsed());
+                    if remaining.is_zero() {
+                        return Err(StoreError::new("BUSY"));
+                    }
+                    std::thread::sleep(STORE_LOCK_POLL.min(remaining));
+                }
+            }
+        };
+        let file = self.acquire_lock_since(started)?;
+        Ok((local, file))
+    }
+
+    fn acquire_lock_since(&self, started: Instant) -> Result<StoreFileLock> {
         check_directory_tree(&self.root)?;
         let path = self.root.join(".workbench.lock");
         check_optional_regular(&path)?;
@@ -331,7 +358,6 @@ impl WorkbenchStore {
             .open(&path)
             .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
         check_open_regular(&file)?;
-        let started = Instant::now();
         loop {
             match file.try_lock() {
                 Ok(()) => break,

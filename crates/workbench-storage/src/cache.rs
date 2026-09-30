@@ -98,11 +98,7 @@ impl WorkbenchStore {
     /// No directory enumeration, recursion, or renderer-provided path is accepted.
     /// A completed account has coverPeak zero; old versions can reserve it again.
     pub fn cleanup_legacy_cover_cache(&self) -> Result<()> {
-        let _local = self
-            .local_lock
-            .lock()
-            .map_err(|_| StoreError::new("CACHE_UNAVAILABLE"))?;
-        let _file = self.acquire_lock()?;
+        let (_local, _file) = self.maintenance_lock()?;
         let mut registry = self.read_cache_registry()?;
         // The old single scratch slot can contain an interrupted cover write.
         // It is never valid catalog state and is safe to unlink under this lock.

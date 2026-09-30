@@ -325,9 +325,9 @@ impl WorkbenchStore {
         self.acquire_lock_since(Instant::now())
     }
 
-    /// Optional cleanup must not queue indefinitely behind an active transaction.
+    /// Cache callbacks/cleanup retain their bounded, non-reentrant contract.
     /// Local and cross-process contention consume the same two-second budget.
-    pub(crate) fn maintenance_lock(&self) -> Result<(MutexGuard<'_, ()>, StoreFileLock)> {
+    pub(crate) fn bounded_cache_locks(&self) -> Result<(MutexGuard<'_, ()>, StoreFileLock)> {
         let started = Instant::now();
         let local = loop {
             match self.local_lock.try_lock() {

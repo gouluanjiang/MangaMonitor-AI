@@ -7,6 +7,7 @@
 #[cfg(any(windows, test))]
 mod contract {
     use serde::Deserialize;
+    use serde_json::{json, Value};
     use std::{
         fs,
         future::Future,
@@ -14,7 +15,6 @@ mod contract {
         sync::Arc,
         time::{Duration, Instant},
     };
-    use serde_json::{json, Value};
     use workbench_accounts::{DiscoverySnapshot, QueryResult, Source};
 
     #[derive(Clone, Deserialize)]
@@ -168,9 +168,9 @@ mod contract {
                         .authors
                         .iter()
                         .all(|author| !author.trim().is_empty());
-                row["detailPassed"] = json!(identity_verified
-                    && has_authors
-                    && response.observation_error_code.is_none());
+                row["detailPassed"] = json!(
+                    identity_verified && has_authors && response.observation_error_code.is_none()
+                );
                 row["detailIdentityVerified"] = json!(identity_verified);
                 row["detailHasAuthorCredits"] = json!(has_authors);
                 row["detail"] = json!(response.page);
@@ -209,26 +209,35 @@ mod contract {
         {
             return Err("AUDIT_DETAIL_RECEIPT_MISMATCH".into());
         }
-        fn index(snapshot: &DiscoverySnapshot) -> HashMap<
-            (workbench_storage::Source, &str),
-            &workbench_storage::DiscoveryRecord,
-        > {
-            snapshot.records.iter().map(|record| {
-                ((record.work.source, record.work.work_id.as_str()), record)
-            }).collect::<HashMap<_, _>>()
+        fn index(
+            snapshot: &DiscoverySnapshot,
+        ) -> HashMap<(workbench_storage::Source, &str), &workbench_storage::DiscoveryRecord>
+        {
+            snapshot
+                .records
+                .iter()
+                .map(|record| ((record.work.source, record.work.work_id.as_str()), record))
+                .collect::<HashMap<_, _>>()
         }
         let saved = index(catalog);
         let visible = index(confirmed);
         if saved.len() != catalog.records.len() || visible.len() != confirmed.records.len() {
             return Err("AUDIT_CATALOG_DUPLICATE_WORK".into());
         }
-        let policies: HashMap<_, _> = confirmed.author_policies.iter().map(|policy| {
-            ((policy.source, policy.author.as_str()), policy)
-        }).collect();
-        let blocked: HashSet<_> = confirmed.authors.iter().filter(|range| {
-            range.error_code.as_deref() == Some("AUTHOR_QUERY_PLACEHOLDER")
-        }).map(|range| (range.source, range.author.as_str())).collect();
-        let observation_error = catalog.observation_error_code.as_ref()
+        let policies: HashMap<_, _> = confirmed
+            .author_policies
+            .iter()
+            .map(|policy| ((policy.source, policy.author.as_str()), policy))
+            .collect();
+        let blocked: HashSet<_> = confirmed
+            .authors
+            .iter()
+            .filter(|range| range.error_code.as_deref() == Some("AUTHOR_QUERY_PLACEHOLDER"))
+            .map(|range| (range.source, range.author.as_str()))
+            .collect();
+        let observation_error = catalog
+            .observation_error_code
+            .as_ref()
             .or(confirmed.observation_error_code.as_ref());
         for (row, work) in rows.iter_mut().zip(&plan.works) {
             let source = match work.source {
@@ -253,13 +262,25 @@ mod contract {
                     "perAuthorEntryVerified":false,"membershipEvidence":"final-native-catalog"})
             }).collect();
             let memberships_passed = !memberships.is_empty()
-                && memberships.iter().all(|membership| membership["present"] == true);
+                && memberships
+                    .iter()
+                    .all(|membership| membership["present"] == true);
             let mut failures = vec![];
-            if row["detailPassed"] != true { failures.push("AUDIT_DETAIL_NOT_VERIFIED"); }
-            if record.is_none() { failures.push("AUDIT_WORK_NOT_IN_FINAL_CATALOG"); }
-            if projected.is_none() { failures.push("AUDIT_WORK_NOT_CONFIRMED"); }
-            if !memberships_passed { failures.push("AUDIT_EXPECTED_AUTHOR_MEMBERSHIP_MISSING"); }
-            if observation_error.is_some() { failures.push("AUDIT_FINAL_CATALOG_WARNING"); }
+            if row["detailPassed"] != true {
+                failures.push("AUDIT_DETAIL_NOT_VERIFIED");
+            }
+            if record.is_none() {
+                failures.push("AUDIT_WORK_NOT_IN_FINAL_CATALOG");
+            }
+            if projected.is_none() {
+                failures.push("AUDIT_WORK_NOT_CONFIRMED");
+            }
+            if !memberships_passed {
+                failures.push("AUDIT_EXPECTED_AUTHOR_MEMBERSHIP_MISSING");
+            }
+            if observation_error.is_some() {
+                failures.push("AUDIT_FINAL_CATALOG_WARNING");
+            }
             row["memberships"] = json!(memberships);
             row["savedInCatalog"] = json!(record.is_some());
             row["savedInCatalogEvidence"] = json!("final-native-catalog-view");
@@ -483,13 +504,25 @@ mod contract {
                 discovery_revision: Some(7),
                 observation_error_code: None,
                 page: workbench_accounts::SourcePage {
-                    page: 1, total: Some(1), pages: Some(1), has_more: Some(false),
-                    folders: vec![], issues: vec![], jm_search_boundary: None,
+                    page: 1,
+                    total: Some(1),
+                    pages: Some(1),
+                    has_more: Some(false),
+                    folders: vec![],
+                    issues: vec![],
+                    jm_search_boundary: None,
                     items: vec![workbench_accounts::SourceWork {
-                        source: Source::Jm, work_id: "123".into(), title: "Synthetic work".into(),
+                        source: Source::Jm,
+                        work_id: "123".into(),
+                        title: "Synthetic work".into(),
                         authors: authors.iter().map(|author| (*author).into()).collect(),
-                        description: None, tags: vec![], categories: None, favorite: None,
-                        chapter_count: None, page_count: None, source_updated_at: None,
+                        description: None,
+                        tags: vec![],
+                        categories: None,
+                        favorite: None,
+                        chapter_count: None,
+                        page_count: None,
+                        source_updated_at: None,
                         cover_available: false,
                     }],
                 },
@@ -498,19 +531,35 @@ mod contract {
 
         fn detail_fixture() -> (Plan, DiscoverySnapshot) {
             let plan = serde_json::from_value(json!({"version":1,"expectedFollowedAuthors":1,
-                "works":[{"source":"JM","workId":"123","expectedAuthors":["Writer"]}]})).unwrap();
-            let policy = workbench_storage::AuthorQueryDocument::default()
-                .resolve(workbench_storage::Source::Jm, &"a".repeat(64), "Writer");
+                "works":[{"source":"JM","workId":"123","expectedAuthors":["Writer"]}]}))
+            .unwrap();
+            let policy = workbench_storage::AuthorQueryDocument::default().resolve(
+                workbench_storage::Source::Jm,
+                &"a".repeat(64),
+                "Writer",
+            );
             let catalog = DiscoverySnapshot {
-                scopes: vec![], revision: 7, followed_authors: vec!["Writer".into()],
-                following_revision: 2, policy_revision: 3, run: None, last_check: None,
-                authors: vec![], author_policies: vec![policy], other_record_count: 0,
-                includes_other: true, observation_error_code: None,
+                scopes: vec![],
+                revision: 7,
+                followed_authors: vec!["Writer".into()],
+                following_revision: 2,
+                policy_revision: 3,
+                run: None,
+                last_check: None,
+                authors: vec![],
+                author_policies: vec![policy],
+                other_record_count: 0,
+                includes_other: true,
+                observation_error_code: None,
                 records: vec![workbench_storage::DiscoveryRecord {
                     work: workbench_accounts::discovery_work_from_source(
-                        detail_response(&["Writer"]).page.items.remove(0)),
-                    matched_authors: vec!["Unrelated query".into()], author_verified: false,
-                    observed_at: 1, metadata_detail_at: Some(1), scan_id: "a".repeat(64),
+                        detail_response(&["Writer"]).page.items.remove(0),
+                    ),
+                    matched_authors: vec!["Unrelated query".into()],
+                    author_verified: false,
+                    observed_at: 1,
+                    metadata_detail_at: Some(1),
+                    scan_id: "a".repeat(64),
                     first_discovered_run_id: None,
                 }],
             };
@@ -532,15 +581,22 @@ mod contract {
                 match kind {
                     1 => policy.verified_aliases.push(credit.into()),
                     2 => policy.exact_credits.push(credit.into()),
-                    3 => policy.work_credits.push(workbench_storage::AuthorWorkCredit {
-                        work_id: "123".into(), expected_authors: vec![credit.into()],
-                        expected_author_variants: vec![], corrected_authors: vec!["Writer".into()],
-                    }),
+                    3 => policy
+                        .work_credits
+                        .push(workbench_storage::AuthorWorkCredit {
+                            work_id: "123".into(),
+                            expected_authors: vec![credit.into()],
+                            expected_author_variants: vec![],
+                            corrected_authors: vec!["Writer".into()],
+                        }),
                     _ => {}
                 }
                 let mut confirmed = catalog.clone();
                 confirmed.includes_other = false;
-                let mut rows = vec![detail_receipt(&plan.works[0], Ok(detail_response(&[credit])))];
+                let mut rows = vec![detail_receipt(
+                    &plan.works[0],
+                    Ok(detail_response(&[credit])),
+                )];
                 assert_eq!(rows[0]["passed"], false);
                 finalize_details(&plan, &mut rows, &catalog, &confirmed).unwrap();
                 assert_eq!(rows[0]["passed"], true);
@@ -580,16 +636,21 @@ mod contract {
                         catalog.author_policies[0].source = workbench_storage::Source::Pica;
                         confirmed.author_policies = catalog.author_policies.clone();
                     }
-                    10 => confirmed.authors.push(serde_json::from_value(json!({
-                        "author":"Writer","source":"JM","state":"partial",
-                        "lastAttemptAt":null,"lastCompleteAt":null,"observedCount":0,
-                        "pagesRead":0,"errorCode":"AUTHOR_QUERY_PLACEHOLDER"
-                    })).unwrap()),
+                    10 => confirmed.authors.push(
+                        serde_json::from_value(json!({
+                            "author":"Writer","source":"JM","state":"partial",
+                            "lastAttemptAt":null,"lastCompleteAt":null,"observedCount":0,
+                            "pagesRead":0,"errorCode":"AUTHOR_QUERY_PLACEHOLDER"
+                        }))
+                        .unwrap(),
+                    ),
                     _ => {}
                 }
                 let result = if kind == 1 {
                     Err(workbench_accounts::AccountError::new("SOURCE_UNAVAILABLE"))
-                } else { Ok(response) };
+                } else {
+                    Ok(response)
+                };
                 let mut rows = vec![detail_receipt(&plan.works[0], result)];
                 finalize_details(&plan, &mut rows, &catalog, &confirmed).unwrap();
                 assert_eq!(rows[0]["passed"], false, "case {kind}");
@@ -598,9 +659,15 @@ mod contract {
                     assert_eq!(rows[0]["memberships"][0]["present"], true);
                     assert_eq!(rows[0]["detailPassed"], false);
                 }
-                if kind == 1 { assert_eq!(rows[0]["errorCode"], "SOURCE_UNAVAILABLE"); }
-                if kind == 2 { assert_eq!(rows[0]["savedInCatalog"], false); }
-                if kind == 3 { assert_eq!(rows[0]["visibleInAllAuthorResults"], false); }
+                if kind == 1 {
+                    assert_eq!(rows[0]["errorCode"], "SOURCE_UNAVAILABLE");
+                }
+                if kind == 2 {
+                    assert_eq!(rows[0]["savedInCatalog"], false);
+                }
+                if kind == 3 {
+                    assert_eq!(rows[0]["visibleInAllAuthorResults"], false);
+                }
             }
         }
 
@@ -610,7 +677,10 @@ mod contract {
                 let (plan, catalog) = detail_fixture();
                 let mut confirmed = catalog.clone();
                 confirmed.includes_other = false;
-                let mut rows = vec![detail_receipt(&plan.works[0], Ok(detail_response(&["Writer"])))];
+                let mut rows = vec![detail_receipt(
+                    &plan.works[0],
+                    Ok(detail_response(&["Writer"])),
+                )];
                 match kind {
                     0 => confirmed.revision += 1,
                     1 => confirmed.policy_revision += 1,
@@ -1036,17 +1106,28 @@ mod local {
             let auth = scope(scopes, work.source)?;
             // Exactly one native detail request per planned identity. Local
             // catalog retries must never repeat a completed source request.
-            let response = service.query(
-                work.source, &auth.session_id, QueryKind::Detail, &work.work_id, None, 1,
-            ).await;
+            let response = service
+                .query(
+                    work.source,
+                    &auth.session_id,
+                    QueryKind::Detail,
+                    &work.work_id,
+                    None,
+                    1,
+                )
+                .await;
             rows.push(detail_receipt(work, response));
             save(output, "details-progress.private.json", &rows)?;
-            println!("{}", json!({"mode":"details","checked":rows.len(),
-                "total":plan.works.len(),"membershipFinalized":false}));
+            println!(
+                "{}",
+                json!({"mode":"details","checked":rows.len(),
+                "total":plan.works.len(),"membershipFinalized":false})
+            );
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
         control.check_cancel()?;
-        let final_snapshot = snapshot(service, scopes, output, "catalog-after.private.json").await?;
+        let final_snapshot =
+            snapshot(service, scopes, output, "catalog-after.private.json").await?;
         control.check_cancel()?;
         let confirmed = read_catalog(service, scopes, false).await?;
         save(output, "confirmed-catalog.private.json", &confirmed)?;
@@ -1056,20 +1137,26 @@ mod local {
         // recent checkpoints. This mode never starts a recent traversal.
         for auth in scopes {
             control.check_cancel()?;
-            let history = retry_busy_read(|| {
-                service.source_recent_history(auth.source, &auth.session_id)
-            }).await?;
-            save(output, &format!("recent-{}.private.json", auth.source.as_str()), &history)?;
+            let history =
+                retry_busy_read(|| service.source_recent_history(auth.source, &auth.session_id))
+                    .await?;
+            save(
+                output,
+                &format!("recent-{}.private.json", auth.source.as_str()),
+                &history,
+            )?;
         }
         control.check_cancel()?;
-        Ok(json!({"mode":"details","passed":rows.iter().all(|row| row["passed"] == true),
+        Ok(
+            json!({"mode":"details","passed":rows.iter().all(|row| row["passed"] == true),
             "checked":rows.len(),"passing":rows.iter().filter(|row| row["passed"] == true).count(),
             "detailsVerified":rows.iter().filter(|row| row["detailPassed"] == true).count(),
             "membershipFinalized":true,"perAuthorEntryVerified":false,
             "membershipEvidence":"final-native-catalog","recentTraversalPerformed":false,
             "nativeUiAcceptance":false,"inventoryMutation":false,"fullSiteCoverage":false,
             "observationErrorCode":final_snapshot.observation_error_code,
-            "projectedObservationErrorCode":confirmed.observation_error_code}))
+            "projectedObservationErrorCode":confirmed.observation_error_code}),
+        )
     }
 
     async fn authors(

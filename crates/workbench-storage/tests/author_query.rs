@@ -348,7 +348,7 @@ fn policies_are_bounded_revisioned_and_do_not_rewrite_unrelated_documents() {
 
     let checking: workbench_storage::DiscoveryDocument =
         serde_json::from_value(serde_json::json!({
-            "version": 1, "accounts": [{ "accountKey": "b".repeat(64), "records": [], "authors": [{
+            "version": 2, "accounts": [{ "accountKey": "b".repeat(64), "records": [], "authors": [{
                 "author": "Writer Name", "source": "JM", "state": "checking", "lastAttemptAt": 1,
                 "lastCompleteAt": null, "observedCount": 0, "pagesRead": 0, "errorCode": null
             }]}]

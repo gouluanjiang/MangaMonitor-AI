@@ -1,12 +1,12 @@
 # Current development handoff
 
-Updated 2026-09-30. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
+Updated 2026-10-01. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
 
 ## Current maintenance batch
 
 The user authorized the [independently reviewed maintenance fixes](MAINTENANCE_AUDIT_2026-09-30.md), strict on-demand recent-feed metadata checks before rendering unknown covers, and JM female-category filtering. The previous rule that unknown recent tags display immediately is superseded. Version `1.0.2-rc.1` distinguishes this candidate from the installed formal `1.0.1`; it is not a release declaration. No live profile migration or formal installation is part of source/isolated-test approval.
 
-Library, download and author-catalog format changes were explicitly approved: old data migrates in memory only on read; ordinary CAS/atomic writes use version 2; old programs reject unsupported formats. Do not launch an older app against newly saved data. Current changes require CI and user acceptance before merge or release.
+Library, download and author-catalog format changes were explicitly approved: old data migrates in memory only on read; ordinary CAS/atomic writes use version 2; old programs reject unsupported formats. Do not launch an older app against newly saved data. Application revision `d50e91204f4c38827d8427600aec5950633aaff8` has passed baseline, frontend (314 logic/240 browser tests), Windows native and isolated installer checks; see the maintenance contract for links and the single CI inspector-timeout retry. User acceptance and authority to use real registration files remain pending. Do not merge, release or restart the current app from this source/test approval alone.
 
 The earlier author coverage campaign has completed its private checks: all 28 known works, both sources for the 826 followed authors, continuous recent-feed supplementation and residual evidence review. This records that bounded campaign, not a guarantee about every work on either website. It does not require another full scan for unrelated maintenance.
 

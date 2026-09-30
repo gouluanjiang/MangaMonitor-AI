@@ -540,6 +540,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             },
         );
         let [jm_identity, pica_identity] = identities;
+        let identities = [jm_identity?, pica_identity?];
+        // These are revocable identity leases, not account guards. A queued
+        // local catalog read must not stall covers or account replacement.
+        drop(pica);
+        drop(jm);
         let root = self.root.clone();
         let (following, policies) = tokio::task::spawn_blocking(move || {
             crate::discovery::discovery_store_io(|| {
@@ -550,14 +555,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         .await
         .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
         .map_err(|error| AccountError::new(error.code))?;
-        self.check_saved(&mut jm)?;
-        self.check_saved(&mut pica)?;
-        Ok(crate::discovery::DiscoveryContext::new(
-            [jm_identity?, pica_identity?],
+        let context = crate::discovery::DiscoveryContext::new(
+            identities,
             self.root.clone(),
             following,
             policies,
-        ))
+        );
+        self.discovery_validate_context(&context)?;
+        Ok(context)
     }
 
     /// Independent of the source request locks, including external vault changes.

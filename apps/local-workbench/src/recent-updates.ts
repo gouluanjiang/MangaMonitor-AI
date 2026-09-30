@@ -28,6 +28,7 @@ export interface RecentUpdatesState {
   retainedItems?: SourceWork[];
   retainedCoverage?: RecentHistoryResult["coverage"];
   historyError?: boolean;
+  historyErrorCode?: string | null;
   observationErrorCode?: string | null;
   uncommittedIds?: string[];
 }
@@ -154,10 +155,17 @@ export class RecentUpdatesReader {
           retainedItems: history.items,
           retainedCoverage: history.coverage,
           historyError: false,
+          historyErrorCode: null,
         });
       })
-      .catch(() => {
-        this.publish({ historyError: true });
+      .catch((error: unknown) => {
+        this.publish({
+          historyError: true,
+          historyErrorCode:
+            error instanceof SourceError && /^[A-Z0-9_]{1,80}$/.test(error.code)
+              ? error.code
+              : "SOURCE_UNAVAILABLE",
+        });
       })
       .finally(() => {
         this.historyTask = null;

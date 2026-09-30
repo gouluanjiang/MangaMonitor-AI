@@ -363,11 +363,15 @@ export function RecentUpdatesPanel({
               data-testid="recent-unsaved"
             >
               本页已经读取，但作者目录补录尚未保存；作品继续保留在此处。请重试读取，保存成功后才会移入作者更新。
+              <small>诊断代码：{state.observationErrorCode}</small>
             </p>
           )}
           {state?.historyError && (
             <p role="alert" className="source-notice">
               近期补漏历史暂未读取成功；当前来源结果保留，可刷新最近更新重试。
+              {state.historyErrorCode && (
+                <small>诊断代码：{state.historyErrorCode}</small>
+              )}
             </p>
           )}
           <div

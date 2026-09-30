@@ -6,12 +6,13 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
+    collections::HashMap,
     fs::{self, File, Metadata, OpenOptions, TryLockError},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -28,10 +29,26 @@ const MAX_BOOKLISTS_BYTES: usize = 5 * 1024 * 1024;
 // Covers all permitted scopes and maximum-length UTF-8 names without truncation.
 pub(crate) const MAX_FOLLOWING_BYTES: usize = 32 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-// Independent account/catalog/document handles share the same OS lock, but not
-// local_lock. A short overlap must not fail an otherwise idle page's first read.
+// The bounded OS wait is for other processes. In-process handles queue on one
+// root gate first, so a large catalog read cannot make our own history read BUSY.
 const STORE_LOCK_WAIT: Duration = Duration::from_secs(2);
 const STORE_LOCK_POLL: Duration = Duration::from_millis(20);
+static ROOT_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+fn root_gate(root: &Path) -> Result<Arc<Mutex<()>>> {
+    let key = fs::canonicalize(root).map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+    let mut gates = ROOT_GATES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+    if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
+        return Ok(gate);
+    }
+    gates.retain(|_, gate| gate.strong_count() != 0);
+    let gate = Arc::new(Mutex::new(()));
+    gates.insert(key, Arc::downgrade(&gate));
+    Ok(gate)
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -99,7 +116,7 @@ impl Drop for StoreFileLock {
 /// The root is selected by the application, never by a renderer command argument.
 pub struct WorkbenchStore {
     pub(crate) root: PathBuf,
-    pub(crate) local_lock: Mutex<()>,
+    pub(crate) local_lock: Arc<Mutex<()>>,
     // Acquired only while local_lock is held. No filesystem handles are cached.
     document_cache: Mutex<DocumentCache>,
     pub(crate) discovery_index: Mutex<Option<crate::discovery_journal::DiscoveryIndexCache>>,
@@ -111,9 +128,10 @@ impl WorkbenchStore {
     pub fn open(app_data_root: impl AsRef<Path>) -> Result<Self> {
         let root = app_data_root.as_ref().join(PRIVATE_DIRECTORY);
         let directory_handles = ensure_directory_tree(&root)?;
+        let local_lock = root_gate(&root)?;
         Ok(Self {
             root,
-            local_lock: Mutex::new(()),
+            local_lock,
             document_cache: Mutex::new(DocumentCache::default()),
             discovery_index: Mutex::new(None),
             _directory_handles: directory_handles,
@@ -748,6 +766,44 @@ mod shared_cache_tests {
         assert_eq!(next.value.count, 2);
         assert_eq!(first.value.count, 1);
         assert!(!Arc::ptr_eq(&first, &next));
+    }
+}
+
+#[cfg(test)]
+mod queued_transaction_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn independent_handles_wait_for_a_long_local_commit_and_read_its_revision() {
+        let directory = TempDir::new().unwrap();
+        let owner = WorkbenchStore::open(directory.path()).unwrap();
+        let observer = WorkbenchStore::open(directory.path()).unwrap();
+        let independent = TempDir::new().unwrap();
+        let other = WorkbenchStore::open(independent.path()).unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let _local = owner.local_lock.lock().unwrap();
+            let _file = owner.acquire_lock().unwrap();
+            started.send(()).unwrap();
+            std::thread::sleep(STORE_LOCK_WAIT + Duration::from_millis(250));
+            owner
+                .write_unlocked(BOOKLISTS, MAX_BOOKLISTS_BYTES, 0, Booklists::default())
+                .unwrap();
+        });
+        ready.recv().unwrap();
+        // Another profile is not serialized behind this catalog transaction.
+        assert_eq!(other.read_booklists().unwrap().revision, 0);
+        assert_eq!(observer.read_booklists().unwrap().revision, 1);
+        writer.join().unwrap();
+        // Queuing did not relax compare-and-swap or repeat the transaction.
+        assert_eq!(
+            observer
+                .write_booklists(0, Booklists::default())
+                .unwrap_err()
+                .code,
+            "REVISION_CONFLICT"
+        );
     }
 }
 

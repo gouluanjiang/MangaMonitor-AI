@@ -1,6 +1,6 @@
 {
   "name": "@mangamonitor/local-workbench",
-  "version": "1.0.2-rc.2",
+  "version": "1.0.2-rc.3",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.19.0",

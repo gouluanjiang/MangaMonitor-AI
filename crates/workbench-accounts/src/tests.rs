@@ -1076,6 +1076,57 @@ async fn uncertain_favorite_cannot_be_toggled_again_before_target_is_observed() 
 }
 
 #[tokio::test]
+async fn waiting_for_local_catalog_does_not_block_covers_or_retain_a_changed_account() {
+    let root = TempDir::new().unwrap();
+    let service = Arc::new(service(&root, FakeBackend::default(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    let pica = login(&service, Source::Pica, "fixture", false).await;
+    query(&service, Source::Jm, &session).await.unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.path().join("workbench-preview-v1/.workbench.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move {
+            service
+                .discovery_context(vec![
+                    crate::DiscoveryScope {
+                        source: Source::Jm,
+                        session_id: session,
+                    },
+                    crate::DiscoveryScope {
+                        source: Source::Pica,
+                        session_id: pica,
+                    },
+                ])
+                .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let cover = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        service.cover(Source::Jm, &session, "123"),
+    )
+    .await;
+    let replacement = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        login(&service, Source::Jm, "replacement", false),
+    )
+    .await;
+    lock.unlock().unwrap();
+    assert!(cover.is_ok_and(|result| result.is_ok()));
+    assert!(replacement.is_ok());
+    assert!(matches!(
+        pending.await.unwrap(),
+        Err(AccountError { code: "SESSION_CHANGED" })
+    ));
+}
+
+#[tokio::test]
 async fn slow_detail_does_not_block_known_covers_and_cannot_commit_to_a_new_session() {
     let root = TempDir::new().unwrap();
     let backend = FakeBackend::default();

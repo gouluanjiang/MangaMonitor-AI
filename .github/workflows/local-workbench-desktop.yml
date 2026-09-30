@@ -258,7 +258,7 @@ jobs:
         # Builds only. Live execution refuses CI and requires an explicit local plan.
         run: cargo +1.98.1 build --release --locked -p workbench-accounts --example author_coverage_audit
       - name: Build the isolated catalog diagnostic
-        run: cargo +1.98.1 build --locked -p workbench-storage --example discovery_catalog_probe
+        run: cargo +1.98.1 build --release --locked -p workbench-storage --example discovery_catalog_probe
       - name: Build the reviewed author policy import helper
         run: cargo +1.98.1 build --locked -p workbench-storage --example author_query_policy
       - name: Build frontend assets for native context tests
@@ -401,7 +401,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mangamonitor-catalog-probe-${{ github.sha }}
-          path: target/debug/examples/discovery_catalog_probe.exe
+          path: target/release/examples/discovery_catalog_probe.exe
           retention-days: 7
           if-no-files-found: error
       # Private author policies are supplied locally; this artifact contains code only.

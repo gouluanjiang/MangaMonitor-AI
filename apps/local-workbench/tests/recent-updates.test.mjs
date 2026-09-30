@@ -265,6 +265,29 @@ test("failed supplementary history preserves a successful live page", async () =
   );
   await reader.start();
   assert.equal(reader.state.historyError, true);
+  assert.equal(reader.state.historyErrorCode, "STORE_BUSY");
   assert.equal(reader.state.phase, "ready");
   assert.equal(reader.state.snapshot.items.length, 2);
+});
+
+test("history diagnostics discard raw errors and clear after recovery", async () => {
+  let failed = true;
+  const reader = new RecentUpdatesReader(
+    {
+      query: async () => page(1, [1, 2]),
+      recentHistory: async () => {
+        if (failed) throw new Error("private path and account data");
+        return { ...scope, items: [work(3)], coverage: {}, revision: 2 };
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  assert.equal(reader.state.historyErrorCode, "SOURCE_UNAVAILABLE");
+  assert.equal(JSON.stringify(reader.state).includes("private path"), false);
+  failed = false;
+  await reader.refreshHistory();
+  assert.equal(reader.state.historyError, false);
+  assert.equal(reader.state.historyErrorCode, null);
+  assert.equal(reader.state.retainedItems[0].workId, "3");
 });

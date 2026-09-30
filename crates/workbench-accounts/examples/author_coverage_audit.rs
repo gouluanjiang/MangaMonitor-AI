@@ -228,7 +228,9 @@ mod contract {
                 .canonicalize()
                 .map_err(|_| "AUDIT_EXISTING_PROFILE_REQUIRED")?;
             if parent.starts_with(&profile)
-                || parent.ancestors().any(|ancestor| ancestor.join(".git").exists())
+                || parent
+                    .ancestors()
+                    .any(|ancestor| ancestor.join(".git").exists())
             {
                 return Err("AUDIT_CANCEL_FILE_MUST_BE_PRIVATE".into());
             }
@@ -303,8 +305,17 @@ mod contract {
             assert_eq!(args.plan, PathBuf::from("plan"));
             assert!(args.cancel_file.is_none());
             let mut values: Vec<_> = [
-                "--live-author-audit", "--profile", "profile", "--output", "output",
-                "--plan", "plan", "--mode", "snapshot", "--cancel-file", "marker",
+                "--live-author-audit",
+                "--profile",
+                "profile",
+                "--output",
+                "output",
+                "--plan",
+                "plan",
+                "--mode",
+                "snapshot",
+                "--cancel-file",
+                "marker",
             ]
             .into_iter()
             .map(str::to_owned)
@@ -447,15 +458,19 @@ mod contract {
             let settled = wait_for_workers(&service);
             tokio::pin!(settled);
             phase_wait.await.unwrap();
-            assert!(tokio::time::timeout(Duration::from_millis(20), &mut settled)
-                .await
-                .is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut settled)
+                    .await
+                    .is_err()
+            );
             assert!(service.load(Ordering::SeqCst));
             source_release.send(()).unwrap();
             store_wait.await.unwrap();
-            assert!(tokio::time::timeout(Duration::from_millis(20), &mut settled)
-                .await
-                .is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), &mut settled)
+                    .await
+                    .is_err()
+            );
             store_release.send(()).unwrap();
             settled.await;
             worker.await.unwrap();
@@ -920,7 +935,15 @@ mod local {
             }
             "evidence" => evidence(service, &scopes, plan, &args.output, control).await,
             "authors" | "retry" => {
-                authors(service, &scopes, plan, &args.output, args.mode == "retry", control).await
+                authors(
+                    service,
+                    &scopes,
+                    plan,
+                    &args.output,
+                    args.mode == "retry",
+                    control,
+                )
+                .await
             }
             "recent" => recent(service, &scopes, plan, &args.output, control).await,
             _ => Err("AUDIT_MODE_INVALID".into()),
@@ -1006,7 +1029,8 @@ mod local {
             report["cancelErrorCode"] = json!(cancel_error);
             let saved_progress = match &control.active_run {
                 Some(ActiveRun::Authors(_)) => {
-                    match retry_busy_read(|| service.discovery_progress(control.scopes.clone())).await
+                    match retry_busy_read(|| service.discovery_progress(control.scopes.clone()))
+                        .await
                     {
                         Ok(progress) => save(
                             &args.output,
@@ -1017,7 +1041,8 @@ mod local {
                     }
                 }
                 Some(ActiveRun::Recent(_)) => {
-                    match retry_busy_read(|| std::future::ready(service.recent_check_progress())).await
+                    match retry_busy_read(|| std::future::ready(service.recent_check_progress()))
+                        .await
                     {
                         Ok(progress) => save(
                             &args.output,

@@ -2610,15 +2610,18 @@ impl Traversal {
         let complete = page.has_more == Some(false)
             || (terminal && page.has_more != Some(true))
             || (!capped_total && page.total == Some(count as u64));
-        if (!capped_total && page.total.is_some_and(|total| {
-            count as u64 > total
-                || ((page.has_more == Some(false) || terminal) && count as u64 != total)
-                || (page.has_more == Some(true) && count as u64 >= total)
-        })) || page.pages.is_some_and(|pages| {
-            page.page > pages.max(1)
-                || (complete && pages > page.page)
-                || (terminal && page.has_more == Some(true))
-        }) {
+        if (!capped_total
+            && page.total.is_some_and(|total| {
+                count as u64 > total
+                    || ((page.has_more == Some(false) || terminal) && count as u64 != total)
+                    || (page.has_more == Some(true) && count as u64 >= total)
+            }))
+            || page.pages.is_some_and(|pages| {
+                page.page > pages.max(1)
+                    || (complete && pages > page.page)
+                    || (terminal && page.has_more == Some(true))
+            })
+        {
             return Err(invalid());
         }
         if !complete && (raw_count == MAX_DISCOVERY_RECORDS || page.page == MAX_DISCOVERY_PAGES) {

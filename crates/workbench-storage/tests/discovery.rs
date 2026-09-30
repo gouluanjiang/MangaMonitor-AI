@@ -1064,10 +1064,7 @@ fn observation_checkpoint_failure_preserves_replay_and_revalidates_warm_pages() 
     );
     assert_eq!(manifest(&directory), previous_manifest);
     fs::write(&current_page, valid_page).unwrap();
-    let checkpoint_hash = format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&before).unwrap())
-    );
+    let checkpoint_hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&before).unwrap()));
     let blocked_checkpoint = directory
         .path()
         .join(PRIVATE_DIRECTORY)

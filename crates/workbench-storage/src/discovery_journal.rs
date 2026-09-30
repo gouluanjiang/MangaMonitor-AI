@@ -204,7 +204,11 @@ struct PreparedPatch {
 }
 
 type RecordPositions = HashMap<String, HashMap<(Source, String), usize>>;
-type LoadedDiscovery = (Document<DiscoveryDocument>, DiscoveryIndexCache, Vec<String>);
+type LoadedDiscovery = (
+    Document<DiscoveryDocument>,
+    DiscoveryIndexCache,
+    Vec<String>,
+);
 
 fn corrupt() -> StoreError {
     StoreError::new("DOCUMENT_CORRUPT")
@@ -377,7 +381,8 @@ impl WorkbenchStore {
             crate::author_query::AUTHOR_QUERY_FILE,
             crate::author_query::MAX_AUTHOR_QUERY_BYTES,
         )?;
-        let (discovery, _, _) = self.load_discovery_unlocked(self.discovery_manifest_unlocked()?)?;
+        let (discovery, _, _) =
+            self.load_discovery_unlocked(self.discovery_manifest_unlocked()?)?;
         if following.revision != expected_following_revision
             || discovery.revision != expected_discovery_revision
             || policies.revision != expected_policy_revision
@@ -489,10 +494,7 @@ impl WorkbenchStore {
         Ok(chain)
     }
 
-    fn load_discovery_unlocked(
-        &self,
-        manifest: Option<Manifest>,
-    ) -> Result<LoadedDiscovery> {
+    fn load_discovery_unlocked(&self, manifest: Option<Manifest>) -> Result<LoadedDiscovery> {
         let mut document: Document<DiscoveryDocument> =
             self.read_unlocked(DISCOVERY_FILE, MAX_DISCOVERY_BYTES)?;
         let base_stamp = self.discovery_base_stamp_unlocked()?;

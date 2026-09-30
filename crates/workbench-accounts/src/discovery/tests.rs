@@ -527,14 +527,28 @@ async fn initial_eight_page_recent_window_recovers_replay_and_preserves_coverage
             assert_eq!(pica.source, Source::Pica);
             assert_eq!(pica.pages_read, 1);
             assert_eq!(pica.replay_recovery_pages, 0);
-            assert!(serde_json::to_value(pica).unwrap().get("replayRecoveryPages").is_none());
+            assert!(serde_json::to_value(pica)
+                .unwrap()
+                .get("replayRecoveryPages")
+                .is_none());
         } else {
             assert_eq!(
                 run.phase,
-                if outcome == Some("CHECK_CANCELLED") { "cancelled" } else { "partial" }
+                if outcome == Some("CHECK_CANCELLED") {
+                    "cancelled"
+                } else {
+                    "partial"
+                }
             );
             assert_eq!(history.coverage, previous.coverage);
-            assert_eq!(history.items.len(), if outcome == Some("SOURCE_TIMEOUT") { 42 } else { 44 });
+            assert_eq!(
+                history.items.len(),
+                if outcome == Some("SOURCE_TIMEOUT") {
+                    42
+                } else {
+                    44
+                }
+            );
         }
         let calls = backend.0.calls.lock().unwrap();
         let jm_pages: Vec<_> = calls
@@ -563,14 +577,20 @@ async fn initial_recent_replay_recovery_stops_after_three_extra_requests_without
             recent_replay_page(number, start..start + 3),
         );
     }
-    service.recent_check_start(scopes.clone(), Some(2)).await.unwrap();
+    service
+        .recent_check_start(scopes.clone(), Some(2))
+        .await
+        .unwrap();
     let run = finish_recent(&service).await;
     let result = &run.results[0];
     assert_eq!(run.phase, "partial");
     assert_eq!(result.replay_recovery_pages, 3);
     assert_eq!(result.pages_read, 5);
     assert_eq!(result.records_read, 24);
-    assert_eq!(result.error_code.as_deref(), Some("RECENT_RANGE_INCOMPLETE"));
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("RECENT_RANGE_INCOMPLETE")
+    );
     assert!(!result.initial_window);
     assert!(!result.reached_end);
     assert!(!result.joined_previous);
@@ -581,7 +601,14 @@ async fn initial_recent_replay_recovery_stops_after_three_extra_requests_without
     assert_eq!(history.coverage, previous.coverage);
     assert_eq!(history.items.len(), 12);
     assert_eq!(
-        backend.0.calls.lock().unwrap().iter().filter(|(source, _, _)| source == "JM").count(),
+        backend
+            .0
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(source, _, _)| source == "JM")
+            .count(),
         5
     );
 }

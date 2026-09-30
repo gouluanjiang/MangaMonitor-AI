@@ -905,16 +905,25 @@ async fn jm_recent_attaches_every_ordered_raw_row_without_extra_requests() {
     let rows = boundary.recent_rows.as_ref().unwrap();
     assert_eq!(rows.len(), page.items.len());
     assert_eq!(
-        rows.iter().map(|row| row.work_id.as_str()).collect::<Vec<_>>(),
+        rows.iter()
+            .map(|row| row.work_id.as_str())
+            .collect::<Vec<_>>(),
         ["125", "123", "124"]
     );
     assert_eq!(rows.first(), boundary.first.as_ref());
     assert_eq!(rows.last(), boundary.last.as_ref());
     assert!(rows.iter().all(|row| row.fingerprint.len() == 64
-        && row.fingerprint.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))));
+        && row
+            .fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))));
     assert_eq!(
         sources.recorded.lock().unwrap().as_slice(),
-        [(Source::Jm, Method::GET, "/categories/filter?page=7&order=&c=0&o=mr".into())]
+        [(
+            Source::Jm,
+            Method::GET,
+            "/categories/filter?page=7&order=&c=0&o=mr".into()
+        )]
     );
     assert!(sources.cover_recorded.lock().unwrap().is_empty());
 }
@@ -932,16 +941,23 @@ fn jm_recent_middle_row_proof_keeps_all_raw_fields_and_array_order() {
     )
     .unwrap();
     let parse = |middle| {
-        protocol::recent_page(Source::Jm, &json!({"total":3,"content":[
-            {"id":"123","name":"First fixture"}, middle,
-            {"id":"125","name":"Last fixture"}
-        ]}), 1)
+        protocol::recent_page(
+            Source::Jm,
+            &json!({"total":3,"content":[
+                {"id":"123","name":"First fixture"}, middle,
+                {"id":"125","name":"Last fixture"}
+            ]}),
+            1,
+        )
         .unwrap()
         .0
     };
     let first = parse(raw.clone());
     let boundary = first.jm_search_boundary.as_ref().unwrap();
-    assert_eq!(first.jm_search_boundary, parse(reordered).jm_search_boundary);
+    assert_eq!(
+        first.jm_search_boundary,
+        parse(reordered).jm_search_boundary
+    );
     let canonical = br#"{"extra":{"a":{"x":1,"y":2},"z":0},"id":"124","name":"Middle fixture","sequence":[{"a":1,"b":2},2]}"#;
     assert_eq!(
         boundary.recent_rows.as_ref().unwrap()[1].fingerprint,
@@ -971,24 +987,55 @@ fn recent_full_row_proof_requires_known_clean_jm_rows() {
         json!({"id":"124","name":"Invalid fixture","author":{}}),
         Value::Null,
     ] {
-        let (page, _) = protocol::recent_page(Source::Jm, &json!({"total":3,"content":[
-            {"id":"123","name":"First fixture"}, invalid,
-            {"id":"125","name":"Last fixture"}
-        ]}), 1).unwrap();
-        assert_eq!((page.record_count(), page.items.len(), page.issues.len()), (3, 2, 1));
-        assert!(page.jm_search_boundary.as_ref().unwrap().recent_rows.is_none());
+        let (page, _) = protocol::recent_page(
+            Source::Jm,
+            &json!({"total":3,"content":[
+                {"id":"123","name":"First fixture"}, invalid,
+                {"id":"125","name":"Last fixture"}
+            ]}),
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            (page.record_count(), page.items.len(), page.issues.len()),
+            (3, 2, 1)
+        );
+        assert!(page
+            .jm_search_boundary
+            .as_ref()
+            .unwrap()
+            .recent_rows
+            .is_none());
     }
     let row = json!({"id":"123","name":"Fixture"});
-    let (unknown, _) = protocol::recent_page(Source::Jm, &json!({"content":[row.clone()]}), 1).unwrap();
+    let (unknown, _) =
+        protocol::recent_page(Source::Jm, &json!({"content":[row.clone()]}), 1).unwrap();
     assert!(unknown.jm_search_boundary.is_none());
-    let (search, _) = protocol::search_page(Source::Jm, &json!({"total":1,"content":[row.clone()]}), 1).unwrap();
-    assert!(search.jm_search_boundary.as_ref().unwrap().recent_rows.is_none());
-    let (pica, _) = protocol::recent_page(Source::Pica, &json!({"comics":{
-        "total":1,"page":1,"pages":1,"limit":20,"docs":[{"_id":PICA_ID,"title":"Fixture"}]
-    }}), 1).unwrap();
+    let (search, _) =
+        protocol::search_page(Source::Jm, &json!({"total":1,"content":[row.clone()]}), 1).unwrap();
+    assert!(search
+        .jm_search_boundary
+        .as_ref()
+        .unwrap()
+        .recent_rows
+        .is_none());
+    let (pica, _) = protocol::recent_page(
+        Source::Pica,
+        &json!({"comics":{
+            "total":1,"page":1,"pages":1,"limit":20,"docs":[{"_id":PICA_ID,"title":"Fixture"}]
+        }}),
+        1,
+    )
+    .unwrap();
     assert!(pica.jm_search_boundary.is_none());
     assert_eq!(
-        protocol::recent_page(Source::Jm, &json!({"total":2,"content":[row.clone(),row]}), 1).unwrap_err().code,
+        protocol::recent_page(
+            Source::Jm,
+            &json!({"total":2,"content":[row.clone(),row]}),
+            1
+        )
+        .unwrap_err()
+        .code,
         "SOURCE_PAGINATION_INVALID"
     );
 }
@@ -1000,13 +1047,23 @@ fn jm_recent_full_row_proof_never_crosses_the_serialized_page_boundary() {
     ]});
     let (recent, _) = protocol::recent_page(Source::Jm, &data, 1).unwrap();
     let (search, _) = protocol::search_page(Source::Jm, &data, 1).unwrap();
-    assert!(recent.jm_search_boundary.as_ref().unwrap().recent_rows.is_some());
+    assert!(recent
+        .jm_search_boundary
+        .as_ref()
+        .unwrap()
+        .recent_rows
+        .is_some());
     let encoded = serde_json::to_value(&recent).unwrap();
     assert_eq!(encoded, serde_json::to_value(&search).unwrap());
     assert!(encoded["jmSearchBoundary"].get("recentRows").is_none());
     let restored: SourcePage = serde_json::from_value(encoded.clone()).unwrap();
     assert_eq!(restored, search);
-    assert!(restored.jm_search_boundary.as_ref().unwrap().recent_rows.is_none());
+    assert!(restored
+        .jm_search_boundary
+        .as_ref()
+        .unwrap()
+        .recent_rows
+        .is_none());
     let mut injected = encoded;
     injected["jmSearchBoundary"]["recentRows"] = json!([
         {"workId":"123","fingerprint":"a".repeat(64)}

@@ -139,9 +139,15 @@ fn raw_budget_cannot_be_extended_by_verified_overlaps() {
         // Exercise the boundary without allocating a large synthetic catalog.
         traversal.raw_record_count = MAX_DISCOVERY_RECORDS - remaining;
         let second = jm_page(2, 10, &[101, 102, 103]);
-        assert_eq!(traversal.append(&second).unwrap_err().code, "DISCOVERY_LIMIT");
+        assert_eq!(
+            traversal.append(&second).unwrap_err().code,
+            "DISCOVERY_LIMIT"
+        );
         assert_eq!(traversal.record_count, 2);
-        assert_eq!(traversal.raw_record_count, MAX_DISCOVERY_RECORDS - remaining);
+        assert_eq!(
+            traversal.raw_record_count,
+            MAX_DISCOVERY_RECORDS - remaining
+        );
     }
 }
 
@@ -212,7 +218,10 @@ async fn incremental_overlap_preserves_old_baselines_and_counts_new_prefix_once(
     let range = jm_range(&next);
     assert_eq!(range.state, DiscoveryRangeState::Complete);
     assert_eq!(range.pages_read, 3);
-    assert!(!range.pages_complete, "the old tail was retained, not re-read");
+    assert!(
+        !range.pages_complete,
+        "the old tail was retained, not re-read"
+    );
     assert_eq!(range.last_check_mode, Some(DiscoveryMode::Incremental));
     assert_eq!(range.last_complete_at, jm_range(&prior).last_complete_at);
     assert_eq!(

@@ -801,7 +801,10 @@ mod tests {
                     .map_err(|error| AccountError::new(error.code))
             })
             .unwrap();
-        assert_eq!(store.read_observed_works().unwrap().value.accounts[0].coverage, coverage);
+        assert_eq!(
+            store.read_observed_works().unwrap().value.accounts[0].coverage,
+            coverage
+        );
     }
 }
 
@@ -895,7 +898,12 @@ mod recent_sequence_tests {
         let mut traversal = crate::discovery::Traversal::default();
         let (mut ids, mut head) = (vec![], vec![]);
         for batch in [
-            page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false),
+            page(
+                1,
+                10_000,
+                &["100", "101", "102", "103", "104", "105"],
+                false,
+            ),
             page(2, 10_000, &["101", "102", "103"], false),
         ] {
             assert!(!append_recent_page(&mut traversal, &batch, &mut ids, &mut head).unwrap());
@@ -922,7 +930,12 @@ mod recent_sequence_tests {
             let (mut ids, mut head) = (vec![], vec![]);
             append_recent_page(
                 &mut traversal,
-                &page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false),
+                &page(
+                    1,
+                    10_000,
+                    &["100", "101", "102", "103", "104", "105"],
+                    false,
+                ),
                 &mut ids,
                 &mut head,
             )
@@ -931,7 +944,12 @@ mod recent_sequence_tests {
             match kind {
                 0 => next.items[1].title = "Changed projection".into(),
                 1 => {
-                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap()[1]
+                    next.jm_search_boundary
+                        .as_mut()
+                        .unwrap()
+                        .recent_rows
+                        .as_mut()
+                        .unwrap()[1]
                         .fingerprint = "f".repeat(64);
                 }
                 2 => next = page(2, 10_000, &["103", "105", "104", "106"], false),
@@ -941,19 +959,40 @@ mod recent_sequence_tests {
                 6 => next = page(2, 10_000, &["105", "106", "104"], false),
                 7 => next.jm_search_boundary.as_mut().unwrap().recent_rows = None,
                 8 => {
-                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap().pop();
+                    next.jm_search_boundary
+                        .as_mut()
+                        .unwrap()
+                        .recent_rows
+                        .as_mut()
+                        .unwrap()
+                        .pop();
                 }
                 9 => {
-                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap()[1]
+                    next.jm_search_boundary
+                        .as_mut()
+                        .unwrap()
+                        .recent_rows
+                        .as_mut()
+                        .unwrap()[1]
                         .work_id = "999".into();
                 }
                 10 => {
-                    next.jm_search_boundary.as_mut().unwrap().recent_rows.as_mut().unwrap()[1]
+                    next.jm_search_boundary
+                        .as_mut()
+                        .unwrap()
+                        .recent_rows
+                        .as_mut()
+                        .unwrap()[1]
                         .fingerprint = "g".repeat(64);
                 }
                 11 => {
-                    next.jm_search_boundary.as_mut().unwrap().first.as_mut().unwrap().fingerprint =
-                        "f".repeat(64);
+                    next.jm_search_boundary
+                        .as_mut()
+                        .unwrap()
+                        .first
+                        .as_mut()
+                        .unwrap()
+                        .fingerprint = "f".repeat(64);
                 }
                 _ => next = page(2, 10_000, &["105", "106", "106"], false),
             }
@@ -977,12 +1016,19 @@ mod recent_sequence_tests {
         for ids in [&["103", "104", "105", "106"][..], &["105", "106"], &["106"]] {
             let mut traversal = crate::discovery::Traversal::default();
             traversal
-                .append_recent(&page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false))
+                .append_recent(&page(
+                    1,
+                    10_000,
+                    &["100", "101", "102", "103", "104", "105"],
+                    false,
+                ))
                 .unwrap();
             traversal
                 .append_recent(&page(2, 10_000, &["101", "102", "103"], false))
                 .unwrap();
-            assert!(traversal.append_recent(&page(3, 10_000, ids, false)).is_err());
+            assert!(traversal
+                .append_recent(&page(3, 10_000, ids, false))
+                .is_err());
             assert!(!traversal.recent_can_checkpoint());
             traversal
                 .append_recent(&page(3, 10_000, &["104", "105", "106"], false))
@@ -996,31 +1042,50 @@ mod recent_sequence_tests {
         let mut traversal = crate::discovery::Traversal::default();
         let names: Vec<_> = (100..112).map(|id| id.to_string()).collect();
         let refs: Vec<_> = names.iter().map(String::as_str).collect();
-        traversal.append_recent(&page(1, 10_000, &refs, false)).unwrap();
+        traversal
+            .append_recent(&page(1, 10_000, &refs, false))
+            .unwrap();
         for number in 2..=4 {
             let start = (number as usize - 2) * 3;
-            traversal.append_recent(&page(number, 10_000, &refs[start..start + 3], false)).unwrap();
+            traversal
+                .append_recent(&page(number, 10_000, &refs[start..start + 3], false))
+                .unwrap();
             assert!(!traversal.recent_can_checkpoint());
         }
         assert_eq!(
-            traversal.append_recent(&page(5, 10_000, &refs[9..], false)).unwrap_err().code,
+            traversal
+                .append_recent(&page(5, 10_000, &refs[9..], false))
+                .unwrap_err()
+                .code,
             "RECENT_RANGE_INCOMPLETE"
         );
-        traversal.append_recent(&page(5, 10_000, &["109", "110", "111", "112"], false)).unwrap();
+        traversal
+            .append_recent(&page(5, 10_000, &["109", "110", "111", "112"], false))
+            .unwrap();
         assert!(traversal.recent_can_checkpoint());
 
         let mut tail = crate::discovery::Traversal::default();
-        tail.append_recent(&page(1, 10_000, &["100", "101"], false)).unwrap();
-        tail.append_recent(&page(2, 10_000, &["100", "101"], false)).unwrap();
+        tail.append_recent(&page(1, 10_000, &["100", "101"], false))
+            .unwrap();
+        tail.append_recent(&page(2, 10_000, &["100", "101"], false))
+            .unwrap();
         assert!(!tail.recent_can_checkpoint());
-        assert!(tail.append_recent(&page(3, 10_000, &["100", "101"], false)).is_err());
-        tail.append_recent(&page(3, 10_000, &["102"], false)).unwrap();
+        assert!(tail
+            .append_recent(&page(3, 10_000, &["100", "101"], false))
+            .is_err());
+        tail.append_recent(&page(3, 10_000, &["102"], false))
+            .unwrap();
         assert!(tail.recent_can_checkpoint());
     }
 
     #[test]
     fn contiguous_recent_replay_does_not_relax_author_or_pica_traversal() {
-        let first = page(1, 10_000, &["100", "101", "102", "103", "104", "105"], false);
+        let first = page(
+            1,
+            10_000,
+            &["100", "101", "102", "103", "104", "105"],
+            false,
+        );
         let repeated = page(2, 10_000, &["101", "102", "103"], false);
         let mut author = crate::discovery::Traversal::default();
         author.append(&first).unwrap();

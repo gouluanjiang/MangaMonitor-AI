@@ -10,6 +10,10 @@ declare global {
       saved: ReaderPosition | null;
       fail: number | null;
       failChapter: string | null;
+      failSave: boolean;
+      holdChapter: string | null;
+      releaseChapter?: () => void;
+      knownChapters: string[];
       firstChapterPages: number;
       imageHeight: number;
       finalImageHeight: number | null;
@@ -51,6 +55,9 @@ test.beforeEach(async ({ page }) => {
       saved: null,
       fail: null,
       failChapter: null,
+      failSave: false,
+      holdChapter: null,
+      knownChapters: [],
       firstChapterPages: 10000,
       imageHeight: 1000,
       finalImageHeight: null,
@@ -63,6 +70,7 @@ test.beforeEach(async ({ page }) => {
       state.calls.push({ command, args: structuredClone(args) });
       switch (command) {
         case "reader_open": {
+          state.knownChapters = [];
           if (state.holdOpen)
             await new Promise<void>((resolve) => {
               state.releaseOpen = resolve;
@@ -90,6 +98,11 @@ test.beforeEach(async ({ page }) => {
         case "reader_chapter":
           if (state.failChapter === args.chapterId)
             throw { code: "SOURCE_UNAVAILABLE" };
+          if (state.holdChapter === args.chapterId)
+            await new Promise<void>((resolve) => {
+              state.releaseChapter = resolve;
+            });
+          state.knownChapters.push(String(args.chapterId));
           return {
             readerId: args.readerId,
             chapterId: args.chapterId,
@@ -130,6 +143,13 @@ test.beforeEach(async ({ page }) => {
           };
         }
         case "reader_save_position":
+          if (state.failSave) throw { code: "REVISION_CONFLICT" };
+          if (
+            !state.knownChapters.includes(
+              (args.position as ReaderPosition).chapterId,
+            )
+          )
+            throw { code: "READER_POSITION_INVALID" };
           state.saved = structuredClone(args.position as ReaderPosition);
           return null;
         case "reader_close":
@@ -198,6 +218,101 @@ async function openOnline(page: Page) {
   await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
 }
+test("reader close exposes an unsaved position and retries before releasing its native session", async ({
+  page,
+}) => {
+  await openLibrary(page);
+  await page.evaluate(() => {
+    window.readerTest.failSave = true;
+  });
+  await jump(page, 4);
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "重试保存并退出", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.readerTest.calls.filter((call) => call.command === "reader_close"),
+    ),
+  ).toEqual([]);
+  await page.evaluate(() => {
+    window.readerTest.failSave = false;
+  });
+  await page
+    .getByRole("button", { name: "重试保存并退出", exact: true })
+    .click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  expect(await page.evaluate(() => window.readerTest.saved?.pageIndex)).toBe(3);
+  expect(
+    await page.evaluate(
+      () =>
+        window.readerTest.calls.filter(
+          (call) => call.command === "reader_close",
+        ).length,
+    ),
+  ).toBe(1);
+});
+
+test("discarding a failed position closes without claiming or retrying a successful save", async ({
+  page,
+}) => {
+  await openLibrary(page);
+  await page.evaluate(() => {
+    window.readerTest.failSave = true;
+  });
+  await jump(page, 5);
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "放弃未保存位置并退出", exact: true }),
+  ).toBeVisible();
+  const attempts = await page.evaluate(
+    () =>
+      window.readerTest.calls.filter(
+        (call) => call.command === "reader_save_position",
+      ).length,
+  );
+  await page
+    .getByRole("button", { name: "放弃未保存位置并退出", exact: true })
+    .click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        window.readerTest.calls.filter(
+          (call) => call.command === "reader_save_position",
+        ).length,
+    ),
+  ).toBe(attempts);
+  expect(
+    await page.evaluate(() => window.readerTest.saved?.pageIndex),
+  ).not.toBe(4);
+});
+
+test("switching away from an unloaded chapter never submits its unknown position", async ({
+  page,
+}) => {
+  await openLibrary(page);
+  await page.evaluate(() => {
+    window.readerTest.holdChapter = "two";
+  });
+  await showToolbar(page);
+  await page.getByLabel("选择章节").selectOption("two");
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.readerTest.releaseChapter)))
+    .toBe(true);
+  await page.getByLabel("选择章节").selectOption("one");
+  await expect(page.getByLabel("当前页码")).toContainText("10000");
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  const positions = await page.evaluate(() =>
+    window.readerTest.calls
+      .filter((call) => call.command === "reader_save_position")
+      .map((call) => (call.args.position as ReaderPosition).chapterId),
+  );
+  expect(positions.length).toBeGreaterThan(0);
+  expect(positions.every((chapterId) => chapterId === "one")).toBe(true);
+  await page.evaluate(() => window.readerTest.releaseChapter?.());
+});
 async function jump(page: Page, number: number, count = 10000) {
   await showToolbar(page);
   await page

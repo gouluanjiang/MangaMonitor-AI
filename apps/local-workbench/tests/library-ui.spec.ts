@@ -34,6 +34,8 @@ type Options = {
   usability?: boolean;
   workDates?: boolean;
   languageTags?: string[][];
+  libraryReferences?: LibrarySnapshot["items"][number]["sourceRef"][];
+  libraryLinks?: LibrarySnapshot["items"][number]["links"][];
   workbenchVersion?: string;
 };
 type Hooks = {
@@ -98,11 +100,12 @@ async function installMock(page: Page, options: Options = {}) {
               : "[合成作者] Café A [翻译乙]"
             : "合成电脑作品 " + String(number).padStart(4, "0");
       const reference: LibrarySnapshot["items"][number]["sourceRef"] =
-        options.namespaceMarks && number <= 2
+        options.libraryReferences?.[number - 1] ??
+        (options.namespaceMarks && number <= 2
           ? number === 1
             ? { source: "JM", workId: "123" }
             : { source: "Pica", workId: "0123456789abcdef01234567" }
-          : null;
+          : null);
       return {
         id: id(number),
         relativePath: reference ? reference.source + "/" + base : base,
@@ -128,6 +131,9 @@ async function installMock(page: Page, options: Options = {}) {
           options.usability && number === 3 ? "LIBRARY_FILE_CHANGED" : null,
         sourceRef: reference,
         identityEvidence: reference ? "manual" : null,
+        ...(options.libraryLinks?.[number - 1]
+          ? { links: options.libraryLinks[number - 1] }
+          : {}),
       };
     };
     const savedPC = localStorage.getItem("synthetic.library.pc");
@@ -1127,4 +1133,41 @@ test("retired phone and classification lists neither appear nor load, while PC s
   await expect(page.getByTestId("library-detail-stock")).toContainText(
     "已入库 · 电脑漫画库",
   );
+});
+
+test("female-oriented library tags require JM source evidence and never hide unrelated Pica or unknown files", async ({
+  page,
+}) => {
+  await installMock(page, {
+    pcCount: 4,
+    languageTags: [["女性向"], ["女性向"], ["女性向"], ["女性向"]],
+    libraryReferences: [
+      { source: "JM", workId: "12345" },
+      { source: "Pica", workId: "0123456789abcdef01234567" },
+      null,
+      null,
+    ],
+    libraryLinks: [
+      [],
+      [],
+      [],
+      [
+        {
+          reference: { source: "JM", workId: "12346" },
+          evidence: "manual",
+          linkedAt: 1,
+        },
+      ],
+    ],
+  });
+  await expect(page.getByTestId("library-grid")).toHaveAttribute(
+    "data-total-items",
+    "2",
+  );
+  await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(4))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(2))).toBeVisible();
+  await expect(page.getByTestId("library-card-" + id(3))).toBeVisible();
+  expect(await page.evaluate(() => window.libraryTest.pc.items.length)).toBe(4);
+  expect(await commands(page, "source_query")).toEqual([]);
 });

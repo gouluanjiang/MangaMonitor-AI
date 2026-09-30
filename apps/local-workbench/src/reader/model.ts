@@ -33,16 +33,20 @@ export function readerRequestedPages(
 // open or awaits that reader's flush/close, without touching another window.
 export class ReaderLifetime {
   private stopped = false;
+  private disposed = false;
   private attached: (() => Promise<void>) | null = null;
+  private cleanup: (() => Promise<void>) | null = null;
   private closing: Promise<void> | null = null;
+  private disposing: Promise<void> | null = null;
   private readonly cancel: () => Promise<void>;
   constructor(cancel: () => Promise<void>) {
     this.cancel = cancel;
   }
-  attach(close: () => Promise<void>): boolean {
+  attach(close: () => Promise<void>, cleanup = close): boolean {
     this.attached = close;
+    this.cleanup = cleanup;
     if (!this.stopped) return true;
-    void close().catch(() => undefined);
+    void (this.disposed ? cleanup() : close()).catch(() => undefined);
     return false;
   }
   close(): Promise<void> {
@@ -56,6 +60,12 @@ export class ReaderLifetime {
     );
     this.closing = closing;
     return closing;
+  }
+  /** Unmount cannot ask the user to retry; release resources even if saving fails. */
+  dispose(): Promise<void> {
+    this.stopped = true;
+    this.disposed = true;
+    return (this.disposing ??= this.cleanup ? this.cleanup() : this.close());
   }
 }
 export function clampPosition(
@@ -179,12 +189,28 @@ export function visiblePages(
 export class ReaderProgressWriter {
   private pending: ReaderPosition | null = null;
   private running: Promise<void> | null = null;
+  private accepting = true;
+  private discarded = false;
   private readonly save: (position: ReaderPosition) => Promise<void>;
   constructor(save: (position: ReaderPosition) => Promise<void>) {
     this.save = save;
   }
   set(position: ReaderPosition): void {
-    this.pending = { ...position };
+    if (this.accepting) this.pending = { ...position };
+  }
+  stopAccepting(): void {
+    this.accepting = false;
+  }
+  resumeAccepting(): void {
+    if (!this.discarded) this.accepting = true;
+  }
+  async discard(): Promise<void> {
+    this.stopAccepting();
+    this.discarded = true;
+    this.pending = null;
+    // An already submitted native write cannot be undone or raced by closing.
+    await this.running?.catch(() => undefined);
+    this.pending = null;
   }
   flush(): Promise<void> {
     if (this.running)
@@ -198,7 +224,7 @@ export class ReaderProgressWriter {
         try {
           await this.save(next);
         } catch (error) {
-          this.pending ??= next;
+          if (!this.discarded) this.pending ??= next;
           throw error;
         }
       }
@@ -206,5 +232,74 @@ export class ReaderProgressWriter {
       this.running = null;
     });
     return this.running;
+  }
+}
+
+export class ReaderPositionSaveError extends Error {
+  readonly reason: unknown;
+  constructor(reason: unknown) {
+    super("READER_POSITION_SAVE_FAILED");
+    this.reason = reason;
+  }
+}
+
+/** Keep a failed save retryable without closing its native reader session. */
+export class ReaderCloseController {
+  private closing: Promise<void> | null = null;
+  private releasing: Promise<void> | null = null;
+  private released = false;
+  private disposed = false;
+  private readonly writer: ReaderProgressWriter;
+  private readonly release: () => Promise<void>;
+  constructor(writer: ReaderProgressWriter, release: () => Promise<void>) {
+    this.writer = writer;
+    this.release = release;
+  }
+  private releaseOnce(): Promise<void> {
+    if (this.released) return Promise.resolve();
+    if (this.releasing) return this.releasing;
+    const pending = Promise.resolve()
+      .then(this.release)
+      .then(() => {
+        this.released = true;
+        this.writer.stopAccepting();
+      })
+      .finally(() => {
+        this.releasing = null;
+      });
+    this.releasing = pending;
+    return pending;
+  }
+  close(discardPosition = false): Promise<void> {
+    if (this.released) return Promise.resolve();
+    if (this.closing) return this.closing;
+    this.writer.stopAccepting();
+    const pending = (async () => {
+      if (discardPosition) await this.writer.discard();
+      else {
+        try {
+          await this.writer.flush();
+        } catch (failure) {
+          throw new ReaderPositionSaveError(failure);
+        }
+      }
+      await this.releaseOnce();
+    })();
+    this.closing = pending;
+    void pending.catch(() => {
+      if (this.closing === pending) this.closing = null;
+      if (!this.disposed) this.writer.resumeAccepting();
+    });
+    return pending;
+  }
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    this.writer.stopAccepting();
+    try {
+      await this.close();
+    } catch {
+      await this.writer.discard();
+      await this.releaseOnce();
+    }
   }
 }

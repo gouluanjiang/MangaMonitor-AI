@@ -15,6 +15,8 @@ use std::{
 };
 
 pub const MAX_DOWNLOAD_TASKS: usize = 500;
+/// Abandoned tasks retain their staging proofs until explicit cleanup succeeds.
+pub const MAX_ABANDONED_DOWNLOAD_TASKS: usize = 500;
 pub const MAX_DOWNLOAD_BATCH: usize = 50;
 /// One reviewed selection may fill the existing queue; transport chunks stay small.
 pub const MAX_DOWNLOAD_SELECTION: usize = MAX_DOWNLOAD_TASKS;
@@ -74,6 +76,7 @@ pub enum DownloadPhase {
     Paused,
     Error,
     Downloaded,
+    Abandoned,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -155,7 +158,7 @@ pub struct DownloadsDocument {
 impl Default for DownloadsDocument {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             tasks: Vec::new(),
             history_evidence: Vec::new(),
         }
@@ -172,10 +175,22 @@ fn json(v: &Option<String>, limit: usize) -> bool {
         .is_none_or(|v| v.len() <= limit && serde_json::from_str::<serde_json::Value>(v).is_ok())
 }
 impl ValidatedDocument for DownloadsDocument {
+    const VERSION: u32 = 2;
+    fn migrate(&mut self) -> Result<()> {
+        if self.version == 1 {
+            // Version one never admitted this new state or more than 500 rows.
+            if self.tasks.len() > MAX_DOWNLOAD_TASKS || self.tasks.iter().any(|task| task.phase == DownloadPhase::Abandoned) {
+                return Err(StoreError::new("DOWNLOAD_DOCUMENT_INVALID"));
+            }
+            self.version = 2;
+        }
+        Ok(())
+    }
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("DOWNLOAD_DOCUMENT_INVALID");
-        if self.version != 1
-            || self.tasks.len() > MAX_DOWNLOAD_TASKS
+        if self.version != 2
+            || self.tasks.iter().filter(|task| task.phase != DownloadPhase::Abandoned).count() > MAX_DOWNLOAD_TASKS
+            || self.tasks.iter().filter(|task| task.phase == DownloadPhase::Abandoned).count() > MAX_ABANDONED_DOWNLOAD_TASKS
             || self.history_evidence.len() > MAX_DOWNLOAD_HISTORY_EVIDENCE
         {
             return Err(invalid());
@@ -273,6 +288,9 @@ impl ValidatedDocument for DownloadsDocument {
                 {
                     return Err(invalid());
                 }
+            }
+            if t.phase == DownloadPhase::Abandoned && t.library_entry_id.is_some() {
+                return Err(invalid());
             }
             if t.phase == DownloadPhase::Downloaded
                 && (t.library_entry_id.is_none()

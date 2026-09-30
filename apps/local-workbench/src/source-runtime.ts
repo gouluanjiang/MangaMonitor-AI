@@ -87,6 +87,23 @@ const identity = (value: unknown): value is string =>
 function invalid(): never {
   throw new SourceError("INVALID_RESPONSE");
 }
+function contentVerifiedIds(value: unknown, items: SourceWork[]): string[] {
+  if (value === undefined) return [];
+  const ids = new Set(items.map((work) => work.workId));
+  if (
+    !Array.isArray(value) ||
+    value.length > items.length ||
+    value.some((id) => typeof id !== "string" || !ids.has(id)) ||
+    new Set(value).size !== value.length
+  )
+    invalid();
+  return [...value] as string[];
+}
+function contentVerifiedUntil(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (!integer(value) || (value as number) <= 0) invalid();
+  return value as number;
+}
 function validSource(value: unknown): value is Source {
   return value === "JM" || value === "Pica";
 }
@@ -816,6 +833,17 @@ export function createSourceAdapter(
         ...scope,
         items,
         revision: value.revision as number,
+        ...(value.contentVerifiedIds === undefined
+          ? {}
+          : {
+              contentVerifiedIds: contentVerifiedIds(
+                value.contentVerifiedIds,
+                items,
+              ),
+              contentVerifiedUntil: contentVerifiedUntil(
+                value.contentVerifiedUntil,
+              ),
+            }),
         coverage: {
           headIds: [...coverage.headIds] as string[],
           checkedAt: coverage.checkedAt as number | null,
@@ -900,6 +928,17 @@ export function createSourceAdapter(
         notifyAuthorCatalogChanged({ ...scope, revision: discoveryRevision });
       return {
         ...result,
+        ...(raw.contentVerifiedIds === undefined
+          ? {}
+          : {
+              contentVerifiedIds: contentVerifiedIds(
+                raw.contentVerifiedIds,
+                result.items,
+              ),
+              contentVerifiedUntil: contentVerifiedUntil(
+                raw.contentVerifiedUntil,
+              ),
+            }),
         ...(discoveryRevision === undefined ? {} : { discoveryRevision }),
         ...(observationErrorCode === undefined ? {} : { observationErrorCode }),
       };

@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { ReaderPageCache } from "../src/reader/cache.ts";
 import {
   ReaderProgressWriter,
+  ReaderCloseController,
+  ReaderLifetime,
+  ReaderPositionSaveError,
   clampPosition,
   pageAtOffset,
   pageLayout,
@@ -18,6 +21,7 @@ import {
   parseReaderChapter,
   parseReaderImage,
   readerErrorMessage,
+  readerPositionErrorMessage,
 } from "../src/reader/runtime.ts";
 
 const image = (pageIndex, overrides = {}) => ({
@@ -370,6 +374,134 @@ test("position writes serialize and coalesce, and a failed write retains the new
   await rejected;
   await exitFlush;
   assert.deepEqual(saved.at(-1), position(7));
+});
+
+test("close failures retain position and reset both lifetime and session flights for an explicit retry", async () => {
+  let fail = true,
+    releases = 0;
+  const saved = [];
+  const writer = new ReaderProgressWriter(async (position) => {
+    if (fail) throw { code: "REVISION_CONFLICT" };
+    saved.push(position);
+  });
+  const close = new ReaderCloseController(writer, async () => {
+    releases++;
+  });
+  const lifetime = new ReaderLifetime(async () => {});
+  lifetime.attach(
+    () => close.close(),
+    () => close.dispose(),
+  );
+  writer.set({ chapterId: "one", pageIndex: 4, offset: 0.2 });
+  await assert.rejects(lifetime.close(), ReaderPositionSaveError);
+  assert.equal(releases, 0);
+  // Reading remains possible after the failed close; the newer position wins.
+  writer.set({ chapterId: "one", pageIndex: 5, offset: 0.4 });
+  fail = false;
+  await lifetime.close();
+  await lifetime.close();
+  await lifetime.dispose();
+  assert.deepEqual(saved, [{ chapterId: "one", pageIndex: 5, offset: 0.4 }]);
+  assert.equal(releases, 1);
+});
+
+test("explicit discard waits for an in-flight save and cannot requeue its failure or leak the session", async () => {
+  const flight = deferred();
+  let writes = 0,
+    releases = 0;
+  const writer = new ReaderProgressWriter(async () => {
+    writes++;
+    await flight.promise;
+  });
+  writer.set({ chapterId: "one", pageIndex: 3, offset: 0 });
+  const earlier = writer.flush();
+  const failed = assert.rejects(earlier);
+  const close = new ReaderCloseController(writer, async () => {
+    releases++;
+  });
+  const discarded = close.close(true);
+  writer.set({ chapterId: "one", pageIndex: 4, offset: 0 });
+  await tick();
+  assert.equal(releases, 0);
+  flight.reject(new Error("write failed"));
+  await failed;
+  await discarded;
+  await close.dispose();
+  await writer.flush();
+  assert.equal(writes, 1);
+  assert.equal(releases, 1);
+});
+
+test("a failed native release can be retried without repeating a completed position write", async () => {
+  let writes = 0,
+    releases = 0;
+  const writer = new ReaderProgressWriter(async () => {
+    writes++;
+  });
+  writer.set({ chapterId: "one", pageIndex: 1, offset: 0 });
+  const close = new ReaderCloseController(writer, async () => {
+    if (++releases === 1) throw new Error("READER_UNAVAILABLE");
+  });
+  await assert.rejects(close.close(), /READER_UNAVAILABLE/);
+  await close.close();
+  assert.equal(writes, 1);
+  assert.equal(releases, 2);
+});
+
+test("forced unmount releases a failing writer, including a session attached after cancellation", async () => {
+  let writes = 0,
+    releases = 0,
+    cancellations = 0;
+  const writer = new ReaderProgressWriter(async () => {
+    writes++;
+    throw new Error("unavailable");
+  });
+  writer.set({ chapterId: "one", pageIndex: 2, offset: 0 });
+  const close = new ReaderCloseController(writer, async () => {
+    releases++;
+  });
+  const lifetime = new ReaderLifetime(async () => {
+    cancellations++;
+  });
+  await lifetime.dispose();
+  assert.equal(
+    lifetime.attach(
+      () => close.close(),
+      () => close.dispose(),
+    ),
+    false,
+  );
+  await tick();
+  await tick();
+  assert.equal(cancellations, 1);
+  assert.equal(writes, 1);
+  assert.equal(releases, 1);
+  writer.set({ chapterId: "one", pageIndex: 8, offset: 0 });
+  await writer.flush();
+  assert.equal(writes, 1);
+});
+
+test("position errors distinguish an unsaved current location from prior progress without echoing diagnostics", () => {
+  assert.match(
+    readerPositionErrorMessage({ code: "READER_POSITION_INVALID" }),
+    /本次阅读位置未保存/,
+  );
+  assert.match(
+    readerPositionErrorMessage({ code: "READER_CHAPTER_UNKNOWN" }),
+    /章节加载完成/,
+  );
+  assert.match(
+    readerPositionErrorMessage({ code: "SOURCE_SESSION_EXPIRED" }),
+    /之前已保存/,
+  );
+  assert.doesNotMatch(
+    readerPositionErrorMessage(new Error("C:\\private\\secret.cbz")),
+    /private|secret/,
+  );
+  assert.doesNotMatch(
+    readerErrorMessage({ code: "READER_POSITION_INVALID" }),
+    /已保存的阅读位置会保留/,
+  );
 });
 
 test("native reader parsing rejects crossed identities and active media while preserving unknown chapter lengths", () => {

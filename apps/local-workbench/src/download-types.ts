@@ -52,7 +52,8 @@ export interface DownloadTaskRevision {
   taskId: string;
   expectedRevision: number;
 }
-export type DownloadAction = "pause" | "resume" | "retry";
+export type DownloadAction =
+  "pause" | "resume" | "retry" | "abandon" | "cleanup";
 export type DownloadLocalFiles =
   "present" | "missing" | "incomplete" | "unavailable";
 export type DownloadPhase =
@@ -62,7 +63,8 @@ export type DownloadPhase =
   | "saving"
   | "paused"
   | "error"
-  | "downloaded";
+  | "downloaded"
+  | "abandoned";
 export interface DownloadTask {
   id: string;
   revision: number;

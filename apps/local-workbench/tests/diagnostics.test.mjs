@@ -2,10 +2,57 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   diagnosticSummary,
+  createDiagnosticProblem,
+  diagnosticProblemLines,
   validateWorkbenchInfo,
 } from "../src/diagnostics.ts";
 import { matchingSettingsPages } from "../src/settings-navigation.ts";
 import { emptyLibrary } from "../src/library-types.ts";
+
+test("diagnostic problems keep only allowed codes, operations, source and fixed occurrence time", () => {
+  const at = Date.UTC(2026, 8, 30, 3, 4, 5);
+  const known = createDiagnosticProblem(
+    "downloads",
+    { code: "DOWNLOAD_INDEX_FAILED", title: "private-title" },
+    at,
+    "JM",
+  );
+  assert.deepEqual(known, {
+    operation: "downloads",
+    code: "DOWNLOAD_INDEX_FAILED",
+    occurredAt: at,
+    source: "JM",
+  });
+  const unknown = createDiagnosticProblem(
+    "library",
+    { code: "LIBRARY_PRIVATE_ACCOUNT_COOKIE", path: "C:/private-path" },
+    at,
+  );
+  assert.equal(unknown.code, "UNCLASSIFIED_ERROR");
+  const lines = diagnosticProblemLines([
+    known,
+    unknown,
+    {
+      operation: "accounts",
+      code: "private-password",
+      occurredAt: at,
+      source: "private-user",
+    },
+    { operation: "private-operation", code: "BUSY", occurredAt: at },
+    { operation: "preferences", code: "BUSY", occurredAt: NaN },
+    { operation: "preferences", code: "BUSY", occurredAt: Infinity },
+  ]);
+  assert.equal(lines.length, 3);
+  assert.match(
+    lines[0],
+    /下载队列 · JM · 2026-09-30T03:04:05.000Z · DOWNLOAD_INDEX_FAILED/,
+  );
+  assert.doesNotMatch(lines.join("\n"), /private|COOKIE|password|C:\//);
+  assert.deepEqual(
+    diagnosticProblemLines([known]),
+    diagnosticProblemLines([known]),
+  );
+});
 
 test("diagnostics report only allowed statuses and counts, even with private DTO fields", () => {
   const state = {

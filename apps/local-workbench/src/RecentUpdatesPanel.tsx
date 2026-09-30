@@ -37,6 +37,8 @@ import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
 import { isContentHidden, rememberContentWork } from "./content-filter.ts";
 import { useAuthorCatalogMembership } from "./author-catalog-membership.ts";
 import { subscribeAuthorCatalogChanges } from "./author-catalog-events.ts";
+import { ContentCheckedCard } from "./ContentCheckedCard.tsx";
+import { mergeSourceWorks } from "./source-types.ts";
 
 export function RecentUpdatesPanel({
   active,
@@ -129,7 +131,11 @@ export function RecentUpdatesPanel({
         currentView.current.scopeKey === scopeKey &&
         snapshot &&
         previous &&
-        snapshot.page > previous.page &&
+        (snapshot.page > previous.page ||
+          (snapshot.page === previous.page &&
+            snapshot.items.some(
+              (work, index) => work.tags !== previous?.items[index]?.tags,
+            ))) &&
         snapshot.items.length >= previous.items.length &&
         previous.items.every(
           (work, index) =>
@@ -139,7 +145,21 @@ export function RecentUpdatesPanel({
         // Capture when the response arrives, not when it was requested: the
         // reader may have moved elsewhere while waiting. The grid restores
         // this card after commit and yields to any new scroll input.
-        grid.current?.restore(grid.current.capture());
+        let anchor = grid.current?.capture() ?? null;
+        if (anchor) {
+          const index = snapshot.items.findIndex(
+            (work) => sourceWorkKey(work) === anchor?.key,
+          );
+          if (index >= 0 && isContentHidden(snapshot.items[index])) {
+            const neighbor = snapshot.items
+              .slice(index + 1)
+              .find((work) => !isContentHidden(work));
+            anchor = neighbor
+              ? (grid.current?.capture(sourceWorkKey(neighbor)) ?? null)
+              : null;
+          }
+        }
+        grid.current?.restore(anchor);
       }
       previous = snapshot;
       setObserved({ key: scopeKey, adapter, reader: next, state });
@@ -186,7 +206,16 @@ export function RecentUpdatesPanel({
   const retained = (state?.retainedItems ?? []).filter(
     (work) => !liveKeys.has(sourceWorkKey(work)),
   );
-  const displayItems = [...(data?.items ?? []), ...retained];
+  // Keep live order, but do not let a light row erase locally retained labels.
+  const enriched = mergeSourceWorks(
+    state?.retainedItems ?? [],
+    data?.items ?? [],
+  );
+  const byKey = new Map(enriched.map((work) => [sourceWorkKey(work), work]));
+  const displayItems = [...(data?.items ?? []), ...retained].map(
+    (work) => byKey.get(sourceWorkKey(work)) ?? work,
+  );
+  const hiddenCount = displayItems.filter(isContentHidden).length;
   const uncommitted = new Set(state?.uncommittedIds ?? []);
   const eligible = displayItems.filter(
     (work) =>
@@ -214,6 +243,7 @@ export function RecentUpdatesPanel({
   const selected = visible.filter(
     (work) =>
       selection.includes(sourceWorkKey(work)) &&
+      reader?.contentChecks.verified(work) &&
       inventory(work).kind !== "owned",
   );
   useBrowseSession({
@@ -376,6 +406,11 @@ export function RecentUpdatesPanel({
               ? ` 另有已保存近期作品 ${retained.length} 部，未计入本次网站分页。`
               : ""}
           </p>
+          <p className="source-muted" data-testid="content-preference-summary">
+            按明确 BL／耽美、AI 标签{source === "JM" ? "及女性向标签" : ""}隐藏{" "}
+            {hiddenCount} 部。
+            即将显示的作品先核验标签；核验失败可重试，不显示封面、不删除本地文件。
+          </p>
           <SourceIssues
             source={source}
             issues={data?.issues}
@@ -424,12 +459,16 @@ export function RecentUpdatesPanel({
                     onClick={() =>
                       setSelection(
                         visible
-                          .filter((work) => inventory(work).kind !== "owned")
+                          .filter(
+                            (work) =>
+                              inventory(work).kind !== "owned" &&
+                              reader?.contentChecks.verified(work),
+                          )
                           .map(sourceWorkKey),
                       )
                     }
                   >
-                    全选已读取筛选范围
+                    全选已核验筛选范围
                   </button>
                 )}
               </div>
@@ -446,73 +485,92 @@ export function RecentUpdatesPanel({
                 className="source-card"
                 data-testid={"recent-work-" + sourceWorkKey(work)}
               >
-                <div className="source-card-cover">
-                  <CoverInteraction
-                    className="source-cover-button source-language-cover"
-                    title={work.title}
-                    request={sourceReaderRequest(scope, work)}
-                    onDetails={() => onOpen(work)}
-                    selectionMode={selectionMode}
-                    selected={selection.includes(sourceWorkKey(work))}
-                    onToggleSelection={() => {
-                      if (inventory(work).kind !== "owned")
-                        setSelection((previous) =>
-                          previous.includes(sourceWorkKey(work))
-                            ? previous.filter(
-                                (key) => key !== sourceWorkKey(work),
-                              )
-                            : [...previous, sourceWorkKey(work)],
-                        );
-                    }}
+                {reader && (
+                  <ContentCheckedCard
+                    pool={reader.contentChecks}
+                    work={work}
+                    active={active}
                   >
-                    <SourceCover adapter={adapter} scope={scope} work={work} />
-                    <SourceLanguageBadge
-                      tags={work.tags}
-                      work={work}
-                      scope={scope}
-                    />
-                  </CoverInteraction>
-                  {selectionMode && (
-                    <input
-                      type="checkbox"
-                      aria-label={"选择 " + work.title}
-                      checked={selection.includes(sourceWorkKey(work))}
-                      disabled={inventory(work).kind === "owned"}
-                      onChange={(event) =>
-                        setSelection((previous) =>
-                          event.target.checked
-                            ? [...previous, sourceWorkKey(work)]
-                            : previous.filter(
-                                (key) => key !== sourceWorkKey(work),
-                              ),
-                        )
-                      }
-                    />
-                  )}
-                </div>
-                <h3>
-                  <button onClick={() => onOpen(work)}>{work.title}</button>
-                </h3>
-                <AuthorLinks authors={work.authors} />
-                <p className="source-card-state">
-                  {inventoryLabel(inventory(work))}
-                </p>
-                <p
-                  className="source-card-date"
-                  title={
-                    formatWorkDate(work.sourceUpdatedAt, true) ?? undefined
-                  }
-                >
-                  {formatWorkDate(work.sourceUpdatedAt)
-                    ? `更新：${formatWorkDate(work.sourceUpdatedAt)}`
-                    : "更新时间未知"}
-                </p>
-                <DownloadWorkButton
-                  work={work}
-                  owned={inventory(work).kind === "owned"}
-                  ready={!!library.rootId}
-                  onClick={() => onDownload(work)}
-                />
+                    {(checked) => (
+                      <>
+                        <div className="source-card-cover">
+                          <CoverInteraction
+                            className="source-cover-button source-language-cover"
+                            title={work.title}
+                            request={sourceReaderRequest(scope, work)}
+                            onDetails={() => onOpen(work)}
+                            selectionMode={selectionMode}
+                            selected={selection.includes(sourceWorkKey(work))}
+                            onToggleSelection={() => {
+                              if (inventory(work).kind !== "owned")
+                                setSelection((previous) =>
+                                  previous.includes(sourceWorkKey(work))
+                                    ? previous.filter(
+                                        (key) => key !== sourceWorkKey(work),
+                                      )
+                                    : [...previous, sourceWorkKey(work)],
+                                );
+                            }}
+                          >
+                            <SourceCover
+                              adapter={adapter}
+                              scope={scope}
+                              work={checked}
+                            />
+                            <SourceLanguageBadge
+                              tags={checked.tags}
+                              work={checked}
+                              scope={scope}
+                            />
+                          </CoverInteraction>
+                          {selectionMode && (
+                            <input
+                              type="checkbox"
+                              aria-label={"选择 " + work.title}
+                              checked={selection.includes(sourceWorkKey(work))}
+                              disabled={inventory(work).kind === "owned"}
+                              onChange={(event) =>
+                                setSelection((previous) =>
+                                  event.target.checked
+                                    ? [...previous, sourceWorkKey(work)]
+                                    : previous.filter(
+                                        (key) => key !== sourceWorkKey(work),
+                                      ),
+                                )
+                              }
+                            />
+                          )}
+                        </div>
+                        <h3>
+                          <button onClick={() => onOpen(work)}>
+                            {work.title}
+                          </button>
+                        </h3>
+                        <AuthorLinks authors={work.authors} />
+                        <p className="source-card-state">
+                          {inventoryLabel(inventory(work))}
+                        </p>
+                        <p
+                          className="source-card-date"
+                          title={
+                            formatWorkDate(work.sourceUpdatedAt, true) ??
+                            undefined
+                          }
+                        >
+                          {formatWorkDate(work.sourceUpdatedAt)
+                            ? `更新：${formatWorkDate(work.sourceUpdatedAt)}`
+                            : "更新时间未知"}
+                        </p>
+                        <DownloadWorkButton
+                          work={work}
+                          owned={inventory(work).kind === "owned"}
+                          ready={!!library.rootId}
+                          onClick={() => onDownload(work)}
+                        />
+                      </>
+                    )}
+                  </ContentCheckedCard>
+                )}
               </article>
             )}
           />
@@ -579,7 +637,15 @@ export function RecentUpdatesPanel({
               !library.rootId || selected.length > downloadSelectionLimit
             }
             onDownload={() => {
-              void Promise.resolve(onDownloadMany(selected)).then((keys) => {
+              void Promise.resolve(
+                onDownloadMany(
+                  selected.filter(
+                    (work) =>
+                      reader?.contentChecks.verified(work) &&
+                      !isContentHidden(work),
+                  ),
+                ),
+              ).then((keys) => {
                 if (keys)
                   setSelection((previous) =>
                     previous.filter((key) => !keys.includes(key)),

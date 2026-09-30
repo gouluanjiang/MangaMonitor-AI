@@ -207,7 +207,7 @@ fn category_supplements_fit_beside_all_sixty_four_source_tags() {
 
 fn document() -> DiscoveryDocument {
     DiscoveryDocument {
-        version: 1,
+        version: 2,
         accounts: vec![DiscoveryAccount {
             last_check: None,
             account_key: "b".repeat(64),
@@ -1154,7 +1154,7 @@ fn future_or_inconsistent_manifest_cannot_be_loaded_or_overwritten() {
         .join("discovery-journal.json");
     let original = manifest(&directory);
     let mut future = original.clone();
-    future["version"] = 2.into();
+    future["version"] = 3.into();
     let mut broken_chain = original;
     broken_chain["revision"] = 2.into();
     broken_chain["patchCount"] = 2.into();

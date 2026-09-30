@@ -67,7 +67,15 @@ const workId = (source: DownloadSource, value: unknown): string =>
   (source === "JM" ? /^[1-9]\d{0,19}$/ : /^[a-f0-9]{24}$/).test(value)
     ? value
     : invalid();
-const actions: DownloadAction[] = ["pause", "resume", "retry"];
+const actions: DownloadAction[] = [
+  "pause",
+  "resume",
+  "retry",
+  "abandon",
+  "cleanup",
+];
+const localControl = (action: DownloadAction) =>
+  ["pause", "abandon", "cleanup"].includes(action);
 const phases: DownloadPhase[] = [
   "queued",
   "downloading",
@@ -76,6 +84,7 @@ const phases: DownloadPhase[] = [
   "paused",
   "error",
   "downloaded",
+  "abandoned",
 ];
 function scope(value: DownloadScope, allowEmpty = false): DownloadScope {
   return {
@@ -100,9 +109,9 @@ export const canControlDownload = (
 ) =>
   task.allowedActions.includes(action) &&
   (current === null
-    ? action === "pause"
+    ? localControl(action)
     : current.source === task.source &&
-      (action === "pause" || Boolean(current.sessionId)));
+      (localControl(action) || Boolean(current.sessionId)));
 export function validateDownloadPlan(value: unknown): DownloadPlan {
   const raw = record(value);
   if (!Array.isArray(raw.authors) || raw.authors.length > 1000)
@@ -121,7 +130,7 @@ export function validateDownloadPlan(value: unknown): DownloadPlan {
 }
 export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
   const raw = record(value);
-  if (!Array.isArray(raw.tasks) || raw.tasks.length > 500) return invalid();
+  if (!Array.isArray(raw.tasks) || raw.tasks.length > 1000) return invalid();
   const tasks = raw.tasks.map((value) => {
     const task = record(value);
     if (integer(task.revision) === 0) return invalid();
@@ -164,13 +173,22 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
       return invalid();
     if (task.phase !== "downloaded" && libraryEntryId !== null)
       return invalid();
+    if (task.allowedActions.includes("cleanup") && task.phase !== "abandoned")
+      return invalid();
+    if (
+      task.allowedActions.includes("abandon") &&
+      !["paused", "error", "queued"].includes(task.phase as string)
+    )
+      return invalid();
     if (task.allowedActions.includes("resume") && task.phase !== "paused")
       return invalid();
     if (task.allowedActions.includes("retry") && task.phase !== "error")
       return invalid();
     if (
       task.allowedActions.includes("pause") &&
-      ["saving", "paused", "error", "downloaded"].includes(task.phase as string)
+      ["saving", "paused", "error", "downloaded", "abandoned"].includes(
+        task.phase as string,
+      )
     )
       return invalid();
     return {
@@ -203,6 +221,11 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
     } as DownloadTask;
   });
   if (new Set(tasks.map((task) => task.id)).size !== tasks.length)
+    return invalid();
+  if (
+    tasks.filter((task) => task.phase === "abandoned").length > 500 ||
+    tasks.filter((task) => task.phase !== "abandoned").length > 500
+  )
     return invalid();
   return { revision: integer(raw.revision), tasks };
 }
@@ -413,7 +436,7 @@ export function createDownloadAdapter(
       if (!actions.includes(action)) return invalid();
       return validateDownloadSnapshot(
         await call("jm_download_control", {
-          scope: scope(current, action === "pause"),
+          scope: scope(current, localControl(action)),
           taskId: rootIdentity(taskId),
           expectedRevision: integer(expectedRevision),
           action,
@@ -459,11 +482,26 @@ export function downloadErrorMessage(cause: unknown): string {
     return "保存目录或文件暂时无法读取，或原文件身份缺少核对依据，请先核对电脑文件。";
   if (code === "DOWNLOAD_DESTINATION_EXISTS")
     return "该文件名已被其他下载任务或电脑文件占用，请核对冲突后重新准备。现有文件不会被覆盖。";
+  if (code.startsWith("DOWNLOAD_INDEX_")) {
+    const reason = code.slice("DOWNLOAD_INDEX_".length);
+    const reasons: Record<string, string> = {
+      LIBRARY_BUSY: "请先完成漫画库目录读取，再重试登记。",
+      LIBRARY_LIMIT_REACHED:
+        "漫画库记录已达上限，请先整理库记录；直接重试不会释放容量。",
+      LIBRARY_IDENTITY_CONFLICT:
+        "作品身份与预期不一致，请先核对已有文件，避免反复重试。",
+      LIBRARY_FILE_CHANGED: "已保存文件身份发生变化，请先核对文件。",
+      DOWNLOAD_OUTPUT_CHANGED: "已保存输出与校验记录不一致，请先核对文件。",
+      DOWNLOAD_ROOT_CHANGED: "漫画库目录已改变，请先核对当前目录。",
+    };
+    if (reasons[reason])
+      return "作品保存后的核验或登记未完成。" + reasons[reason];
+  }
   if (code === "LIBRARY_BUSY")
     return "电脑目录正在读取或已暂停读取，请完成目录读取后重试当前操作；已有下载进度会保留。";
   if (/BUSY/.test(code)) return "当前任务还在处理，请等待它暂停或完成后再试。";
   if (code === "DOWNLOAD_LIMIT_REACHED")
-    return "下载记录已达到 500 条，请先整理已完成的历史记录，再添加任务。";
+    return "下载队列已达到 500 条，请先整理完成记录，或暂停并放弃不再需要的任务，再添加任务。";
   if (
     code === "DOWNLOAD_BATCH_INPUT_INVALID" ||
     code === "DOWNLOAD_BATCH_LIMIT"
@@ -471,6 +509,13 @@ export function downloadErrorMessage(cause: unknown): string {
     return "每行输入一个编号或链接，一次最多选择 500 本；不会截取前 50 本。";
   if (code === "DOWNLOAD_BATCH_DUPLICATE")
     return "本批重复的来源编号，已跳过。";
+  if (code === "DOWNLOAD_ABANDONED_LIMIT_REACHED")
+    return "已放弃记录已达 500 条，请先在「需要处理」明确清理这些任务的临时文件。最终漫画文件会保留。";
+  if (
+    code === "DOWNLOAD_CLEANUP_INCOMPLETE" ||
+    code === "DOWNLOAD_CLEANUP_REVIEW_REQUIRED"
+  )
+    return "临时目录含未知或已改变的内容，未完成清理；已放弃记录仍保留，请先核对，程序不会删除最终漫画文件。";
   if (code === "DOWNLOAD_HISTORY_NOT_COMPLETED")
     return "只能整理已完成的下载记录，未完成任务的进度会保留。";
   if (code === "DOWNLOAD_HISTORY_LIMIT_REACHED")
@@ -481,6 +526,8 @@ export function downloadErrorMessage(cause: unknown): string {
     return "任务记录已恢复，请点击继续后执行。";
   if (/DOCUMENT_INVALID|INVALID_DOCUMENT|RESPONSE_INVALID/.test(code))
     return "下载状态无法确认，已显示内容保留。请重新读取队列。";
+  if (code === "DOWNLOAD_WORKER_INTERRUPTED")
+    return "下载处理意外中断，队列已停止。已保存进度保留，请重新读取后明确继续或重试。";
   if (/INDEX_/.test(code))
     return "作品已保存，但电脑文件登记尚未完成。重试会先核对已有结果。";
   if (code === "DOWNLOAD_METADATA_INVALID")
@@ -515,11 +562,13 @@ export const downloadPhaseLabel = (phase: DownloadPhase) =>
     paused: "已暂停",
     error: "需要处理",
     downloaded: "已下载",
+    abandoned: "已放弃 · 待清理临时文件",
   })[phase];
 export const isDownloadPresent = (task: DownloadTask) =>
   task.phase === "downloaded" && task.localFiles === "present";
 export const downloadNeedsAttention = (task: DownloadTask) =>
   task.phase === "error" ||
+  task.phase === "abandoned" ||
   (task.phase === "downloaded" && !isDownloadPresent(task));
 export const downloadQueueFilters = ["active", "error", "downloaded"] as const;
 export type DownloadQueueFilter = (typeof downloadQueueFilters)[number];
@@ -546,7 +595,7 @@ export function downloadAttentionReason(task: DownloadTask): string {
   const code = task.errorCode ?? "";
   if (/SESSION|AUTH|ACCOUNT|CREDENTIAL|TOKEN|SOURCE_MISMATCH/.test(code))
     return "需要连接来源账号";
-  if (/INDEX_/.test(code)) return "保存成功，入库登记未完成";
+  if (/INDEX_/.test(code)) return "保存后的核验或入库登记未完成";
   if (/VERIFY|MANIFEST|PROOF|INCOMPLETE/.test(code)) return "完整校验未通过";
   if (/ROOT|DIRECTORY|DESTINATION|LIBRARY/.test(code))
     return "漫画库目录需要处理";
@@ -619,7 +668,7 @@ export const filterDownloadTasks = (
           (filter === "downloaded" && isDownloadPresent(task)) ||
           (filter === "error" && downloadNeedsAttention(task)) ||
           (filter === "active" &&
-            !["error", "downloaded"].includes(task.phase))),
+            !["error", "downloaded", "abandoned"].includes(task.phase))),
     )
     .sort((left, right) =>
       filter === "downloaded"
@@ -649,6 +698,8 @@ export interface DownloadState {
   batchPlan: DownloadSelectionPlan | null;
   preparation: { done: number; total: number } | null;
   recentBatch: RecentDownloadBatch | null;
+  resuming: { done: number; total: number; stopped: boolean } | null;
+  queueNotice: string;
   submittingKeys: string[];
   submissionIssues: DownloadSubmissionFailure[];
 }
@@ -670,6 +721,8 @@ export function downloadActionState(
     tasks.find((item) => item.phase !== "downloaded") ??
     tasks.find(isDownloadPresent);
   if (!task) return { label: "下载到漫画库", disabled: false };
+  if (task.phase === "abandoned")
+    return { label: "请先清理已放弃记录", disabled: true };
   if (task.phase === "error") return { label: "重试下载", disabled: false };
   if (task.phase === "paused") return { label: "继续下载", disabled: false };
   if (isDownloadPresent(task)) return { label: "已入库", disabled: true };
@@ -691,6 +744,8 @@ export class DownloadController {
     batchPlan: null,
     preparation: null,
     recentBatch: null,
+    resuming: null,
+    queueNotice: "",
     submittingKeys: [],
     submissionIssues: [],
   };
@@ -699,6 +754,8 @@ export class DownloadController {
   private readPromise: Promise<void> | null = null;
   private readingFiles = false;
   private pendingRecheck = false;
+  private readFailures = 0;
+  private retryRead = false;
   private epoch = 0;
   private planEpoch = 0;
   private preparedContext: string | null = null;
@@ -723,6 +780,8 @@ export class DownloadController {
     for (const listener of this.listeners) listener(this.state);
   }
   private accept(snapshot: DownloadSnapshot) {
+    this.readFailures = 0;
+    this.retryRead = false;
     if (snapshot.revision < this.state.snapshot.revision)
       throw new DownloadError("DOWNLOAD_REVISION_STALE");
     const batch = this.state.recentBatch;
@@ -759,11 +818,16 @@ export class DownloadController {
       return;
     }
     if (
-      !this.state.error &&
       !this.state.busy &&
-      this.state.snapshot.tasks.some(activeTask)
+      ((!this.state.error && this.state.snapshot.tasks.some(activeTask)) ||
+        this.retryRead)
     )
-      this.timer = setTimeout(() => void this.read(false), 1000);
+      this.timer = setTimeout(
+        () => void this.read(false),
+        this.retryRead
+          ? Math.min(30_000, 1000 * 2 ** Math.min(this.readFailures - 1, 5))
+          : 1000,
+      );
   }
   read(recheckFiles = true): Promise<void> {
     if (this.readPromise) {
@@ -791,8 +855,15 @@ export class DownloadController {
           checkFiles = true;
         } while (true);
       } catch (cause) {
-        if (epoch === this.epoch)
+        if (epoch === this.epoch) {
+          const code = cause instanceof DownloadError ? cause.code : "";
+          this.retryRead =
+            /^(BUSY|DOWNLOAD_(UNAVAILABLE|WORKER_BUSY|STORAGE_UNAVAILABLE|READ_FAILED)|STORE_(UNAVAILABLE|READ_FAILED)|READ_FAILED|IO_ERROR)$/.test(
+              code,
+            );
+          this.readFailures++;
           this.publish({ error: downloadErrorMessage(cause) });
+        }
       } finally {
         if (epoch === this.epoch) {
           this.readPromise = null;
@@ -1287,7 +1358,110 @@ export class DownloadController {
     }
   }
   pauseAll() {
-    return this.changeQueue(() => this.adapter.pauseAll());
+    this.stopResume();
+    return this.changeQueue(async () => {
+      const next = await this.adapter.pauseAll();
+      this.publish({
+        queueNotice: next.tasks.some((task) => task.phase === "saving")
+          ? "后续任务已暂停；当前作品的保存、校验和登记将完成。"
+          : "队列已暂停，进度已保留。",
+      });
+      return next;
+    });
+  }
+  stopResume() {
+    this.planEpoch++;
+    if (this.state.resuming)
+      this.publish({ resuming: { ...this.state.resuming, stopped: true } });
+  }
+  async resumeAll(
+    context: DownloadContext,
+    tasks: DownloadTask[],
+  ): Promise<boolean> {
+    if (
+      this.state.busy ||
+      !tasks.length ||
+      tasks.length > 500 ||
+      new Set(tasks.map((task) => task.id)).size !== tasks.length ||
+      tasks.some(
+        (task) =>
+          !canControlDownload(task, "resume", context.scope) ||
+          (task.rootId && task.rootId !== context.rootId),
+      )
+    )
+      return false;
+    const epoch = this.epoch,
+      token = ++this.planEpoch;
+    this.publish({
+      busy: true,
+      error: "",
+      resuming: { done: 0, total: tasks.length, stopped: false },
+    });
+    clearTimeout(this.timer);
+    let done = 0;
+    try {
+      await this.readPromise;
+      for (let offset = 0; offset < tasks.length; offset += 50) {
+        if (epoch !== this.epoch || token !== this.planEpoch) return false;
+        const chunk = tasks.slice(offset, offset + 50);
+        if (
+          chunk.some(
+            (expected) =>
+              !this.state.snapshot.tasks.some(
+                (current) =>
+                  current.id === expected.id &&
+                  current.revision === expected.revision &&
+                  current.rootId === expected.rootId &&
+                  canControlDownload(current, "resume", context.scope),
+              ),
+          )
+        )
+          throw new DownloadError("DOWNLOAD_TASK_STALE");
+        const next = await this.adapter.resumeMany(
+          context.scope,
+          chunk.map((task) => ({
+            taskId: task.id,
+            expectedRevision: task.revision,
+          })),
+        );
+        if (epoch !== this.epoch) return false;
+        if (
+          chunk.some(
+            (expected) =>
+              !next.tasks.some(
+                (current) =>
+                  current.id === expected.id &&
+                  current.source === expected.source &&
+                  current.workId === expected.workId &&
+                  current.revision > expected.revision,
+              ),
+          )
+        )
+          invalid();
+        this.accept(next);
+        done += chunk.length;
+        this.publish({
+          resuming: {
+            done,
+            total: tasks.length,
+            stopped: token !== this.planEpoch,
+          },
+        });
+      }
+      return token === this.planEpoch;
+    } catch (cause) {
+      if (epoch === this.epoch)
+        this.publish({ error: downloadErrorMessage(cause) });
+      return false;
+    } finally {
+      if (epoch === this.epoch) {
+        this.publish({
+          busy: false,
+          resuming: { done, total: tasks.length, stopped: done < tasks.length },
+        });
+        this.schedule();
+      }
+    }
   }
   resumeMany(current: DownloadScope, tasks: DownloadTask[]) {
     if (
@@ -1394,12 +1568,14 @@ export class DownloadController {
         action,
       );
       if (
-        !next.tasks.some(
-          (result) =>
-            result.id === task.id &&
-            result.source === task.source &&
-            result.workId === task.workId,
-        )
+        action === "cleanup"
+          ? next.tasks.some((result) => result.id === task.id)
+          : !next.tasks.some(
+              (result) =>
+                result.id === task.id &&
+                result.source === task.source &&
+                result.workId === task.workId,
+            )
       )
         return invalid();
       if (epoch === this.epoch) this.accept(next);
@@ -1420,6 +1596,8 @@ export class DownloadController {
     this.readPromise = null;
     this.readingFiles = false;
     this.pendingRecheck = false;
+    this.retryRead = false;
+    this.readFailures = 0;
     this.pendingSubmissions.clear();
     this.state = {
       ...this.state,

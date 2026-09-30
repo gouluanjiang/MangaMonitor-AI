@@ -10,6 +10,7 @@ import {
   ReaderDownloadError,
   ReaderError,
   readerErrorMessage,
+  readerPositionErrorMessage,
 } from "./runtime.ts";
 import { ReaderPageCache } from "./cache.ts";
 import {
@@ -162,6 +163,14 @@ export function ReaderSession({
     };
   };
   const remember = (value: ReaderPosition) => {
+    // A selected chapter is not a readable position until its page count arrives.
+    if (
+      closing ||
+      !count ||
+      value.chapterId !== chapterId ||
+      value.pageIndex >= count
+    )
+      return;
     currentPosition.current = value;
     setPosition(value);
     writer.set(value);
@@ -169,7 +178,9 @@ export function ReaderSession({
     saveTimer.current = setTimeout(() => {
       void writer
         .flush()
-        .catch(() => setNotice("阅读位置暂未保存，退出时会再次尝试。"));
+        .catch((failure: unknown) =>
+          setNotice(readerPositionErrorMessage(failure)),
+        );
     }, 700);
   };
   useEffect(
@@ -333,9 +344,13 @@ export function ReaderSession({
   }, [chapterId, count, displayedPage, visibleKey, mode, active]);
 
   const changeChapter = (id: string) => {
-    if (id === chapterId) return;
-    writer.set(capturePosition());
-    void writer.flush().catch(() => setNotice("阅读位置暂未保存。"));
+    if (closing || id === chapterId) return;
+    if (count) writer.set(capturePosition());
+    void writer
+      .flush()
+      .catch((failure: unknown) =>
+        setNotice(readerPositionErrorMessage(failure)),
+      );
     pendingChapterPosition.current = { chapterId: id, pageIndex: 0, offset: 0 };
     pendingAnchor.current = pendingChapterPosition.current;
     currentPosition.current = pendingChapterPosition.current;
@@ -345,7 +360,7 @@ export function ReaderSession({
     setScrollTop(0);
   };
   const jump = (pageIndex: number) => {
-    if (!count) return;
+    if (closing || !count) return;
     const value = {
       chapterId,
       pageIndex: Math.max(0, Math.min(count - 1, pageIndex)),

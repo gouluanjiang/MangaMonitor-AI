@@ -816,3 +816,241 @@ test("changing source invalidates a Pica confirmation and a wrong-source result 
   assert.ok(controller.getState().error);
   controller.dispose();
 });
+
+test("temporary read failure retries with bounded backoff and never issues download mutations", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const calls = [];
+  const controller = new DownloadController({
+    read: async (check) => {
+      calls.push(check);
+      if (calls.length === 2 || calls.length === 3)
+        throw new DownloadError("BUSY");
+      return snapshot(
+        [
+          task({
+            phase: calls.length > 3 ? "paused" : "downloading",
+            allowedActions: calls.length > 3 ? ["resume"] : ["pause"],
+          }),
+        ],
+        calls.length,
+      );
+    },
+    control: async () => assert.fail("read recovery cannot mutate downloads"),
+    resumeMany: async () => assert.fail("read recovery cannot admit work"),
+  });
+  const flush = async () => {
+    for (let n = 0; n < 8; n++) await Promise.resolve();
+  };
+  await controller.read();
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.ok(controller.getState().error);
+  t.mock.timers.tick(1000);
+  await flush();
+  assert.equal(calls.length, 3);
+  t.mock.timers.tick(1999);
+  await flush();
+  assert.equal(calls.length, 3);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.deepEqual(calls, [true, false, false, false]);
+  assert.equal(controller.getState().error, "");
+  controller.dispose();
+  t.mock.timers.tick(30_000);
+  await flush();
+  assert.equal(calls.length, 4);
+});
+
+test("invalid read data does not enter a permanent automatic retry loop", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let calls = 0;
+  const controller = new DownloadController({
+    read: async () => {
+      calls++;
+      throw new DownloadError("DOWNLOAD_RESPONSE_INVALID");
+    },
+  });
+  await controller.read();
+  t.mock.timers.tick(60_000);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  controller.dispose();
+});
+
+function resumeRows(count) {
+  return Array.from({ length: count }, (_, index) =>
+    task({
+      id: (index + 1).toString(16).padStart(64, "0"),
+      workId: String(index + 1),
+      rootId,
+    }),
+  );
+}
+function admitted(rows, selected) {
+  return rows.map((row) =>
+    selected.some((item) => item.taskId === row.id)
+      ? {
+          ...row,
+          revision: row.revision + 1,
+          phase: "queued",
+          allowedActions: ["pause"],
+        }
+      : row,
+  );
+}
+test("one explicit continue admits all selected works in source-bound batches of at most fifty", async () => {
+  let rows = resumeRows(151),
+    revision = 1;
+  const calls = [];
+  const controller = new DownloadController({
+    read: async () => snapshot(rows, revision),
+    resumeMany: async (scope, selected) => {
+      calls.push({ scope, selected });
+      rows = admitted(rows, selected);
+      return snapshot(rows, ++revision);
+    },
+  });
+  await controller.read();
+  assert.equal(await controller.resumeAll(context, rows), true);
+  assert.deepEqual(
+    calls.map((call) => call.selected.length),
+    [50, 50, 50, 1],
+  );
+  assert.ok(calls.every((call) => call.scope.source === "JM"));
+  assert.equal(
+    new Set(calls.flatMap((call) => call.selected.map((item) => item.taskId)))
+      .size,
+    151,
+  );
+  assert.deepEqual(controller.getState().resuming, {
+    done: 151,
+    total: 151,
+    stopped: false,
+  });
+  controller.dispose();
+});
+
+test("stopping a multi-batch continue preserves the accepted batch and never admits the remainder", async () => {
+  const rows = resumeRows(101),
+    gate = pending();
+  let calls = 0,
+    selected;
+  const controller = new DownloadController({
+    read: async () => snapshot(rows),
+    resumeMany: async (_scope, values) => {
+      calls++;
+      selected = values;
+      return gate.promise;
+    },
+  });
+  await controller.read();
+  const running = controller.resumeAll(context, rows);
+  await Promise.resolve();
+  controller.stopResume();
+  gate.resolve(snapshot(admitted(rows, selected), 2));
+  assert.equal(await running, false);
+  assert.equal(calls, 1);
+  assert.deepEqual(controller.getState().resuming, {
+    done: 50,
+    total: 101,
+    stopped: true,
+  });
+  assert.equal(
+    controller
+      .getState()
+      .snapshot.tasks.filter((item) => item.phase === "queued").length,
+    50,
+  );
+  controller.dispose();
+});
+
+test("a changed pending task or changed context stops the next continue batch", async () => {
+  for (const change of ["task", "context"]) {
+    const rows = resumeRows(51);
+    let calls = 0;
+    const controller = new DownloadController({
+      read: async () => snapshot(rows),
+      resumeMany: async (_scope, selected) => {
+        calls++;
+        const next = admitted(rows, selected);
+        if (change === "task") next[50] = { ...next[50], revision: 2 };
+        else controller.cancelPlan();
+        return snapshot(next, 2);
+      },
+    });
+    await controller.read();
+    assert.equal(await controller.resumeAll(context, rows), false);
+    assert.equal(calls, 1);
+    assert.equal(controller.getState().resuming.done, 50);
+    controller.dispose();
+  }
+});
+
+test("local abandonment and exact cleanup work without source credentials, and malformed cleanup is rejected", async () => {
+  const paused = task({ allowedActions: ["resume", "abandon"] });
+  const abandoned = task({
+    phase: "abandoned",
+    revision: 2,
+    allowedActions: ["cleanup"],
+  });
+  const calls = [];
+  let malformed = false;
+  const controller = new DownloadController({
+    control: async (scope, _id, _revision, action) => {
+      calls.push([scope, action]);
+      return snapshot(action === "abandon" || malformed ? [abandoned] : [], 2);
+    },
+  });
+  await controller.control(null, paused, "abandon");
+  assert.equal(controller.getState().snapshot.tasks[0].phase, "abandoned");
+  malformed = true;
+  await controller.control(null, abandoned, "cleanup");
+  assert.ok(controller.getState().error);
+  malformed = false;
+  await controller.control(null, abandoned, "cleanup");
+  assert.deepEqual(controller.getState().snapshot.tasks, []);
+  assert.ok(calls.every(([scope]) => scope.sessionId === ""));
+  controller.dispose();
+  const rows = resumeRows(501);
+  assert.throws(() => validateDownloadSnapshot(snapshot(rows)));
+  assert.throws(() =>
+    validateDownloadSnapshot(
+      snapshot(
+        rows.map((row) => ({
+          ...row,
+          phase: "abandoned",
+          allowedActions: ["cleanup"],
+        })),
+      ),
+    ),
+  );
+  assert.equal(
+    validateDownloadSnapshot(
+      snapshot([
+        ...rows.slice(0, 500),
+        task({ phase: "abandoned", allowedActions: ["cleanup"] }),
+      ]),
+    ).tasks.length,
+    501,
+  );
+});
+
+test("index failure reasons distinguish capacity and identity from temporary contention", () => {
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_INDEX_LIBRARY_BUSY"),
+    /漫画库目录读取/,
+  );
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_INDEX_LIBRARY_LIMIT_REACHED"),
+    /直接重试不会释放容量/,
+  );
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_INDEX_LIBRARY_IDENTITY_CONFLICT"),
+    /身份/,
+  );
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_INDEX_DOWNLOAD_OUTPUT_CHANGED"),
+    /校验记录不一致/,
+  );
+});

@@ -31,6 +31,8 @@ import type { DemoTask, TaskStage, Work } from "./types.ts";
 import { Icon } from "./icons.tsx";
 import { WorkbenchSettings } from "./WorkbenchSettings.tsx";
 import { DiagnosticsPanel } from "./DiagnosticsPanel.tsx";
+import { createDiagnosticProblem } from "./diagnostics.ts";
+import type { DiagnosticProblem } from "./diagnostics.ts";
 import type { SettingsPage } from "./settings-navigation.ts";
 import {
   initialPreferences,
@@ -256,6 +258,8 @@ export default function App() {
   );
   const [loadingAccounts, setLoadingAccounts] = useState(persistence.native);
   const [accountsError, setAccountsError] = useState("");
+  const [accountDiagnostic, setAccountDiagnostic] =
+    useState<DiagnosticProblem | null>(null);
   const accountsRef = useRef(accounts);
   accountsRef.current = accounts;
   const contextForSource = (source: DownloadSource): DownloadContext | null => {
@@ -357,7 +361,10 @@ export default function App() {
         if (!disposed) mergeAccounts(updates);
       })
       .catch((cause) => {
-        if (!disposed) setAccountsError(sourceErrorMessage(cause));
+        if (!disposed) {
+          setAccountsError(sourceErrorMessage(cause));
+          setAccountDiagnostic(createDiagnosticProblem("accounts", cause));
+        }
       })
       .finally(() => {
         if (!disposed) setLoadingAccounts(false);
@@ -492,6 +499,34 @@ export default function App() {
   const [preferencesFailed, setPreferencesFailed] = useState(false);
   const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [preferencesError, setPreferencesError] = useState("");
+  const [preferenceDiagnostic, setPreferenceDiagnostic] =
+    useState<DiagnosticProblem | null>(null);
+  const libraryDiagnostic = useMemo(
+    () =>
+      library.error ? createDiagnosticProblem("library", library.error) : null,
+    [library.error],
+  );
+  const downloadDiagnostic = useMemo(
+    () =>
+      downloads.error
+        ? createDiagnosticProblem("downloads", downloads.error)
+        : null,
+    [downloads.error],
+  );
+  const accountStateDiagnostics = useMemo(
+    () =>
+      accounts
+        .filter((account) => account.errorCode)
+        .map((account) =>
+          createDiagnosticProblem(
+            "accounts",
+            account.errorCode,
+            Date.now(),
+            account.source,
+          ),
+        ),
+    [accounts],
+  );
   const preferencesSnapshot =
     useRef<DocumentSnapshot<WorkbenchPreferences> | null>(null);
   const preferencesBusy = useRef(false);
@@ -877,6 +912,7 @@ export default function App() {
       preferencesSnapshot.current = null;
       setPreferencesFailed(true);
       setPreferencesError(persistenceErrorMessage(error));
+      setPreferenceDiagnostic(createDiagnosticProblem("preferences", error));
     } finally {
       if (request === preferencesRead.current) {
         preferencesBusy.current = false;
@@ -945,6 +981,7 @@ export default function App() {
     } catch (error) {
       setPreferencesFailed(true);
       setPreferencesError(persistenceErrorMessage(error));
+      setPreferenceDiagnostic(createDiagnosticProblem("preferences", error));
       return false;
     } finally {
       preferencesBusy.current = false;
@@ -2137,6 +2174,17 @@ export default function App() {
             <DiagnosticsPanel
               state={{
                 accounts,
+                problems: [
+                  ...accountStateDiagnostics,
+                  ...(accountsError && accountDiagnostic
+                    ? [accountDiagnostic]
+                    : []),
+                  ...(preferencesError && preferenceDiagnostic
+                    ? [preferenceDiagnostic]
+                    : []),
+                  ...(libraryDiagnostic ? [libraryDiagnostic] : []),
+                  ...(downloadDiagnostic ? [downloadDiagnostic] : []),
+                ],
                 accountsLoading: loadingAccounts,
                 accountsFailed: Boolean(accountsError),
                 library: library.snapshot,
@@ -2159,6 +2207,9 @@ export default function App() {
                   mergeAccounts(await sourceAdapter.accounts(true));
                 } catch (cause) {
                   setAccountsError(sourceErrorMessage(cause));
+                  setAccountDiagnostic(
+                    createDiagnosticProblem("accounts", cause),
+                  );
                 } finally {
                   setLoadingAccounts(false);
                 }

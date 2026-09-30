@@ -24,6 +24,10 @@ declare global {
       aiIds: number[];
       catalogIds: number[];
       catalogOtherIds: number[];
+      unverified: boolean;
+      detailFailIds: number[];
+      holdDetails: boolean;
+      releaseDetails: (() => void)[];
       queue: DownloadSnapshot;
       observedWheelDelta?: number;
       directionInputs?: { x: number; y: number; shift: boolean }[];
@@ -66,6 +70,10 @@ async function install(
     catalogIds?: number[];
     catalogOtherIds?: number[];
     holdPage?: number;
+    unverified?: boolean;
+    holdDetails?: boolean;
+    detailFailIds?: number[];
+    detailTags?: Record<string, string[]>;
   } = {},
 ) {
   await page.addInitScript(
@@ -89,6 +97,10 @@ async function install(
         aiIds: options.aiIds ?? [],
         catalogIds: options.catalogIds ?? [],
         catalogOtherIds: options.catalogOtherIds ?? [],
+        unverified: options.unverified ?? false,
+        detailFailIds: options.detailFailIds ?? [],
+        holdDetails: options.holdDetails ?? false,
+        releaseDetails: [],
         queue: { revision: 0, tasks: [] },
       } as Window["recentTest"]);
       const work = (
@@ -229,7 +241,22 @@ async function install(
               const response = {
                 source,
                 sessionId: session,
-                items: ids.map((id) => work(source, id, session)),
+                items: ids.map((id) => ({
+                  ...work(source, id, session),
+                  ...(args.kind === "detail" && options.detailTags?.[String(id)]
+                    ? { tags: options.detailTags[String(id)] }
+                    : {}),
+                })),
+                contentVerifiedIds: hooks.unverified
+                  ? []
+                  : ids.map((id) =>
+                      source === "JM"
+                        ? String(id)
+                        : String(id).padStart(24, "0"),
+                    ),
+                contentVerifiedUntil: hooks.unverified
+                  ? null
+                  : Date.now() + 86_400_000,
                 page: pageNumber,
                 total: args.kind === "recent" ? total : ids.length,
                 pages:
@@ -246,6 +273,14 @@ async function install(
                     : false,
                 folders: [],
               };
+              if (args.kind === "detail") {
+                if (hooks.holdDetails)
+                  await new Promise<void>((resolve) =>
+                    hooks.releaseDetails.push(resolve),
+                  );
+                if (hooks.detailFailIds.includes(Number(args.query)))
+                  throw { code: "SOURCE_TIMEOUT" };
+              }
               if (args.kind === "recent" && hooks.holdPage === pageNumber) {
                 hooks.holdPage = null;
                 await new Promise<void>((resolve) => {
@@ -337,6 +372,96 @@ const recentCalls = (page: Page) =>
       .filter((c) => c.command === "source_query" && c.args.kind === "recent")
       .map((c) => c.args),
   );
+const detailCalls = (page: Page) =>
+  page.evaluate(() =>
+    window.recentTest.calls.filter(
+      (call) => call.command === "source_query" && call.args.kind === "detail",
+    ),
+  );
+
+test("unknown recent cards stay covered, bound details to two, reuse verdicts and retry failures explicitly", async ({
+  page,
+}) => {
+  await install(page, {
+    unverified: true,
+    holdDetails: true,
+    detailFailIds: [4],
+    detailTags: { "1": ["耽美花園"], "2": ["AI作畫"], "3": ["女性向"] },
+  });
+  await expect.poll(async () => (await detailCalls(page)).length).toBe(2);
+  await expect(
+    page.getByTestId("recent-grid").locator(".cover-interaction"),
+  ).toHaveCount(0);
+  await expect(recentCard(page, "Pica", 1)).toContainText("正在核验内容标签");
+  expect((await detailCalls(page)).length).toBe(2);
+  await page.evaluate(() => {
+    window.recentTest.holdDetails = false;
+    window.recentTest.releaseDetails.splice(0).forEach((release) => release());
+  });
+  await expect(recentCard(page, "Pica", 1)).toHaveCount(0);
+  await expect(recentCard(page, "Pica", 2)).toHaveCount(0);
+  await expect(recentCard(page, "Pica", 3)).toContainText(
+    "Pica 合成最近更新 3",
+  );
+  await expect(recentCard(page, "Pica", 4)).toContainText("标签核验失败");
+  await expect(
+    recentCard(page, "Pica", 4).getByRole("button", { name: "下载到漫画库" }),
+  ).toHaveCount(0);
+  const failedCalls = (await detailCalls(page)).filter(
+    (call) => Number(call.args.query) === 4,
+  ).length;
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-recent").click();
+  expect(
+    (await detailCalls(page)).filter((call) => Number(call.args.query) === 4)
+      .length,
+  ).toBe(failedCalls);
+  await page.evaluate(() => {
+    window.recentTest.detailFailIds = [];
+  });
+  await recentCard(page, "Pica", 4)
+    .getByRole("button", { name: "重试核验" })
+    .click();
+  await expect(recentCard(page, "Pica", 4)).toContainText(
+    "Pica 合成最近更新 4",
+  );
+  expect(
+    (await detailCalls(page)).filter((call) => Number(call.args.query) === 3),
+  ).toHaveLength(1);
+  await page.getByLabel("最近更新来源").selectOption("JM");
+  await expect(recentCard(page, "JM", 4)).toContainText("JM 合成最近更新 4");
+  await expect(recentCard(page, "JM", 3)).toHaveCount(0);
+});
+
+test("source change cannot mount delayed old detail and offscreen unknown rows do not trigger full detail scans", async ({
+  page,
+}) => {
+  await install(page, { unverified: true, holdDetails: true });
+  await expect.poll(async () => (await detailCalls(page)).length).toBe(2);
+  await page.getByLabel("最近更新来源").selectOption("JM");
+  await expect
+    .poll(
+      async () =>
+        (await detailCalls(page)).filter((c) => c.args.source === "JM").length,
+    )
+    .toBe(2);
+  await page.evaluate(() => {
+    window.recentTest.holdDetails = false;
+    window.recentTest.releaseDetails.splice(0).forEach((release) => release());
+  });
+  await expect(recentCard(page, "JM", 1)).toContainText("JM 合成最近更新 1");
+  await expect(recentCard(page, "Pica", 1)).toHaveCount(0);
+  await expect
+    .poll(
+      async () =>
+        (await detailCalls(page)).filter((c) => c.args.source === "Pica")
+          .length,
+    )
+    .toBe(2);
+  expect(
+    (await detailCalls(page)).filter((c) => c.args.source === "JM").length,
+  ).toBeLessThan(20);
+});
 const recentCard = (page: Page, source: Source, id: number) =>
   page.getByTestId(
     `recent-work-${source}:${source === "JM" ? String(id) : String(id).padStart(24, "0")}`,

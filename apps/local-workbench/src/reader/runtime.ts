@@ -17,20 +17,32 @@ export class ReaderError extends Error {
 }
 // Only the host's curated download messages may be shown verbatim in the reader.
 export class ReaderDownloadError extends Error {}
+function readerErrorCode(error: unknown): string {
+  return error instanceof ReaderError
+    ? error.code
+    : typeof error === "string"
+      ? error
+      : error &&
+          typeof error === "object" &&
+          "code" in error &&
+          typeof error.code === "string"
+        ? error.code
+        : error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
+          ? error.message
+          : "";
+}
+export function readerPositionErrorMessage(error: unknown): string {
+  const code = readerErrorCode(error);
+  if (code === "READER_POSITION_INVALID" || code === "READER_CHAPTER_UNKNOWN")
+    return "当前章节的位置还无法确认，本次阅读位置未保存。请等章节加载完成后重试。";
+  if (/SESSION|AUTH|LOGIN|CHANGED|STALE/.test(code))
+    return "阅读会话或内容已变化，本次阅读位置未保存。之前已保存的位置不受影响。";
+  return "本次阅读位置未保存。可以重试保存，或放弃未保存的位置后退出。";
+}
 export function readerErrorMessage(error: unknown): string {
-  const code =
-    error instanceof ReaderError
-      ? error.code
-      : typeof error === "string"
-        ? error
-        : error &&
-            typeof error === "object" &&
-            "code" in error &&
-            typeof error.code === "string"
-          ? error.code
-          : error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
-            ? error.message
-            : "";
+  const code = readerErrorCode(error);
+  if (code === "READER_POSITION_INVALID" || code === "READER_CHAPTER_UNKNOWN")
+    return "当前章节或位置还无法确认，请重新读取章节后重试。";
   if (code.startsWith("READER_WINDOW_"))
     return "暂时无法打开阅读小窗，请重试。";
   if (/SESSION|AUTH|LOGIN/.test(code))

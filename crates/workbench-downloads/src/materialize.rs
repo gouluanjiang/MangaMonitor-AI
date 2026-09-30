@@ -19,6 +19,10 @@ use std::{
 };
 use workbench_storage::{DownloadFile, DownloadRecord, Source, MAX_DOWNLOAD_FILES};
 mod archive_output;
+#[cfg(test)]
+pub(crate) use archive_output::{forget_verified_layout, reset_verify_metrics, verify_metrics};
+mod abandoned;
+pub(crate) use abandoned::cleanup_abandoned;
 
 pub(crate) fn require_root(record: &DownloadRecord) -> Result<Directory> {
     let directory = Directory::open(Path::new(&record.root.path))?;

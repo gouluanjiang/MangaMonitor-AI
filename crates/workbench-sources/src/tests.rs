@@ -3073,3 +3073,19 @@ fn jm_explicit_english_scope_survives_optional_metadata_byte_compaction() {
     assert_eq!(parsed.title, original.title);
     assert_eq!(parsed.authors, original.authors);
 }
+
+#[test]
+fn jm_blocked_category_evidence_survives_exact_metadata_byte_boundary() {
+    for label in ["女性向", "AI作畫", "耽美"] {
+        let mut tags = vec!["t".repeat(2000); 32];
+        tags.push("x".into());
+        let mut data = json!({"id":"123","name":"Boundary","tags":tags});
+        let initial = protocol::work(Source::Jm, &data, false).unwrap().0;
+        let gap = protocol::MAX_WORK_JSON_BYTES - serde_json::to_vec(&initial).unwrap().len();
+        data["tags"][32] = json!("x".repeat(gap + 1));
+        data["category_sub"] = json!({"title":label});
+        let parsed = protocol::work(Source::Jm, &data, false).unwrap().0;
+        assert!(parsed.tags.iter().any(|tag| tag == label));
+        assert!(serde_json::to_vec(&parsed).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+    }
+}

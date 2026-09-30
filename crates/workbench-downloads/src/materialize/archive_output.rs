@@ -3,6 +3,27 @@
 //! in the task's existing isolated staging until durable PC registration.
 use super::*;
 use sha2::Digest;
+use std::cell::RefCell;
+thread_local! {
+    // One proof per worker thread, never persisted or trusted after restart.
+    // A hit still rereads and verifies the entire ZIP and its file identity.
+    static VERIFIED_LAYOUT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+#[cfg(test)]
+#[derive(Clone, Default, Debug)]
+pub(crate) struct VerifyMetrics { pub whole_passes: u64, pub whole_bytes: u64, pub entry_passes: u64, pub entry_bytes: u64, pub elapsed_micros: u128 }
+#[cfg(test)]
+thread_local! { static METRICS: RefCell<VerifyMetrics> = RefCell::new(VerifyMetrics::default()); }
+#[cfg(test)]
+pub(crate) fn reset_verify_metrics() { METRICS.with(|v| *v.borrow_mut() = VerifyMetrics::default()); VERIFIED_LAYOUT.with(|v| *v.borrow_mut() = None); }
+#[cfg(test)]
+pub(crate) fn forget_verified_layout() { VERIFIED_LAYOUT.with(|value| *value.borrow_mut() = None); }
+#[cfg(test)]
+pub(crate) fn verify_metrics() -> VerifyMetrics { METRICS.with(|v| v.borrow().clone()) }
+#[cfg(test)]
+struct VerifyTimer(std::time::Instant);
+#[cfg(test)]
+impl Drop for VerifyTimer { fn drop(&mut self) { METRICS.with(|v| v.borrow_mut().elapsed_micros += self.0.elapsed().as_micros()); } }
 use std::io::{Seek, SeekFrom};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -15,19 +36,35 @@ fn archive_proof(record: &DownloadRecord) -> Result<&DownloadFile> {
 }
 
 pub(super) fn verify(record: &DownloadRecord) -> Result<()> {
+    #[cfg(test)]
+    let _timer = VerifyTimer(std::time::Instant::now());
     let root = require_root(record)?;
     let mut file = root.read(&record.destination)?;
     if record.output_identity.as_ref() != Some(&fs::file_key(&file)?) {
         return Err(error("DOWNLOAD_OUTPUT_CHANGED"));
     }
     let proof = archive_proof(record)?;
-    if fs::digest(&mut file)? != (proof.size_bytes, proof.sha256.clone()) {
+    let observed = fs::digest(&mut file)?;
+    #[cfg(test)]
+    METRICS.with(|v| { let mut v = v.borrow_mut(); v.whole_passes += 1; v.whole_bytes += observed.0; });
+    if observed != (proof.size_bytes, proof.sha256.clone()) {
         return Err(error("DOWNLOAD_OUTPUT_CHANGED"));
     }
     let manifest_bytes = manifest(record)?;
     if record.output_manifest_hash.as_ref() != Some(&hash(&manifest_bytes)) {
         return Err(error("DOWNLOAD_PROOF_INVALID"));
     }
+    let layout_key = hash(&serde_json::to_vec(&(
+        &record.root.id, &record.root.file_key, &record.destination,
+        &record.output_identity, proof, &record.output_manifest_hash,
+        &manifest_bytes,
+    )).map_err(|_| error("DOWNLOAD_PROOF_INVALID"))?);
+    if VERIFIED_LAYOUT.with(|value| value.borrow().as_ref() == Some(&layout_key)) {
+        require_root(record)?;
+        return Ok(());
+    }
+    #[cfg(test)]
+    METRICS.with(|v| v.borrow_mut().entry_passes += 1);
     // The whole ZIP hash was checked before opening its central directory.
     // Its bytes originate in this task's fixed layout, not an arbitrary archive.
     file.rewind().map_err(|_| error("DOWNLOAD_READ_FAILED"))?;
@@ -62,6 +99,8 @@ pub(super) fn verify(record: &DownloadRecord) -> Result<()> {
                 break;
             }
             count += n as u64;
+            #[cfg(test)]
+            METRICS.with(|v| v.borrow_mut().entry_bytes += n as u64);
             if count > expected.size_bytes {
                 return Err(error("DOWNLOAD_OUTPUT_CHANGED"));
             }
@@ -72,6 +111,7 @@ pub(super) fn verify(record: &DownloadRecord) -> Result<()> {
         }
     }
     require_root(record)?;
+    VERIFIED_LAYOUT.with(|value| *value.borrow_mut() = Some(layout_key));
     Ok(())
 }
 

@@ -216,7 +216,7 @@ pub struct DiscoveryDocument {
 impl Default for DiscoveryDocument {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             accounts: vec![],
         }
     }
@@ -288,9 +288,21 @@ fn baseline_valid(baseline: &DiscoveryBaseline, source: Source) -> bool {
 }
 
 impl ValidatedDocument for DiscoveryDocument {
+    const VERSION: u32 = 2;
+
+    fn migrate(&mut self) -> Result<()> {
+        match self.version {
+            1 => self.version = Self::VERSION,
+            2 => (),
+            0 => return Err(StoreError::new("DOCUMENT_CORRUPT")),
+            _ => return Err(StoreError::new("UNSUPPORTED_SCHEMA")),
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("VALIDATION_FAILED");
-        if self.version != 1 || self.accounts.len() > MAX_DISCOVERY_ACCOUNTS {
+        if self.version != Self::VERSION || self.accounts.len() > MAX_DISCOVERY_ACCOUNTS {
             return Err(invalid());
         }
         let mut account_keys = HashSet::new();

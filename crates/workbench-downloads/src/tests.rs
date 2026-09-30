@@ -24,6 +24,8 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[path = "maintenance_tests.rs"]
+mod maintenance_tests;
 #[path = "inventory_tests.rs"]
 mod inventory_tests;
 #[path = "pica_tests.rs"]

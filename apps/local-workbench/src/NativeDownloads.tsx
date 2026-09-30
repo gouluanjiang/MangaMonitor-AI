@@ -47,6 +47,69 @@ import type { AccountSummary } from "./source-types.ts";
 import { Icon } from "./icons.tsx";
 import "./native-downloads.css";
 
+function TaskMaintenanceConfirmation({
+  downloads,
+  task,
+  action,
+  onClose,
+}: {
+  downloads: DownloadsState;
+  task: DownloadTask;
+  action: "abandon" | "cleanup";
+  onClose(): void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  return (
+    <dialog
+      ref={dialog}
+      className="dialog download-confirmation"
+      aria-label={action === "abandon" ? "放弃下载任务" : "清理下载临时文件"}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!downloads.busy) onClose();
+      }}
+    >
+      <h2>
+        {action === "abandon"
+          ? "放弃此任务，释放队列容量"
+          : "清理此任务临时文件"}
+      </h2>
+      <p>
+        {sourceLabel(task.source)} {task.workId}
+      </p>
+      <p>
+        {action === "abandon"
+          ? "任务将停止并保留为待清理记录。已有暂存、最终 ZIP 和漫画库均不会删除。"
+          : "仅清理此任务有记录且核验通过的下载暂存。成功后移除已放弃记录；最终 ZIP、漫画目录和库索引均保留。未知或已改变的内容会阻止清理。"}
+      </p>
+      {downloads.error && <p role="alert">{downloads.error}</p>}
+      <div className="dialog-actions">
+        <button
+          className="button secondary"
+          disabled={downloads.busy}
+          onClick={onClose}
+        >
+          取消
+        </button>
+        <button
+          className="button primary"
+          disabled={downloads.busy}
+          onClick={() =>
+            void downloads.controller.control(null, task, action).then(() => {
+              if (!downloads.controller.getState().error) onClose();
+            })
+          }
+        >
+          {action === "abandon" ? "确认放弃，保留文件" : "确认清理临时文件"}
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
 export function useDownloads(
   adapter: DownloadAdapter,
   enabled: boolean,
@@ -106,8 +169,12 @@ export function useDownloads(
 }
 export type DownloadsState = ReturnType<typeof useDownloads>;
 export const unfinishedDownloadCount = (tasks: DownloadTask[]) =>
-  tasks.filter((task) => !isContentHidden(task) && !isDownloadPresent(task))
-    .length;
+  tasks.filter(
+    (task) =>
+      task.phase !== "abandoned" &&
+      !isContentHidden(task) &&
+      !isDownloadPresent(task),
+  ).length;
 export function downloadStatusText(
   downloads: Pick<DownloadsState, "ready" | "snapshot" | "error">,
 ) {
@@ -290,6 +357,10 @@ export function NativeDownloads({
   const [historySelection, setHistorySelection] = useState<
     DownloadTask[] | null
   >(null);
+  const [maintenance, setMaintenance] = useState<{
+    task: DownloadTask;
+    action: "abandon" | "cleanup";
+  } | null>(null);
   const scope = getDownloadScope(accounts, selectedSource);
   const context = contexts[selectedSource];
   useEffect(() => {
@@ -346,10 +417,20 @@ export function NativeDownloads({
   };
   return (
     <>
+      {maintenance && (
+        <TaskMaintenanceConfirmation
+          downloads={downloads}
+          task={maintenance.task}
+          action={maintenance.action}
+          onClose={() => setMaintenance(null)}
+        />
+      )}
       {historySelection && (
         <HistoryConfirmation
           downloads={downloads}
-          tasks={historySelection.filter((task) => !isContentHidden(task))}
+          tasks={historySelection.map((task) =>
+            isContentHidden(task) ? { ...task, title: "已隐藏作品" } : task,
+          )}
           onClose={() => setHistorySelection(null)}
         />
       )}
@@ -473,29 +554,111 @@ export function NativeDownloads({
           </button>
           {(["JM", "Pica"] as const).map((source) => {
             const current = getDownloadScope(accounts, source);
-            const resumable = visibleTasks
-              .filter(
-                (task) =>
-                  task.source === source &&
-                  task.allowedActions.includes("resume"),
-              )
-              .slice(0, 50);
+            const resumable = visibleTasks.filter(
+              (task) =>
+                task.source === source &&
+                task.allowedActions.includes("resume"),
+            );
             return (
               <button
                 key={source}
                 className="button secondary"
                 data-testid={`download-resume-many-${source}`}
-                disabled={downloads.busy || !current || !resumable.length}
+                disabled={
+                  downloads.busy ||
+                  !current ||
+                  !contexts[source] ||
+                  !resumable.length
+                }
                 onClick={() => {
-                  if (current)
-                    void downloads.controller.resumeMany(current, resumable);
+                  if (current && contexts[source])
+                    void downloads.controller.resumeAll(
+                      contexts[source],
+                      resumable,
+                    );
                 }}
               >
-                继续{sourceLabel(source)} {resumable.length} 本
+                继续{sourceLabel(source)}全部 {resumable.length} 本
               </button>
             );
           })}
         </div>
+        {downloads.snapshot.tasks.some(isContentHidden) && (
+          <details className="source-notice">
+            <summary>维护已隐藏的下载记录（仅显示来源编号）</summary>
+            <ul>
+              {downloads.snapshot.tasks.filter(isContentHidden).map((task) => (
+                <li key={task.id}>
+                  {sourceLabel(task.source)} {task.workId} ·{" "}
+                  {downloadPhaseLabel(task.phase)}
+                  {task.allowedActions.includes("pause") && (
+                    <button
+                      className="text-button"
+                      disabled={downloads.busy}
+                      onClick={() =>
+                        void downloads.controller.control(null, task, "pause")
+                      }
+                    >
+                      暂停
+                    </button>
+                  )}
+                  {task.allowedActions.includes("abandon") && (
+                    <button
+                      className="text-button"
+                      disabled={downloads.busy}
+                      onClick={() =>
+                        setMaintenance({ task, action: "abandon" })
+                      }
+                    >
+                      放弃任务
+                    </button>
+                  )}
+                  {task.allowedActions.includes("cleanup") && (
+                    <button
+                      className="text-button"
+                      disabled={downloads.busy}
+                      onClick={() =>
+                        setMaintenance({ task, action: "cleanup" })
+                      }
+                    >
+                      清理临时文件
+                    </button>
+                  )}
+                  {task.phase === "downloaded" && (
+                    <button
+                      className="text-button"
+                      disabled={downloads.busy}
+                      onClick={() =>
+                        setHistorySelection([{ ...task, title: "已隐藏作品" }])
+                      }
+                    >
+                      整理完成记录
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {downloads.queueNotice && (
+          <p className="source-notice" role="status">
+            {downloads.queueNotice}
+          </p>
+        )}
+        {downloads.resuming && (
+          <p className="source-notice" role="status">
+            已继续 {downloads.resuming.done} / {downloads.resuming.total} 本
+            {downloads.resuming.stopped ? " · 后续批次已停止" : ""}
+            {downloads.busy && !downloads.resuming.stopped && (
+              <button
+                className="text-button"
+                onClick={() => downloads.controller.stopResume()}
+              >
+                停止继续
+              </button>
+            )}
+          </p>
+        )}
         {downloads.error && (
           <p
             role="alert"
@@ -712,7 +875,7 @@ export function NativeDownloads({
                             key={action}
                             className="text-button"
                             disabled={
-                              (action === "pause" && downloads.busy) ||
+                              downloads.busy ||
                               downloads.submittingKeys.includes(
                                 downloadSubmissionKey(task.source, task.workId),
                               ) ||
@@ -724,6 +887,13 @@ export function NativeDownloads({
                             }
                             data-testid={`download-${action}-${task.id}`}
                             onClick={() => {
+                              if (
+                                action === "abandon" ||
+                                action === "cleanup"
+                              ) {
+                                setMaintenance({ task, action });
+                                return;
+                              }
                               if (action !== "pause") {
                                 onReprepare(task);
                                 return;
@@ -739,7 +909,11 @@ export function NativeDownloads({
                               ? "暂停"
                               : action === "resume"
                                 ? "继续"
-                                : "重试"}
+                                : action === "abandon"
+                                  ? "放弃任务"
+                                  : action === "cleanup"
+                                    ? "清理临时文件并移除记录"
+                                    : "重试"}
                           </button>
                         ))}
                         {downloadNeedsAttention(task) && (
@@ -785,6 +959,7 @@ export function NativeDownloads({
                       </div>
                     </div>
                     {task.phase !== "downloaded" &&
+                      task.phase !== "abandoned" &&
                       task.filesTotal !== null &&
                       task.filesDone === task.filesTotal && (
                         <p
@@ -802,7 +977,7 @@ export function NativeDownloads({
                     )}
                     {((!getDownloadScope(accounts, task.source) &&
                       task.allowedActions.some(
-                        (action) => action !== "pause",
+                        (action) => action === "resume" || action === "retry",
                       )) ||
                       /SESSION|AUTH|ACCOUNT|CREDENTIAL|TOKEN|SOURCE_MISMATCH/.test(
                         task.errorCode ?? "",
@@ -835,6 +1010,11 @@ export function NativeDownloads({
                     <p className="download-destination quiet">
                       {task.destinationDisplay}
                     </p>
+                    {task.phase === "saving" && (
+                      <p className="quiet">
+                        正在打包、核验或登记；图片计数不是总完成进度。暂停队列会停止后续任务，当前保存将完成。
+                      </p>
+                    )}
                     {task.phase === "paused" && (
                       <p className="quiet">
                         {task.allowedActions.includes("resume")

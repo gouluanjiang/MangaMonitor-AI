@@ -473,21 +473,33 @@ pub(crate) fn jm_download_batch_cancel<R: Runtime>(
     Ok(())
 }
 
+fn repair_interrupted_scheduler<T>(scheduler: &Mutex<Scheduler<T>>, repair: impl FnOnce()) {
+    // Controls also take scheduler before service. Retire every old admission
+    // before making a new explicit continue eligible to start another driver.
+    let mut state = scheduler.lock().unwrap_or_else(|poison| poison.into_inner());
+    state.pending.clear();
+    repair();
+    state.running = false;
+    scheduler.clear_poison();
+}
+
 fn launch(
     downloads: Arc<DesktopDownloads>,
     store_state: Arc<DesktopStore>,
     store: Arc<WorkbenchStore>,
     library_state: Arc<library::DesktopLibrary>,
 ) {
-    tauri::async_runtime::spawn_blocking(move || {
+    let supervisor_downloads = Arc::clone(&downloads);
+    let supervisor_store = Arc::clone(&store);
+    let worker = tauri::async_runtime::spawn_blocking(move || {
         tauri::async_runtime::block_on(async move {
             loop {
                 let scheduled = match downloads.scheduler.lock() {
                     Ok(mut scheduler) => scheduler.take_next(),
-                    Err(_) => return,
+                    Err(_) => return false,
                 };
                 let Some(scheduled) = scheduled else {
-                    return;
+                    return true;
                 };
                 run_one(
                     Arc::clone(&downloads),
@@ -499,6 +511,15 @@ fn launch(
                 .await;
             }
         })
+    });
+    tauri::async_runtime::spawn(async move {
+        if !matches!(worker.await, Ok(true)) {
+            tauri::async_runtime::spawn_blocking(move || {
+                repair_interrupted_scheduler(&supervisor_downloads.scheduler, || {
+                    let _ = supervisor_downloads.service.worker_interrupted(&supervisor_store);
+                });
+            }).await.ok();
+        }
     });
 }
 
@@ -679,7 +700,7 @@ pub(crate) async fn jm_download_control<R: Runtime>(
     action: Control,
 ) -> Result<DownloadSnapshot, StoreError> {
     require_main(window.label())?;
-    let starts = !matches!(action, Control::Pause);
+    let starts = matches!(action, Control::Resume | Control::Retry);
     let session = if starts {
         live_execution_allowed()?;
         Some(lease(Arc::clone(accounts.inner()), &scope).await?)
@@ -903,6 +924,28 @@ mod tests {
             revision,
             session: "synthetic memory lease",
         }
+    }
+    #[tokio::test]
+    async fn joined_panicking_driver_retires_poisoned_admissions_before_explicit_restart() {
+        let scheduler = Arc::new(Mutex::new(Scheduler::default()));
+        scheduler.lock().unwrap().enqueue(vec![scheduled("old", 1)]);
+        let driver_state = Arc::clone(&scheduler);
+        let worker = tokio::spawn(async move {
+            let _guard = driver_state.lock().unwrap();
+            panic!("synthetic driver failure");
+        });
+        assert!(worker.await.is_err());
+        let repaired = std::cell::Cell::new(false);
+        repair_interrupted_scheduler(&scheduler, || {
+            assert!(scheduler.try_lock().is_err(), "repair remains serialized with queue controls");
+            repaired.set(true);
+        });
+        assert!(repaired.get());
+        let mut state = scheduler.lock().unwrap();
+        assert!(!state.running);
+        assert!(state.pending.is_empty());
+        assert!(state.enqueue(vec![scheduled("explicit retry", 2)]));
+        assert_eq!(state.take_next().unwrap().task_id, "explicit retry");
     }
     #[test]
     fn queue_driver_is_single_and_fifo_even_when_new_work_is_confirmed_mid_download() {

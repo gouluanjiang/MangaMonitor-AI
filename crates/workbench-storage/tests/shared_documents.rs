@@ -113,7 +113,7 @@ fn cached_documents_do_not_mask_future_schema_replacement_or_unsafe_files() {
     let valid = fs::read_to_string(&path).unwrap();
     for future in [
         valid.replace("\"schemaVersion\":1", "\"schemaVersion\":2"),
-        valid.replace("\"version\":1", "\"version\":2"),
+        valid.replace("\"version\":2", "\"version\":3"),
     ] {
         fs::write(&path, &valid).unwrap();
         let _cached = store.read_library_shared().unwrap();

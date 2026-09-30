@@ -6,13 +6,14 @@ use crate::{
     ScanAction,
 };
 use std::{
+    collections::BTreeMap,
     io::Read,
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 use workbench_storage::{
     library_hash_is_valid, library_relative_path_is_valid, Document, LibraryDocument,
-    LibraryEvidence, LibraryFormat, LibraryRecord, WorkbenchStore, MAX_LIBRARY_ITEMS,
+    LibraryEvidence, LibraryFormat, LibraryRecord, LibraryRoot, LibraryScanSeed, WorkbenchStore, MAX_LIBRARY_ITEMS,
     MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
 };
 
@@ -144,6 +145,29 @@ impl LibraryService {
         self.begin(store, previous, root)
     }
 
+    /// Native selection may replace metadata only after confirming a different
+    /// canonical root. The callback never receives renderer-controlled paths.
+    pub fn choose_confirmed(
+        &mut self,
+        store: &WorkbenchStore,
+        path: &Path,
+        confirm: impl FnOnce(&LibraryRoot, &LibraryRoot) -> bool,
+    ) -> Result<Option<LibrarySnapshot>> {
+        let previous = store.read_library()?;
+        let root = Root::choose(path)?;
+        if let Some(old) = previous.value.root.as_ref().filter(|old| **old != root.saved) {
+            if !confirm(old, &root.saved) {
+                return Ok(None);
+            }
+        }
+        // A confirmation only authorizes replacement of the revision it showed.
+        if store.read_library()?.revision != previous.revision {
+            return Err(error("LIBRARY_STALE_SNAPSHOT"));
+        }
+        root.verify()?;
+        self.begin(store, previous, root).map(Some)
+    }
+
     fn begin(
         &mut self,
         store: &WorkbenchStore,
@@ -156,14 +180,26 @@ impl LibraryService {
             .checked_add(1)
             .filter(|v| *v <= MAX_SAFE_INTEGER)
             .ok_or(error("REVISION_EXHAUSTED"))?;
-        let mut job = ScanJob::new(root, generation, previous.revision, &previous.value.records)?;
+        let same_root = previous.value.root.as_ref() == Some(&root.saved);
+        let mut seeds = BTreeMap::new();
+        if same_root {
+            for seed in &previous.value.scan_baseline {
+                seeds.insert(seed.id.clone(), seed.clone());
+            }
+            for record in &previous.value.records {
+                seeds.insert(record.item.id.clone(), LibraryScanSeed::from(record));
+            }
+        }
+        let scan_baseline: Vec<_> = seeds.into_values().collect();
+        let mut job = ScanJob::new(root, generation, previous.revision, &scan_baseline)?;
         let value = LibraryDocument {
-            reviewed_works: if previous.value.root.as_ref() == Some(&job.root.saved) {
+            scan_baseline,
+            reviewed_works: if same_root {
                 previous.value.reviewed_works.clone()
             } else {
                 Vec::new()
             },
-            relocations: if previous.value.root.as_ref() == Some(&job.root.saved) {
+            relocations: if same_root {
                 previous.value.relocations.clone()
             } else {
                 Vec::new()
@@ -227,6 +263,7 @@ impl LibraryService {
             }
             ScanAction::Start => unreachable!(),
         }
+        job.checkpoint_baseline(&mut document.value);
         document.value.updated_at = Some(now());
         // A failed checkpoint drops the cursor. Continuing a consumed iterator
         // after a failed save could omit entries and falsely report completeness.

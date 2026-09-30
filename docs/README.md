@@ -4,7 +4,7 @@
 
 ## 使用与版本
 
-- [使用指南](USER_GUIDE.md)：安装、账号、浏览、下载、阅读及问题诊断；1.0.0 操作说明同样适用于 1.0.1。
+- [使用指南](USER_GUIDE.md)：安装、账号、浏览、下载、阅读及问题诊断；候选版新行为在文内标明。
 - [当前项目状态](PROJECT_STATUS.md)：已交付功能、已知边界、取消项和以后讨论的范围。
 - [1.0.1 版本说明](RELEASE_NOTES_1.0.1.md)与[正式发行页](https://github.com/gouluanjiang/MangaMonitor-AI/releases/tag/v1.0.1)。
 - [1.0.1 发行记录](RELEASE_1.0.1_2026-09-29.md)：最终 CI、产物哈希、发布、安装及原生验收证据。
@@ -13,6 +13,7 @@
 ## 开发与维护
 
 - [当前交接](DEVELOPMENT_HANDOFF.md)：接手开发先读这一份；不必顺序重读所有历史报告。
+- [2026-09-30 维护审计修复](MAINTENANCE_AUDIT_2026-09-30.md)与 [1.0.2-rc.1 候选说明](RELEASE_NOTES_1.0.2-rc.1.md)：修复范围、格式兼容与待验收边界。
 - [贡献和问题反馈](../CONTRIBUTING.md)、[开发规则](../AGENTS.md)、[来源基线与仓库隔离](../SOURCE_BASELINE.md)。
 - [前端说明](../apps/local-workbench/README.md)与[原生桌面说明](../apps/local-workbench/src-tauri/README.md)。
 - [许可](../LICENSE)与[第三方通知](../THIRD_PARTY_NOTICES.md)。

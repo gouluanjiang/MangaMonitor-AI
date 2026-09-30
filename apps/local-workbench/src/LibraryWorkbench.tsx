@@ -20,7 +20,7 @@ import type {
   LibrarySnapshot,
 } from "./library-types.ts";
 import { LibraryController, libraryErrorMessage } from "./library-runtime.ts";
-import { filterLibraryItems, normalizeLibraryText } from "./library-model.ts";
+import { searchLibraryItems, sortLibraryItems } from "./library-model.ts";
 import {
   formatTimestamp,
   formatWorkDate,
@@ -42,6 +42,7 @@ import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
 import {
   getContentFilterRevision,
   isBlockedTagged,
+  isJmFemaleTag,
   isContentHidden,
   rememberContentWork,
   subscribeContentFilter,
@@ -585,14 +586,29 @@ export function LibraryWorkbench({
       library.snapshot.items.filter(
         (item) =>
           !isBlockedTagged(item.tags) &&
+          !(
+            (item.sourceRef?.source === "JM" ||
+              (item.links ?? []).some(
+                (link) => link.reference.source === "JM",
+              )) &&
+            item.tags.some(isJmFemaleTag)
+          ) &&
           !(item.sourceRef && isContentHidden(item.sourceRef)) &&
           !(item.links ?? []).some((link) => isContentHidden(link.reference)),
       ),
     [library.snapshot.items, contentRevision],
   );
+  const searched = useMemo(
+    () => searchLibraryItems(visibleItems, query),
+    [visibleItems, query],
+  );
   const items = useMemo(
-    () => filterLibraryItems(visibleItems, query, sort, filter),
-    [visibleItems, query, sort, filter],
+    () =>
+      sortLibraryItems(
+        searched.items.filter((item) => libraryFilterMatches(item, filter)),
+        sort,
+      ),
+    [searched, sort, filter],
   );
   const detail = visibleItems.find((item) => item.id === detailId);
   const itemKeys = useMemo(() => items.map((item) => item.id), [items]);
@@ -615,10 +631,6 @@ export function LibraryWorkbench({
     root,
     itemKeys: [],
   });
-  const searchedItems = useMemo(
-    () => filterLibraryItems(visibleItems, query),
-    [visibleItems, query],
-  );
   useEffect(() => {
     setDetailId(null);
   }, [query, library.snapshot.rootId]);
@@ -720,13 +732,7 @@ export function LibraryWorkbench({
                     }}
                   >
                     {libraryFilterLabels[value]}{" "}
-                    <span>
-                      {
-                        searchedItems.filter((item) =>
-                          libraryFilterMatches(item, value),
-                        ).length
-                      }
-                    </span>
+                    <span>{searched.counts[value]}</span>
                   </button>
                 ),
               )}

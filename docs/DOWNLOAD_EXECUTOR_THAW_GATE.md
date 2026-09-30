@@ -76,3 +76,11 @@ Implement within the reviewed scope, updating meaningful regressions for changed
 Live checks require applicable authorization and local execution. Preserve each gate's staging/proof and human-acceptance prerequisites; synthetic tests do not satisfy them. Inventory, promotion, replacement and deletion remain separately gated; production requires explicit final acceptance.
 
 Missing approval or integrity evidence blocks the affected real action. Identify the gap and continue independent authorized work.
+
+## 2026-09-30 maintenance review
+
+The approved audit batch adds explicit abandon and separate task-staging cleanup actions, not automatic deletion on failure. Cleanup requires the selected abandoned task, current root and command identity, isolated staging lock, and an allowlist proved by validated command/checkpoint metadata; unknown files, unknown directories and links stop cleanup. No final library ZIP is opened or removed. Failure keeps the task available for diagnosis. Implementing these controls does not authorize running them on a user's real files.
+
+Worker supervision does not auto-resume a failed task. Resume-all preserves current source/account/generation and submits bounded batches; a changed context stops the sequence. Pause messaging reflects in-flight final-save work. Existing source protocol pins and image concurrency are unchanged.
+
+The archive optimization retains all full-file hash/identity boundaries and caches only a validated layout tied to the exact manifest and file proof. A changed file, receipt or cold process requires validation. Synthetic counters, tamper cases and isolated cleanup tests are required in CI; no live manga download or deletion is part of this maintenance verification.

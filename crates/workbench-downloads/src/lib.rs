@@ -1,5 +1,6 @@
 //! Explicitly approved JM/Pica desktop download queues. No production inventory,
-//! phone-library mutation, restart-time network execution, overwrite, or deletion.
+//! phone-library mutation, restart-time network execution or final-output deletion.
+//! Explicit abandoned-task cleanup is limited to its recorded, verified staging.
 mod adapter;
 mod fs;
 mod inventory;

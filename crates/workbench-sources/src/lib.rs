@@ -10,7 +10,7 @@ mod thumbnail;
 mod types;
 
 pub use content::{
-    inherit_content_tags, is_ai_tag, is_bl_tag, is_blocked_tag, is_jm_english_category,
+    inherit_content_tags, is_ai_tag, is_bl_tag, is_blocked_tag, is_jm_english_category, is_jm_female_tag,
     retained_content_tags,
 };
 pub use language::{

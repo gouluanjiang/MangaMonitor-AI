@@ -499,6 +499,8 @@ mod contract {
 
         fn detail_response(authors: &[&str]) -> QueryResult {
             QueryResult {
+                content_verified_ids: vec![],
+                content_verified_until: None,
                 source: Source::Jm,
                 session_id: "synthetic-session".into(),
                 discovery_revision: Some(7),

@@ -221,6 +221,54 @@ test("three cover choices preserve details and cancellation; independent small r
   });
 });
 
+test("native window close keeps a failed position available for retry or explicit discard", async ({
+  page,
+}) => {
+  const harness = harnesses.get(page)!;
+  await openLocalWindow(page);
+  const first = await harness.child(1);
+  harness.failSave.add("reader-window-1");
+  await jump(first, 3, 6);
+  await harness.emit("reader-window-1", "reader-window-close-requested");
+  await expect(
+    first.getByRole("button", { name: "重试保存并退出", exact: true }),
+  ).toBeVisible();
+  expect(harness.closed.has("reader-window-1")).toBe(false);
+  expect(
+    harness.calls.filter(
+      (call) =>
+        call.label === "reader-window-1" && call.command === "reader_close",
+    ),
+  ).toEqual([]);
+  harness.failSave.delete("reader-window-1");
+  await first
+    .getByRole("button", { name: "重试保存并退出", exact: true })
+    .click();
+  await expect.poll(() => harness.closed.has("reader-window-1")).toBe(true);
+  expect(
+    harness.saved.get(harness.key(harness.requests.get("reader-window-1")!))
+      ?.pageIndex,
+  ).toBe(2);
+
+  await openOnlineWindow(page);
+  const second = await harness.child(2);
+  harness.failSave.add("reader-window-2");
+  await jump(second, 2, 6);
+  await harness.emit("reader-window-2", "reader-window-close-requested");
+  await expect(
+    second.getByRole("button", { name: "放弃未保存位置并退出", exact: true }),
+  ).toBeVisible();
+  expect(harness.closed.has("reader-window-2")).toBe(false);
+  await second
+    .getByRole("button", { name: "放弃未保存位置并退出", exact: true })
+    .click();
+  await expect.poll(() => harness.closed.has("reader-window-2")).toBe(true);
+  expect(
+    harness.saved.get(harness.key(harness.requests.get("reader-window-2")!))
+      ?.pageIndex,
+  ).not.toBe(1);
+});
+
 test("pin failure remains visibly off, windows keep independent positions and native close flushes before closing only its reader", async ({
   page,
 }) => {

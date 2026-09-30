@@ -5,6 +5,7 @@ import {
   isBlTag,
   isBlTagged,
   isAiTag,
+  isJmFemaleTag,
   isBlockedTag,
   isBlockedTagged,
   retainedContentTags,
@@ -29,6 +30,31 @@ const work = (workId, tags, source = "JM") => ({
   chapterCount: null,
   pageCount: null,
   coverAvailable: false,
+});
+
+test("女性向 is retained explicit JM evidence, not a Pica or title guess", () => {
+  const jm = { ...work("female-scope", []), categories: [" 女性向 "] };
+  assert.equal(isJmFemaleTag(" 女性向 "), true);
+  assert.equal(isJmFemaleTag("非女性向"), false);
+  assert.equal(isBlockedTag("女性向"), false);
+  assert.equal(isContentHidden(jm), true);
+  assert.equal(isContentHidden({ ...jm, source: "Pica" }), false);
+  assert.equal(
+    isContentHidden({ ...work("female-title", []), title: "女性向" }),
+    false,
+  );
+  const compact = compactWork(jm);
+  assert.deepEqual(compact.tags, ["女性向"]);
+  assert.equal(
+    isContentHidden(mergeSourceWorks([compact], [work(jm.workId, [])])[0]),
+    true,
+  );
+  const full = inheritContentTags(
+    Array.from({ length: 128 }, (_, i) => `tag${i}`),
+    ["女性向"],
+  );
+  assert.equal(full.length, 128);
+  assert.ok(full.some(isJmFemaleTag));
 });
 
 test("exact label matrix is shared with Rust and never matches ordinary words", () => {

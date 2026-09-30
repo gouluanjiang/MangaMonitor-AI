@@ -381,11 +381,12 @@ impl WorkbenchStore {
         }
         let probe: SchemaProbe =
             serde_json::from_slice(&bytes).map_err(|_| StoreError::new("DOCUMENT_CORRUPT"))?;
-        if probe.schema_version > 1 || probe.value.version > 1 {
+        if probe.schema_version > 1 || probe.value.version > u64::from(T::VERSION) {
             return Err(StoreError::new("UNSUPPORTED_SCHEMA"));
         }
-        let envelope: Envelope<T> =
+        let mut envelope: Envelope<T> =
             serde_json::from_slice(&bytes).map_err(|_| StoreError::new("DOCUMENT_CORRUPT"))?;
+        envelope.value.migrate()?;
         if envelope.schema_version != 1
             || envelope.revision == 0
             || envelope.revision > MAX_SAFE_INTEGER

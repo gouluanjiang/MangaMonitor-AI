@@ -806,3 +806,153 @@ fn live_scan_holds_root_against_directory_redirection() {
         "LIBRARY_ROOT_CHANGED"
     );
 }
+
+
+fn historical_records(store: &WorkbenchStore) -> Vec<workbench_storage::LibraryRecord> {
+    let mut document = store.read_library().unwrap();
+    for (index, record) in document.value.records.iter_mut().enumerate() {
+        record.item.added_at = (index != 0).then_some(1000 + index as u64);
+        record.item.version_updated_at = Some("2026-09-01".into());
+        record.manual_override = true;
+        record.item.source_ref = Some(LibraryReference {
+            source: Source::Jm,
+            work_id: (1000 + index).to_string(),
+        });
+        record.item.identity_evidence = Some(LibraryEvidence::Manual);
+        record.item.links = vec![workbench_storage::LibrarySourceLink {
+            reference: LibraryReference {
+                source: Source::Pica,
+                work_id: format!("{index:024x}"),
+            },
+            evidence: workbench_storage::LibraryLinkEvidence::Manual,
+            linked_at: 900,
+        }];
+    }
+    let expected = document.value.records.clone();
+    store.write_library(document.revision, document.value).unwrap();
+    expected
+}
+
+#[test]
+fn interrupted_and_repeated_rescans_preserve_unvisited_metadata_without_publishing_seeds() {
+    let media = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let image = image_bytes();
+    // More than one 128-node batch, without relying on directory enumeration order.
+    for index in 0..140 {
+        archive(&media.path().join(format!("synthetic-{index:03}.zip")), &[("1.png", &image)]);
+    }
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let mut service = LibraryService::new();
+    let initial = service.choose(&store, media.path()).unwrap();
+    let ready = finish(&mut service, &store, initial);
+    let expected = historical_records(&store);
+    let root = ready.root_id.as_deref().unwrap();
+    let first = service.scan(&store, root, ready.generation, ScanAction::Start).unwrap();
+    assert!(first.items.is_empty());
+    let stored = store.read_library().unwrap();
+    assert_eq!(stored.value.scan_baseline.len(), expected.len());
+    assert!(serde_json::to_vec(&stored.value.scan_baseline).unwrap().len()
+        < serde_json::to_vec(&expected).unwrap().len());
+    // Historical seeds cannot authorize covers or reader entry access.
+    assert_eq!(service.cover(&store, root, first.generation, &expected[0].item.id).unwrap_err().code, "LIBRARY_ENTRY_UNKNOWN");
+    assert_eq!(workbench_library::LocalReader::open(&store, root, first.generation, &expected[0].item.id).err().unwrap().code, "LIBRARY_ENTRY_UNKNOWN");
+    let restarted = service.scan(&store, root, first.generation, ScanAction::Start).unwrap();
+    let partial = service.scan(&store, root, restarted.generation, ScanAction::Next).unwrap();
+    assert!(!partial.items.is_empty());
+    assert!(partial.items.len() < expected.len());
+    let checkpoint = store.read_library().unwrap();
+    assert_eq!(checkpoint.value.records.len() + checkpoint.value.scan_baseline.len(), expected.len());
+    assert!(checkpoint.value.scan_baseline.iter().all(|seed|
+        !checkpoint.value.records.iter().any(|record| record.item.id == seed.id)));
+    drop(service);
+    let mut reopened = LibraryService::new();
+    let interrupted = reopened.read(&store).unwrap();
+    assert_eq!(interrupted.phase, LibraryPhase::Paused);
+    assert_eq!(interrupted.freshness, LibraryFreshness::Cached);
+    let start = reopened.scan(&store, root, partial.generation, ScanAction::Start).unwrap();
+    let finished = finish(&mut reopened, &store, start);
+    assert_eq!(finished.phase, LibraryPhase::Complete);
+    let final_document = store.read_library().unwrap();
+    assert!(final_document.value.scan_baseline.is_empty());
+    for old in &expected {
+        assert_eq!(final_document.value.records.iter().find(|record| record.item.id == old.item.id), Some(old));
+    }
+}
+
+#[test]
+fn restarted_scan_rechecks_identity_and_drops_only_absent_seed_metadata_on_completion() {
+    let media = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    let image = image_bytes();
+    for name in ["unchanged.zip", "replaced.zip", "removed.zip"] {
+        archive(&media.path().join(name), &[("1.png", &image)]);
+    }
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let mut service = LibraryService::new();
+    let initial = service.choose(&store, media.path()).unwrap();
+    let ready = finish(&mut service, &store, initial);
+    let expected = historical_records(&store);
+    let start = service.scan(&store, ready.root_id.as_deref().unwrap(), ready.generation, ScanAction::Start).unwrap();
+    drop(service);
+    archive(&media.path().join("replaced.zip"), &[("1.png", &image), ("2.png", &image)]);
+    fs::remove_file(media.path().join("removed.zip")).unwrap();
+    // An interrupted error state must retain the same unvisited seeds.
+    let mut interrupted = store.read_library().unwrap();
+    interrupted.value.phase = LibraryPhase::Error;
+    interrupted.value.error_code = Some("LIBRARY_SCAN_INCOMPLETE".into());
+    store.write_library(interrupted.revision, interrupted.value).unwrap();
+    let mut reopened = LibraryService::new();
+    let restart = reopened.scan(&store, start.root_id.as_deref().unwrap(), start.generation, ScanAction::Start).unwrap();
+    let finished = finish(&mut reopened, &store, restart);
+    assert_eq!(finished.phase, LibraryPhase::Complete);
+    let final_document = store.read_library().unwrap();
+    assert!(final_document.value.scan_baseline.is_empty());
+    assert_eq!(final_document.value.records.len(), 2);
+    let unchanged = expected.iter().find(|record| record.item.file_name == "unchanged.zip").unwrap();
+    assert_eq!(final_document.value.records.iter().find(|record| record.item.id == unchanged.item.id), Some(unchanged));
+    let replaced = final_document.value.records.iter().find(|record| record.item.file_name == "replaced.zip").unwrap();
+    let old = expected.iter().find(|record| record.item.id == replaced.item.id).unwrap();
+    assert_eq!(replaced.item.added_at, old.item.added_at);
+    assert_eq!(replaced.item.version_updated_at, None);
+    assert!(!replaced.manual_override);
+    assert_eq!(replaced.item.source_ref, None);
+    assert!(replaced.item.links.is_empty());
+}
+
+#[test]
+fn choosing_another_root_requires_confirmation_of_the_same_revision() {
+    let media = TempDir::new().unwrap();
+    let other = TempDir::new().unwrap();
+    let private = TempDir::new().unwrap();
+    archive(&media.path().join("synthetic.zip"), &[("1.png", &image_bytes())]);
+    let store = WorkbenchStore::open(private.path()).unwrap();
+    let mut service = LibraryService::new();
+    let initial = service.choose_confirmed(&store, media.path(), |_, _| panic!("first root needs no replacement confirmation")).unwrap().unwrap();
+    let ready = finish(&mut service, &store, initial);
+    historical_records(&store);
+    let path = private.path().join(PRIVATE_DIRECTORY).join("library.json");
+    let before = fs::read(&path).unwrap();
+    assert!(service.choose_confirmed(&store, other.path(), |old, next| {
+        assert_ne!(old, next);
+        false
+    }).unwrap().is_none());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let same = service.choose_confirmed(&store, &media.path().join("."), |_, _| panic!("same canonical root")).unwrap().unwrap();
+    assert_eq!(same.root_id, ready.root_id);
+    let prior = store.read_library().unwrap();
+    assert_eq!(service.choose_confirmed(&store, other.path(), |_, _| {
+        let mut changed = store.read_library().unwrap();
+        changed.value.updated_at = Some(123);
+        store.write_library(changed.revision, changed.value).unwrap();
+        true
+    }).unwrap_err().code, "LIBRARY_STALE_SNAPSHOT");
+    assert_eq!(store.read_library().unwrap().value.root, prior.value.root);
+    let selected = service.choose_confirmed(&store, other.path(), |_, _| true).unwrap().unwrap();
+    assert_ne!(selected.root_id, ready.root_id);
+    let replaced = store.read_library().unwrap();
+    assert!(replaced.value.records.is_empty());
+    assert!(replaced.value.scan_baseline.is_empty());
+    assert!(replaced.value.reviewed_works.is_empty());
+    assert!(replaced.value.relocations.is_empty());
+}

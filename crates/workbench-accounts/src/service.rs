@@ -800,10 +800,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .query_ordered_unobserved(source, session_id, kind, query, folder_id, page, reverse)
             .await?;
         match self
-            .observe_query(source, session_id, kind, &result.page, observed_at)
+            .observe_query(source, session_id, kind, &mut result.page, observed_at)
             .await
         {
-            Ok(revision) => result.discovery_revision = revision,
+            Ok((revision, verified, until)) => {
+                result.discovery_revision = revision;
+                result.content_verified_ids = verified;
+                result.content_verified_until = until;
+            }
             Err(error) => result.observation_error_code = Some(error.code.into()),
         }
         Ok(result)
@@ -982,6 +986,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             page: result,
             discovery_revision: None,
             observation_error_code: None,
+            content_verified_ids: vec![],
+            content_verified_until: None,
         })
     }
 

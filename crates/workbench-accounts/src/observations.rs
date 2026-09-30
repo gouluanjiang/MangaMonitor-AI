@@ -26,6 +26,10 @@ pub struct RecentHistoryResult {
     pub session_id: String,
     pub items: Vec<SourceWork>,
     pub revision: u64,
+    /// Complete detail metadata already retained locally, not inferred from a list.
+    pub content_verified_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_verified_until: Option<u64>,
     pub coverage: RecentCoverage,
 }
 
@@ -76,6 +80,7 @@ pub(crate) struct RecentControl {
     state: Mutex<RecentState>,
     replay: tokio::sync::Mutex<Option<(String, u64, u64, u64)>>,
     favorite_seed: tokio::sync::Mutex<HashSet<String>>,
+    content_proofs: Mutex<ContentProofCache>,
 }
 
 #[derive(Default)]
@@ -149,15 +154,51 @@ fn observed(work: SourceWork, at: u64, detail: bool, via: &str) -> ObservedWork 
     }
 }
 
+const CONTENT_PROOF_TTL: u64 = 24 * 60 * 60 * 1000;
+const MAX_CONTENT_PROOFS: usize = 4096;
+type ContentProofKey = (String, String, String);
+
+#[derive(Default)]
+struct ContentProofCache {
+    // Account, session, work ID -> exact detail version and its original expiry.
+    // Never reconstructed from persisted timestamps or a lightweight list.
+    entries: HashMap<ContentProofKey, (Option<String>, u64)>,
+}
+
+impl ContentProofCache {
+    fn observe(&mut self, key: ContentProofKey, version: Option<&str>, detail: bool, now: u64) -> Option<u64> {
+        if detail {
+            let until = now.checked_add(CONTENT_PROOF_TTL)?;
+            if !self.entries.contains_key(&key) && self.entries.len() >= MAX_CONTENT_PROOFS {
+                self.entries.retain(|_, (_, expires)| *expires > now);
+                if self.entries.len() >= MAX_CONTENT_PROOFS {
+                    if let Some(oldest) = self.entries.iter().min_by_key(|(_, (_, expires))| *expires).map(|(key, _)| key.clone()) {
+                        self.entries.remove(&oldest);
+                    }
+                }
+            }
+            self.entries.insert(key, (version.map(str::to_owned), until));
+            return Some(until);
+        }
+        let valid = self.entries.get(&key).filter(|(saved, until)|
+            saved.as_deref() == version && now < *until && now >= until.saturating_sub(CONTENT_PROOF_TTL)
+        ).map(|(_, until)| *until);
+        if valid.is_none() {
+            self.entries.remove(&key);
+        }
+        valid
+    }
+}
+
 impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     pub(crate) async fn observe_query(
         &self,
         source: Source,
         session_id: &str,
         kind: QueryKind,
-        page: &SourcePage,
+        page: &mut SourcePage,
         at: u64,
-    ) -> Result<Option<u64>> {
+    ) -> Result<(Option<u64>, Vec<String>, Option<u64>)> {
         let (key, root, lease) = self.observation_identity(source, session_id).await?;
         let via = match kind {
             QueryKind::Favorites => "favorites",
@@ -177,26 +218,58 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .map(|work| observed(work, at, detail, via))
             .collect();
         let recent_page = matches!(kind, QueryKind::Recent).then_some(page.page);
+        let wanted: HashSet<_> = page.items.iter().map(|work| work.work_id.clone()).collect();
         let captured = lease.clone();
-        tokio::task::spawn_blocking(move || {
+        let proof_account = key.clone();
+        let retained = tokio::task::spawn_blocking(move || {
             captured.require_current()?;
             let store = WorkbenchStore::open(&root).map_err(|e| AccountError::new(e.code))?;
-            store
+            let saved = store
                 .merge_observed_works(&key, storage_source(source), records, recent_page)
                 .map_err(|e| AccountError::new(e.code))?;
-            captured.require_current()
+            captured.require_current()?;
+            Ok::<_, AccountError>(saved.value.accounts.into_iter()
+                .filter(|account| account.account_key == key && account.source == storage_source(source))
+                .flat_map(|account| account.records)
+                .filter(|record| wanted.contains(&record.work.work_id))
+                .collect::<Vec<_>>())
         })
         .await
         .map_err(|_| unavailable())??;
         lease.require_current()?;
+        // Reuse exact-ID explicit evidence before returning a light list. In
+        // particular, a recent row must not erase a previously inspected tag.
+        let retained: HashMap<_, _> = retained.into_iter()
+            .map(|record| (record.work.work_id.clone(), record)).collect();
+        let mut verified = vec![];
+        let mut verified_until: Option<u64> = None;
+        for work in &mut page.items {
+            if let Some(record) = retained.get(&work.work_id) {
+                work.tags = workbench_sources::inherit_content_tags(&work.tags, &record.work.tags);
+                if cache::validate_work(source, work).is_err() {
+                    work.tags = workbench_sources::retained_content_tags(&work.tags);
+                    cache::validate_work(source, work)?;
+                }
+            }
+        }
+        {
+            let mut proofs = self.recent_checks.content_proofs.lock().map_err(|_| unavailable())?;
+            for work in &page.items {
+                let key = (proof_account.clone(), session_id.to_owned(), work.work_id.clone());
+                if let Some(until) = proofs.observe(key, work.source_updated_at.as_deref(), detail, at) {
+                    verified.push(work.work_id.clone());
+                    verified_until = Some(verified_until.map_or(until, |prior| prior.min(until)));
+                }
+            }
+        }
         if self.discovery_is_active()? {
-            return Ok(None);
+            return Ok((None, verified, verified_until));
         }
         let Ok(scopes) = self.current_discovery_scopes().await else {
-            return Ok(None);
+            return Ok((None, verified, verified_until));
         };
         self.discovery_observe(scopes, page.items.clone(), detail, at)
-            .await
+            .await.map(|revision| (revision, verified, verified_until))
     }
 
     /// Import existing favorite caches once per authenticated account generation.
@@ -300,6 +373,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 account.account_key == key && account.source == storage_source(source)
             });
         let mut items = vec![];
+        let mut content_verified_ids = vec![];
+        let mut content_verified_until: Option<u64> = None;
+        let now = cache::now_ms()?;
         if let Some(account) = account {
             let works: HashMap<_, _> = account
                 .records
@@ -312,11 +388,23 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 .filter_map(|id| works.get(id.as_str()).map(|record| source_work(record)))
                 .collect();
         }
+        {
+            let mut proofs = self.recent_checks.content_proofs.lock().map_err(|_| unavailable())?;
+            for work in &items {
+                let proof_key = (key.clone(), session_id.to_owned(), work.work_id.clone());
+                if let Some(until) = proofs.observe(proof_key, work.source_updated_at.as_deref(), false, now) {
+                    content_verified_ids.push(work.work_id.clone());
+                    content_verified_until = Some(content_verified_until.map_or(until, |prior| prior.min(until)));
+                }
+            }
+        }
         Ok(RecentHistoryResult {
             source,
             session_id: session_id.into(),
             items,
             revision: document.revision,
+            content_verified_ids,
+            content_verified_until,
             coverage: account
                 .map_or_else(RecentCoverage::default, |account| account.coverage.clone()),
         })
@@ -733,6 +821,31 @@ fn contiguous_join(ids: &[String], previous: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_proof_requires_session_detail_and_exact_version_even_in_the_same_millisecond() {
+        let key = ("account".into(), "session".into(), "100".into());
+        let mut proofs = ContentProofCache::default();
+        // Even a saved detail timestamp cannot seed this empty session cache.
+        assert_eq!(proofs.observe(key.clone(), Some("v1"), false, 10), None);
+        assert_eq!(proofs.observe(key.clone(), Some("v1"), true, 10), Some(10 + CONTENT_PROOF_TTL));
+        assert_eq!(proofs.observe(key.clone(), Some("v1"), false, 10), Some(10 + CONTENT_PROOF_TTL));
+        assert_eq!(proofs.observe(key.clone(), Some("v2"), false, 10), None);
+        assert_eq!(proofs.observe(key.clone(), Some("v1"), false, 10), None);
+        assert_eq!(proofs.observe(key.clone(), None, true, 20), Some(20 + CONTENT_PROOF_TTL));
+        assert_eq!(proofs.observe(key.clone(), None, false, 21), Some(20 + CONTENT_PROOF_TTL));
+        let other_session = ("account".into(), "other-session".into(), "100".into());
+        let other_account = ("other-account".into(), "session".into(), "100".into());
+        assert_eq!(proofs.observe(other_session, None, false, 21), None);
+        assert_eq!(proofs.observe(other_account, None, false, 21), None);
+        assert_eq!(proofs.observe(key, None, false, 20 + CONTENT_PROOF_TTL), None);
+        for id in 0..=MAX_CONTENT_PROOFS {
+            proofs.observe(("a".into(), "s".into(), id.to_string()), None, true, 30 + id as u64);
+        }
+        assert_eq!(proofs.entries.len(), MAX_CONTENT_PROOFS);
+        assert!(!proofs.entries.contains_key(&("a".into(), "s".into(), "0".into())));
+    }
+
     #[test]
     fn checkpoint_requires_the_entire_contiguous_sequence() {
         let ids = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();

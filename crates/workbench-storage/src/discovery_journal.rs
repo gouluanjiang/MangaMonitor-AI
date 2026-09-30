@@ -70,7 +70,7 @@ impl DiscoveryPagePatch {
         }
         // This validation is bounded by the incoming page, not the saved history.
         DiscoveryDocument {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             accounts: vec![DiscoveryAccount {
                 account_key: self.account_key.clone(),
                 authors: self.authors.clone(),
@@ -105,10 +105,10 @@ struct Checkpoint {
 
 impl Manifest {
     fn validate(&self) -> Result<()> {
-        if self.version > 1 {
+        if self.version > DiscoveryDocument::VERSION {
             return Err(StoreError::new("UNSUPPORTED_SCHEMA"));
         }
-        if self.version != 1
+        if self.version == 0
             || self.base_revision > MAX_SAFE_INTEGER
             || self.revision > MAX_SAFE_INTEGER
             || self.patch_count > MAX_JOURNAL_PATCHES
@@ -473,7 +473,10 @@ impl WorkbenchStore {
                 return Err(corrupt());
             }
             let header: PatchHeader = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
-            if header.version != 1
+            if header.version > DiscoveryDocument::VERSION {
+                return Err(StoreError::new("UNSUPPORTED_SCHEMA"));
+            }
+            if header.version == 0
                 || header.revision != revision
                 || header.previous_revision.checked_add(1) != Some(revision)
                 || header.previous_revision < manifest.chain_base_revision()
@@ -527,6 +530,7 @@ impl WorkbenchStore {
             if document.revision != checkpoint.revision {
                 return Err(corrupt());
             }
+            document.value.migrate()?;
             document.value.validate().map_err(|_| corrupt())?;
         }
         let mut index = RawIndex::from_document(&document.value)?;
@@ -718,7 +722,7 @@ impl WorkbenchStore {
         }
         let next_revision = revision + 1;
         let envelope = PatchEnvelope {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             previous_revision: revision,
             previous_sha256: cache
                 .manifest
@@ -733,7 +737,7 @@ impl WorkbenchStore {
             return Err(StoreError::new("DOCUMENT_TOO_LARGE"));
         }
         let next = Manifest {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             base_revision: cache.base_revision,
             base_sha256: cache.base_sha256.clone(),
             revision: next_revision,
@@ -859,6 +863,7 @@ impl WorkbenchStore {
             bytes: bytes.len() as u64,
         };
         let next = Manifest {
+            version: DiscoveryDocument::VERSION,
             checkpoint: Some(checkpoint.clone()),
             head_sha256: None,
             patch_count: 0,
@@ -984,7 +989,7 @@ mod summary_size_tests {
             complete_scopes: 0,
         };
         let value = DiscoveryDocument {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             accounts: vec![DiscoveryAccount {
                 account_key: "b".repeat(64),
                 authors: vec![],

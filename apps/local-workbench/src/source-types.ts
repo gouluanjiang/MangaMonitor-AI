@@ -99,6 +99,8 @@ export interface CatalogRequest {
   snapshot?: CatalogSnapshot;
 }
 export interface SourceQueryResult extends SourceScope, SourcePage {
+  contentVerifiedIds?: string[];
+  contentVerifiedUntil?: number | null;
   /** Present only after the observed records were committed to the author catalog. */
   discoveryRevision?: number | null;
   observationErrorCode?: string | null;
@@ -111,6 +113,8 @@ export interface KnownAuthorWorks extends SourceScope {
   observationErrorCode?: string | null;
 }
 export interface RecentHistoryResult extends SourceScope {
+  contentVerifiedIds?: string[];
+  contentVerifiedUntil?: number | null;
   items: SourceWork[];
   revision: number;
   coverage: {

@@ -78,6 +78,10 @@ pub enum QueryKind {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResult {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub content_verified_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_verified_until: Option<u64>,
     pub source: Source,
     pub session_id: String,
     #[serde(flatten)]

@@ -265,6 +265,20 @@ export function libraryErrorMessage(cause: unknown): string {
       return "整理后的 ZIP 与映射记录不一致，原记录未改变。请核对文件。";
     case "LIBRARY_MIGRATION_CONFLICT":
       return "原作品与 ZIP 的来源资料冲突，请核对后再导入。";
+    case "BUSY":
+    case "LOCK_BUSY":
+      return "本机数据正在写入，请稍后重试。漫画库记录未被清空。";
+    case "DOCUMENT_CORRUPT":
+      return "漫画库索引数据损坏，原数据已保留。请在设置中查看诊断信息并联系维护者，重新扫描不能修复此文档。";
+    case "UNSUPPORTED_SCHEMA":
+    case "UNSUPPORTED_VERSION":
+      return "漫画库索引由较新版本保存，当前版本无法读取。请使用兼容版本，原数据已保留。";
+    case "DOCUMENT_TOO_LARGE":
+      return "漫画库索引超过安全读取或保存上限，原数据已保留。请在设置中查看诊断信息并联系维护者。";
+    case "STORE_WRITE_FAILED":
+      return "漫画库索引未能保存，请检查本机存储权限与可用空间后重新读取。原记录已保留。";
+    case "COMMIT_UNCERTAIN":
+      return "漫画库索引的保存结果尚未确认，请重新读取核对，勿依据当前进度判断已完成。";
     case "LIBRARY_BUSY":
       return "漫画库正在读取或处理任务，请完成后再试。";
     case "LIBRARY_FILE_CHANGED":
@@ -345,7 +359,9 @@ export class LibraryController {
     drive = false,
   ) {
     if (this.state.busy) return;
+    const wasDriving = this.timer !== undefined;
     clearTimeout(this.timer);
+    this.timer = undefined;
     const token = this.epoch;
     const previousError = this.state.error;
     let accepted = false;
@@ -361,7 +377,13 @@ export class LibraryController {
             ? libraryErrorMessage(snapshot.errorCode)
             : "",
         });
-      } else this.publish({ error: previousError });
+      } else {
+        // Canceling a folder/replacement dialog must not strand an active scan.
+        // Restored cached state alone never authorizes starting a scan.
+        accepted =
+          drive && wasDriving && this.state.snapshot.freshness === "live";
+        this.publish({ error: previousError });
+      }
     } catch (cause) {
       if (token === this.epoch)
         this.publish({ error: libraryErrorMessage(cause) });
@@ -383,7 +405,10 @@ export class LibraryController {
           !this.state.error &&
           this.state.snapshot.phase === "reading"
         )
-          this.timer = setTimeout(() => void this.scan("next"), 80);
+          this.timer = setTimeout(() => {
+            this.timer = undefined;
+            void this.scan("next");
+          }, 80);
       }
     }
   }
@@ -417,6 +442,7 @@ export class LibraryController {
     if (action === "pause") {
       this.paused = true;
       clearTimeout(this.timer);
+      this.timer = undefined;
       if (this.state.busy) return Promise.resolve();
     } else if (action !== "next") this.paused = false;
     if (action === "next" && (this.paused || this.state.error))
@@ -438,6 +464,7 @@ export class LibraryController {
   dispose() {
     this.epoch++;
     clearTimeout(this.timer);
+    this.timer = undefined;
     this.listeners.clear();
     this.state = { ...this.state, busy: false };
   }

@@ -76,6 +76,11 @@ pub fn is_jm_english_category(tag: &str) -> bool {
     normalized_label(tag) == "english manga"
 }
 
+/// Source-specific preference evidence; only JM callers exclude on this label.
+pub fn is_jm_female_tag(tag: &str) -> bool {
+    normalized_label(tag) == "女性向"
+}
+
 pub fn is_blocked_tag(tag: &str) -> bool {
     is_bl_tag(tag) || is_ai_tag(tag)
 }
@@ -85,6 +90,7 @@ pub fn retained_content_tags(tags: &[String]) -> Vec<String> {
     for matches in [
         is_bl_tag as fn(&str) -> bool,
         is_ai_tag,
+        is_jm_female_tag,
         is_jm_english_category,
     ] {
         if let Some(tag) = tags.iter().find(|tag| matches(tag)) {
@@ -99,6 +105,7 @@ pub fn inherit_content_tags(incoming: &[String], prior: &[String]) -> Vec<String
     for matches in [
         is_bl_tag as fn(&str) -> bool,
         is_ai_tag,
+        is_jm_female_tag,
         is_jm_english_category,
     ] {
         if tags.iter().any(|tag| matches(tag)) {
@@ -109,6 +116,7 @@ pub fn inherit_content_tags(incoming: &[String], prior: &[String]) -> Vec<String
                 if let Some(index) = tags.iter().rposition(|tag| {
                     crate::language_tag_kind(tag).is_none()
                         && !is_blocked_tag(tag)
+                        && !is_jm_female_tag(tag)
                         && !is_jm_english_category(tag)
                 }) {
                     tags.remove(index);
@@ -125,6 +133,19 @@ pub fn inherit_content_tags(incoming: &[String], prior: &[String]) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn female_preference_is_preserved_without_becoming_a_global_block() {
+        assert!(is_jm_female_tag(" 女性向 "));
+        assert!(!is_jm_female_tag("非女性向"));
+        assert!(!is_blocked_tag("女性向"));
+        let prior = vec!["女性向".into()];
+        assert_eq!(retained_content_tags(&prior), ["女性向"]);
+        let full = (0..128).map(|i| format!("tag{i}")).collect::<Vec<_>>();
+        let merged = inherit_content_tags(&full, &prior);
+        assert_eq!(merged.len(), 128);
+        assert!(merged.iter().any(|tag| is_jm_female_tag(tag)));
+    }
 
     #[test]
     fn exact_label_matrix_is_shared_with_frontend() {

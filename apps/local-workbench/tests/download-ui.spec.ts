@@ -498,7 +498,7 @@ async function install(page: Page, options: Options = {}) {
             if (!target || target.source !== scope.source)
               throw { code: "DOWNLOAD_SOURCE_MISMATCH" };
             if (
-              args.action !== "pause" &&
+              !["pause", "abandon", "cleanup"].includes(String(args.action)) &&
               !hooks.accounts.some(
                 (account) =>
                   account.source === target.source &&
@@ -507,6 +507,20 @@ async function install(page: Page, options: Options = {}) {
               )
             )
               throw { code: "DOWNLOAD_SESSION_REQUIRED" };
+            if (target.revision !== args.expectedRevision)
+              throw { code: "DOWNLOAD_TASK_STALE" };
+            if (args.action === "cleanup") {
+              if (target.phase !== "abandoned")
+                throw { code: "DOWNLOAD_CONTROL_INVALID" };
+              hooks.queue = {
+                revision: hooks.queue.revision + 1,
+                tasks: hooks.queue.tasks.filter(
+                  (task) => task.id !== target.id,
+                ),
+              };
+              save();
+              return clone(hooks.queue);
+            }
             hooks.queue = {
               revision: hooks.queue.revision + 1,
               tasks: hooks.queue.tasks.map((task) =>
@@ -515,10 +529,19 @@ async function install(page: Page, options: Options = {}) {
                   : {
                       ...task,
                       revision: task.revision + 1,
-                      phase: args.action === "pause" ? "paused" : "downloading",
+                      phase:
+                        args.action === "pause"
+                          ? "paused"
+                          : args.action === "abandon"
+                            ? "abandoned"
+                            : "downloading",
                       errorCode: null,
                       allowedActions:
-                        args.action === "pause" ? ["resume"] : ["pause"],
+                        args.action === "pause"
+                          ? ["resume", "abandon"]
+                          : args.action === "abandon"
+                            ? ["cleanup"]
+                            : ["pause"],
                     },
               ),
             };
@@ -1716,7 +1739,7 @@ test("multiple queued works pause and resume explicitly under one source after r
   ).toHaveText("等待下载");
   await page.getByTestId("download-pause-all").click();
   await expect(page.getByTestId("download-resume-many-JM")).toHaveText(
-    "继续JM 2 本",
+    "继续JM全部 2 本",
   );
   await page.reload();
   await page.getByTestId("nav-queue").click();
@@ -1955,4 +1978,106 @@ test("new download failures produce one temporary grouped warning and its view a
     "aria-pressed",
     "false",
   );
+});
+
+test("one source continue resumes every selected paused task in fifty-item batches", async ({
+  page,
+}) => {
+  await install(page, {
+    initialTasks: Array.from({ length: 121 }, (_, n) =>
+      queueTask(n + 1, "paused"),
+    ),
+  });
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-resume-many-JM")).toHaveText(
+    "继续JM全部 121 本",
+  );
+  await page.getByTestId("download-resume-many-JM").click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_resume_many")).length)
+    .toBe(3);
+  const requests = await calls(page, "jm_download_resume_many");
+  expect(
+    requests.map((request) => (request.args.tasks as unknown[]).length),
+  ).toEqual([50, 50, 21]);
+  await expect(page.getByText("已继续 121 / 121 本")).toBeVisible();
+  expect(await calls(page, "jm_download_prepare")).toEqual([]);
+});
+
+test("hidden abandoned tasks expose only source IDs and require explicit staging cleanup confirmation", async ({
+  page,
+}) => {
+  const hidden = queueTask(7, "paused", {
+    title: "不得展示的隐藏标题",
+    tags: ["Boys Love"],
+    allowedActions: ["resume", "abandon"],
+  });
+  await install(page, { initialTasks: [hidden] });
+  await page.getByTestId("nav-queue").click();
+  const originalLibrary = await page.evaluate(() => window.downloadTest.pc);
+  await expect(page.getByText(hidden.title)).toHaveCount(0);
+  await page.getByText("维护已隐藏的下载记录（仅显示来源编号）").click();
+  const maintenance = page
+    .locator("details")
+    .filter({ hasText: "维护已隐藏的下载记录" });
+  await expect(maintenance).toContainText("1007");
+  await maintenance
+    .getByRole("button", { name: "放弃任务", exact: true })
+    .click();
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+  await page.getByRole("button", { name: "确认放弃，保留文件" }).click();
+  await expect(maintenance).toContainText("已放弃");
+  await maintenance
+    .getByRole("button", { name: "清理临时文件", exact: true })
+    .click();
+  expect(
+    (await calls(page, "jm_download_control")).map((call) => call.args.action),
+  ).toEqual(["abandon"]);
+  await expect(
+    page.getByRole("dialog", { name: "清理下载临时文件" }),
+  ).toContainText("最终 ZIP、漫画目录和库索引均保留");
+  await page.getByRole("button", { name: "确认清理临时文件" }).click();
+  await expect
+    .poll(async () => (await calls(page, "jm_download_control")).length)
+    .toBe(2);
+  expect(
+    await page.evaluate(() => window.downloadTest.queue.tasks.length),
+  ).toBe(0);
+  expect(await page.evaluate(() => window.downloadTest.pc)).toEqual(
+    originalLibrary,
+  );
+  await expect(page.getByText(hidden.title)).toHaveCount(0);
+});
+
+test("pause during saving keeps finalization active and stops every waiting task", async ({
+  page,
+}) => {
+  await install(page, {
+    initialTasks: [queueTask(1, "paused"), queueTask(2, "paused")],
+  });
+  await page.getByTestId("nav-queue").click();
+  await page.evaluate(() => {
+    window.downloadTest.queue = {
+      revision: 3,
+      tasks: window.downloadTest.queue.tasks.map((task, index) => ({
+        ...task,
+        phase: index === 0 ? "saving" : "queued",
+        allowedActions: index === 0 ? [] : ["pause"],
+      })),
+    };
+  });
+  await page.getByTestId("download-read").click();
+  await expect(
+    page.getByTestId("download-phase-" + "1".padStart(64, "0")),
+  ).toHaveText("保存到电脑");
+  await page.getByTestId("download-pause-all").click();
+  await expect(
+    page.getByText("后续任务已暂停；当前作品的保存、校验和登记将完成。"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.downloadTest.queue.tasks.map((task) => task.phase),
+    ),
+  ).toEqual(["saving", "paused"]);
+  expect(await calls(page, "jm_download_resume_many")).toEqual([]);
 });

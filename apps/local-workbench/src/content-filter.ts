@@ -81,6 +81,9 @@ export function isBlTagged(tags?: readonly string[]): boolean {
 export function isBlockedTagged(tags?: readonly string[]): boolean {
   return tags?.some(isBlockedTag) ?? false;
 }
+export function isJmFemaleTag(tag: string): boolean {
+  return normalizedLabel(tag) === "女性向";
+}
 export function isJmEnglishCategory(tag: string): boolean {
   return normalizedLabel(tag) === "english manga";
 }
@@ -88,7 +91,12 @@ export function isJmEnglishCategory(tag: string): boolean {
 /** Compact catalogs keep at most two language labels and one label per blocked kind. */
 export function retainedContentTags(tags: readonly string[]): string[] {
   const retained = retainedLanguageTags(tags);
-  for (const matches of [isBlTag, isAiTag, isJmEnglishCategory]) {
+  for (const matches of [
+    isBlTag,
+    isAiTag,
+    isJmFemaleTag,
+    isJmEnglishCategory,
+  ]) {
     const label = tags.find(matches);
     if (label) retained.push(label.trim());
   }
@@ -101,7 +109,12 @@ export function inheritContentTags(
   previous: readonly string[],
 ): string[] {
   let tags = inheritLanguageTags(incoming, previous);
-  for (const matches of [isBlTag, isAiTag, isJmEnglishCategory]) {
+  for (const matches of [
+    isBlTag,
+    isAiTag,
+    isJmFemaleTag,
+    isJmEnglishCategory,
+  ]) {
     const prior = !tags.some(matches) && previous.find(matches);
     if (!prior) continue;
     if (tags === incoming) tags = [...tags];
@@ -110,6 +123,7 @@ export function inheritContentTags(
         (tag) =>
           !languageTagKind(tag) &&
           !isBlockedTag(tag) &&
+          !isJmFemaleTag(tag) &&
           !isJmEnglishCategory(tag),
       );
       // A saturated list consisting only of evidence can be compacted safely.
@@ -137,7 +151,10 @@ let revision = 0,
   notificationQueued = false;
 const key = (work: ContentWork) => JSON.stringify([work.source, work.workId]);
 const excludedByMetadata = (work: ContentWork) =>
-  isBlockedTagged(work.tags) || isBlockedTagged(work.categories);
+  isBlockedTagged(work.tags) ||
+  isBlockedTagged(work.categories) ||
+  (work.source === "JM" &&
+    [...(work.tags ?? []), ...(work.categories ?? [])].some(isJmFemaleTag));
 /** The accepted JM author/search scope is narrower than general browsing. */
 export const isOutsideJmAuthorScope = (work: ContentWork) =>
   work.source === "JM" &&

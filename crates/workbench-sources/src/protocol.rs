@@ -422,6 +422,9 @@ pub(crate) fn work(
                 && !raw_tags.iter().any(|tag| crate::is_bl_tag(tag));
             let added_ai = work.tags.iter().any(|tag| crate::is_ai_tag(tag))
                 && !raw_tags.iter().any(|tag| crate::is_ai_tag(tag));
+            let added_female = source == Source::Jm
+                && work.tags.iter().any(|tag| crate::is_jm_female_tag(tag))
+                && !raw_tags.iter().any(|tag| crate::is_jm_female_tag(tag));
             let added_english_scope = source == Source::Jm
                 && work
                     .tags
@@ -430,13 +433,14 @@ pub(crate) fn work(
                 && !raw_tags
                     .iter()
                     .any(|tag| crate::is_jm_english_category(tag));
-            if category_conflict || added_bl || added_ai || added_english_scope {
+            if category_conflict || added_bl || added_ai || added_female || added_english_scope {
                 // An extreme byte-boundary record must not turn a known
                 // conflict into a single language by dropping its categories.
                 while serialized.len() > MAX_WORK_JSON_BYTES {
                     let Some(index) = work.tags.iter().rposition(|tag| {
                         crate::language_tag_kind(tag).is_none()
                             && !crate::is_blocked_tag(tag)
+                            && !crate::is_jm_female_tag(tag)
                             && !crate::is_jm_english_category(tag)
                     }) else {
                         break;
@@ -458,7 +462,9 @@ pub(crate) fn work(
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
                 }
-                if serialized.len() > MAX_WORK_JSON_BYTES && added_english_scope {
+                if serialized.len() > MAX_WORK_JSON_BYTES && work.tags.iter().any(|tag|
+                    crate::is_blocked_tag(tag) || (source == Source::Jm &&
+                    (crate::is_jm_female_tag(tag) || crate::is_jm_english_category(tag)))) {
                     // The scope marker already lives in tags. Remove the
                     // duplicate category representation before giving up.
                     work.categories = None;

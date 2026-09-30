@@ -91,7 +91,7 @@ async fn saved_credits_reproject_for_new_follow_without_query_provenance_or_remo
         .write_discovery(
             0,
             DiscoveryDocument {
-                version: 1,
+                version: 2,
                 accounts: vec![DiscoveryAccount {
                     account_key: context.account_key,
                     authors: vec![],
@@ -252,6 +252,47 @@ async fn nonfollowed_recent_works_stay_in_pool_and_replay_when_the_author_is_fol
         .iter()
         .all(|range| range.state == DiscoveryRangeState::Idle));
     assert_eq!(backend.0.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn recent_light_rows_reuse_exact_account_detail_evidence_without_detail_fanout() {
+    let (_root, backend, service, scopes) = setup().await;
+    let scope = &scopes[0];
+    let light = work(Source::Jm, "100", &["Author A"]);
+    backend.put(Source::Jm, "__recent__", 1, page(1, 1, vec![light.clone()]));
+    let first = service.query(Source::Jm, &scope.session_id, QueryKind::Recent, "", None, 1).await.unwrap();
+    assert!(first.content_verified_ids.is_empty());
+    assert!(first.content_verified_until.is_none());
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+    let mut detail = light;
+    detail.categories = Some(vec!["女性向".into(), "AI作畫".into()]);
+    backend.0.details.lock().unwrap().insert("100".into(), Ok(detail));
+    let detail = service.query(Source::Jm, &scope.session_id, QueryKind::Detail, "100", None, 1).await.unwrap();
+    assert_eq!(detail.content_verified_ids, ["100"]);
+    let until = detail.content_verified_until.unwrap();
+    let detail_last = service.source_recent_history(Source::Jm, &scope.session_id).await.unwrap();
+    assert_eq!(detail_last.content_verified_ids, ["100"]);
+    assert_eq!(detail_last.content_verified_until, Some(until));
+    let unchanged = service.query(Source::Jm, &scope.session_id, QueryKind::Recent, "", None, 1).await.unwrap();
+    assert_eq!(unchanged.content_verified_ids, ["100"]);
+    assert_eq!(unchanged.content_verified_until, Some(until));
+    // An explicit version change invalidates proof without needing clock progress.
+    let mut updated = work(Source::Jm, "100", &["Author A"]);
+    updated.source_updated_at = Some("2026-09-30T12:00:00.000Z".into());
+    backend.put(Source::Jm, "__recent__", 1, page(1, 1, vec![updated]));
+    let second = service.query(Source::Jm, &scope.session_id, QueryKind::Recent, "", None, 1).await.unwrap();
+    assert!(second.content_verified_ids.is_empty());
+    assert!(second.content_verified_until.is_none());
+    assert!(second.page.items[0].tags.iter().any(|tag| tag == "女性向"));
+    assert!(second.page.items[0].tags.iter().any(|tag| tag == "AI作畫"));
+    let cached = service.source_recent_history(Source::Jm, &scope.session_id).await.unwrap();
+    assert!(cached.content_verified_ids.is_empty());
+    assert!(cached.content_verified_until.is_none());
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert!(service.source_recent_history(Source::Jm, "old-session").await.is_err());
+    let other = service.source_recent_history(Source::Pica, &scopes[1].session_id).await.unwrap();
+    assert!(other.content_verified_ids.is_empty());
+    assert!(other.content_verified_until.is_none());
 }
 
 #[tokio::test]
@@ -816,7 +857,7 @@ async fn arbitrary_author_history_reads_raw_current_pair_and_never_another_accou
         .write_discovery(
             0,
             DiscoveryDocument {
-                version: 1,
+                version: 2,
                 accounts: vec![
                     DiscoveryAccount {
                         account_key: context.account_key,
@@ -1064,7 +1105,7 @@ async fn existing_raw_ids_and_legacy_records_are_not_rediscovered_after_credit_c
     follow(&service, &scopes[0], "Author A", true).await;
     let context = service.discovery_context(scopes.clone()).await.unwrap();
     let legacy = DiscoveryDocument {
-        version: 1,
+        version: 2,
         accounts: vec![DiscoveryAccount {
             account_key: context.account_key,
             authors: vec![],
@@ -2134,7 +2175,7 @@ async fn blocked_legacy_results_are_hidden_without_deleting_shared_or_stored_rec
         .write_discovery(
             0,
             DiscoveryDocument {
-                version: 1,
+                version: 2,
                 accounts: vec![DiscoveryAccount {
                     last_check: None,
                     account_key: context.account_key,

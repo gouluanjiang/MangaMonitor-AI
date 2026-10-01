@@ -34,8 +34,11 @@ test("metadata preparation failure remains diagnosable after navigation and queu
         : invoke(command, args);
   });
   await page.getByTestId("nav-completion").click();
+  // The initial saved catalog contains 103; 102 exists only after a mock scan.
+  // Exercise preparation from the saved record without starting any scan.
+  await expect(page.getByTestId("author-update-JM:103")).toBeVisible();
   await page
-    .getByTestId("author-update-JM:102")
+    .getByTestId("author-update-JM:103")
     .getByRole("button", { name: "下载到漫画库", exact: true })
     .click();
   await expect(page.getByTestId("download-attention-toast")).toContainText(

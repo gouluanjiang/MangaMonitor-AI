@@ -211,4 +211,35 @@ source attribution and paging completeness retain their existing contracts.
 The visible-result metric now requires a card to intersect the scroll viewport;
 received records, render work and completion remain separate. A low-height
 viewport regression prevents mounted-but-offscreen cards from counting as seen.
-Native measurements for this follow-up remain pending its exact tested candidate.
+The exact final application `4b18417caf7250f8bedf23b266bfbece1f8c9ec3` passed
+baseline `36839431821`, UI `36839431796` (323 logic / 251 browser cases), and
+Windows `36839431921`, including installed WebView and restart tests. The eight
+manifested candidate files were verified again before native launch.
+
+The first dual-source query after cold startup, using the same author and real
+profile as the earlier observation, returned the same 70 attributed records and
+unchanged ownership counts. Saved records were available at 6,182 ms and the
+complete query ended at 20,572 ms. Cumulative catalog reads were 20,416 ms,
+query-rule reads 231 ms, queueing 4 ms, source operations 2,496 ms, local commits
+13,736 ms, rendering 174 ms and other transport 49 ms, with no failed requests or
+missing native timing. These are sequential live observations rather than a
+controlled network benchmark. The original mounted-record metric and the new
+viewport metric are not equivalent, so this native comparison uses record
+availability and completion only. The new visible metric remained unset while
+results were below the viewport and recorded when the examiner scrolled to them;
+that value includes deliberate inspection delay, not just software latency.
+
+Cold native startup restored both accounts and the deliberate history entry;
+runtime author tabs correctly started empty. Search counts, page-switch scroll
+restoration and history's exclusion of background queries passed. Protected
+library, download, following, author-policy and reading-progress hashes still
+matched the initial backup. The candidate is open for user acceptance; the
+formal installation and shortcuts are unchanged. No merge or release occurred.
+
+Natural future special-follow updates, a real website cover outage, user-operated
+history clearing/disable and a later successful manual author scan remain live
+acceptance boundaries. Their state/failure/concurrency paths are covered by the
+synthetic suites; this batch did not trigger a full author scan, deliberately
+break authentication/network access, or download/delete manga to manufacture
+those cases. Stages 2–5 add behaviors without a comparable old performance metric;
+no separate numeric speedup is claimed for them.

@@ -16,13 +16,27 @@ markers. See the batch contract's engineering checkpoint for exact CI evidence.
 Early native stages passed Windows CI. The controlled, already-built-artifact
 comparison measured median first visible results of 3,057.5 → 185.2 ms and
 complete visible results of 3,057.5 → 1,481.7 ms with the same four synthetic
-source requests; this is not a real-website measurement. Final combined CI is
-being repeated for the history-switch feedback and typed reader-event fixes.
-The next UI run passed 250 cases but exposed a pre-existing clipped-row anchor
-boundary; a narrow grid correction now preserves the first complete visible row
-when metadata grows, and the original growth test explicitly exercises that
-boundary. Exact-candidate acceptance remains pending. These are implemented
-changes on draft PR #24, not delivered or accepted features.
+source requests; this is not a real-website measurement. Combined revision
+`e49c1ed` passed baseline, 323 logic / 251 browser cases and Windows checks,
+including the corrected clipped-row anchor boundary. Exact-candidate native
+checks preserved sessions, library state, independent tabs, history semantics,
+and recent-feed positions; protected data hashes remained unchanged.
+
+Native timings exposed repeated large-catalog parsing as the remaining search
+bottleneck. The follow-up shares a verified immutable checkpoint parse per root,
+still checking disk bytes and revisions on every reuse, and avoids whole-pool
+replay before returning an author's known observations. It also measures actual
+card viewport intersection, including virtual row replacement. No stored format
+or author-attribution rule changes. Final application revision `4b18417` passed
+baseline `36839431821`, UI `36839431796` (323 logic / 251 browser cases), and
+Windows `36839431921`. Its hash-verified candidate passed bounded native cold
+startup/history/session/position checks. The same real-profile author query
+improved from 13,897 to 6,182 ms for first records and from 58,023 to 20,572 ms
+for completion, retaining result and ownership counts; live network conditions
+were not controlled. Protected records stayed byte-identical. Formal install
+and shortcuts remain unchanged. Draft PR #24 is unmerged; user acceptance and
+public release are separate. Future special updates, natural cover outages and
+later manual scan markers have synthetic evidence and still need real usage.
 
 Updated 2026-10-01. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
 

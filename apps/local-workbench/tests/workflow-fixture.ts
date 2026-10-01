@@ -445,6 +445,20 @@ export async function installWorkflow(
                 return clone(hooks.queue);
               case "discovery_read":
                 return clone(hooks.discovery);
+              case "special_read":
+                return {
+                  scopes: args.scopes,
+                  authors: [],
+                  updates: [],
+                  run: {
+                    id: 0,
+                    phase: "idle",
+                    startedAt: null,
+                    finishedAt: null,
+                    newCount: 0,
+                    errorCode: null,
+                  },
+                };
               case "discovery_progress": {
                 const { records, ...progress } = hooks.discovery;
                 return clone({ ...progress, recordCount: records.length });

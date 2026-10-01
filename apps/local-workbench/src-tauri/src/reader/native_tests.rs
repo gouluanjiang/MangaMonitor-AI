@@ -99,7 +99,10 @@ fn native_registered_reader_windows_bind_requests_isolate_pages_and_keep_mutatio
     for (command, body) in [
         ("source_accounts", json!({})),
         ("special_start", json!({})),
-        ("special_set", json!({"scopes":[],"author":"Synthetic","enabled":true})),
+        (
+            "special_set",
+            json!({"scopes":[],"author":"Synthetic","enabled":true}),
+        ),
         ("special_mark_read", json!({"scopes":[],"identity":null})),
         ("library_choose", json!({})),
         ("jm_download_read", json!({})),

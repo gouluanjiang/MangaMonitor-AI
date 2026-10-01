@@ -1389,8 +1389,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .into_iter()
             .flat_map(|author| [Source::Jm, Source::Pica].map(|source| (author.clone(), source)))
             .filter(|(author, source)| {
-                requested_ranges.as_ref().is_none_or(|requested| requested.contains(&(author.clone(), storage_source(*source))))
-                    && (!only_unfinished
+                requested_ranges.as_ref().is_none_or(|requested| {
+                    requested.contains(&(author.clone(), storage_source(*source)))
+                }) && (!only_unfinished
                     || !snapshot.authors.iter().any(|range| {
                         range.author == *author
                             && range.source == storage_source(*source)

@@ -51,8 +51,14 @@ fn manual_discovery_and_download_inventory_keep_main_origin_boundaries() {
         ),
         ("discovery_progress", json!({"scopes":scopes})),
         ("special_read", json!({"scopes":scopes})),
-        ("special_set", json!({"scopes":scopes,"author":"Synthetic","enabled":true})),
-        ("special_mark_read", json!({"scopes":scopes,"identity":null})),
+        (
+            "special_set",
+            json!({"scopes":scopes,"author":"Synthetic","enabled":true}),
+        ),
+        (
+            "special_mark_read",
+            json!({"scopes":scopes,"identity":null}),
+        ),
         ("special_progress", json!({})),
         ("special_start", json!({})),
         ("special_cancel", json!({})),

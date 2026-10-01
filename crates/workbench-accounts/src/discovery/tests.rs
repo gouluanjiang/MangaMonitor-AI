@@ -2425,7 +2425,10 @@ async fn eligible_author_catalogs_are_not_cut_off_at_a_small_page_limit() {
         })
         .collect();
     ids.sort();
-    assert_eq!(ids, (101..=225).map(|id| id.to_string()).collect::<Vec<_>>());
+    assert_eq!(
+        ids,
+        (101..=225).map(|id| id.to_string()).collect::<Vec<_>>()
+    );
     let range = account
         .authors
         .iter()

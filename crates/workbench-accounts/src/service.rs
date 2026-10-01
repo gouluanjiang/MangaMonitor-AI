@@ -594,7 +594,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     ) -> Result<T>
     where
         T: Send + 'static,
-        F: FnOnce(workbench_storage::WorkbenchStore) -> std::result::Result<T, workbench_storage::StoreError> + Send + 'static,
+        F: FnOnce(
+                workbench_storage::WorkbenchStore,
+            ) -> std::result::Result<T, workbench_storage::StoreError>
+            + Send
+            + 'static,
     {
         let mut jm = self.slot(Source::Jm).lock().await;
         let mut pica = self.slot(Source::Pica).lock().await;
@@ -602,9 +606,12 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self.require_scope(&mut pica, &context.identities[1].scope.session_id)?;
         self.discovery_validate_context(context)?;
         let root = context.root.clone();
-        let result = tokio::task::spawn_blocking(move || operation(workbench_storage::WorkbenchStore::open(root)?))
-            .await.map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
-            .map_err(|error| AccountError::new(error.code));
+        let result = tokio::task::spawn_blocking(move || {
+            operation(workbench_storage::WorkbenchStore::open(root)?)
+        })
+        .await
+        .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
+        .map_err(|error| AccountError::new(error.code));
         self.check_saved(&mut jm)?;
         self.check_saved(&mut pica)?;
         result

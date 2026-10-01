@@ -798,19 +798,49 @@ export function CompletionPanel({
   });
   useLayoutEffect(() => {
     if (!active || mode !== "search" || !view) return;
+    let observer: IntersectionObserver | undefined;
     const frame = requestAnimationFrame(() => {
       if (!view.run) return;
       const value = searchAdapter.rendered(
         view.run.id,
         view.revision,
         performance.now() - renderStartedAt,
-        sortedVisible.length > 0,
+        false,
       );
       if (value)
         setPaintMetrics({ runId: view.run.id, revision: view.revision, value });
+      if (value?.firstVisibleMs === null && root.current) {
+        const runId = view.run.id;
+        observer = new IntersectionObserver(
+          (entries) => {
+            if (
+              !entries.some(
+                (entry) =>
+                  entry.isIntersecting && entry.intersectionRect.height > 0,
+              )
+            )
+              return;
+            const visible = searchAdapter.visible(runId, view.revision);
+            if (visible)
+              setPaintMetrics({
+                runId,
+                revision: view.revision,
+                value: visible,
+              });
+            observer?.disconnect();
+          },
+          { root: root.current.closest("main") },
+        );
+        root.current
+          .querySelectorAll(".source-card")
+          .forEach((card) => observer!.observe(card));
+      }
     });
-    return () => cancelAnimationFrame(frame);
-  }, [active, mode, view?.revision, searchAdapter]);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [active, mode, view?.revision, searchAdapter, sortedVisible]);
   // Preserve state and memoized catalog while another page is visible.
   if (!active) return null;
   return (

@@ -25,6 +25,7 @@ import {
 export interface AuthorSearchAdapter extends CompletionAdapter {
   setActive(active: boolean): void;
   dispose(): void;
+  visible(runId: string, revision: number): AuthorSearchMetrics | null;
   rendered(
     runId: string,
     revision: number,
@@ -91,6 +92,17 @@ export function createAuthorSearchAdapter(
       generation++;
       listeners.clear();
       scheduler.wake();
+    },
+    visible(runId, revision) {
+      if (
+        disposed ||
+        !snapshot?.searchMetrics ||
+        snapshot.run?.id !== runId ||
+        revision > snapshot.revision
+      )
+        return null;
+      snapshot.searchMetrics.firstVisibleMs ??= performance.now() - started;
+      return { ...snapshot.searchMetrics };
     },
     rendered(runId, revision, elapsedMs, hasVisibleWorks) {
       if (

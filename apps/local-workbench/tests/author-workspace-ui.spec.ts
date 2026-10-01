@@ -8,7 +8,7 @@ test("author tabs stream cached results, isolate state, retain positions and ign
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.setViewportSize({ width: 1672, height: 1020 });
+  await page.setViewportSize({ width: 1672, height: 620 });
   await installWorkflow(page);
   await page.evaluate(() => {
     const previous = window.__TAURI_INTERNALS__!.invoke;
@@ -85,9 +85,14 @@ test("author tabs stream cached results, isolate state, retain positions and ign
     "当前检查范围已读完",
   );
   await page.getByTestId("author-search-timings").locator("summary").click();
+  await expect(page.getByTestId("author-search-timings")).toContainText(
+    "首次可见：尚未记录",
+  );
+  await page.getByTestId("author-update-JM:1").scrollIntoViewIfNeeded();
   await expect(page.getByTestId("author-search-timings")).not.toContainText(
     "首次可见：尚未记录",
   );
+  await page.setViewportSize({ width: 1672, height: 1020 });
   await mkdir("visual-evidence", { recursive: true });
   await writeFile(
     "visual-evidence/author-search-synthetic-timings.txt",

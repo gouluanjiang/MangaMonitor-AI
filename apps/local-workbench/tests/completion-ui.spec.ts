@@ -616,6 +616,84 @@ const seedChangeSummary = (page: Page) =>
     h.view.revision++;
   });
 
+test("scan markers retain the prior success through a pending, partial or cancelled check and replace only on success", async ({
+  page,
+}) => {
+  await install(page);
+  await seedChangeSummary(page);
+  await page.evaluate(() => {
+    const view = window.authorTest.view;
+    view.lastSuccessfulCheck = structuredClone(view.lastCheck);
+  });
+  await page.getByTestId("nav-completion").click();
+  const first = page.getByTestId("author-update-JM:789");
+  await expect(first.getByTestId("scan-addition-badge")).toHaveText(
+    "本次扫描新增",
+  );
+  await page.getByTestId("completion-new-only").click();
+  for (const phase of ["checking", "partial", "cancelled", "error"] as const) {
+    await page.evaluate((phase) => {
+      const view = window.authorTest.view;
+      view.lastCheck = {
+        ...view.lastCheck!,
+        id: "b".repeat(64),
+        phase,
+        startedAt: 1800000004000,
+        finishedAt: phase === "checking" ? null : 1800000005000,
+        completeScopes: 1,
+        attemptedScopes: 2,
+      };
+      if (!view.records.some((record) => record.work.workId === "999")) {
+        const added = structuredClone(
+          view.records.find((record) => record.work.workId === "789")!,
+        );
+        added.work.workId = "999";
+        added.work.title = "合成作者 · 尚未完整成功的本轮新增";
+        added.firstDiscoveredRunId = view.lastCheck.id;
+        view.records.push(added);
+      }
+      // Metadata replacement never changes the original first-discovery ID.
+      view.records.find((record) => record.work.workId === "789")!.work.title =
+        "合成作者 · 已更新元数据";
+      view.revision++;
+    }, phase);
+    await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
+    await expect(page.getByTestId("completion-retained-markers")).toContainText(
+      "新增标记保留上次成功检查",
+    );
+    await expect(first.getByTestId("scan-addition-badge")).toHaveText(
+      "本次扫描新增",
+    );
+    await expect(page.getByTestId("completion-new-only")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("author-update-JM:999")).toHaveCount(0);
+  }
+  await page.evaluate(() => {
+    const view = window.authorTest.view;
+    view.lastCheck!.phase = "complete";
+    view.lastCheck!.completeScopes = view.lastCheck!.totalScopes;
+    view.lastCheck!.attemptedScopes = view.lastCheck!.totalScopes;
+    view.lastSuccessfulCheck = structuredClone(view.lastCheck);
+    view.revision++;
+    sessionStorage.setItem(
+      "synthetic-author-summary",
+      JSON.stringify({ view, inventory: window.authorTest.inventory }),
+    );
+  });
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
+  await expect(first.getByTestId("scan-addition-badge")).toHaveCount(0);
+  await expect(
+    page.getByTestId("author-update-JM:999").getByTestId("scan-addition-badge"),
+  ).toHaveText("本次扫描新增");
+  await page.reload();
+  await page.getByTestId("nav-completion").click();
+  await expect(
+    page.getByTestId("author-update-JM:999").getByTestId("scan-addition-badge"),
+  ).toHaveText("本次扫描新增");
+});
+
 test("change summary uses first discovery identities, keeps historical omissions and follows current file registration", async ({
   page,
 }) => {

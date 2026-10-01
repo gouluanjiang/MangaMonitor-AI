@@ -9,12 +9,13 @@ head `2f39585`. Do not replace the outstanding recent-list repair or merge/relea
 this batch. Cross-source identical full author names reuse a runtime search tab
 by explicit user choice; this is not author identity or ownership consolidation.
 
-Stage 1 implements retained author tabs, progressive cached/page results, bounded
-foreground-prioritized source requests, and separate local/queue/source/render
-timing. Its targeted tests and existing recent-list regressions require CI;
-performance and exact-candidate native acceptance remain unverified at this
-checkpoint. Special follows, cover retry policy, history and successful-scan
-addition receipts are the following stages, not delivered features yet.
+All five implementation stages are now present as separate commits: retained
+author tabs/progressive search/timing, special baselines and unread updates,
+bounded cover retries, deliberate viewing history, and successful manual scan
+markers. See the batch contract's engineering checkpoint for exact CI evidence.
+Early native stages passed Windows CI; final combined UI/native regressions,
+performance comparison and exact-candidate acceptance remain in progress. These
+are implemented changes on draft PR #24, not delivered or accepted features.
 
 Updated 2026-10-01. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
 

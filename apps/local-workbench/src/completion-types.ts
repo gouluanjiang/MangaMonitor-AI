@@ -55,6 +55,8 @@ export interface DiscoverySnapshot {
   followedAuthors?: string[];
   run: DiscoveryRun | null;
   lastCheck?: DiscoveryCheckSummary | null;
+  /** Successful manual scan only; background special checks never replace it. */
+  lastSuccessfulCheck?: DiscoveryCheckSummary | null;
   otherRecordCount?: number;
   includesOther?: boolean;
   authorPolicies?: AuthorQueryPolicy[];

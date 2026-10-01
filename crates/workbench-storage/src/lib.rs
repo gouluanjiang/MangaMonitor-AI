@@ -15,6 +15,7 @@ mod observations;
 mod phone;
 mod reader;
 mod reader_window;
+mod scan_receipt;
 mod special;
 mod store;
 mod work_date;

@@ -11,6 +11,7 @@ use workbench_sources::{FavoritePageRequest, FavoriteUpdate};
 
 mod jm_search_boundary;
 mod special_follows;
+mod scan_additions;
 
 type TestService = AccountService<FakeBackend, MemoryVault>;
 type QueryKey = (String, String, u64);

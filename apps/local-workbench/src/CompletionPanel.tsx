@@ -236,7 +236,7 @@ export function CompletionPanel({
   ]);
   useEffect(() => {
     setNewOnly(false);
-  }, [scopeKey, mode, checkSummary?.id]);
+  }, [scopeKey, mode, view?.lastSuccessfulCheck?.id ?? checkSummary?.id]);
   const connected = scopes.length === 2;
   const authorRunning = view?.run?.phase === "checking";
   const running = authorRunning || recentRunning;
@@ -676,15 +676,45 @@ export function CompletionPanel({
         : null,
     [summaryReady, checkSummary?.id, matchingRecords, inventory],
   );
-  const onlyNewVisible = newOnly && summaryReady;
+  // Last successful manual check owns the persistent markers. The current
+  // partial batch is only a clearly labelled preview when no success exists.
+  const successfulSummary =
+    view?.lastSuccessfulCheck === undefined
+      ? summaryReady && checkSummary?.phase === "complete"
+        ? checkSummary
+        : null
+      : view.lastSuccessfulCheck;
+  const markerSummary =
+    mode === "updates" && !showOther
+      ? (successfulSummary ??
+        (summaryReady && checkSummary?.phase !== "complete"
+          ? checkSummary
+          : null))
+      : null;
+  const markerIncomplete =
+    !!markerSummary && markerSummary.phase !== "complete";
+  const previousMarkers =
+    !!markerSummary && markerSummary.id !== checkSummary?.id;
+  const markedCounts = useMemo(
+    () =>
+      markerSummary
+        ? summarizeDiscoveryChanges(
+            matchingRecords,
+            markerSummary.id,
+            inventory,
+          )
+        : null,
+    [markerSummary?.id, matchingRecords, inventory],
+  );
+  const onlyNewVisible = newOnly && !!markerSummary;
   const records = useMemo(
     () =>
       onlyNewVisible
         ? matchingRecords.filter(
-            (record) => record.firstDiscoveredRunId === checkSummary?.id,
+            (record) => record.firstDiscoveredRunId === markerSummary?.id,
           )
         : matchingRecords,
-    [matchingRecords, onlyNewVisible, checkSummary?.id],
+    [matchingRecords, onlyNewVisible, markerSummary?.id],
   );
   const { counts, visible, selectable } = useMemo(() => {
     const counts: Record<InventoryFilter, number> = {
@@ -1155,15 +1185,28 @@ export function CompletionPanel({
                 <button
                   data-testid="completion-new-only"
                   aria-pressed={onlyNewVisible}
-                  disabled={!summaryReady}
+                  disabled={!markerSummary}
                   onClick={() => {
                     setNewOnly(!onlyNewVisible);
                     setSelection([]);
                   }}
                 >
-                  仅看本次新发现
+                  仅看本次扫描新增
                 </button>
               </div>
+              {previousMarkers && (
+                <p data-testid="completion-retained-markers">
+                  新增标记保留上次成功检查（
+                  {new Date(markerSummary!.finishedAt!).toLocaleString()}），
+                  当前范围 {markedCounts?.newTotal ?? 0}{" "}
+                  部；本轮尚未完整成功，不替换标记。
+                </p>
+              )}
+              {markerIncomplete && (
+                <p data-testid="completion-incomplete-markers">
+                  本轮新增预览不完整，未完成来源仍需补查。
+                </p>
+              )}
               {!checkSummary ? (
                 <p className="source-muted">
                   下一次检查后生成变化摘要，已有目录按历史记录保留。
@@ -1217,6 +1260,7 @@ export function CompletionPanel({
                       <p className="source-muted">
                         统计按当前作者、来源和关键词范围；JM
                         与哔咔分别计数。历史未入库作品继续保留。
+                        同一来源作品归属多位作者时，总数只计一次；按作者筛选时可在各自范围看到它。
                         {checkSummary.firstCatalog
                           ? " 本批包含首次建立的目录，首次收录不代表网站新发布。"
                           : " 首次发现不代表网站新发布。"}
@@ -1452,7 +1496,7 @@ export function CompletionPanel({
               {readFailure && !view
                 ? "尚未读取到检查结果，请刷新重试。"
                 : onlyNewVisible
-                  ? "本批已读取范围内，没有符合当前筛选的首次发现作品。历史未入库作品仍保留，可关闭“仅看本次新发现”查看。"
+                  ? "标记范围内，没有符合当前筛选的首次发现作品。历史未入库作品仍保留，可关闭“仅看本次扫描新增”查看。"
                   : scopedRecords.length > 0
                     ? "当前筛选没有结果。"
                     : showOther
@@ -1553,6 +1597,17 @@ export function CompletionPanel({
                       />
                     </div>
                   </CoverInteraction>
+                  {markerSummary &&
+                    record.firstDiscoveredRunId === markerSummary.id && (
+                      <span
+                        className="source-status"
+                        data-testid="scan-addition-badge"
+                      >
+                        {markerIncomplete
+                          ? "本轮新增（不完整）"
+                          : "本次扫描新增"}
+                      </span>
+                    )}
                   <h3>
                     <button
                       className="text-button"

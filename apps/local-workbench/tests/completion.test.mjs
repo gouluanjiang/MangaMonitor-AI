@@ -107,6 +107,34 @@ test("discovery summaries preserve legacy history and explicit first-discovery i
   );
 });
 
+test("only a successful receipt can define retained scan markers", () => {
+  const success = changeSummary();
+  const snapshot = validateDiscoverySnapshot(
+    { ...empty(), lastSuccessfulCheck: success },
+    scopes,
+  );
+  assert.deepEqual(snapshot.lastSuccessfulCheck, success);
+  assert.equal(
+    validateDiscoverySnapshot({ ...empty(), lastSuccessfulCheck: null }, scopes)
+      .lastSuccessfulCheck,
+    null,
+  );
+  for (const phase of [
+    "checking",
+    "partial",
+    "cancelled",
+    "error",
+    "interrupted",
+  ]) {
+    assert.throws(() =>
+      validateDiscoverySnapshot(
+        { ...empty(), lastSuccessfulCheck: { ...success, phase } },
+        scopes,
+      ),
+    );
+  }
+});
+
 test("summary progress stays catalog-free and accepts explicit partial or interrupted coverage", () => {
   for (const phase of [
     "checking",

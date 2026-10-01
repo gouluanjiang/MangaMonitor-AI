@@ -223,6 +223,12 @@ export function validateDiscoveryProgress(
     ).size !== authorPolicies.length
   )
     return invalid();
+  const lastSuccessfulCheck =
+    r.lastSuccessfulCheck == null
+      ? null
+      : checkSummaryValue(r.lastSuccessfulCheck);
+  if (lastSuccessfulCheck && lastSuccessfulCheck.phase !== "complete")
+    return invalid();
   return {
     scopes,
     authorPolicies,
@@ -241,6 +247,7 @@ export function validateDiscoveryProgress(
       : { followedAuthors: array(r.followedAuthors, str, 2000) }),
     run: nullable(r.run, runValue),
     lastCheck: r.lastCheck == null ? null : checkSummaryValue(r.lastCheck),
+    ...(r.lastSuccessfulCheck === undefined ? {} : { lastSuccessfulCheck }),
     recordCount: integer(r.recordCount),
     otherRecordCount:
       r.otherRecordCount === undefined ? 0 : integer(r.otherRecordCount),

@@ -542,6 +542,7 @@ mod contract {
                 "Writer",
             );
             let catalog = DiscoverySnapshot {
+                last_successful_check: None,
                 scopes: vec![],
                 revision: 7,
                 followed_authors: vec!["Writer".into()],

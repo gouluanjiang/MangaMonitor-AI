@@ -97,3 +97,37 @@ The sidebar history view has recording and clear controls and reuses the current
 detail/reader entry paths. Tests cover bounds, duplicates, concurrency, restart,
 disable/clear isolation, deliberate UI visits and reader command authorization.
 CI and exact-candidate checks remain required for this stage.
+
+## Stage 5 implementation notes
+
+`scan-additions.json` stores the last completely successful manual scan summary
+per authenticated account pair. It is independent of the special-follow unread
+document. Existing catalog records already carry their stable first-discovery
+run ID; this stage does not infer dates or migrate those records. The receipt is
+saved after the successful catalog commit with the same cancellation/account
+ordering. A receipt-read race against an older catalog retries the read rather
+than reporting newer markers with older works.
+
+Pending, partial, failed or cancelled scans preserve the previous successful
+markers. Their current progress and incomplete counts remain visible separately.
+If no successful receipt exists, a terminal partial scan may show explicitly
+incomplete new-work previews. Automatic special-follow subset checks do not
+replace manual scan markers. Cards and the quick filter use the receipt's stable
+source/work identities; multiple author associations count the same source work
+once. A later successful manual scan replaces the previous receipt. Native and
+browser regressions cover failure/cancel retention, restart, metadata-only
+changes, multi-author counts and independence from special-follow updates.
+
+## Engineering checkpoint
+
+- `3cbe278` corrected the audit example's missing query timing field and passed
+  Windows desktop CI `36821829795`.
+- Special-follow native changes passed Windows CI `36824949432`; cover retry
+  native changes passed `36826674242`.
+- UI CI `36826674241` passed 246 browser cases with two newly registered cases
+  exposing test setup mistakes: a top control click after restored navigation,
+  and a one-record fixture expecting two unread records. `7aaac6e` corrects them;
+  revalidation is pending. Its new history compile check also identified a
+  `null`/`undefined` reset mismatch, corrected in the following revision.
+- Stages 4/5 and the final combined candidate still require CI and native
+  acceptance. No real scans, downloads, deletions, merge or release have run.

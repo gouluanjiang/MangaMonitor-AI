@@ -1,0 +1,46 @@
+.author-workspace-tools {
+  margin-bottom: 20px;
+}
+.author-workspace-tools form,
+.author-workspace-tools label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.author-workspace-tools input {
+  min-width: 180px;
+}
+.author-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-block: 14px 4px;
+}
+.author-tab {
+  display: flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--border, #34313c);
+  border-radius: 9px;
+}
+.author-tab > button {
+  border: 0;
+  background: transparent;
+}
+.author-tab > [role="tab"] {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 8px 0 0 8px;
+}
+.author-tab > [aria-selected="true"] {
+  background: var(--accent-soft, #342647);
+}
+.author-tab-close {
+  padding-inline: 10px;
+  min-width: 32px;
+}
+.author-search-timings {
+  margin-block: 12px;
+}

@@ -814,6 +814,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let mut result = self
             .query_ordered_unobserved(source, session_id, kind, query, folder_id, page, reverse)
             .await?;
+        let commit_started = std::time::Instant::now();
         match self
             .observe_query(source, session_id, kind, &mut result.page, observed_at)
             .await
@@ -825,6 +826,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
             Err(error) => result.observation_error_code = Some(error.code.into()),
         }
+        result.timing.local_commit_ms = commit_started.elapsed().as_millis() as u64;
         Ok(result)
     }
 
@@ -879,6 +881,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         {
             return Err(AccountError::new("QUERY_INVALID"));
         }
+        let queued_at = std::time::Instant::now();
         let _operation = self.query_operation(source).lock().await;
         let session = {
             let mut slot = self.slot(source).lock().await;
@@ -892,6 +895,8 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         // Source requests retain their own ordering, but their network wait must
         // not hold the account-state lock needed by covers and logout. Recheck
         // the generation before accepting results or applying an auth failure.
+        let queue_ms = queued_at.elapsed().as_millis() as u64;
+        let source_started = std::time::Instant::now();
         let result = match kind {
             QueryKind::Favorites => {
                 self.backend
@@ -933,6 +938,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     jm_search_boundary: None,
                 }),
         };
+        let source_operation_ms = source_started.elapsed().as_millis() as u64;
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
         let mut result = self.finish(&mut slot, result)?;
@@ -1005,6 +1011,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             slot.works.insert(work.clone(), bytes);
         }
         Ok(QueryResult {
+            timing: crate::SourceQueryTiming {
+                queue_ms,
+                source_operation_ms,
+                local_commit_ms: 0,
+            },
             source,
             session_id: session_id.to_owned(),
             page: result,

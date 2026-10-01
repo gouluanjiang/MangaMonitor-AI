@@ -925,10 +925,27 @@ export function createSourceAdapter(
         number | null | undefined;
       const observationErrorCode = raw.observationErrorCode as
         string | null | undefined;
+      if (
+        raw.timing !== undefined &&
+        (!object(raw.timing) ||
+          !integer(raw.timing.queueMs) ||
+          !integer(raw.timing.sourceOperationMs) ||
+          !integer(raw.timing.localCommitMs))
+      )
+        invalid();
       if (discoveryRevision != null && !observationErrorCode)
         notifyAuthorCatalogChanged({ ...scope, revision: discoveryRevision });
       return {
         ...result,
+        ...(raw.timing === undefined
+          ? {}
+          : {
+              timing: raw.timing as {
+                queueMs: number;
+                sourceOperationMs: number;
+                localCommitMs: number;
+              },
+            }),
         ...(raw.contentVerifiedIds === undefined
           ? {}
           : {

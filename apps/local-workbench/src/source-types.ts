@@ -99,6 +99,11 @@ export interface CatalogRequest {
   snapshot?: CatalogSnapshot;
 }
 export interface SourceQueryResult extends SourceScope, SourcePage {
+  timing?: {
+    queueMs: number;
+    sourceOperationMs: number;
+    localCommitMs: number;
+  };
   contentVerifiedIds?: string[];
   contentVerifiedUntil?: number | null;
   /** Present only after the observed records were committed to the author catalog. */

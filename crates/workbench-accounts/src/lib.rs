@@ -78,6 +78,7 @@ pub enum QueryKind {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResult {
+    pub timing: SourceQueryTiming,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub content_verified_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,6 +91,14 @@ pub struct QueryResult {
     pub discovery_revision: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation_error_code: Option<String>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceQueryTiming {
+    pub queue_ms: u64,
+    pub source_operation_ms: u64,
+    pub local_commit_ms: u64,
 }
 
 #[derive(Serialize)]

@@ -1,5 +1,21 @@
 # Current development handoff
 
+## Active author workspace batch (2026-10-01)
+
+The user approved six improvements in five sequential stages; see
+[the implementation contract](AUTHOR_WORKSPACE_2026-10-01.md). Work is on
+`codex/author-workspace-improvements`, based on the already CI-verified PR #23
+head `2f39585`. Do not replace the outstanding recent-list repair or merge/release
+this batch. Cross-source identical full author names reuse a runtime search tab
+by explicit user choice; this is not author identity or ownership consolidation.
+
+Stage 1 implements retained author tabs, progressive cached/page results, bounded
+foreground-prioritized source requests, and separate local/queue/source/render
+timing. Its targeted tests and existing recent-list regressions require CI;
+performance and exact-candidate native acceptance remain unverified at this
+checkpoint. Special follows, cover retry policy, history and successful-scan
+addition receipts are the following stages, not delivered features yet.
+
 Updated 2026-10-01. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
 
 ## Current maintenance batch

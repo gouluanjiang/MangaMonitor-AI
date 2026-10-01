@@ -16,7 +16,14 @@ import {
   notifyAuthorCatalogChanged,
 } from "./author-catalog-events.ts";
 import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
 import type {
   AccountSummary,
@@ -79,9 +86,10 @@ import { SourceIssues } from "./SourceIssues.tsx";
 const nativeAdapter = createCompletionAdapter();
 type ReadRequest = { kind: "full" | "progress"; includeOther: boolean };
 const emptyRecords: DiscoverySnapshot["records"] = [];
-interface Props {
+export interface CompletionPanelProps {
   active?: boolean;
   mode?: "updates" | "search";
+  searchTabId?: string;
   authorRequest?: { name: string; key: number } | null;
   accounts: AccountSummary[];
   sourceAdapter: SourceAdapter;
@@ -106,6 +114,7 @@ interface Props {
 export function CompletionPanel({
   active = true,
   mode = "updates",
+  searchTabId,
   authorRequest = null,
   accounts,
   sourceAdapter,
@@ -122,7 +131,13 @@ export function CompletionPanel({
   downloadBusy = false,
   onOpenLibrary,
   onOpenAccounts,
-}: Props) {
+}: CompletionPanelProps) {
+  const renderStartedAt = performance.now();
+  const [paintMetrics, setPaintMetrics] = useState<{
+    revision: number;
+    runId: string;
+    value: NonNullable<DiscoverySnapshot["searchMetrics"]>;
+  } | null>(null);
   const root = useRef<HTMLElement>(null);
   const grid = useRef<SourceGridHandle>(null);
   const handledAuthorRequest = useRef<number | null>(null);
@@ -137,6 +152,9 @@ export function CompletionPanel({
   );
   const adapter =
     providedAdapter ?? (mode === "search" ? searchAdapter : nativeAdapter);
+  useEffect(() => {
+    if (mode === "search") searchAdapter.setActive(active);
+  }, [active, mode, searchAdapter]);
   const [searchAuthor, setSearchAuthor] = useState("");
   const scopes = accounts
     .map(accountScope)
@@ -163,6 +181,11 @@ export function CompletionPanel({
     catalogCheckId: string | null;
   } | null>(null);
   const view = result?.key === scopeKey ? result.value : null;
+  const searchMetrics =
+    paintMetrics?.runId === view?.run?.id &&
+    paintMetrics?.revision === view?.revision
+      ? paintMetrics.value
+      : view?.searchMetrics;
   const [busy, setBusy] = useState(false),
     [actionError, setActionError] = useState("");
   const [reading, setReading] = useState(false);
@@ -331,6 +354,7 @@ export function CompletionPanel({
     setAuthor("");
     setQuery("");
     setSearchAuthor("");
+    handledAuthorRequest.current = null;
     setSource("all");
     setFilter("missing");
     setShowOther(false);
@@ -352,6 +376,21 @@ export function CompletionPanel({
       epoch.current++;
     };
   }, [load, scopeKey, active, mode]);
+  useEffect(() => {
+    if (!active || !adapter.subscribe) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = adapter.subscribe(() => {
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void load(false);
+      }, 60);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [adapter, active, scopeKey, load]);
   useEffect(() => {
     if (!active || mode !== "updates") return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -376,7 +415,7 @@ export function CompletionPanel({
     if (!active || !connected || busy || reading) return;
     const delay = readFailure
       ? readFailure.retryAfterMs
-      : authorRunning
+      : authorRunning && !adapter.subscribe
         ? 1500
         : null;
     if (delay === null) return;
@@ -498,7 +537,10 @@ export function CompletionPanel({
           ? [author]
           : [];
     void perform(async (isCurrent) => {
-      await onRefreshInventory?.();
+      if (mode === "search") {
+        // Ownership refresh is independent of displaying saved/source results.
+        void onRefreshInventory?.().catch(() => {});
+      } else await onRefreshInventory?.();
       if (!isCurrent()) return;
       if (unfinishedOnly)
         return adapter.startUnfinished(captured.scopes, selected);
@@ -701,6 +743,7 @@ export function CompletionPanel({
   useBrowseSession({
     scope: JSON.stringify([
       mode,
+      searchTabId ?? null,
       scopeKey,
       author,
       source,
@@ -715,6 +758,21 @@ export function CompletionPanel({
     grid,
     itemKeys: sortedVisible.map((record) => sourceWorkKey(record.work)),
   });
+  useLayoutEffect(() => {
+    if (!active || mode !== "search" || !view) return;
+    const frame = requestAnimationFrame(() => {
+      if (!view.run) return;
+      const value = searchAdapter.rendered(
+        view.run.id,
+        view.revision,
+        performance.now() - renderStartedAt,
+        sortedVisible.length > 0,
+      );
+      if (value)
+        setPaintMetrics({ runId: view.run.id, revision: view.revision, value });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, mode, view?.revision, searchAdapter]);
   // Preserve state and memoized catalog while another page is visible.
   if (!active) return null;
   return (
@@ -731,6 +789,55 @@ export function CompletionPanel({
             : "检查关注作者的新作品，保留之前未下载的漫画，默认只显示未入库内容。"}
         </p>
       </header>
+      {mode === "search" && view && (
+        <>
+          <p role="status" data-testid="author-search-cache-status">
+            {running
+              ? "已保存结果可先浏览，正在分批更新；当前结果尚未读取完整。"
+              : "本标签保留上次结果；重新打开不会自动重查，可手动重新搜索。"}
+          </p>
+          {searchMetrics && (
+            <details
+              className="author-search-timings"
+              data-testid="author-search-timings"
+            >
+              <summary>搜索耗时</summary>
+              <p>
+                首次结果可用：
+                {searchMetrics.firstRecordsMs === null
+                  ? "尚无结果"
+                  : `${Math.round(searchMetrics.firstRecordsMs)} ms`}{" "}
+                · 首次可见：
+                {searchMetrics.firstVisibleMs === null
+                  ? "尚未记录"
+                  : `${Math.round(searchMetrics.firstVisibleMs)} ms`}{" "}
+                · 全部结束：
+                {searchMetrics.completedMs === null
+                  ? "尚未结束"
+                  : `${Math.round(searchMetrics.completedMs)} ms`}
+              </p>
+              <p>
+                本地目录读取 {Math.round(searchMetrics.localCatalogMs)} ms ·
+                查询规则 {Math.round(searchMetrics.policyMs)} ms · 请求排队{" "}
+                {Math.round(
+                  searchMetrics.queueMs + searchMetrics.nativeQueueMs,
+                )}{" "}
+                ms · 来源请求 {Math.round(searchMetrics.sourceOperationMs)} ms ·
+                本地登记 {Math.round(searchMetrics.localCommitMs)} ms · 界面更新{" "}
+                {Math.round(searchMetrics.renderMs)} ms
+              </p>
+              <p className="source-muted">
+                分项可能并行，不能相加当作总耗时。来源请求包含网络、协议解析及来源重试；传递等其余耗时{" "}
+                {Math.round(searchMetrics.transportOtherMs)} ms。
+                缺少原生分段计时的请求{" "}
+                {searchMetrics.requestsWithoutNativeTiming} 次；失败请求{" "}
+                {searchMetrics.failedRequests}{" "}
+                次。结束耗时不代表结果完整，以范围状态为准。
+              </p>
+            </details>
+          )}
+        </>
+      )}
       {!connected ? (
         <div className="source-empty">
           <p>请连接 JM 和哔咔账号后检查。</p>
@@ -740,15 +847,19 @@ export function CompletionPanel({
         <>
           <div className="completion-controls source-page-tools">
             {mode === "search" ? (
-              <label>
-                作者名{" "}
-                <input
-                  aria-label="搜索作者名"
-                  value={searchAuthor}
-                  onChange={(event) => setSearchAuthor(event.target.value)}
-                  disabled={busy || running}
-                />
-              </label>
+              searchTabId ? (
+                <strong>{authorRequest?.name}</strong>
+              ) : (
+                <label>
+                  作者名{" "}
+                  <input
+                    aria-label="搜索作者名"
+                    value={searchAuthor}
+                    onChange={(event) => setSearchAuthor(event.target.value)}
+                    disabled={busy || running}
+                  />
+                </label>
+              )
             ) : (
               <label>
                 检查作者{" "}
@@ -772,11 +883,15 @@ export function CompletionPanel({
                 running ||
                 (mode === "search" ? !searchAuthor.trim() : !authors.length)
               }
-              data-testid="completion-start"
+              data-testid={
+                searchTabId ? "author-tab-refresh" : "completion-start"
+              }
               onClick={() => startCheck()}
             >
               {mode === "search"
-                ? "搜索两站作品"
+                ? searchTabId
+                  ? "重新搜索当前作者"
+                  : "搜索两站作品"
                 : author
                   ? "检查该作者新增作品"
                   : "一键检查全部关注作者"}

@@ -61,6 +61,7 @@ import {
   SourceLanguageProvider,
 } from "./SourceLanguageBadge.tsx";
 import { CompletionPanel } from "./CompletionPanel.tsx";
+import { AuthorWorkspace } from "./AuthorWorkspace.tsx";
 import {
   LibraryWorkbench,
   LibrarySettingsPanel,
@@ -2550,38 +2551,44 @@ export default function App() {
             />
           )}
           {persistence.native &&
-            authorPages.map((authorPage) => (
-              <div
-                key={authorPage}
-                hidden={embeddedSourceDetail || page !== authorPage}
-              >
-                <CompletionPanel
-                  active={!embeddedSourceDetail && page === authorPage}
-                  mode={authorPage === "author-search" ? "search" : "updates"}
-                  authorRequest={
-                    authorPage === "author-search" ? authorRequest : null
-                  }
-                  accounts={accounts}
-                  sourceAdapter={sourceAdapter}
-                  library={library.snapshot}
-                  inventorySnapshot={downloadLibrary.snapshot}
-                  inventoryReady={
-                    downloadLibrary.ready &&
-                    !downloadLibrary.error &&
-                    !library.error
-                  }
-                  onRefreshInventory={downloadLibrary.refresh}
-                  inventoryError={downloadLibrary.error || library.error}
-                  density={appearance.density}
-                  onOpenWork={openSourceWork}
-                  onDownload={(work) => void beginDownload(work.workId, work)}
-                  onDownloadMany={beginDownloadMany}
-                  downloadBusy={false}
-                  onOpenLibrary={() => openSettings("library")}
-                  onOpenAccounts={() => openSettings("accounts")}
-                />
-              </div>
-            ))}
+            authorPages.map((authorPage) => {
+              const AuthorPage =
+                authorPage === "author-search"
+                  ? AuthorWorkspace
+                  : CompletionPanel;
+              return (
+                <div
+                  key={authorPage}
+                  hidden={embeddedSourceDetail || page !== authorPage}
+                >
+                  <AuthorPage
+                    active={!embeddedSourceDetail && page === authorPage}
+                    mode={authorPage === "author-search" ? "search" : "updates"}
+                    authorRequest={
+                      authorPage === "author-search" ? authorRequest : null
+                    }
+                    accounts={accounts}
+                    sourceAdapter={sourceAdapter}
+                    library={library.snapshot}
+                    inventorySnapshot={downloadLibrary.snapshot}
+                    inventoryReady={
+                      downloadLibrary.ready &&
+                      !downloadLibrary.error &&
+                      !library.error
+                    }
+                    onRefreshInventory={downloadLibrary.refresh}
+                    inventoryError={downloadLibrary.error || library.error}
+                    density={appearance.density}
+                    onOpenWork={openSourceWork}
+                    onDownload={(work) => void beginDownload(work.workId, work)}
+                    onDownloadMany={beginDownloadMany}
+                    downloadBusy={false}
+                    onOpenLibrary={() => openSettings("library")}
+                    onOpenAccounts={() => openSettings("accounts")}
+                  />
+                </div>
+              );
+            })}
           {persistence.native &&
             discoveryPanels.map((panel) => (
               <div

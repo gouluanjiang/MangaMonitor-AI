@@ -17,6 +17,33 @@ import {
 
 const scope = { source: "JM", sessionId: "synthetic-session" };
 
+test("query timings are optional for old payloads and reject invalid native measurements", async () => {
+  let timing;
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async () => ({
+      ...scope,
+      items: [],
+      page: 1,
+      pages: 1,
+      total: 0,
+      hasMore: false,
+      folders: [],
+      ...(timing === undefined ? {} : { timing }),
+    }),
+  });
+  const query = { kind: "author", query: "Synthetic", page: 1, folderId: null };
+  assert.equal((await adapter.query(scope, query)).timing, undefined);
+  timing = { queueMs: 12, sourceOperationMs: 40, localCommitMs: 3 };
+  assert.deepEqual((await adapter.query(scope, query)).timing, timing);
+  for (const invalid of [-1, NaN, "40"]) {
+    timing = { queueMs: 0, sourceOperationMs: invalid, localCommitMs: 0 };
+    await assert.rejects(adapter.query(scope, query), {
+      code: "SOURCE_RESPONSE_INVALID",
+    });
+  }
+});
+
 test("author policy IPC preserves original query spellings and validates the exact source and author", async () => {
   const calls = [];
   const policy = {

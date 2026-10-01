@@ -47,6 +47,7 @@ export interface DiscoveryCheckSummary {
   completeScopes: number;
 }
 export interface DiscoverySnapshot {
+  searchMetrics?: import("./author-search-metrics.ts").AuthorSearchMetrics;
   scopes: SourceScope[];
   revision: number;
   followingRevision?: number;
@@ -94,6 +95,8 @@ export interface DiscoverySnapshot {
   observationErrorCode?: string | null;
 }
 export interface CompletionAdapter {
+  /** In-memory ad-hoc searches publish page batches without catalog polling. */
+  subscribe?(listener: () => void): () => void;
   startRecentCheck?(
     scopes: SourceScope[],
     maxPages?: number,

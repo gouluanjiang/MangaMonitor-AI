@@ -24,14 +24,21 @@ test("metadata preparation failure remains diagnosable after navigation and queu
       }
     ).__TAURI_INTERNALS__;
     const invoke = bridge.invoke;
-    bridge.invoke = (command, args) =>
-      command === "jm_download_prepare"
-        ? Promise.reject({
-            code: "DOWNLOAD_METADATA_TITLE_CONTROL",
-            title: "private-title",
-            path: "C:/private-path",
-          })
-        : invoke(command, args);
+    bridge.invoke = (command, args) => {
+      if (command === "jm_download_prepare")
+        return Promise.reject({
+          code: "DOWNLOAD_METADATA_TITLE_CONTROL",
+          title: "private-title",
+          path: "C:/private-path",
+        });
+      if (command === "workbench_info")
+        return Promise.resolve({
+          version: "1.0.1",
+          revision: "a".repeat(40),
+          platform: "windows",
+        });
+      return invoke(command, args);
+    };
   });
   await page.getByTestId("nav-completion").click();
   // The initial saved catalog contains 103; 102 exists only after a mock scan.
@@ -50,7 +57,7 @@ test("metadata preparation failure remains diagnosable after navigation and queu
     /准备下载 · JM.*DOWNLOAD_METADATA_TITLE_CONTROL/,
   );
   const summary = await page.getByTestId("diagnostic-summary").inputValue();
-  await page.getByTestId("nav-downloads").click();
+  await page.getByTestId("nav-queue").click();
   await page.getByRole("button", { name: "重新读取队列", exact: true }).click();
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("settings-network").click();
@@ -70,6 +77,9 @@ test("metadata preparation failure remains diagnosable after navigation and queu
     ),
   ).toEqual([]);
   expect(errors).toEqual([]);
+  expect(
+    await page.evaluate(() => window.workflowTest.unexpectedCommands),
+  ).toEqual([]);
 });
 
 test("copy receipts survive live summary changes and failed copying preserves selectable text", async ({

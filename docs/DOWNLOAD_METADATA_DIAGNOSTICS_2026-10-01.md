@@ -45,5 +45,13 @@ mock failure to settings and through a queue refresh with external network
 requests blocked and no confirmation/execution call.
 
 Formal verification uses the existing baseline, UI and Windows CI workflows.
-CI results will be recorded after the source revision is finalized. No real
-download, full author scan, installation, merge or release is part of this work.
+The browser test allowlist now explicitly includes the diagnostic panel suite;
+previous green runs that omitted this file do not prove its behavior. The new
+scenario uses an already-saved synthetic record and the current queue navigation,
+with no synthetic scan required. Unexpected mock commands fail the test.
+
+The exact checked revision and final workflow links are recorded in
+[draft PR #24](https://github.com/gouluanjiang/MangaMonitor-AI/pull/24).
+Synthetic engineering verification is separate from real-source acceptance.
+No real download, full author scan, installation, merge or release is part of
+this work.

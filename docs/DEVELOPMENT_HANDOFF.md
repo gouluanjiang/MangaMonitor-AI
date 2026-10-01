@@ -8,7 +8,11 @@ The implementation preserves the existing admission rules and all persisted
 formats, adds redacted field-specific preparation errors, and retains at most
 20 preparation diagnostics for the current process. It does not normalize
 rejected metadata, request real source data or recover a particular work.
-Required CI is pending for this follow-up; keep the existing draft PR unmerged.
+The exact checked revision and current CI evidence for this follow-up are
+tracked in [draft PR #24](https://github.com/gouluanjiang/MangaMonitor-AI/pull/24).
+Browser discovery explicitly includes the diagnostic-panel regressions. Keep
+the draft unmerged; synthetic verification does not establish live acceptance
+or authorize installing against the real profile.
 
 ## Active author workspace batch (2026-10-01)
 

@@ -1,18 +1,28 @@
 # Current development handoff
 
-## Active library and browsing follow-ups (2026-10-01)
+## Library and browsing follow-ups — delivered for acceptance (2026-10-01)
 
-Continue on `codex/library-browse-followups`, based on `0fdc8fc` and draft
-PR #24. The user resumed after a Codex restart and added wrapping all author tabs
-into rows. See [this batch contract](LIBRARY_BROWSING_FOLLOWUPS_2026-10-01.md)
-for history covers, five-action local menus, confirmed recoverable recycling,
-detail special follow, combined recent feeds and automatic browse-new badges.
-No overall UI redesign, full author scan, real manga download/deletion,
-merge or public release is part of validation. Existing profile formats remain;
-optional per-account/source/surface browse sidecars are independent of special
-unread and successful scan markers. Formal CI, exact candidate verification and
-user acceptance must be reported separately. Implementation and regressions are
-currently integrated; record CI/delivery evidence in that contract when ready.
+Application/test revision `19b50a4` on `codex/library-browse-followups` passed
+baseline, 355 logic / 268 browser cases, Windows native IPC/Clippy and isolated
+installer/WebView/restart/data-preservation checks. Draft PR #25 is stacked on
+#24 and remains unmerged. See [this batch contract](LIBRARY_BROWSING_FOLLOWUPS_2026-10-01.md)
+for run links, exact candidate hash, compatibility and acceptance steps.
+
+The user resumed after a Codex restart and added naturally wrapping author tabs.
+The delivered batch includes history covers, five-action local menus with
+confirmed recoverable recycling, detail special follow, combined recent feeds,
+and independent previous-browsing new badges. No overall UI redesign, full
+author scan or real manga download/deletion was used in verification.
+
+After fresh permission to close the current windows, the hash-verified candidate
+updated the existing Dev desktop entry. Bounded native checks confirmed startup,
+history covers, five-action menu/cancel, combined source browsing/position and
+first-use baselines. Existing protected records remained byte-identical. The
+main window is open. User acceptance, real special-follow future updates, and
+natural browse-new changes remain pending; do not mark these accepted based on
+synthetic CI. No merge or public release was performed. Existing document formats
+remain; optional per-account/source/surface sidecars are independent of special
+unread and successful scan markers.
 
 ## Download tag whitespace compatibility (2026-10-01)
 

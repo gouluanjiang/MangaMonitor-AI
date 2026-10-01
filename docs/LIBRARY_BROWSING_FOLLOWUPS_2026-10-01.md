@@ -74,17 +74,44 @@ Reuse existing pinned Windows bindings; no copied third-party implementation.
 
 ## Verification and delivery status
 
-Implementation and synthetic regressions are being integrated. Formal checks and
-builds run in the established CI, not locally. Record exact commits, run links,
-counts, artifact hashes, visual review and untested boundaries here after they
-finish. Prior accepted builds do not establish this batch's acceptance.
+The final application/test revision is `19b50a40d3453b7b35d7c2f6171c155df2bd1f46`.
+Formal tests and builds use the established CI; no local suite or Rust build was
+run for this batch.
 
-Required regressions include multi-row tabs and focus at narrow widths; visible
-history covers, failure/retry and scroll preservation; ordinary/special follow
-ordering; cancel/busy/stale/late-response recycle and corrected ownership;
-per-source combined pagination/late heads; first baseline, failure, account
-renewal, section switches and cold restart markers; existing recent list order
-and flicker checks. Real manga files are not downloaded or deleted in testing.
+- [Baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36878440436) passed.
+- [UI CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36878440336) passed formatting, 355 logic cases, TypeScript/build and all 268 Chromium cases.
+- [Windows CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36878440424) passed storage/account/library tests, all 57 native IPC cases, strict Clippy, packaging and isolated installation/startup/restart/data preservation.
+- Windows native tests exercise a generated temporary ZIP through the actual
+  Shell Recycle Bin adapter, verify the returned recycled identity, retain an
+  unrelated file and reject permanent fallback signals. Library/IPC regressions
+  cover cancellation, stale identities, active readers/downloads and failures.
+- Browser regressions cover history covers and deliberate visits, special-follow
+  ordering, independent source failures, launch baselines, old-tail pagination,
+  persistence errors, wrapped tabs and unchanged recent-list/flicker behavior.
+  Two initial scroll tests incorrectly assigned scrollTop while restoration was
+  settling; they now use real wheel input. Anchor and stability assertions remain.
+- Final CI screenshots were inspected at narrow widths: author tabs wrap into
+  visible rows with close controls; the five-action local menu stays in bounds.
+
+The downloaded candidate manifest has identical source/checkout revisions of
+`19b50a40d3453b7b35d7c2f6171c155df2bd1f46`. All eight manifest files match their
+recorded size and SHA-256; the installed-form executable hash is
+`964918a8c18df107e4348e36eaa5541734366ba19128bc2c3e5b988bdeccc008`.
+After current user approval, the exact candidate was installed through the
+existing Dev desktop entry. The installed executable matches the hash above.
+The installer preserved all snapshotted registration documents byte-for-byte.
+Bounded native checks confirmed the five-action menu and cancelling its native
+confirmation, visible history covers, a combined JM/Pica first page, navigation
+position retention, and first-use recent/author browsing baselines. Existing
+incomplete author ranges remain explicit; no new full scan was started.
+Library, downloads, follows, reading progress, history and author-query rules
+remained byte-identical after these checks. Ordinary cover/list reads and four
+new per-source/surface baseline sidecars are expected local cache activity.
+Special-follow real usage, future natural updates and final user acceptance remain
+separate from these synthetic checks. No real manga download/deletion or full
+source/author scan was performed for verification. The user approved closing current windows for this update; the new main window
+is open for acceptance. No special-follow toggle or media execution was used
+against the real profile.
 
 ## User acceptance steps after exact-candidate delivery
 

@@ -6,6 +6,9 @@ test("special follows keep baseline, unread and ordinary follows separate across
 }) => {
   await installWorkflow(page);
   await page.evaluate(() => {
+    // The shared workflow starts with one old omission, not two new updates.
+    // Finish its synthetic check before selecting this test's two update rows.
+    window.workflowTest.finishCheck();
     const previous = window.__TAURI_INTERNALS__!.invoke;
     const hooks = {
       scopes: window.workflowTest.accounts.map((account) => ({

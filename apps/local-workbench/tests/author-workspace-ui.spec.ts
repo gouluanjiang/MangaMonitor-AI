@@ -164,7 +164,9 @@ test("author tabs stream cached results, isolate state, retain positions and ign
   }, scroll);
   await page.waitForTimeout(160);
   await page.getByTestId("nav-library").click();
-  await openUnifiedSearch(page);
+  // The sidebar restores the retained search mode. Clicking the already active
+  // mode control would intentionally scroll that top-of-page control into view.
+  await page.getByTestId("nav-discovery").click();
   await expect
     .poll(() => page.locator("main").evaluate((el) => el.scrollTop))
     .toBeGreaterThan(scroll - 20);

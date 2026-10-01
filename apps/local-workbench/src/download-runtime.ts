@@ -1,5 +1,11 @@
 import { invokeDesktop, isDesktopRuntime } from "./runtime.ts";
 import {
+  downloadMetadataCode,
+  downloadMetadataMessages,
+  retainDownloadMetadataProblems,
+} from "./download-metadata-problems.ts";
+import type { DownloadMetadataProblem } from "./download-metadata-problems.ts";
+import {
   downloadInputWorkId,
   downloadSubmissionKey,
 } from "./download-input.ts";
@@ -446,6 +452,8 @@ export function createDownloadAdapter(
   };
 }
 export function downloadErrorMessage(cause: unknown): string {
+  const metadataCode = downloadMetadataCode(cause);
+  if (metadataCode) return downloadMetadataMessages[metadataCode];
   const code =
     typeof cause === "string"
       ? cause
@@ -530,8 +538,6 @@ export function downloadErrorMessage(cause: unknown): string {
     return "下载处理意外中断，队列已停止。已保存进度保留，请重新读取后明确继续或重试。";
   if (/INDEX_/.test(code))
     return "作品已保存，但电脑文件登记尚未完成。重试会先核对已有结果。";
-  if (code === "DOWNLOAD_METADATA_INVALID")
-    return "来源作品信息暂时无法确认，请重新读取作品后再试。";
   if (code === "DOWNLOAD_SOURCE_INCOMPLETE")
     return "来源目录暂未读取完整，当前下载还不能完成。已保留进度，请稍后重试。";
   if (/STAGING_CHANGED|SOURCE_CHANGED|STAGING_CONFLICT/.test(code))
@@ -694,7 +700,7 @@ export interface DownloadState {
   reading: boolean;
   busy: boolean;
   error: string;
-  failure?: { cause: unknown; occurredAt: number };
+  failure?: { cause: unknown; occurredAt: number; preparation?: boolean };
   plan: DownloadPlan | null;
   batchPlan: DownloadSelectionPlan | null;
   preparation: { done: number; total: number } | null;
@@ -703,6 +709,7 @@ export interface DownloadState {
   queueNotice: string;
   submittingKeys: string[];
   submissionIssues: DownloadSubmissionFailure[];
+  metadataProblems: DownloadMetadataProblem[];
 }
 export function downloadActionState(
   state: Pick<DownloadState, "snapshot" | "submittingKeys">,
@@ -749,6 +756,7 @@ export class DownloadController {
     queueNotice: "",
     submittingKeys: [],
     submissionIssues: [],
+    metadataProblems: [],
   };
   private listeners = new Set<(state: DownloadState) => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -784,10 +792,27 @@ export class DownloadController {
     };
     for (const listener of this.listeners) listener(this.state);
   }
-  private fail(cause: unknown) {
+  private fail(cause: unknown, preparation = false) {
     this.publish({
       error: downloadErrorMessage(cause),
-      failure: { cause, occurredAt: Date.now() },
+      failure: {
+        cause,
+        occurredAt: Date.now(),
+        ...(preparation ? { preparation: true } : {}),
+      },
+    });
+  }
+  private recordMetadataProblems(
+    source: DownloadSource,
+    causes: readonly unknown[],
+  ) {
+    if (!causes.some((cause) => downloadMetadataCode(cause))) return;
+    this.publish({
+      metadataProblems: retainDownloadMetadataProblems(
+        this.state.metadataProblems,
+        source,
+        causes,
+      ),
     });
   }
   private accept(snapshot: DownloadSnapshot) {
@@ -1046,7 +1071,15 @@ export class DownloadController {
               });
               continue;
             }
-            const plan = await this.adapter.prepare(context, item.input);
+            const plan = await this.adapter
+              .prepare(context, item.input)
+              .catch((cause) => {
+                if (epoch === this.epoch) {
+                  checkContext(item.source);
+                  this.recordMetadataProblems(item.source, [cause]);
+                }
+                throw cause;
+              });
             checkContext(item.source);
             if (
               plan.source !== item.source ||
@@ -1141,7 +1174,10 @@ export class DownloadController {
         this.publish({ plan });
       }
     } catch (cause) {
-      if (epoch === this.epoch && token === this.planEpoch) this.fail(cause);
+      if (epoch === this.epoch && token === this.planEpoch) {
+        this.recordMetadataProblems(context.scope.source, [cause]);
+        this.fail(cause, true);
+      }
     } finally {
       if (epoch === this.epoch) {
         this.publish({ busy: false });
@@ -1231,9 +1267,13 @@ export class DownloadController {
         ) {
           if (epoch !== this.epoch || token !== this.planEpoch) return;
           const chunk = values.slice(offset, offset + downloadPreparationChunk);
-          const next = await this.adapter.prepareBatch(context, chunk, [
-            ...batchPlan.batchIds,
-          ]);
+          const next = await this.adapter
+            .prepareBatch(context, chunk, [...batchPlan.batchIds])
+            .catch((cause) => {
+              if (epoch === this.epoch && token === this.planEpoch)
+                this.recordMetadataProblems(source, [cause]);
+              throw cause;
+            });
           if (epoch !== this.epoch || token !== this.planEpoch) return;
           if (
             next.plans.length + next.issues.length !== chunk.length ||
@@ -1255,6 +1295,10 @@ export class DownloadController {
               throw new DownloadError("DOWNLOAD_PLAN_STALE");
             batchPlan.batchIds.push(next.batchId);
           }
+          this.recordMetadataProblems(
+            source,
+            next.issues.map((issue) => issue.errorCode),
+          );
           batchPlan.plans.push(...next.plans);
           batchPlan.issues.push(
             ...next.issues.map((issue) => ({
@@ -1274,7 +1318,7 @@ export class DownloadController {
     } catch (cause) {
       if (epoch === this.epoch && token === this.planEpoch) {
         this.cancelPlan();
-        this.fail(cause);
+        this.fail(cause, true);
       }
     } finally {
       if (epoch === this.epoch) {

@@ -35,6 +35,19 @@ fn prepare_metadata(f: &Fixture, metadata: JmDownloadMetadata) -> Result<Downloa
     )
 }
 
+#[test]
+fn metadata_rejection_explains_the_field_without_creating_a_plan_or_changing_saved_data() {
+    let f = zip_fixture();
+    let before = f.store.read_downloads().unwrap();
+    let library = f.store.read_library().unwrap();
+    let mut metadata = record(&f).metadata;
+    metadata.title = "Synthetic\ntitle".into();
+    assert_eq!(prepare_metadata(&f, metadata).unwrap_err().code, "DOWNLOAD_METADATA_TITLE_CONTROL");
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    assert_eq!(f.store.read_library().unwrap(), library);
+    assert_eq!(fs::read_dir(&f.library).unwrap().count(), 0);
+}
+
 fn preview(f: &Fixture, id: &str, title: &str) -> DownloadPlan {
     let mut metadata = record(f).metadata;
     metadata.work_id = id.into();

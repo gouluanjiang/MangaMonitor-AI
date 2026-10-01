@@ -3,6 +3,7 @@ import type { LibrarySnapshot } from "./library-types.ts";
 import type { DownloadSnapshot } from "./download-types.ts";
 import { isDownloadPresent } from "./download-runtime.ts";
 import { fileNeedsReview } from "./library-matching.ts";
+import { downloadMetadataMessages } from "./download-metadata-problems.ts";
 
 export interface WorkbenchInfo {
   version: string;
@@ -44,6 +45,7 @@ const diagnosticOperations = {
   accounts: "账号连接",
   library: "漫画库读取",
   downloads: "下载队列",
+  downloadPreparation: "准备下载",
   preferences: "设置读取或保存",
 };
 export type DiagnosticOperation = keyof typeof diagnosticOperations;
@@ -55,6 +57,7 @@ export interface DiagnosticProblem {
 }
 // Exact allowlist, never a prefix/regex pass-through of native diagnostic text.
 const diagnosticMessages: Readonly<Record<string, string>> = {
+  ...downloadMetadataMessages,
   BUSY: "本机资料正忙，请稍后重试。",
   LIBRARY_BUSY: "漫画库正忙，请稍后重试。",
   REVISION_CONFLICT: "资料已被另一项操作更新，请重新读取后重试。",

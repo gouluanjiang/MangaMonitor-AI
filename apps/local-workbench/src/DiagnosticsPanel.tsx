@@ -90,7 +90,8 @@ export function DiagnosticsPanel({
     >
       <h2 id="diagnostics-title">网络与诊断</h2>
       <p className="settings-copy">
-        查看本次运行的状态，前往对应页面处理问题。
+        查看本次运行的状态，前往对应页面处理问题。作品信息校验失败会保留最近 20
+        条诊断；退出程序后清空。
       </p>
       <p className="settings-help" data-testid="diagnostics-version">
         {info

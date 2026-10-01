@@ -1,6 +1,74 @@
 import { expect, test } from "@playwright/test";
 import { installWorkflow } from "./workflow-fixture.ts";
 
+test("metadata preparation failure remains diagnosable after navigation and queue refresh without a task", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/*", (route) =>
+    new URL(route.request().url()).hostname === "127.0.0.1"
+      ? route.continue()
+      : route.abort(),
+  );
+  await installWorkflow(page);
+  await page.evaluate(() => {
+    const bridge = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke(
+            command: string,
+            args?: Record<string, unknown>,
+          ): Promise<unknown>;
+        };
+      }
+    ).__TAURI_INTERNALS__;
+    const invoke = bridge.invoke;
+    bridge.invoke = (command, args) =>
+      command === "jm_download_prepare"
+        ? Promise.reject({
+            code: "DOWNLOAD_METADATA_TITLE_CONTROL",
+            title: "private-title",
+            path: "C:/private-path",
+          })
+        : invoke(command, args);
+  });
+  await page.getByTestId("nav-completion").click();
+  await page
+    .getByTestId("author-update-JM:102")
+    .getByRole("button", { name: "下载到漫画库", exact: true })
+    .click();
+  await expect(page.getByTestId("download-attention-toast")).toContainText(
+    "来源作品标题含不支持的控制字符",
+  );
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-network").click();
+  await expect(page.getByTestId("diagnostic-summary")).toHaveValue(
+    /准备下载 · JM.*DOWNLOAD_METADATA_TITLE_CONTROL/,
+  );
+  const summary = await page.getByTestId("diagnostic-summary").inputValue();
+  await page.getByTestId("nav-downloads").click();
+  await page.getByRole("button", { name: "重新读取队列", exact: true }).click();
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("settings-network").click();
+  await expect(page.getByTestId("diagnostic-summary")).toHaveValue(
+    /准备下载 · JM.*DOWNLOAD_METADATA_TITLE_CONTROL/,
+  );
+  expect(
+    summary + (await page.getByTestId("diagnostic-summary").inputValue()),
+  ).not.toMatch(/private-title|private-path|synthetic-JM/);
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.calls.filter(({ command }) =>
+        /jm_download_confirm|source_login|delete|promote|replace|library_scan/.test(
+          command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test("copy receipts survive live summary changes and failed copying preserves selectable text", async ({
   page,
 }) => {

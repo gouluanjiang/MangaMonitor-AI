@@ -8,6 +8,7 @@ import {
 import { AuthorSearchProvider } from "./AuthorLinks.tsx";
 import { DownloadFeedbackContext } from "./DownloadWorkButton.tsx";
 import { downloadActionState } from "./download-runtime.ts";
+import { downloadMetadataCode } from "./download-metadata-problems.ts";
 import { RankingPanel } from "./RankingPanel.tsx";
 import { ReaderAccessProvider, useReaderHost } from "./reader-access.tsx";
 import { ReaderDownloadError } from "./reader/runtime.ts";
@@ -529,7 +530,11 @@ export default function App() {
   );
   const downloadDiagnostic = useMemo(
     () =>
-      downloads.error
+      downloads.error &&
+      !(
+        downloads.failure?.preparation &&
+        downloadMetadataCode(downloads.failure.cause)
+      )
         ? createDiagnosticProblem(
             "downloads",
             downloads.failure?.cause ?? downloads.error,
@@ -2232,6 +2237,14 @@ export default function App() {
               state={{
                 accounts,
                 problems: [
+                  ...downloads.metadataProblems.map((problem) =>
+                    createDiagnosticProblem(
+                      "downloadPreparation",
+                      problem.code,
+                      problem.occurredAt,
+                      problem.source,
+                    ),
+                  ),
                   ...accountStateDiagnostics,
                   ...(accountsError && accountDiagnostic
                     ? [accountDiagnostic]

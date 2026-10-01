@@ -147,6 +147,18 @@ fn download_metadata(work: workbench_accounts::SourceWork) -> JmDownloadMetadata
     }
 }
 
+fn download_detail_metadata(
+    source: Source,
+    work_id: &str,
+    items: Vec<workbench_accounts::SourceWork>,
+) -> Result<JmDownloadMetadata, StoreError> {
+    let work = items.into_iter().next().ok_or(error("DOWNLOAD_METADATA_MISSING"))?;
+    if work.source != source || work.work_id != work_id {
+        return Err(error("DOWNLOAD_METADATA_IDENTITY_MISMATCH"));
+    }
+    Ok(download_metadata(work))
+}
+
 async fn lease(
     accounts: Arc<accounts::DesktopAccounts>,
     scope: &DownloadScope,
@@ -225,14 +237,7 @@ pub(crate) async fn jm_download_prepare<R: Runtime>(
         .await
         .map_err(|e| error(e.code))?;
     session.require_current().map_err(|e| error(e.code))?;
-    let work = detail
-        .page
-        .items
-        .into_iter()
-        .next()
-        .filter(|w| w.source == scope.source && w.work_id == work_id)
-        .ok_or(error("DOWNLOAD_METADATA_INVALID"))?;
-    let metadata = download_metadata(work);
+    let metadata = download_detail_metadata(scope.source, &work_id, detail.page.items)?;
     let downloads = Arc::clone(downloads.inner());
     let store = open_store(Arc::clone(store.inner())).await?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -355,14 +360,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
                 .map_err(|e| error(e.code))?;
             session.require_current().map_err(|e| error(e.code))?;
             require_preparation(&downloads, preparation)?;
-            let work = detail
-                .page
-                .items
-                .into_iter()
-                .next()
-                .filter(|work| work.source == scope.source && work.work_id == work_id)
-                .ok_or(error("DOWNLOAD_METADATA_INVALID"))?;
-            let metadata = download_metadata(work);
+            let metadata = download_detail_metadata(scope.source, &work_id, detail.page.items)?;
             let downloads = Arc::clone(&downloads);
             let store = Arc::clone(&store);
             let root_id = root_id.clone();
@@ -1049,6 +1047,10 @@ mod tests {
             "sourceUpdatedAt": "2026-09-15T12:34:56.000Z"
         }))
         .unwrap();
+        assert_eq!(download_detail_metadata(Source::Pica, &work.work_id, vec![]).unwrap_err().code, "DOWNLOAD_METADATA_MISSING");
+        assert_eq!(download_detail_metadata(Source::Pica, "000000000000000000000001", vec![work.clone()]).unwrap_err().code, "DOWNLOAD_METADATA_IDENTITY_MISMATCH");
+        assert_eq!(download_detail_metadata(Source::Jm, &work.work_id, vec![work.clone()]).unwrap_err().code, "DOWNLOAD_METADATA_IDENTITY_MISMATCH");
+        assert_eq!(download_detail_metadata(Source::Pica, &work.work_id, vec![work.clone()]).unwrap(), download_metadata(work.clone()));
         let metadata = download_metadata(work.clone());
         assert_eq!(metadata.version_updated_at, work.source_updated_at);
         work.source_updated_at = Some("2026-09-20T00:00:00.000Z".into());

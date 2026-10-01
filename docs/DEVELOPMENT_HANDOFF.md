@@ -1,5 +1,15 @@
 # Current development handoff
 
+## Synthetic download metadata diagnostics (2026-10-01)
+
+The user approved generic validation, error classification and diagnostic work
+with synthetic data only. See [the scoped change](DOWNLOAD_METADATA_DIAGNOSTICS_2026-10-01.md).
+The implementation preserves the existing admission rules and all persisted
+formats, adds redacted field-specific preparation errors, and retains at most
+20 preparation diagnostics for the current process. It does not normalize
+rejected metadata, request real source data or recover a particular work.
+Required CI is pending for this follow-up; keep the existing draft PR unmerged.
+
 ## Active author workspace batch (2026-10-01)
 
 The user approved six improvements in five sequential stages; see

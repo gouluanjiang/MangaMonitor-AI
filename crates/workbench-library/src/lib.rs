@@ -1,17 +1,19 @@
-//! Read-only indexing of an explicitly selected PC library. This crate does not
-//! download, extract, modify, move or delete user media, or claim phone presence.
+//! Indexing of an explicitly selected PC library, with a separately confirmed
+//! single-file recycle boundary. Reading never modifies user media.
 mod archive;
 mod cover;
 mod metadata;
 mod migration;
 mod paths;
 mod reader;
+mod recycle;
 mod reviewed;
 mod scan;
 mod service;
 
 pub use migration::LibraryMigrationResult;
 pub use reader::{source_reader_key, LocalReader, ReaderChapter, ReaderImage};
+pub use recycle::{LibraryRecyclePreview, LibraryRecycleRequest, LibraryRecycleResult, VerifiedRecycleTarget};
 pub use reviewed::{
     import_reviewed_library, preview_reviewed_library, reviewed_library_presence,
     ReviewedFilePresence, ReviewedLibraryImport, ReviewedLibraryPresence,

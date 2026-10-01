@@ -95,3 +95,21 @@ bindings, source/credential boundaries, request accounting, image enumeration,
 staging, promotion, replacement and deletion are unchanged. Prior protocol pins
 and executor reviews remain applicable. Tests are synthetic and do not authorize
 or perform real source requests or media downloads; no persisted migration occurs.
+
+## 2026-10-01 explicit library recycle review
+
+The user approved a local-cover delete action with native confirmation and
+recoverable Windows Recycle Bin semantics. See
+[the batch contract](LIBRARY_BROWSING_FOLLOWUPS_2026-10-01.md#recycle-only-boundary).
+The selected root/generation/item/revision and verified archive identity remain
+authoritative through confirmation. This is not automatic download cleanup,
+replacement, directory deletion, or permission to delete real books for tests.
+
+New download admission shares a read/exclusive gate with the recycle command.
+Active source preparation, confirmation, queue/driver registration blocks the
+operation; idle temporary previews may be retired without changing durable
+tasks. No source protocol, image enumeration, execution proof or limit changes.
+Stored links/history/progress survive a recycled-file tombstone and can be reused
+only for the same restored file identity. Uncertain operation/storage outcomes
+are explicitly reported. Synthetic CI and user-operated real acceptance remain
+different gates; production monitoring stays disabled.

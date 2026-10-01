@@ -483,7 +483,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     }
 
     /// Captures both verified identities together. It performs no remote IO.
-    pub(crate) async fn observation_identity(
+    /// Desktop browsing sidecars reuse this identity and revocable lease;
+    /// renderers never select the persisted account namespace or root path.
+    pub async fn observation_identity(
         &self,
         source: Source,
         session_id: &str,

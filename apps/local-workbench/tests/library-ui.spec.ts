@@ -15,6 +15,8 @@ type PhoneLibrarySnapshot = {
 test.use({ storageState: { cookies: [], origins: [] } });
 type Call = { command: string; args: Record<string, unknown> };
 type Options = {
+  archives?: boolean;
+  recycleResults?: ("cancel" | "busy" | "success")[];
   failRevealOnce?: boolean;
   failPreferences?: boolean;
   pcCount?: number;
@@ -110,7 +112,7 @@ async function installMock(page: Page, options: Options = {}) {
         id: id(number),
         relativePath: reference ? reference.source + "/" + base : base,
         fileName: base,
-        format: "directory",
+        format: options.archives ? "zip" : "directory",
         title: base,
         authors: ["合成作者"],
         description: null,
@@ -219,6 +221,7 @@ async function installMock(page: Page, options: Options = {}) {
     };
     const booklists = { revision: 0, value: { version: 1, lists: [] } };
     let revealFailed = false;
+    let recycleIndex = 0;
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
@@ -232,6 +235,37 @@ async function installMock(page: Page, options: Options = {}) {
               revision: "b".repeat(40),
               platform: "windows",
             };
+          if (command === "library_recycle") {
+            const result = options.recycleResults?.[recycleIndex++] ?? "cancel";
+            if (
+              args.rootId !== hooks.pc.rootId ||
+              args.generation !== hooks.pc.generation ||
+              args.expectedRevision !== hooks.pc.revision
+            )
+              throw { code: "LIBRARY_STALE_SNAPSHOT" };
+            if (result === "cancel") return null;
+            if (result === "busy") throw { code: "LIBRARY_ITEM_BUSY" };
+            hooks.pc = {
+              ...hooks.pc,
+              revision: hooks.pc.revision + 1,
+              items: hooks.pc.items.map((item) =>
+                item.id === args.entryId
+                  ? {
+                      ...item,
+                      state: "unreadable",
+                      errorCode: "LIBRARY_RECYCLED",
+                      coverAvailable: false,
+                    }
+                  : item,
+              ),
+            };
+            savePC();
+            return {
+              snapshot: clone(hooks.pc),
+              recycled: true,
+              errorCode: null,
+            };
+          }
           if (command === "library_reveal") {
             if (
               args.rootId !== hooks.pc.rootId ||
@@ -1170,4 +1204,52 @@ test("female-oriented library tags require JM source evidence and never hide unr
   await expect(page.getByTestId("library-card-" + id(3))).toBeVisible();
   expect(await page.evaluate(() => window.libraryTest.pc.items.length)).toBe(4);
   expect(await commands(page, "source_query")).toEqual([]);
+});
+
+test("library context menu exposes five actions and recycle cancellation/failure preserve the card", async ({
+  page,
+}) => {
+  await installMock(page, {
+    pcCount: 4,
+    archives: true,
+    recycleResults: ["cancel", "busy", "success"],
+  });
+  const cover = page.getByTestId("library-open-" + id(1));
+  await cover.click({ button: "right" });
+  const menu = page.getByTestId("reader-cover-actions");
+  await expect(menu.getByRole("menuitem")).toHaveCount(5);
+  await menu
+    .getByRole("menuitem", { name: "打开文件位置", exact: true })
+    .click();
+  expect(await commands(page, "library_reveal")).toHaveLength(1);
+  expect(await commands(page, "library_recycle")).toHaveLength(0);
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
+  await expect
+    .poll(async () => (await commands(page, "library_recycle")).length)
+    .toBe(1);
+  await expect(cover).toBeVisible();
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
+  await expect(page.getByTestId("library-file-message")).toContainText(
+    "正在被读取",
+  );
+  await expect(cover).toBeVisible();
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
+  await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(2))).toBeVisible();
+  await expect(page.getByTestId("library-file-message")).toContainText(
+    "已移到回收站",
+  );
+  const calls = await commands(page, "library_recycle");
+  expect(calls).toHaveLength(3);
+  expect(calls[0].args).toEqual({
+    rootId: "a".repeat(64),
+    generation: 1,
+    entryId: id(1),
+    expectedRevision: 1,
+  });
+  expect(await commands(page, "reader_window_open")).toHaveLength(0);
+  expect(await commands(page, "reader_open")).toHaveLength(0);
 });

@@ -49,7 +49,18 @@ export interface LibraryCover {
   entryId: string;
   dataUrl: string | null;
 }
+export interface LibraryRecycleResult {
+  snapshot: LibrarySnapshot;
+  recycled: boolean;
+  errorCode: string | null;
+}
 export interface LibraryAdapter {
+  recycle(
+    rootId: string,
+    generation: number,
+    entryId: string,
+    expectedRevision: number,
+  ): Promise<LibraryRecycleResult | null>;
   reveal(rootId: string, generation: number, entryId: string): Promise<void>;
   read(): Promise<LibrarySnapshot>;
   choose(): Promise<LibrarySnapshot | null>;

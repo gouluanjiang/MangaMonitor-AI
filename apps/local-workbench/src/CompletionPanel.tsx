@@ -82,6 +82,11 @@ import {
 import type { UpdatedSort } from "./work-dates.ts";
 import "./completion.css";
 import { SourceIssues } from "./SourceIssues.tsx";
+import {
+  BrowsingMarkerNote,
+  BrowsingNewBadge,
+  useAuthorBrowsingMarkers,
+} from "./useBrowsingMarkers.tsx";
 
 const nativeAdapter = createCompletionAdapter();
 type ReadRequest = { kind: "full" | "progress"; includeOther: boolean };
@@ -203,6 +208,12 @@ export function CompletionPanel({
   const recentRunning = recentRun?.phase === "checking";
   const [readFailure, setReadFailure] = useState<CompletionReadFailure | null>(
     null,
+  );
+  const browsing = useAuthorBrowsingMarkers(
+    accounts,
+    view,
+    active && mode === "updates",
+    !!readFailure,
   );
   const [author, setAuthor] = useState(""),
     [query, setQuery] = useState("");
@@ -1360,6 +1371,13 @@ export function CompletionPanel({
               ),
             )}
           </div>
+          {mode === "updates" && (
+            <BrowsingMarkerNote
+              notes={browsing.notes}
+              surface="authors"
+              onRetry={browsing.retry}
+            />
+          )}
           <p className="page-summary" data-testid="completion-counts">
             {onlyNewVisible ? "仅看本次新发现 · " : ""}
             {showOther ? "其他关键词结果（未确认作者归属） · " : ""}
@@ -1629,6 +1647,9 @@ export function CompletionPanel({
                         scope={scope}
                         work={work}
                       />
+                      {mode === "updates" && !showOther && (
+                        <BrowsingNewBadge work={work} marked={browsing.keys} />
+                      )}
                       <SourceLanguageBadge
                         tags={work.tags}
                         work={work}

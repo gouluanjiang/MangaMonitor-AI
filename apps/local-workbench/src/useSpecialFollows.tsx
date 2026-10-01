@@ -127,8 +127,13 @@ export function useSpecialFollows(
             }
             setError("");
           } catch {
-            if (alive.current && current.current.key === captured.key)
+            if (alive.current && current.current.key === captured.key) {
               setError("特别关注状态暂未读取，请重试；已有记录保留。");
+              if (command === "special_set")
+                current.current.notify(
+                  "特别关注未能保存，请稍后重试；普通关注和已有记录保留。",
+                );
+            }
           }
         });
       chain.current = task;
@@ -241,17 +246,55 @@ export function useSpecialFollows(
 }
 type SpecialState = ReturnType<typeof useSpecialFollows>;
 export const SpecialFollowsContext = createContext<SpecialState | null>(null);
-export function SpecialFollowButton({ author }: { author: string }) {
+export function SpecialFollowButton({
+  author,
+  disabled = false,
+  beforeEnable,
+}: {
+  author: string;
+  disabled?: boolean;
+  beforeEnable?(): Promise<boolean>;
+}) {
   const state = useContext(SpecialFollowsContext);
+  const pending = useRef(false);
+  const [preparing, setPreparing] = useState(false);
+  const current = useRef({ state, author });
+  current.current = { state, author };
   if (!state) return null;
   const enabled = state.enabled(author);
   return (
     <button
       type="button"
       className="text-button"
-      disabled={!state.connected || state.busy}
+      disabled={
+        disabled ||
+        preparing ||
+        !state.connected ||
+        !state.snapshot ||
+        state.busy
+      }
       aria-pressed={enabled}
-      onClick={() => void state.set(author, !enabled)}
+      onClick={() => {
+        if (pending.current) return;
+        pending.current = true;
+        setPreparing(true);
+        const accountKey = JSON.stringify(state.snapshot?.scopes);
+        void (async () => {
+          if (!enabled && beforeEnable && !(await beforeEnable())) return;
+          if (
+            current.current.author !== author ||
+            JSON.stringify(current.current.state?.snapshot?.scopes) !==
+              accountKey
+          )
+            return;
+          await state.set(author, !enabled);
+        })()
+          .catch(() => {})
+          .finally(() => {
+            pending.current = false;
+            setPreparing(false);
+          });
+      }}
       title="取消特别关注仍保留普通关注；首次建立基线不把旧作算作新作"
     >
       {enabled ? "取消特别关注" : "设为特别关注"}

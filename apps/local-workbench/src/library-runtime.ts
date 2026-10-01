@@ -5,6 +5,7 @@ import type {
   LibraryCover,
   LibraryItem,
   LibraryReference,
+  LibraryRecycleResult,
   LibraryScanAction,
   LibrarySnapshot,
 } from "./library-types.ts";
@@ -183,6 +184,32 @@ export function createLibraryAdapter(
     }
   }
   return {
+    recycle: async (rootId, generation, entryId, expectedRevision) => {
+      const result = await call("library_recycle", {
+        rootId: id(rootId),
+        generation: integer(generation),
+        entryId: id(entryId),
+        expectedRevision: integer(expectedRevision),
+      });
+      if (result === null) return null;
+      const raw = record(result);
+      const snapshot = validateLibrarySnapshot(raw.snapshot);
+      if (
+        snapshot.rootId !== rootId ||
+        snapshot.generation !== generation ||
+        snapshot.revision < expectedRevision ||
+        typeof raw.recycled !== "boolean" ||
+        (raw.errorCode !== null &&
+          (typeof raw.errorCode !== "string" ||
+            !/^[A-Z_]{1,80}$/.test(raw.errorCode)))
+      )
+        return bad();
+      return {
+        snapshot,
+        recycled: raw.recycled,
+        errorCode: raw.errorCode as string | null,
+      };
+    },
     reveal: async (rootId, generation, entryId) => {
       await call("library_reveal", {
         rootId: id(rootId),
@@ -249,6 +276,24 @@ export function libraryErrorMessage(cause: unknown): string {
   const code =
     typeof cause === "string" ? cause : (cause as { code?: string })?.code;
   switch (code) {
+    case "LIBRARY_ITEM_BUSY":
+      return "这本漫画正在被读取或使用，或下载队列仍在工作；请稍后重试。";
+    case "LIBRARY_RECYCLE_FORMAT_UNSUPPORTED":
+    case "LIBRARY_RECYCLE_UNSUPPORTED":
+      return "当前只支持在 Windows 中将 ZIP 或 CBZ 移到回收站。";
+    case "LIBRARY_RECYCLE_NOT_COMPLETED":
+    case "LIBRARY_RECYCLE_FAILED":
+    case "LIBRARY_RECYCLE_UNAVAILABLE":
+      return "未能将漫画移到回收站，请检查文件占用或回收站状态后重试。";
+    case "LIBRARY_RECYCLE_SAVE_FAILED":
+      return "文件位置已改变，但漫画库登记未能保存；请重新读取漫画库核对。阅读进度和历史保留。";
+    case "LIBRARY_RECYCLE_REFRESH_REQUIRED":
+      return "文件位置已改变，请重新读取漫画库确认当前状态；阅读进度和历史保留。";
+    case "LIBRARY_RECYCLE_RESULT_UNCERTAIN":
+    case "LIBRARY_RECYCLE_UNCERTAIN":
+      return "回收结果尚未确认，请核对回收站和文件位置后重新读取漫画库。";
+    case "LIBRARY_RECYCLED":
+      return "此文件已移到回收站；恢复后重新读取漫画库即可再次识别。";
     case "LIBRARY_REVEAL_FAILED":
       return "暂时无法打开文件位置，请稍后重试。";
     case "LIBRARY_REVEAL_UNSUPPORTED":
@@ -429,6 +474,39 @@ export class LibraryController {
   read() {
     this.paused = false;
     return this.run(() => this.adapter.read());
+  }
+  async recycle(
+    entryId: string,
+    expected: Pick<LibrarySnapshot, "rootId" | "generation" | "revision">,
+  ) {
+    if (this.state.busy) throw new LibraryError("LIBRARY_BUSY");
+    const current = this.state.snapshot;
+    if (
+      !expected.rootId ||
+      expected.rootId !== current.rootId ||
+      expected.generation !== current.generation ||
+      expected.revision !== current.revision
+    )
+      throw new LibraryError("LIBRARY_STALE_SNAPSHOT");
+    const token = this.epoch;
+    let result: LibraryRecycleResult | null | undefined;
+    await this.run(async () => {
+      result = await this.adapter.recycle(
+        expected.rootId!,
+        expected.generation,
+        entryId,
+        expected.revision,
+      );
+      return result?.snapshot ?? null;
+    });
+    if (token !== this.epoch) return null;
+    if (result === undefined)
+      throw (
+        this.state.failure?.cause ?? new LibraryError("LIBRARY_UNAVAILABLE")
+      );
+    const outcome = result as LibraryRecycleResult | null;
+    if (outcome?.errorCode) this.fail(outcome.errorCode);
+    return outcome;
   }
   choose() {
     this.paused = false;

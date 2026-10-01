@@ -27,12 +27,18 @@ import type { SourceScope, SourceWork } from "./source-types.ts";
 import "./reader-access.css";
 import { CoverRetryContext, type CoverRetryAction } from "./cover-retry.tsx";
 
+export interface LibraryCoverActions {
+  reveal(): void | Promise<void>;
+  recycle(): void | Promise<void>;
+  recycleDisabled?: boolean;
+}
 interface ReaderAccess {
   choose(
     request: ReaderRequest,
     title: string,
     details: () => void,
     point?: { x: number; y: number; keyboard?: boolean },
+    localActions?: LibraryCoverActions,
   ): void;
   read(request: ReaderRequest): void;
   readWindow(request: ReaderRequest): void;
@@ -52,6 +58,7 @@ export function CoverInteraction({
   request,
   title,
   onDetails,
+  localActions,
   selectionMode = false,
   selected = false,
   onToggleSelection,
@@ -62,6 +69,7 @@ export function CoverInteraction({
   request: ReaderRequest | null;
   title: string;
   onDetails(): void;
+  localActions?: LibraryCoverActions;
   selectionMode?: boolean;
   selected?: boolean;
   onToggleSelection?(): void;
@@ -94,7 +102,13 @@ export function CoverInteraction({
   ) => {
     element.focus({ preventScroll: true });
     if (request && access.available)
-      access.choose(request, title, onDetails, { x, y, keyboard });
+      access.choose(
+        request,
+        title,
+        onDetails,
+        { x, y, keyboard },
+        localActions,
+      );
     else onDetails();
   };
   return (
@@ -203,6 +217,7 @@ function CoverActions({
   onRead,
   onDetails,
   onReadWindow,
+  localActions,
   onClose,
   busy,
   error,
@@ -212,6 +227,7 @@ function CoverActions({
   onRead(): void;
   onDetails(): void;
   onReadWindow(): void;
+  localActions?: LibraryCoverActions;
   onClose(): void;
   busy: boolean;
   error: string;
@@ -309,6 +325,30 @@ function CoverActions({
         <button role="menuitem" onClick={onReadWindow} disabled={busy}>
           {busy ? "正在打开小窗…" : "小窗阅读"}
         </button>
+        {localActions && (
+          <>
+            <button
+              role="menuitem"
+              onClick={() => void localActions.reveal()}
+              disabled={busy}
+            >
+              打开文件位置
+            </button>
+            <button
+              role="menuitem"
+              className="reader-menu-delete"
+              onClick={() => void localActions.recycle()}
+              disabled={busy || localActions.recycleDisabled}
+              title={
+                localActions.recycleDisabled
+                  ? "仅在目录空闲时回收 ZIP 或 CBZ"
+                  : "确认后移到 Windows 回收站，可恢复"
+              }
+            >
+              删除漫画
+            </button>
+          </>
+        )}
         {error && <p role="alert">{error}</p>}
       </div>
     </div>,
@@ -327,6 +367,7 @@ export function useReaderHost(
     request: ReaderRequest;
     title: string;
     details(): void;
+    localActions?: LibraryCoverActions;
     point: { x: number; y: number; keyboard?: boolean };
   } | null>(null);
   const [openingWindow, setOpeningWindow] = useState(false);
@@ -452,7 +493,7 @@ export function useReaderHost(
   };
   const actions: ReaderAccess = {
     available: enabled,
-    choose: (next, title, details, point) => {
+    choose: (next, title, details, point, localActions) => {
       if (!enabled) return details();
       remember();
       setChoiceError("");
@@ -462,6 +503,7 @@ export function useReaderHost(
         request: next,
         title,
         details,
+        localActions: next.kind === "library" ? localActions : undefined,
         point: point ?? {
           x: rect?.left ?? 24,
           y: rect?.top ?? 24,
@@ -477,6 +519,16 @@ export function useReaderHost(
       setRequest(next);
     },
   };
+  const performLocalAction = (action: () => void | Promise<void>) => {
+    setChoice(null);
+    const previous = returnTo.current;
+    returnTo.current = null;
+    if (previous?.element?.isConnected)
+      previous.element.focus({ preventScroll: true });
+    void Promise.resolve()
+      .then(action)
+      .catch(() => report.current("本地文件操作未完成，请核对漫画库提示。"));
+  };
   const layer = (
     <>
       {choice && (
@@ -485,6 +537,16 @@ export function useReaderHost(
           busy={openingWindow}
           error={choiceError}
           point={choice.point}
+          localActions={
+            choice.localActions
+              ? {
+                  reveal: () => performLocalAction(choice.localActions!.reveal),
+                  recycle: () =>
+                    performLocalAction(choice.localActions!.recycle),
+                  recycleDisabled: choice.localActions.recycleDisabled,
+                }
+              : undefined
+          }
           onRead={() => actions.read(choice.request)}
           onReadWindow={() => openWindow(choice.request, true)}
           onDetails={() => {

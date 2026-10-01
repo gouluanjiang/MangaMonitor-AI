@@ -1,5 +1,19 @@
 # Current development handoff
 
+## Active library and browsing follow-ups (2026-10-01)
+
+Continue on `codex/library-browse-followups`, based on `0fdc8fc` and draft
+PR #24. The user resumed after a Codex restart and added wrapping all author tabs
+into rows. See [this batch contract](LIBRARY_BROWSING_FOLLOWUPS_2026-10-01.md)
+for history covers, five-action local menus, confirmed recoverable recycling,
+detail special follow, combined recent feeds and automatic browse-new badges.
+No overall UI redesign, full author scan, real manga download/deletion,
+merge or public release is part of validation. Existing profile formats remain;
+optional per-account/source/surface browse sidecars are independent of special
+unread and successful scan markers. Formal CI, exact candidate verification and
+user acceptance must be reported separately. Implementation and regressions are
+currently integrated; record CI/delivery evidence in that contract when ready.
+
 ## Download tag whitespace compatibility (2026-10-01)
 
 After the diagnostic-only candidate a0e868a was installed on the user's
@@ -10,7 +24,9 @@ non-whitespace controls rejected. Strict stored-document validation, existing
 record bytes and task bindings remain unchanged; no schema migration is needed.
 Both single and batch preparation use the same service boundary. Tests use
 synthetic metadata and isolated ledgers only, without source requests or media
-execution. Fresh CI/candidate evidence is required before user acceptance.
+execution. Source `0fdc8fc` passed its CI and exact-candidate installation; the
+user explicitly accepted the correction. That acceptance is separate from the
+new library/browsing batch.
 The details are in [the metadata contract](DOWNLOAD_METADATA_DIAGNOSTICS_2026-10-01.md).
 Keep draft PR #24 unmerged and do not perform a real manga download for verification.
 

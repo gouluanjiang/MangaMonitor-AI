@@ -197,7 +197,21 @@ impl LibraryService {
         }
         let scan_baseline: Vec<_> = seeds.into_values().collect();
         let mut job = ScanJob::new(root, generation, previous.revision, &scan_baseline)?;
+        let retained: Vec<_> = if same_root {
+            previous.value.records.iter()
+                .filter(|record| crate::recycle::retained_metadata(record))
+                .cloned().collect()
+        } else {
+            Vec::new()
+        };
+        job.retain_recycled(&retained);
+        let retained_ids: std::collections::BTreeSet<_> = retained.iter().map(|record| record.item.id.as_str()).collect();
+        let scan_baseline = scan_baseline.into_iter().filter(|seed| !retained_ids.contains(seed.id.as_str())).collect();
         let value = LibraryDocument {
+            // Recycled tombstones retain restore metadata through a complete
+            // scan while absent. They are never positive presence records.
+            visited: retained.len() as u64,
+            records: retained,
             scan_baseline,
             reviewed_works: if same_root {
                 previous.value.reviewed_works.clone()

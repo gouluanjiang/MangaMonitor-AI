@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CompletionPanel } from "./CompletionPanel.tsx";
 import type { CompletionPanelProps } from "./CompletionPanel.tsx";
 import { authorQueryError, authorQueryMessage } from "./author-query.ts";
@@ -20,6 +20,8 @@ export function AuthorWorkspace(props: Props) {
   const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
+  const searchInput = useRef<HTMLInputElement>(null);
+  const focusAfterClose = useRef<string | null>(null);
   const serial = useRef(0);
   const handled = useRef<number | null>(null);
   const scopeKey = JSON.stringify(props.accounts.map(accountScope));
@@ -29,6 +31,15 @@ export function AuthorWorkspace(props: Props) {
   }, [scopeKey]);
   const tabRef = useRef(tabs);
   tabRef.current = tabs;
+  useLayoutEffect(() => {
+    const target = focusAfterClose.current;
+    if (target === null) return;
+    focusAfterClose.current = null;
+    const element = target
+      ? document.getElementById(target)
+      : searchInput.current;
+    element?.focus({ preventScroll: true });
+  }, [tabs]);
   function open(raw: string, initialFilter: "all" | "missing" = "missing") {
     const name = raw.trim();
     const issue = authorQueryError(name);
@@ -65,8 +76,15 @@ export function AuthorWorkspace(props: Props) {
     const remaining = tabRef.current.filter((tab) => tab.id !== id);
     tabRef.current = remaining;
     setTabs(remaining);
-    if (selected === id)
-      setSelected((remaining[index] ?? remaining[index - 1])?.id ?? "");
+    const next =
+      selected === id
+        ? (remaining[index] ?? remaining[index - 1])
+        : remaining.find((tab) => tab.id === selected);
+    if (selected === id) {
+      setSelected(next?.id ?? "");
+      setQuery(next?.name ?? "");
+    }
+    focusAfterClose.current = next?.id ?? "";
   }
   return (
     <>
@@ -81,6 +99,7 @@ export function AuthorWorkspace(props: Props) {
             <label>
               作者名{" "}
               <input
+                ref={searchInput}
                 type="text"
                 aria-label="搜索作者名"
                 value={query}

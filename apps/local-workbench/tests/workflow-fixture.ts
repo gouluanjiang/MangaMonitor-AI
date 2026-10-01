@@ -9,6 +9,7 @@ import type {
 } from "../src/download-types.ts";
 import type { AccountSummary, SourceWork } from "../src/source-types.ts";
 import { initialPreferences } from "../src/preferences.ts";
+import { installBrowsingMarkerFixture } from "./browsing-marker-fixture.ts";
 
 declare global {
   interface Window {
@@ -36,6 +37,7 @@ export async function installWorkflow(
   page: Page,
   { enhanceBridge = false }: { enhanceBridge?: boolean } = {},
 ) {
+  await installBrowsingMarkerFixture(page);
   await page.addInitScript(
     ({ preferences, enhanceBridge }) => {
       const clone = <T>(value: T): T => structuredClone(value);
@@ -293,6 +295,12 @@ export async function installWorkflow(
             args: Record<string, unknown> = {},
           ) => {
             hooks.calls.push({ command, args: clone(args) });
+            const browsing = window.syntheticBrowsingMarkers.call(
+              command,
+              args,
+              hooks.accounts,
+            );
+            if (browsing !== undefined) return browsing;
             if (command === "source_author_known_works")
               return {
                 source: args.source,

@@ -85,6 +85,7 @@ pub(crate) struct ScanJob {
     entries: Entries,
     active: Option<WorkScan>,
     previous: BTreeMap<String, LibraryScanSeed>,
+    retained: BTreeMap<String, usize>,
     incomplete: bool,
 }
 
@@ -217,8 +218,13 @@ impl ScanJob {
             entries,
             active: None,
             previous,
+            retained: BTreeMap::new(),
             incomplete: false,
         })
+    }
+
+    pub(crate) fn retain_recycled(&mut self, records: &[LibraryRecord]) {
+        self.retained = records.iter().enumerate().map(|(index, record)| (record.item.id.clone(), index)).collect();
     }
 
     pub fn batch(&mut self, document: &mut LibraryDocument) -> Result<()> {
@@ -348,12 +354,17 @@ impl ScanJob {
         document.scan_baseline = if document.phase == LibraryPhase::Complete {
             Vec::new()
         } else {
-            self.previous.values().cloned().collect()
+            self.previous.values().filter(|seed| !self.retained.contains_key(&seed.id)).cloned().collect()
         };
     }
 
     fn finish_work(&mut self, document: &mut LibraryDocument, mut record: LibraryRecord) {
-        let old = self.previous.remove(&record.item.id);
+        let retained = self.retained.remove(&record.item.id);
+        let old = self.previous.remove(&record.item.id).filter(|old| {
+            // A newly created file at the same recycled pathname does not gain
+            // the removed file's admission date or manual source ownership.
+            retained.is_none() || (old.identity.is_some() && old.identity == record.identity)
+        });
         record.item.added_at = old.as_ref().map_or_else(
             || {
                 (record.item.state == LibraryItemState::Indexed && record.item.error_code.is_none())
@@ -382,7 +393,13 @@ impl ScanJob {
                 }
             }
         }
-        document.records.push(record);
+        // A restored archive replaces its tombstone by exact indexed identity;
+        // retaining a second row would violate the unique entry-id contract.
+        if let Some(index) = retained {
+            document.records[index] = record;
+        } else {
+            document.records.push(record);
+        }
     }
 }
 

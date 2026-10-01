@@ -1,16 +1,38 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { useViewingHistory } from "./useViewingHistory.ts";
 import type { HistoryIdentity } from "./history-runtime.ts";
-import { isContentHidden } from "./content-filter.ts";
+import type { LibraryAdapter, LibrarySnapshot } from "./library-types.ts";
+import type { AccountSummary, SourceAdapter } from "./source-types.ts";
+import { sourceLabel } from "./source-types.ts";
+import {
+  getContentFilterRevision,
+  subscribeContentFilter,
+} from "./content-filter.ts";
+import {
+  historyCoverTarget,
+  historyEntryVisible,
+  historyIdentityKey,
+} from "./history-covers.ts";
+import { SourceCover } from "./SourceWorkbench.tsx";
+import { LibraryCover } from "./LibraryWorkbench.tsx";
 import { useBrowseSession } from "./useBrowseSession.ts";
 import { formatTimestamp } from "./work-dates.ts";
+import "./viewing-history.css";
 export function ViewingHistoryPanel({
   active,
   history,
+  sourceAdapter,
+  accounts,
+  libraryAdapter,
+  librarySnapshot,
   onOpen,
 }: {
   active: boolean;
   history: ReturnType<typeof useViewingHistory>;
+  sourceAdapter: SourceAdapter;
+  accounts: AccountSummary[];
+  libraryAdapter: LibraryAdapter;
+  librarySnapshot: LibrarySnapshot;
   onOpen: (identity: HistoryIdentity) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -19,13 +41,22 @@ export function ViewingHistoryPanel({
   useEffect(() => {
     if (active) void history.refresh();
   }, [active, history.refresh]);
-  useBrowseSession({ scope: "viewing-history", active, root, itemKeys: [] });
-  if (!active) return null;
+  useSyncExternalStore(
+    subscribeContentFilter,
+    getContentFilterRevision,
+    getContentFilterRevision,
+  );
   const entries =
-    history.snapshot?.entries.filter(
-      (entry) =>
-        entry.identity.kind !== "source" || !isContentHidden(entry.identity),
+    history.snapshot?.entries.filter((entry) =>
+      historyEntryVisible(entry.identity, librarySnapshot),
     ) ?? [];
+  useBrowseSession({
+    scope: "viewing-history",
+    active,
+    root,
+    itemKeys: entries.map((entry) => historyIdentityKey(entry.identity)),
+  });
+  if (!active) return null;
   return (
     <div
       ref={root}
@@ -67,7 +98,7 @@ export function ViewingHistoryPanel({
         <button
           className="button secondary"
           onClick={() => setConfirm(true)}
-          disabled={history.busy || !entries.length}
+          disabled={history.busy || !history.snapshot?.entries.length}
         >
           清空历史
         </button>
@@ -100,22 +131,51 @@ export function ViewingHistoryPanel({
         <p>{history.snapshot ? "暂无浏览记录。" : "正在读取浏览历史…"}</p>
       )}
       <ol className="viewing-history-list">
-        {entries.map((entry) => (
-          <li key={JSON.stringify(entry.identity)}>
-            <button
-              className="text-button"
-              onClick={() => onOpen(entry.identity)}
-            >
-              {entry.title}
-            </button>
-            <span>
-              {entry.identity.kind === "library"
-                ? "漫画库"
-                : entry.identity.source}{" "}
-              · {formatTimestamp(entry.visitedAt)}
-            </span>
-          </li>
-        ))}
+        {entries.map((entry) => {
+          const cover = historyCoverTarget(entry, accounts, librarySnapshot);
+          const key = historyIdentityKey(entry.identity);
+          return (
+            <li key={key} data-browse-key={key}>
+              <div
+                className="viewing-history-cover"
+                data-testid="history-cover"
+              >
+                {cover.kind === "source" ? (
+                  <SourceCover
+                    adapter={sourceAdapter}
+                    scope={cover.scope}
+                    work={cover.work}
+                    resolveMissing
+                  />
+                ) : cover.kind === "library" ? (
+                  <LibraryCover
+                    adapter={libraryAdapter}
+                    snapshot={librarySnapshot}
+                    item={cover.item}
+                  />
+                ) : (
+                  <div className="source-cover">
+                    <span>{cover.message}</span>
+                  </div>
+                )}
+              </div>
+              <div className="viewing-history-copy">
+                <button
+                  className="text-button viewing-history-title"
+                  onClick={() => onOpen(entry.identity)}
+                >
+                  {entry.title}
+                </button>
+                <span>
+                  {entry.identity.kind === "library"
+                    ? "漫画库"
+                    : sourceLabel(entry.identity.source)}{" "}
+                  · {formatTimestamp(entry.visitedAt)}
+                </span>
+              </div>
+            </li>
+          );
+        })}
       </ol>
     </div>
   );

@@ -107,3 +107,9 @@ body[data-ui-reduced-motion="true"] .reader-cover-actions {
   transition: opacity 100ms ease;
   transform: none;
 }
+
+.reader-cover-actions .reader-menu-delete {
+  color: #efa6aa;
+  border-top: 1px solid var(--line);
+  margin-top: 3px;
+}

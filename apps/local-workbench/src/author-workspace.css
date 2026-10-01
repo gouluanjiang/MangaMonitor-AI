@@ -20,13 +20,17 @@
 }
 .author-tabs {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 8px;
-  overflow-x: auto;
+  min-width: 0;
   padding-block: 14px 4px;
 }
 .author-tab {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 9px;
 }
@@ -37,16 +41,21 @@
   padding: 7px 12px;
 }
 .author-tab > [role="tab"] {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  line-height: 1.45;
   border-radius: 8px 0 0 8px;
 }
 .author-tab > [aria-selected="true"] {
   background: var(--accent-soft, #342647);
 }
 .author-tab-close {
+  flex: 0 0 36px;
+  align-self: flex-start;
   padding-inline: 10px;
   min-width: 32px;
 }

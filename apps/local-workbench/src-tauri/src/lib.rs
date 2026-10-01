@@ -1,4 +1,6 @@
 mod accounts;
+mod browsing_markers;
+mod library_recycle;
 mod discovery;
 mod downloads;
 mod history;
@@ -180,6 +182,9 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         .on_window_event(reader_windows::window_event)
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            browsing_markers::browsing_markers_read,
+            browsing_markers::browsing_markers_write,
+            library_recycle::library_recycle,
             history::history_read,
             history::history_record,
             history::history_clear,

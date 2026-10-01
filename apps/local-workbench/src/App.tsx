@@ -722,6 +722,15 @@ export default function App() {
       );
       return;
     }
+    if (
+      library.snapshot.items.find((item) => item.id === identity.entryId)
+        ?.errorCode === "LIBRARY_RECYCLED"
+    ) {
+      setNotice(
+        "文件已移到回收站。恢复文件并重新读取漫画库后可以继续阅读；历史和阅读进度保留。",
+      );
+      return;
+    }
     setRequestedLibraryEntryId(identity.entryId);
     setRequestedLibraryWork(null);
     navigate("library");
@@ -2584,6 +2593,7 @@ export default function App() {
               externalWork={requestedLibraryWork}
               externalEntryId={requestedLibraryEntryId}
               requestKey={libraryRequestKey}
+              onNotice={setNotice}
             />
           )}
           {persistence.native && (
@@ -2631,6 +2641,10 @@ export default function App() {
             <ViewingHistoryPanel
               active={page === "history" && !embeddedSourceDetail}
               history={viewingHistory}
+              sourceAdapter={sourceAdapter}
+              accounts={accounts}
+              libraryAdapter={libraryAdapter}
+              librarySnapshot={library.snapshot}
               onOpen={openHistory}
             />
           )}

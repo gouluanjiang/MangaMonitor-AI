@@ -127,3 +127,111 @@ test("special follows keep baseline, unread and ordinary follows separate across
     ),
   ).toHaveLength(0);
 });
+
+test("detail special follow first adds ordinary follow and cancellation keeps it", async ({
+  page,
+}) => {
+  await installWorkflow(page);
+  await page.evaluate(() => {
+    window.workflowTest.finishCheck();
+    const previous = window.__TAURI_INTERNALS__!.invoke;
+    let followed = false,
+      enabled = false;
+    const mutationCalls: { command: string; args: Record<string, unknown> }[] =
+      [];
+    Object.assign(window, { detailSpecialCalls: mutationCalls });
+    window.__TAURI_INTERNALS__!.invoke = async (command, args = {}) => {
+      const scopes = window.workflowTest.accounts.map((a) => ({
+        source: a.source,
+        sessionId: a.sessionId,
+      }));
+      const special = () => ({
+        scopes,
+        authors: enabled
+          ? [
+              {
+                author: "合成新作者",
+                enabled: true,
+                baselinesComplete: 0,
+                errorCodes: [],
+              },
+            ]
+          : [],
+        updates: [],
+        run: {
+          id: 0,
+          phase: "idle",
+          startedAt: null,
+          finishedAt: null,
+          newCount: 0,
+          errorCode: null,
+        },
+      });
+      if (command === "source_following")
+        return {
+          source: args.source,
+          sessionId: args.sessionId,
+          revision: followed ? 2 : 1,
+          authors: followed ? ["合成关注作者", "合成新作者"] : ["合成关注作者"],
+          works: [],
+        };
+      if (command === "source_follow") {
+        mutationCalls.push({ command, args });
+        followed = Boolean(args.desired);
+        return {
+          source: args.source,
+          sessionId: args.sessionId,
+          revision: 2,
+          authors: ["合成关注作者", "合成新作者"],
+          works: [],
+        };
+      }
+      if (command === "special_set") {
+        mutationCalls.push({ command, args });
+        if (!followed) throw { code: "DISCOVERY_AUTHOR_NOT_FOLLOWED" };
+        enabled = Boolean(args.enabled);
+        return special();
+      }
+      if (command.startsWith("special_"))
+        return command === "special_progress" ? special().run : special();
+      return previous(command, args);
+    };
+  });
+  await page.getByTestId("nav-completion").click();
+  await page
+    .getByTestId("completion-panel")
+    .locator("article h3 button")
+    .first()
+    .click();
+  await expect(page.getByTestId("source-detail")).toBeVisible();
+  const author = page
+    .getByTestId("source-follow-author-合成新作者")
+    .locator("..");
+  await author
+    .getByRole("button", { name: "设为特别关注", exact: true })
+    .click();
+  await expect(
+    author.getByRole("button", { name: "取消特别关注", exact: true }),
+  ).toBeVisible();
+  await expect(
+    author.getByRole("button", { name: "取消作者关注", exact: true }),
+  ).toBeVisible();
+  await author
+    .getByRole("button", { name: "取消特别关注", exact: true })
+    .click();
+  await expect(
+    author.getByRole("button", { name: "设为特别关注", exact: true }),
+  ).toBeVisible();
+  await expect(
+    author.getByRole("button", { name: "取消作者关注", exact: true }),
+  ).toBeVisible();
+  const calls = await page.evaluate(() => (window as any).detailSpecialCalls);
+  expect(calls.map((call: any) => call.command)).toEqual([
+    "source_follow",
+    "special_set",
+    "special_set",
+  ]);
+  expect(calls[0].args.desired).toBe(true);
+  expect(calls[1].args.enabled).toBe(true);
+  expect(calls[2].args.enabled).toBe(false);
+});

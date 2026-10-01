@@ -27,6 +27,40 @@ pub(crate) struct DesktopDownloads {
     batches: Mutex<HashMap<String, PreparedBatch>>,
     scheduler: Mutex<Scheduler<DownloadSession>>,
     preparation_epoch: AtomicU64,
+    admission: Arc<tokio::sync::RwLock<()>>,
+}
+
+impl DesktopDownloads {
+    // The owned read permit crosses async source queries and blocking workers.
+    // Dropping the IPC future must not release a worker's outstanding admission.
+    fn download_admission(&self) -> Result<Arc<tokio::sync::OwnedRwLockReadGuard<()>>, StoreError> {
+        Arc::clone(&self.admission).try_read_owned().map(Arc::new)
+            .map_err(|_| error("LIBRARY_ITEM_BUSY"))
+    }
+
+    pub(crate) fn try_library_recycle_guard(&self) -> Result<tokio::sync::OwnedRwLockWriteGuard<()>, StoreError> {
+        let exclusive = Arc::clone(&self.admission).try_write_owned()
+            .map_err(|_| error("LIBRARY_ITEM_BUSY"))?;
+        // Never wait on the library mutex from here. A running driver keeps
+        // running=true until final registration, including between queue items.
+        let scheduler = self.scheduler.lock().map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        if scheduler.running || !scheduler.pending.is_empty() {
+            return Err(error("LIBRARY_ITEM_BUSY"));
+        }
+        // Idle previews have no media authority. Retire them instead of letting
+        // an abandoned confirmation block recycling forever. New admissions
+        // cannot enter until this permit drops. Preserve every durable task.
+        let mut plans = self.plans.lock().map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        let mut batches = self.batches.lock().map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        let ids: Vec<_> = plans.keys().cloned()
+            .chain(batches.values().flat_map(|batch| batch.plans.iter().map(|plan| plan.plan_id.clone())))
+            .collect();
+        self.service.discard_plans(&ids)?;
+        plans.clear();
+        batches.clear();
+        self.preparation_epoch.fetch_add(1, Ordering::AcqRel);
+        Ok(exclusive)
+    }
 }
 
 #[derive(Clone)]
@@ -222,6 +256,7 @@ pub(crate) async fn jm_download_prepare<R: Runtime>(
     generation: u64,
 ) -> Result<DownloadPlan, StoreError> {
     require_main(window.label())?;
+    let admission = downloads.download_admission()?;
     live_execution_allowed()?;
     let work_id = parse_input(scope.source, &input)?;
     let session = lease(Arc::clone(accounts.inner()), &scope).await?;
@@ -244,6 +279,7 @@ pub(crate) async fn jm_download_prepare<R: Runtime>(
     let downloads = Arc::clone(downloads.inner());
     let store = open_store(Arc::clone(store.inner())).await?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         session.require_current().map_err(|e| error(e.code))?;
         let plan = downloads.service.prepare_for_source(
             &store,
@@ -284,6 +320,7 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
     retained_batch_ids: Option<Vec<String>>,
 ) -> Result<DownloadBatchPlan, StoreError> {
     require_main(window.label())?;
+    let admission = downloads.download_admission()?;
     live_execution_allowed()?;
     if inputs.is_empty()
         || inputs.len() > MAX_DOWNLOAD_BATCH
@@ -369,7 +406,9 @@ pub(crate) async fn jm_download_batch_prepare<R: Runtime>(
             let root_id = root_id.clone();
             let session = session.clone();
             let reserved_plan_ids = reserved_plan_ids.clone();
+            let admission = Arc::clone(&admission);
             tauri::async_runtime::spawn_blocking(move || {
+                let _admission = admission;
                 session.require_current().map_err(|e| error(e.code))?;
                 let plan = downloads.service.prepare_for_source(
                     &store,
@@ -653,6 +692,7 @@ pub(crate) async fn jm_download_confirm<R: Runtime>(
     expected_revision: u64,
 ) -> Result<DownloadSnapshot, StoreError> {
     require_main(window.label())?;
+    let admission = downloads.download_admission()?;
     live_execution_allowed()?;
     let downloads = Arc::clone(downloads.inner());
     let store_state = Arc::clone(store.inner());
@@ -661,6 +701,7 @@ pub(crate) async fn jm_download_confirm<R: Runtime>(
     let worker_downloads = Arc::clone(&downloads);
     let worker_store = Arc::clone(&store);
     let (snapshot, starts) = tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         let mut scheduler = worker_downloads
             .scheduler
             .lock()
@@ -707,6 +748,7 @@ pub(crate) async fn jm_download_control<R: Runtime>(
     action: Control,
 ) -> Result<DownloadSnapshot, StoreError> {
     require_main(window.label())?;
+    let admission = downloads.download_admission()?;
     let starts = matches!(action, Control::Resume | Control::Retry);
     let session = if starts {
         live_execution_allowed()?;
@@ -722,6 +764,7 @@ pub(crate) async fn jm_download_control<R: Runtime>(
     let worker_store = Arc::clone(&store);
     let worker_id = task_id.clone();
     let (snapshot, starts) = tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         let mut scheduler = worker_downloads
             .scheduler
             .lock()
@@ -778,6 +821,7 @@ pub(crate) async fn jm_download_selection_confirm<R: Runtime>(
     batch_ids: Vec<String>,
 ) -> Result<DownloadSnapshot, StoreError> {
     require_main(window.label())?;
+    let admission = downloads.download_admission()?;
     live_execution_allowed()?;
     if batch_ids.is_empty()
         || batch_ids.len() > MAX_DOWNLOAD_SELECTION
@@ -792,6 +836,7 @@ pub(crate) async fn jm_download_selection_confirm<R: Runtime>(
     let worker_downloads = Arc::clone(&downloads);
     let worker_store = Arc::clone(&store);
     let (snapshot, starts) = tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         let mut scheduler = worker_downloads
             .scheduler
             .lock()
@@ -863,6 +908,7 @@ pub(crate) async fn jm_download_resume_many<R: Runtime>(
     tasks: Vec<TaskSelection>,
 ) -> Result<DownloadSnapshot, StoreError> {
     require_main(window.label())?;
+    let admission = downloads.download_admission()?;
     live_execution_allowed()?;
     let session = lease(Arc::clone(accounts.inner()), &scope).await?;
     let downloads = Arc::clone(downloads.inner());
@@ -872,6 +918,7 @@ pub(crate) async fn jm_download_resume_many<R: Runtime>(
     let worker_downloads = Arc::clone(&downloads);
     let worker_store = Arc::clone(&store);
     let (snapshot, starts) = tauri::async_runtime::spawn_blocking(move || {
+        let _admission = admission;
         let mut scheduler = worker_downloads
             .scheduler
             .lock()
@@ -1140,5 +1187,50 @@ mod tests {
             serde_json::to_value(store.read_downloads().unwrap()).unwrap(),
             before
         );
+    }
+}
+
+
+#[cfg(test)]
+mod recycle_admission_tests {
+    use super::*;
+
+    #[test]
+    fn recycle_excludes_prepare_confirm_and_cancelled_waiters_workers() {
+        let downloads = DesktopDownloads::default();
+        let admitted = downloads.download_admission().unwrap();
+        let worker = Arc::clone(&admitted);
+        drop(admitted);
+        assert_eq!(downloads.try_library_recycle_guard().err().unwrap().code, "LIBRARY_ITEM_BUSY");
+        drop(worker);
+        let recycle = downloads.try_library_recycle_guard().unwrap();
+        assert_eq!(downloads.download_admission().err().unwrap().code, "LIBRARY_ITEM_BUSY");
+        assert_eq!(downloads.try_library_recycle_guard().err().unwrap().code, "LIBRARY_ITEM_BUSY");
+        drop(recycle);
+        assert!(downloads.download_admission().is_ok());
+    }
+
+    #[test]
+    fn running_driver_including_registration_blocks_recycle_without_deadlock() {
+        let downloads = DesktopDownloads::default();
+        downloads.scheduler.lock().unwrap().running = true;
+        assert_eq!(downloads.try_library_recycle_guard().err().unwrap().code, "LIBRARY_ITEM_BUSY");
+        // Failed acquisition released its exclusive permit.
+        assert!(downloads.download_admission().is_ok());
+        downloads.scheduler.lock().unwrap().running = false;
+        assert!(downloads.try_library_recycle_guard().is_ok());
+    }
+
+    #[test]
+    fn recycle_invalidates_preparation_epoch_and_releases_admission() {
+        let downloads = DesktopDownloads::default();
+        let prior = downloads.preparation_epoch.load(Ordering::Acquire);
+        let permit = downloads.try_library_recycle_guard().unwrap();
+        assert_eq!(downloads.preparation_epoch.load(Ordering::Acquire), prior + 1);
+        assert_eq!(require_preparation(&downloads, prior).unwrap_err().code, "DOWNLOAD_PREPARATION_CANCELLED");
+        assert!(downloads.plans.lock().unwrap().is_empty());
+        assert!(downloads.batches.lock().unwrap().is_empty());
+        drop(permit);
+        assert!(downloads.download_admission().is_ok());
     }
 }

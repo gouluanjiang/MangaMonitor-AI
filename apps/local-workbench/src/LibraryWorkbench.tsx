@@ -78,7 +78,7 @@ export function useLibrary(adapter: LibraryAdapter, enabled: boolean) {
   return { ...state, controller };
 }
 export type LibraryState = ReturnType<typeof useLibrary>;
-function LibraryCover({
+export function LibraryCover({
   adapter,
   snapshot,
   item,
@@ -540,6 +540,7 @@ export function LibraryWorkbench({
   externalEntryId,
   requestKey = 0,
   searchControl,
+  onNotice,
 }: {
   library: LibraryState;
   active: boolean;
@@ -551,6 +552,7 @@ export function LibraryWorkbench({
   externalEntryId?: string | null;
   requestKey?: number;
   searchControl?: ReactNode;
+  onNotice?(message: string): void;
 }) {
   const [sort, setSort] = useState<LibrarySort>(() =>
       readSortPreference("library", librarySorts, "added-desc"),
@@ -568,6 +570,12 @@ export function LibraryWorkbench({
       density: 5 | 7 | 9;
       anchor: GridAnchor | null;
     } | null>(null);
+  const fileAction = useRef(false);
+  const [fileMessage, setFileMessage] = useState("");
+  const reportFileAction = (message: string) => {
+    setFileMessage(message);
+    onNotice?.(message);
+  };
   const contentRevision = useSyncExternalStore(
     subscribeContentFilter,
     getContentFilterRevision,
@@ -586,6 +594,7 @@ export function LibraryWorkbench({
     () =>
       library.snapshot.items.filter(
         (item) =>
+          item.errorCode !== "LIBRARY_RECYCLED" &&
           !isBlockedTagged(item.tags) &&
           !(
             (item.sourceRef?.source === "JM" ||
@@ -669,6 +678,49 @@ export function LibraryWorkbench({
       });
     root.current?.closest("main")?.scrollTo(0, 0);
   }
+  async function fileOperation(
+    item: LibraryItem,
+    action: "reveal" | "recycle",
+    expected: LibrarySnapshot,
+  ) {
+    if (fileAction.current || !expected.rootId) return;
+    fileAction.current = true;
+    setFileMessage("");
+    const savedAnchor = grid.current?.capture() ?? null;
+    try {
+      if (action === "reveal") {
+        await library.controller.adapter.reveal(
+          expected.rootId,
+          expected.generation,
+          item.id,
+        );
+      } else {
+        const result = await library.controller.recycle(item.id, expected);
+        if (result) {
+          reportFileAction(
+            result.errorCode
+              ? libraryErrorMessage(result.errorCode)
+              : result.recycled
+                ? "漫画已移到回收站，入库状态已更新；恢复文件后重新读取漫画库即可。"
+                : "漫画未移到回收站，请核对文件后重试。",
+          );
+        }
+      }
+    } catch (cause) {
+      reportFileAction(libraryErrorMessage(cause));
+    } finally {
+      fileAction.current = false;
+      requestAnimationFrame(() => {
+        const current = library.controller.getState().snapshot;
+        if (
+          !root.current?.hidden &&
+          current.rootId === expected.rootId &&
+          current.generation === expected.generation
+        )
+          grid.current?.restore(savedAnchor);
+      });
+    }
+  }
   function back() {
     setDetailId(null);
     requestAnimationFrame(() => grid.current?.restore(anchor.current));
@@ -680,6 +732,15 @@ export function LibraryWorkbench({
       className="library-workbench"
       data-testid="library-workbench"
     >
+      {fileMessage && (
+        <p
+          className="source-notice"
+          role="status"
+          data-testid="library-file-message"
+        >
+          {fileMessage}
+        </p>
+      )}
       {detail ? (
         <LibraryDetail
           key={detail.id}
@@ -841,6 +902,18 @@ export function LibraryWorkbench({
                             : null
                         }
                         onDetails={() => open(item)}
+                        localActions={{
+                          reveal: () =>
+                            fileOperation(item, "reveal", library.snapshot),
+                          recycle: () =>
+                            fileOperation(item, "recycle", library.snapshot),
+                          recycleDisabled:
+                            library.busy ||
+                            !["zip", "cbz"].includes(item.format) ||
+                            ["reading", "paused"].includes(
+                              library.snapshot.phase,
+                            ),
+                        }}
                       >
                         <LibraryCover
                           adapter={library.controller.adapter}

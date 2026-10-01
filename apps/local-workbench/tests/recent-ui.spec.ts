@@ -1,4 +1,6 @@
 import { openUnifiedSearch } from "./browse-ui-helpers.ts";
+import { installBrowsingMarkerFixture } from "./browsing-marker-fixture.ts";
+import type { BrowsingBaseline } from "../src/browsing-markers.ts";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { initialPreferences } from "../src/preferences.ts";
@@ -18,6 +20,8 @@ declare global {
       version: number;
       failPage: number | null;
       holdPage: number | null;
+      failSource: Source | null;
+      holdSource: Source | null;
       release?: () => void;
       total: number;
       blIds: number[];
@@ -78,8 +82,12 @@ async function install(
     femaleIds?: number[];
     retainedCount?: number;
     recentPages?: number[][];
+    recentPagesBySource?: Partial<Record<Source, number[][]>>;
+    datesBySource?: Partial<Record<Source, Record<string, string | null>>>;
+    browsingBaselines?: Partial<Record<Source, BrowsingBaseline>>;
   } = {},
 ) {
+  await installBrowsingMarkerFixture(page);
   await page.addInitScript(
     ({ preferences, library, options }) => {
       const hooks = (window.recentTest = {
@@ -96,6 +104,8 @@ async function install(
         version: 0,
         failPage: null,
         holdPage: options.holdPage ?? null,
+        failSource: null,
+        holdSource: null,
         total: 40,
         blIds: options.blIds ?? [],
         aiIds: options.aiIds ?? [],
@@ -107,6 +117,17 @@ async function install(
         releaseDetails: [],
         queue: { revision: 0, tasks: [] },
       } as Window["recentTest"]);
+      for (const account of hooks.accounts) {
+        const baseline = options.browsingBaselines?.[account.source];
+        const key =
+          "synthetic-browsing-markers:" +
+          JSON.stringify([account.source, account.accountId, "recent"]);
+        if (baseline && !localStorage.getItem(key))
+          localStorage.setItem(
+            key,
+            JSON.stringify({ revision: 1, value: { version: 1, baseline } }),
+          );
+      }
       const work = (
         source: Source,
         id: number,
@@ -134,9 +155,11 @@ async function install(
         pageCount: 20,
         coverAvailable: options.covers ?? false,
         sourceUpdatedAt:
-          id % 3 === 0
-            ? null
-            : new Date(1800000000000 - id * 1000).toISOString(),
+          options.datesBySource?.[source]?.[id] !== undefined
+            ? options.datesBySource![source]![id]
+            : id % 3 === 0
+              ? null
+              : new Date(1800000000000 - id * 1000).toISOString(),
       });
       const boundaryEdge = async (item: SourceWork | undefined) =>
         item
@@ -162,6 +185,12 @@ async function install(
             args: Record<string, unknown> = {},
           ) => {
             hooks.calls.push({ command, args: structuredClone(args) });
+            const browsing = window.syntheticBrowsingMarkers.call(
+              command,
+              args,
+              hooks.accounts,
+            );
+            if (browsing !== undefined) return browsing;
             if (command === "source_recent_history")
               return {
                 source: args.source,
@@ -267,7 +296,10 @@ async function install(
                   ? [Number(args.query)]
                   : args.kind === "ranking"
                     ? [901, 902]
-                    : (options.recentPages?.[pageNumber - 1] ??
+                    : (options.recentPagesBySource?.[source]?.[
+                        pageNumber - 1
+                      ] ??
+                      options.recentPages?.[pageNumber - 1] ??
                       Array.from(
                         {
                           length: Math.max(0, Math.min(20, total - start + 1)),
@@ -317,13 +349,21 @@ async function install(
                 if (hooks.detailFailIds.includes(Number(args.query)))
                   throw { code: "SOURCE_TIMEOUT" };
               }
-              if (args.kind === "recent" && hooks.holdPage === pageNumber) {
+              if (
+                args.kind === "recent" &&
+                hooks.holdPage === pageNumber &&
+                (!hooks.holdSource || hooks.holdSource === source)
+              ) {
                 hooks.holdPage = null;
                 await new Promise<void>((resolve) => {
                   hooks.release = resolve;
                 });
               }
-              if (args.kind === "recent" && hooks.failPage === pageNumber)
+              if (
+                args.kind === "recent" &&
+                hooks.failPage === pageNumber &&
+                (!hooks.failSource || hooks.failSource === source)
+              )
                 throw { code: "SOURCE_TIMEOUT" };
               // The native JM recent endpoint includes these raw edge proofs.
               // Keeping them in every JM fixture catches IPC contract drift.
@@ -411,6 +451,252 @@ async function install(
     .getByRole("button", { name: "最近更新", exact: true })
     .click();
 }
+
+test("combined first heads sort by website date, keep source identity and share single-source reads", async ({
+  page,
+}) => {
+  await install(page, {
+    recentPagesBySource: { JM: [[1, 2]], Pica: [[1, 2]] },
+    datesBySource: {
+      JM: { 1: "2026-09-30", 2: null },
+      Pica: { 1: "2026-10-01", 2: "2026-09-29" },
+    },
+  });
+  await page.getByLabel("最近更新来源").selectOption("both");
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 4 部");
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("recent-grid")
+        .locator("article")
+        .evaluateAll((items) =>
+          items.map((item) => item.getAttribute("data-testid")),
+        ),
+    )
+    .toEqual([
+      "recent-work-Pica:" + "1".padStart(24, "0"),
+      "recent-work-JM:1",
+      "recent-work-Pica:" + "2".padStart(24, "0"),
+      "recent-work-JM:2",
+    ]);
+  await expect(recentCard(page, "JM", 1)).toContainText("JM ·");
+  await expect(recentCard(page, "Pica", 1)).toContainText("哔咔 ·");
+  await page.getByLabel("最近更新来源").selectOption("Pica");
+  await page.getByLabel("最近更新来源").selectOption("both");
+  expect(
+    (await recentCalls(page)).map((args) => [args.source, args.page]),
+  ).toEqual([
+    ["Pica", 1],
+    ["JM", 1],
+  ]);
+  expect(await detailCalls(page)).toEqual([]);
+});
+
+test("combined late source head keeps the current visible anchor and settles without flicker", async ({
+  page,
+}) => {
+  await install(page);
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await page.evaluate(() => {
+    window.recentTest.holdPage = 1;
+    window.recentTest.holdSource = "JM";
+  });
+  await page.getByLabel("最近更新来源").selectOption("both");
+  await expect
+    .poll(() => page.evaluate(() => !!window.recentTest.release))
+    .toBe(true);
+  await page.getByRole("main").evaluate((element) => {
+    element.scrollTop = 700;
+  });
+  await expect(recentCard(page, "Pica", 8)).toBeInViewport();
+  const anchor = await captureRecentAnchor(page);
+  await page.evaluate(() => window.recentTest.release!());
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 40 部");
+  await expectRecentAnchor(page, anchor);
+  await expectStationaryRecentGrid(page);
+  expect(
+    (await recentCalls(page)).map((args) => [args.source, args.page]),
+  ).toEqual([
+    ["Pica", 1],
+    ["JM", 1],
+  ]);
+});
+
+test("combined partial failure preserves the successful source and retries only the failed page", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    window.recentTest.failPage = 1;
+    window.recentTest.failSource = "JM";
+  });
+  await page.getByLabel("最近更新来源").selectOption("both");
+  await expect(page.getByTestId("recent-source-progress-JM")).toContainText(
+    "已读内容保留",
+  );
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
+  await expect(recentCard(page, "Pica", 1)).toBeVisible();
+  await expect(page.getByTestId("recent-progress")).toContainText(
+    "部分来源未完成",
+  );
+  await page.evaluate(() => {
+    window.recentTest.failPage = null;
+  });
+  await page.getByRole("button", { name: "重试JM", exact: true }).click();
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 40 部");
+  expect(
+    (await recentCalls(page)).map((args) => [args.source, args.page]),
+  ).toEqual([
+    ["Pica", 1],
+    ["JM", 1],
+    ["JM", 1],
+  ]);
+  expect(await detailCalls(page)).toEqual([]);
+});
+
+test("recent browsing badges survive source and section switches, exclude history tails and clear next launch", async ({
+  page,
+}) => {
+  const id = (value: number) => String(value).padStart(24, "0");
+  await install(page, {
+    recentPages: [[100, 1, 2]],
+    retainedCount: 20,
+    browsingBaselines: {
+      Pica: { knownIds: [id(1)], headIds: [id(1)], reachedEnd: false },
+    },
+  });
+  await expect(
+    recentCard(page, "Pica", 100).getByTestId("browsing-new-badge"),
+  ).toHaveText("新增");
+  await expect(
+    recentCard(page, "Pica", 2).getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("recent-grid").getByTestId("browsing-new-badge"),
+  ).toHaveCount(1);
+  await page.getByLabel("最近更新来源").selectOption("JM");
+  await page.getByLabel("最近更新来源").selectOption("Pica");
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-recent").click();
+  await expect(
+    recentCard(page, "Pica", 100).getByTestId("browsing-new-badge"),
+  ).toHaveText("新增");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.recentTest.calls.filter(
+            (call) =>
+              call.command === "browsing_markers_write" &&
+              call.args.source === "Pica",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.reload();
+  await page.getByTestId("nav-recent").click();
+  await expect(recentCard(page, "Pica", 100)).toBeVisible();
+  await expect(page.getByTestId("recent-browsing-note")).not.toContainText(
+    "正在读取浏览基线",
+  );
+  await expect(
+    page.getByTestId("recent-grid").getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+  expect(await detailCalls(page)).toEqual([]);
+});
+
+test("first recent activation seeds all saved history and an unjoined later head remains uncertain", async ({
+  page,
+}) => {
+  await install(page, { recentPages: [[100, 101]], retainedCount: 40 });
+  await expect(page.getByTestId("recent-browsing-note")).toContainText(
+    "首次浏览已建立基线",
+  );
+  await expect(
+    page.getByTestId("recent-grid").getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.recentTest.calls.filter(
+            (call) => call.command === "browsing_markers_write",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  const saved = await page.evaluate(
+    () =>
+      JSON.parse(
+        localStorage.getItem(
+          "synthetic-browsing-markers:" +
+            JSON.stringify(["Pica", "fixture-account-Pica", "recent"]),
+        )!,
+      ).value.baseline,
+  );
+  expect(saved.knownIds).toHaveLength(42);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.seed(
+      "Pica",
+      "fixture-account-Pica",
+      "recent",
+      {
+        knownIds: ["90".padStart(24, "0")],
+        headIds: ["90".padStart(24, "0")],
+        reachedEnd: false,
+      },
+    );
+  });
+  await page.reload();
+  await page.getByTestId("nav-recent").click();
+  await expect(page.getByTestId("recent-browsing-note")).toContainText(
+    "尚未完整接回上次浏览的头部",
+  );
+  await expect(
+    page.getByTestId("recent-grid").getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+});
+
+test("browse markers follow stable account identity across renewed sessions and isolate another account", async ({
+  page,
+}) => {
+  const head = "1".padStart(24, "0");
+  await install(page, {
+    recentPages: [[100, 1]],
+    browsingBaselines: {
+      Pica: { knownIds: [head], headIds: [head], reachedEnd: false },
+    },
+  });
+  await expect(
+    recentCard(page, "Pica", 100).getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  await page.getByTestId("nav-settings").click();
+  await page.evaluate(() => {
+    window.recentTest.accounts[1].sessionId = "renewed-Pica";
+  });
+  await page
+    .getByRole("button", { name: "重新读取账号状态", exact: true })
+    .click();
+  await page.getByTestId("nav-recent").click();
+  await expect(
+    recentCard(page, "Pica", 100).getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  await page.getByTestId("nav-settings").click();
+  await page.evaluate(() => {
+    window.recentTest.accounts[1].sessionId = "other-Pica";
+    window.recentTest.accounts[1].accountId = "other-account-Pica";
+  });
+  await page
+    .getByRole("button", { name: "重新读取账号状态", exact: true })
+    .click();
+  await page.getByTestId("nav-recent").click();
+  await expect(page.getByTestId("recent-browsing-note")).toContainText(
+    "首次浏览已建立基线",
+  );
+  await expect(
+    recentCard(page, "Pica", 100).getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+});
 
 const recentCalls = (page: Page) =>
   page.evaluate(() =>

@@ -1288,7 +1288,7 @@ export function SourceWorkbench({
     mutation: Omit<FollowMutation, "expectedRevision">,
   ) {
     const captured = currentScope.current;
-    if (!captured || !following || followingLock.current) return;
+    if (!captured || !following || followingLock.current) return false;
     const request = ++followingRequest.current;
     followingLock.current = true;
     setFollowingBusy(true);
@@ -1300,15 +1300,17 @@ export function SourceWorkbench({
         expectedRevision: following.revision,
       });
       if (!stillCurrent(captured) || request !== followingRequest.current)
-        return;
+        return false;
       setFollowing(result);
       setPendingFollow(null);
       setNotice(mutation.desired ? "已加入本机关注。" : "已取消本机关注。");
+      return true;
     } catch (cause) {
       if (stillCurrent(captured) && request === followingRequest.current) {
         setFollowingError(sourceErrorMessage(cause));
         void reconcileSessionFailure(cause, captured);
       }
+      return false;
     } finally {
       if (stillCurrent(captured) && request === followingRequest.current) {
         followingLock.current = false;
@@ -1848,6 +1850,19 @@ export function SourceWorkbench({
                             ? "取消作者关注"
                             : "关注作者"}
                         </button>
+                        <SpecialFollowButton
+                          author={author}
+                          disabled={!following || followingBusy}
+                          beforeEnable={async () =>
+                            following?.authors.includes(author)
+                              ? true
+                              : changeFollow({
+                                  kind: "author",
+                                  value: author,
+                                  desired: true,
+                                })
+                          }
+                        />
                       </div>
                     ))
                   ) : (

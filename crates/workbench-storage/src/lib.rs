@@ -4,6 +4,7 @@
 mod author_evidence;
 mod author_query;
 mod background;
+mod browsing;
 mod cache;
 mod discovery;
 mod discovery_journal;
@@ -25,6 +26,7 @@ pub use author_evidence::{
 };
 pub use author_query::*;
 pub use background::{background_from_path, BackgroundSelection, MAX_BACKGROUND_BYTES};
+pub use browsing::{BrowsingBaseline, BrowsingMarkers, BrowsingSurface, MAX_BROWSING_IDS};
 pub use cache::{AccountCache, CacheEntry};
 pub use discovery::*;
 pub use discovery_journal::DiscoveryPagePatch;

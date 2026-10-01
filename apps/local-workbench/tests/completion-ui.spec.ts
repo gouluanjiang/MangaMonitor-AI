@@ -1,4 +1,5 @@
 import { openUnifiedSearch } from "./browse-ui-helpers.ts";
+import { installBrowsingMarkerFixture } from "./browsing-marker-fixture.ts";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { initialPreferences } from "../src/preferences.ts";
@@ -78,6 +79,7 @@ test.afterEach(async ({ page }) => {
   ).toEqual([]);
 });
 async function install(page: Page) {
+  await installBrowsingMarkerFixture(page);
   const accounts: AccountSummary[] = (["JM", "Pica"] as const).map(
     (source) => ({
       source,
@@ -208,6 +210,12 @@ async function install(page: Page) {
               command,
               args: clone(args) as Record<string, unknown>,
             });
+            const browsing = window.syntheticBrowsingMarkers.call(
+              command,
+              args,
+              hooks.accounts,
+            );
+            if (browsing !== undefined) return browsing;
             if (command === "read_preferences")
               return { revision: 0, value: preferences };
             if (command === "library_read") return clone(library);
@@ -507,6 +515,167 @@ const open = async (page: Page) => {
     "已记录 3 条",
   );
 };
+
+test("author browse badges retain the opening baseline independently of manual scan additions", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.seed(
+      "JM",
+      "synthetic-account-JM",
+      "authors",
+      { knownIds: ["123"], headIds: [], reachedEnd: false },
+    );
+    window.syntheticBrowsingMarkers.seed(
+      "Pica",
+      "synthetic-account-Pica",
+      "authors",
+      {
+        knownIds: ["0123456789abcdef01234567"],
+        headIds: [],
+        reachedEnd: false,
+      },
+    );
+  });
+  await open(page);
+  const card = page.getByTestId("author-update-JM:456");
+  await expect(card.getByTestId("browsing-new-badge")).toHaveText("新增");
+  await expect(card.getByTestId("scan-addition-badge")).toHaveCount(0);
+  await page.getByLabel("更新来源").selectOption("Pica");
+  await page.getByLabel("更新来源").selectOption("JM");
+  await page.getByTestId("completion-sort").selectOption("updated-asc");
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-completion").click();
+  await expect(card.getByTestId("browsing-new-badge")).toHaveText("新增");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.authorTest.calls.filter(
+            (call) => call.command === "browsing_markers_write",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /^(source_query|discovery_start|special_mark_read|special_start)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+  await page.reload();
+  await open(page);
+  await expect(page.getByTestId("authors-browsing-note")).not.toContainText(
+    "正在读取浏览基线",
+  );
+  await expect(card.getByTestId("browsing-new-badge")).toHaveCount(0);
+});
+
+test("first author browsing seeds the existing catalog without changing manual scan markers", async ({
+  page,
+}) => {
+  await install(page);
+  await seedChangeSummary(page);
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("authors-browsing-note")).toContainText(
+    "首次浏览已建立基线",
+  );
+  await expect(
+    page.getByTestId("completion-panel").getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("author-update-JM:789").getByTestId("scan-addition-badge"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /^(source_query|discovery_start|special_mark_read|special_start)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+});
+
+test("failed baseline reads never seed over stored data and failed writes keep this launch's badges", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.seed(
+      "JM",
+      "synthetic-account-JM",
+      "authors",
+      { knownIds: ["123"], headIds: [], reachedEnd: false },
+    );
+    window.syntheticBrowsingMarkers.failure = "BUSY";
+  });
+  await open(page);
+  await expect(page.getByTestId("authors-browsing-note")).toContainText(
+    "浏览基线暂不可用",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter(
+        (call) => call.command === "browsing_markers_write",
+      ),
+    ),
+  ).toEqual([]);
+  await expect(
+    page.getByTestId("completion-panel").getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.failure = null;
+  });
+  await page.getByRole("button", { name: "重试浏览基线", exact: true }).click();
+  await expect(
+    page.getByTestId("author-update-JM:456").getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.authorTest.calls.filter(
+            (call) => call.command === "browsing_markers_write",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.failure = "STORE_UNAVAILABLE";
+    const record = structuredClone(window.authorTest.view.records[1]);
+    record.work.workId = "789";
+    record.work.title = "合成作者 · 后续目录记录";
+    window.authorTest.view.records.push(record);
+    window.authorTest.view.revision++;
+  });
+  await page
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
+    .click();
+  await expect(page.getByTestId("authors-browsing-note")).toContainText(
+    "浏览基线暂不可用",
+  );
+  await expect(
+    page.getByTestId("author-update-JM:789").getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("author-update-JM:456").getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  const saved = await page.evaluate(
+    () =>
+      JSON.parse(
+        localStorage.getItem(
+          "synthetic-browsing-markers:" +
+            JSON.stringify(["JM", "synthetic-account-JM", "authors"]),
+        )!,
+      ).value.baseline,
+  );
+  expect(saved.knownIds).not.toContain("789");
+});
 
 const discoveryCalls = (page: Page, command = "reads") =>
   page.evaluate(

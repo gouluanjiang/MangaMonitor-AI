@@ -4,6 +4,8 @@ description = "Read and update workbench documents, or choose one background wit
 commands.allow = [
   "read_preferences",
   "history_read",
+  "browsing_markers_read",
+  "browsing_markers_write",
   "history_record",
   "history_clear",
   "history_set_enabled",
@@ -54,8 +56,8 @@ commands.allow = ["jm_download_prepare", "jm_download_confirm", "jm_download_rea
 
 [[permission]]
 identifier = "workbench-library"
-description = "Read the native-picked existing comic library and update its private index and verified download path locations; no media writes or execution authority."
-commands.allow = ["library_read", "library_choose", "library_import_paths", "library_scan", "library_cover", "library_reveal"]
+description = "Read the native-picked comic library and its index; explicitly confirmed ZIP/CBZ recycle uses verified identities and Windows Recycle Bin only, never permanent deletion."
+commands.allow = ["library_read", "library_choose", "library_import_paths", "library_scan", "library_cover", "library_reveal", "library_recycle"]
 
 [[permission]]
 identifier = "workbench-reader"

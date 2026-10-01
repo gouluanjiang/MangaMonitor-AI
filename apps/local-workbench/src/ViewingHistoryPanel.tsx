@@ -27,11 +27,19 @@ export function ViewingHistoryPanel({
         entry.identity.kind !== "source" || !isContentHidden(entry.identity),
     ) ?? [];
   return (
-    <div ref={root} data-testid="viewing-history">
-      <h1>浏览历史</h1>
-      <p>最近打开的 100 本漫画。只有打开详情或成功进入阅读器才会记录。</p>
+    <div
+      ref={root}
+      className="viewing-history-panel source-workbench"
+      data-testid="viewing-history"
+    >
+      <header className="page-heading source-heading">
+        <div>
+          <h1>浏览历史</h1>
+          <p>最近打开的 100 本漫画。只有打开详情或成功进入阅读器才会记录。</p>
+        </div>
+      </header>
       <div className="source-actions">
-        <label>
+        <label className="source-check">
           <input
             type="checkbox"
             checked={enabledDraft ?? history.snapshot?.enabled ?? true}
@@ -49,10 +57,15 @@ export function ViewingHistoryPanel({
           记录浏览历史
         </label>
         {enabledDraft !== null && <span role="status">正在保存记录设置…</span>}
-        <button onClick={() => void history.refresh()} disabled={history.busy}>
+        <button
+          className="button secondary"
+          onClick={() => void history.refresh()}
+          disabled={history.busy}
+        >
           重新读取
         </button>
         <button
+          className="button secondary"
           onClick={() => setConfirm(true)}
           disabled={history.busy || !entries.length}
         >
@@ -63,6 +76,7 @@ export function ViewingHistoryPanel({
         <div role="alert">
           <p>清空这份浏览记录？漫画文件、下载、关注和阅读进度都会保留。</p>
           <button
+            className="button secondary"
             onClick={() => {
               setConfirm(false);
               void history.clear();
@@ -70,7 +84,12 @@ export function ViewingHistoryPanel({
           >
             确认清空
           </button>
-          <button onClick={() => setConfirm(false)}>取消</button>
+          <button
+            className="button secondary"
+            onClick={() => setConfirm(false)}
+          >
+            取消
+          </button>
         </div>
       )}
       {history.error && <p role="status">{history.error}</p>}

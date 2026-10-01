@@ -501,9 +501,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let mut discovery_revision = 0;
         let mut history_complete = false;
         if let Ok(scopes) = self.current_discovery_scopes().await {
-            if let Err(error) = self.discovery_replay_observations(scopes.clone()).await {
-                observation_error_code = Some(error.code.into());
-            }
+            // This read already merges the observation pool below. Replaying
+            // every saved observation into the full catalog here adds redundant
+            // writes for each author/source, without adding evidence to the reply.
+            // Author-update reads retain their existing durable replay boundary.
             let context = self.discovery_context(scopes).await?;
             let root = context.root.clone();
             let catalog =

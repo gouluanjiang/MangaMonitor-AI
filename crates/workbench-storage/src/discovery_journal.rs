@@ -17,7 +17,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, collections::HashSet, time::SystemTime};
+use std::{collections::HashMap, collections::HashSet, sync::Arc, time::SystemTime};
 
 const MANIFEST: &str = "discovery-journal.json";
 const JOURNAL_REQUIRED: &str = "discovery-journal-required.json";
@@ -173,18 +173,28 @@ struct BaseStamp {
     modified: SystemTime,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct AccountIndex {
     records: HashMap<(Source, String), usize>,
     ranges: HashMap<(Source, String), usize>,
     summary_bytes: usize,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct RawIndex {
     accounts: HashMap<String, AccountIndex>,
     record_count: usize,
     encoded_bytes: usize,
+}
+
+/// One validated immutable checkpoint per open root. Every reuse still reads
+/// and SHA-256 checks the legacy base, checkpoint and all referenced patches.
+/// This skips repeated parsing/validation/index encoding, never disk integrity
+/// or revision checks. No persistent format changes or second mutable catalog.
+#[derive(Default)]
+pub(crate) struct DiscoveryReadCache {
+    legacy: Option<(String, u64)>,
+    checkpoint: Option<(String, Arc<Document<DiscoveryDocument>>, RawIndex)>,
 }
 
 pub(crate) struct DiscoveryIndexCache {
@@ -498,8 +508,6 @@ impl WorkbenchStore {
     }
 
     fn load_discovery_unlocked(&self, manifest: Option<Manifest>) -> Result<LoadedDiscovery> {
-        let mut document: Document<DiscoveryDocument> =
-            self.read_unlocked(DISCOVERY_FILE, MAX_DISCOVERY_BYTES)?;
         let base_stamp = self.discovery_base_stamp_unlocked()?;
         let base_sha256 = if base_stamp.is_some() {
             Some(hash(&read_regular_bounded(
@@ -509,16 +517,28 @@ impl WorkbenchStore {
         } else {
             None
         };
+        let checkpoint = manifest.as_ref().and_then(|value| value.checkpoint.as_ref());
+        let mut read_cache = self.discovery_read.lock().map_err(|_| corrupt())?;
+        let cached_base_revision = checkpoint.and_then(|_| {
+            read_cache.legacy.as_ref().and_then(|(hash, revision)| {
+                (base_sha256.as_ref() == Some(hash)).then_some(*revision)
+            })
+        });
+        let mut document: Document<DiscoveryDocument> = if let Some(revision) = cached_base_revision {
+            // The base was validated before this exact-byte digest was retained.
+            // Its records will immediately be replaced by the verified checkpoint.
+            Document { revision, value: DiscoveryDocument::default() }
+        } else {
+            self.read_unlocked(DISCOVERY_FILE, MAX_DISCOVERY_BYTES)?
+        };
         let base_revision = document.revision;
         if manifest.as_ref().is_some_and(|manifest| {
             manifest.base_revision != base_revision || manifest.base_sha256 != base_sha256
         }) {
             return Err(corrupt());
         }
-        if let Some(checkpoint) = manifest
-            .as_ref()
-            .and_then(|manifest| manifest.checkpoint.as_ref())
-        {
+        read_cache.legacy = base_sha256.clone().map(|hash| (hash, base_revision));
+        let mut index = if let Some(checkpoint) = checkpoint {
             let bytes = read_regular_bounded(
                 &self.root.join(checkpoint_name(&checkpoint.sha256)),
                 MAX_DISCOVERY_RAW_BYTES,
@@ -526,14 +546,26 @@ impl WorkbenchStore {
             if bytes.len() as u64 != checkpoint.bytes || hash(&bytes) != checkpoint.sha256 {
                 return Err(corrupt());
             }
-            document = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
+            let cached = read_cache.checkpoint.as_ref().filter(|(hash, _, _)| hash == &checkpoint.sha256);
+            let index = if let Some((_, saved, index)) = cached {
+                document = saved.as_ref().clone();
+                index.clone()
+            } else {
+                document = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
+                document.value.migrate()?;
+                document.value.validate().map_err(|_| corrupt())?;
+                let index = RawIndex::from_document(&document.value)?;
+                read_cache.checkpoint = Some((checkpoint.sha256.clone(), Arc::new(document.clone()), index.clone()));
+                index
+            };
             if document.revision != checkpoint.revision {
                 return Err(corrupt());
             }
-            document.value.migrate()?;
-            document.value.validate().map_err(|_| corrupt())?;
-        }
-        let mut index = RawIndex::from_document(&document.value)?;
+            index
+        } else {
+            RawIndex::from_document(&document.value)?
+        };
+        drop(read_cache);
         let mut positions: RecordPositions = document
             .value
             .accounts

@@ -33,9 +33,15 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 // root gate first, so a large catalog read cannot make our own history read BUSY.
 const STORE_LOCK_WAIT: Duration = Duration::from_secs(2);
 const STORE_LOCK_POLL: Duration = Duration::from_millis(20);
-static ROOT_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+static ROOT_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<RootState>>>> = OnceLock::new();
 
-fn root_gate(root: &Path) -> Result<Arc<Mutex<()>>> {
+#[derive(Default)]
+struct RootState {
+    gate: Arc<Mutex<()>>,
+    discovery_read: Arc<Mutex<crate::discovery_journal::DiscoveryReadCache>>,
+}
+
+fn root_gate(root: &Path) -> Result<Arc<RootState>> {
     let key = fs::canonicalize(root).map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
     let mut gates = ROOT_GATES
         .get_or_init(|| Mutex::new(HashMap::new()))
@@ -45,7 +51,7 @@ fn root_gate(root: &Path) -> Result<Arc<Mutex<()>>> {
         return Ok(gate);
     }
     gates.retain(|_, gate| gate.strong_count() != 0);
-    let gate = Arc::new(Mutex::new(()));
+    let gate = Arc::new(RootState::default());
     gates.insert(key, Arc::downgrade(&gate));
     Ok(gate)
 }
@@ -120,6 +126,9 @@ pub struct WorkbenchStore {
     // Acquired only while local_lock is held. No filesystem handles are cached.
     document_cache: Mutex<DocumentCache>,
     pub(crate) discovery_index: Mutex<Option<crate::discovery_journal::DiscoveryIndexCache>>,
+    pub(crate) discovery_read: Arc<Mutex<crate::discovery_journal::DiscoveryReadCache>>,
+    // Keep the per-root cache alive across short-lived account-service handles.
+    _root_state: Arc<RootState>,
     // Windows handles keep ancestors from being renamed/replaced while the store is open.
     _directory_handles: Vec<File>,
 }
@@ -128,12 +137,14 @@ impl WorkbenchStore {
     pub fn open(app_data_root: impl AsRef<Path>) -> Result<Self> {
         let root = app_data_root.as_ref().join(PRIVATE_DIRECTORY);
         let directory_handles = ensure_directory_tree(&root)?;
-        let local_lock = root_gate(&root)?;
+        let shared = root_gate(&root)?;
         Ok(Self {
             root,
-            local_lock,
+            local_lock: Arc::clone(&shared.gate),
             document_cache: Mutex::new(DocumentCache::default()),
             discovery_index: Mutex::new(None),
+            discovery_read: Arc::clone(&shared.discovery_read),
+            _root_state: shared,
             _directory_handles: directory_handles,
         })
     }

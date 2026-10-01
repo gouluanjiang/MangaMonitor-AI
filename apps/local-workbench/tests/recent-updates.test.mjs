@@ -347,7 +347,7 @@ test("live pages enrich saved works in place; only explicit refresh adopts their
 });
 
 for (const historyFirst of [false, true]) {
-  test(`initial ${historyFirst ? "history" : "live page"} displays without waiting and keeps its order when the other arrives`, async () => {
+  test(`initial ${historyFirst ? "history" : "live page"} displays without waiting and establishes the current source head exactly once`, async () => {
     let releaseLive, releaseHistory;
     const reader = new RecentUpdatesReader(
       {
@@ -373,10 +373,7 @@ for (const historyFirst of [false, true]) {
     if (historyFirst) releaseLive(page(1, [1, 2]));
     else releaseHistory(history([work(3), work(2, { tags: ["AI作画"] })]));
     await pending;
-    assert.deepEqual(
-      idsOf(reader.state.displayItems),
-      historyFirst ? ["3", "2", "1"] : ["1", "2", "3"],
-    );
+    assert.deepEqual(idsOf(reader.state.displayItems), ["1", "2", "3"]);
     if (!historyFirst)
       assert.deepEqual(reader.state.displayItems[1].tags, ["AI作画"]);
   });

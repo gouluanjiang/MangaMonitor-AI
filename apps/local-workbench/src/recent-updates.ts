@@ -175,6 +175,9 @@ export class RecentUpdatesReader {
   }
   async start(): Promise<void> {
     if (this.state.phase !== "idle") return;
+    // Establish the current source head once even if history wins the race;
+    // otherwise brand-new works would be buried behind the entire saved list.
+    this.refreshOrder = [];
     // Saved history is supplementary. A large local catalog must not delay the
     // first live page; either result can become visible independently.
     await Promise.all([this.read(1), this.refreshHistory()]);
@@ -214,7 +217,7 @@ export class RecentUpdatesReader {
   async refresh(): Promise<void> {
     if (this.disposed) return;
     if (this.task) return this.task;
-    // Only a successful user-requested first page may rebuild display order.
+    // After initial loading, only a successful user refresh may rebuild order.
     // Retain the last known live order for saved records beyond that first page;
     // a late supplementary history response must not reorder them a second time.
     this.refreshOrder = this.state.snapshot?.items ?? [];

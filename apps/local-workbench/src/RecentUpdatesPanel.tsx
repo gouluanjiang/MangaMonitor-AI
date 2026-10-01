@@ -37,7 +37,6 @@ import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
 import { isContentHidden, rememberContentWork } from "./content-filter.ts";
 import { useAuthorCatalogMembership } from "./author-catalog-membership.ts";
 import { subscribeAuthorCatalogChanges } from "./author-catalog-events.ts";
-import { mergeSourceWorks } from "./source-types.ts";
 
 export function RecentUpdatesPanel({
   active,
@@ -121,24 +120,18 @@ export function RecentUpdatesPanel({
     }
     const next = retained?.reader ?? new RecentUpdatesReader(adapter, scope);
     readers.current.set(scopeKey, { adapter, reader: next });
-    let previous: RecentUpdatesState["snapshot"] = null;
+    let previous: SourceWork[] | null = null;
     const unsubscribe = next.subscribe((state) => {
-      const snapshot = state.snapshot;
-      snapshot?.items.forEach(rememberContentWork);
+      const items = state.displayItems;
+      if (items !== previous) items.forEach(rememberContentWork);
       if (
         currentView.current.active &&
         currentView.current.scopeKey === scopeKey &&
-        snapshot &&
-        previous &&
-        (snapshot.page > previous.page ||
-          (snapshot.page === previous.page &&
-            snapshot.items.some(
-              (work, index) => work.tags !== previous?.items[index]?.tags,
-            ))) &&
-        snapshot.items.length >= previous.items.length &&
-        previous.items.every(
-          (work, index) =>
-            sourceWorkKey(work) === sourceWorkKey(snapshot.items[index]),
+        previous?.length &&
+        items !== previous &&
+        items.length >= previous.length &&
+        previous.every(
+          (work, index) => sourceWorkKey(work) === sourceWorkKey(items[index]),
         )
       ) {
         // Capture when the response arrives, not when it was requested: the
@@ -146,11 +139,11 @@ export function RecentUpdatesPanel({
         // this card after commit and yields to any new scroll input.
         let anchor = grid.current?.capture() ?? null;
         if (anchor) {
-          const index = snapshot.items.findIndex(
+          const index = items.findIndex(
             (work) => sourceWorkKey(work) === anchor?.key,
           );
-          if (index >= 0 && isContentHidden(snapshot.items[index])) {
-            const neighbor = snapshot.items
+          if (index >= 0 && isContentHidden(items[index])) {
+            const neighbor = items
               .slice(index + 1)
               .find((work) => !isContentHidden(work));
             anchor = neighbor
@@ -160,7 +153,7 @@ export function RecentUpdatesPanel({
         }
         grid.current?.restore(anchor);
       }
-      previous = snapshot;
+      previous = items;
       setObserved({ key: scopeKey, adapter, reader: next, state });
     });
     return () => {
@@ -205,15 +198,7 @@ export function RecentUpdatesPanel({
   const retained = (state?.retainedItems ?? []).filter(
     (work) => !liveKeys.has(sourceWorkKey(work)),
   );
-  // Keep live order, but do not let a light row erase locally retained labels.
-  const enriched = mergeSourceWorks(
-    state?.retainedItems ?? [],
-    data?.items ?? [],
-  );
-  const byKey = new Map(enriched.map((work) => [sourceWorkKey(work), work]));
-  const displayItems = [...(data?.items ?? []), ...retained].map(
-    (work) => byKey.get(sourceWorkKey(work)) ?? work,
-  );
+  const displayItems = state?.displayItems ?? [];
   const hiddenCount = displayItems.filter(isContentHidden).length;
   const uncommitted = new Set(state?.uncommittedIds ?? []);
   const eligible = displayItems.filter(
@@ -300,7 +285,7 @@ export function RecentUpdatesPanel({
       <div className="page-heading source-heading">
         <div>
           <h1>最近更新</h1>
-          <p>浏览 JM 与哔咔的新近作品，按网站提供的顺序展示。</p>
+          <p>浏览 JM 与哔咔的新近作品，翻页时保留已显示作品的位置。</p>
         </div>
       </div>
       {navigation}
@@ -422,7 +407,7 @@ export function RecentUpdatesPanel({
           <details className="page-scope-details">
             <summary>浏览范围与排序说明 · 仅筛选已读取作品</summary>
             <p className="source-muted" data-testid="recent-order-note">
-              按来源最新顺序浏览，日期以网站提供为准；不保证每次章节更新都会排到前面。筛选仅覆盖已读取范围。
+              翻页与补充历史不会提前或重排已显示作品；点击“刷新最近更新”后，按已读取的网站顺序重新排列。日期以网站提供为准，不保证每次章节更新都会排到前面。筛选仅覆盖已读取范围。
             </p>
             {data && (
               <p className="source-muted">

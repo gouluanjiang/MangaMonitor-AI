@@ -23,6 +23,7 @@ export interface RecentUpdatesSnapshot extends SourcePage {
 }
 export interface RecentUpdatesState {
   snapshot: RecentUpdatesSnapshot | null;
+  displayItems: SourceWork[];
   phase: "idle" | "reading" | "ready" | "complete" | "limited" | "error";
   error: unknown;
   retainedItems?: SourceWork[];
@@ -31,6 +32,30 @@ export interface RecentUpdatesState {
   historyErrorCode?: string | null;
   observationErrorCode?: string | null;
   uncommittedIds?: string[];
+}
+
+/** Metadata may change without promoting a saved work when its live page arrives. */
+function mergeDisplayItems(
+  order: SourceWork[],
+  live: SourceWork[],
+  retained: SourceWork[],
+): SourceWork[] {
+  // Keep the same metadata precedence as the source lists: lightweight live
+  // rows inherit explicit labels and dates already present in saved records.
+  const remaining = new Map(
+    mergeSourceWorks(retained, live).map((work) => [sourceWorkKey(work), work]),
+  );
+  const items: SourceWork[] = [];
+  for (const group of [order, live, retained]) {
+    for (const work of group) {
+      const key = sourceWorkKey(work);
+      const current = remaining.get(key);
+      if (!current) continue;
+      items.push(current);
+      remaining.delete(key);
+    }
+  }
+  return items;
 }
 
 /** A live feed can move between requests: retain first-seen order and merge IDs. */
@@ -106,11 +131,17 @@ export function appendRecentUpdates(
 
 /** Live pagination and persisted supplementary records are deliberately separate. */
 export class RecentUpdatesReader {
-  state: RecentUpdatesState = { snapshot: null, phase: "idle", error: null };
+  state: RecentUpdatesState = {
+    snapshot: null,
+    displayItems: [],
+    phase: "idle",
+    error: null,
+  };
   private disposed = false;
   private task: Promise<void> | null = null;
   private retryPage = 1;
   private historyTask: Promise<void> | null = null;
+  private refreshOrder: SourceWork[] | null = null;
   private listeners = new Set<(state: RecentUpdatesState) => void>();
   private adapter: SourceAdapter;
   readonly scope: SourceScope;
@@ -129,9 +160,17 @@ export class RecentUpdatesReader {
     this.disposed = true;
     this.listeners.clear();
   }
-  private publish(change: Partial<RecentUpdatesState>) {
+  private publish(change: Partial<RecentUpdatesState>, order?: SourceWork[]) {
     if (this.disposed) return;
-    this.state = { ...this.state, ...change };
+    const next = { ...this.state, ...change };
+    if (change.snapshot !== undefined || change.retainedItems !== undefined) {
+      next.displayItems = mergeDisplayItems(
+        order ?? this.state.displayItems,
+        next.snapshot?.items ?? [],
+        next.retainedItems ?? [],
+      );
+    }
+    this.state = next;
     for (const listener of this.listeners) listener(this.state);
   }
   async start(): Promise<void> {
@@ -173,6 +212,12 @@ export class RecentUpdatesReader {
     return this.historyTask;
   }
   async refresh(): Promise<void> {
+    if (this.disposed) return;
+    if (this.task) return this.task;
+    // Only a successful user-requested first page may rebuild display order.
+    // Retain the last known live order for saved records beyond that first page;
+    // a late supplementary history response must not reorder them a second time.
+    this.refreshOrder = this.state.snapshot?.items ?? [];
     await Promise.all([this.refreshHistory(), this.read(1)]);
   }
   retry(): Promise<void> {
@@ -218,16 +263,24 @@ export class RecentUpdatesReader {
         else if (page.discoveryRevision != null)
           uncommitted.delete(sourceWorkKey(work));
       }
-      this.publish({
-        snapshot,
-        observationErrorCode: page.observationErrorCode ?? null,
-        uncommittedIds: [...uncommitted],
-        phase: snapshot.limited
-          ? "limited"
-          : snapshot.hasMore === false
-            ? "complete"
-            : "ready",
-      });
+      const order =
+        number === 1 && this.refreshOrder !== null
+          ? [...snapshot.items, ...this.refreshOrder]
+          : undefined;
+      if (number === 1) this.refreshOrder = null;
+      this.publish(
+        {
+          snapshot,
+          observationErrorCode: page.observationErrorCode ?? null,
+          uncommittedIds: [...uncommitted],
+          phase: snapshot.limited
+            ? "limited"
+            : snapshot.hasMore === false
+              ? "complete"
+              : "ready",
+        },
+        order,
+      );
     } catch (error) {
       this.publish({ phase: "error", error });
     }

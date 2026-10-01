@@ -291,3 +291,160 @@ test("history diagnostics discard raw errors and clear after recovery", async ()
   assert.equal(reader.state.historyErrorCode, null);
   assert.equal(reader.state.retainedItems[0].workId, "3");
 });
+
+const idsOf = (items) => items.map((item) => item.workId);
+const range = (first, last) =>
+  Array.from({ length: last - first + 1 }, (_, index) => first + index);
+const history = (items) => ({ ...scope, items, coverage: {}, revision: 1 });
+
+test("live pages enrich saved works in place; only explicit refresh adopts their known source order", async () => {
+  const saved = range(1, 400).map((id) =>
+    work(id, id === 332 ? { tags: ["中文"] } : {}),
+  );
+  const pages = [
+    range(1, 80),
+    range(81, 160),
+    [...range(161, 178), 332, ...range(179, 239)],
+  ];
+  const calls = [];
+  const reader = new RecentUpdatesReader(
+    {
+      recentHistory: async () => history(saved),
+      query: async (_scope, request) => {
+        calls.push(request.page);
+        return page(request.page, pages[request.page - 1], {
+          total: 500,
+          pages: 7,
+          items: pages[request.page - 1].map((id) =>
+            work(id, id === 332 ? { title: "Updated synthetic title" } : {}),
+          ),
+        });
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  const original = idsOf(reader.state.displayItems);
+  await reader.loadNext();
+  await reader.loadNext();
+  assert.equal(idsOf(reader.state.snapshot.items).indexOf("332"), 178);
+  assert.equal(idsOf(reader.state.displayItems).indexOf("332"), 331);
+  assert.deepEqual(idsOf(reader.state.displayItems), original);
+  assert.equal(reader.state.displayItems[331].title, "Updated synthetic title");
+  assert.deepEqual(reader.state.displayItems[331].tags, ["中文"]);
+  assert.equal(reader.state.snapshot.items.length, 240);
+  assert.equal(new Set(idsOf(reader.state.displayItems)).size, 400);
+
+  await reader.refresh();
+  assert.equal(idsOf(reader.state.displayItems).indexOf("332"), 178);
+  assert.equal(reader.state.snapshot.items.length, 80);
+  const refreshed = idsOf(reader.state.displayItems);
+  saved.reverse();
+  saved.unshift(work(501));
+  await reader.refreshHistory();
+  assert.deepEqual(idsOf(reader.state.displayItems), [...refreshed, "501"]);
+  assert.deepEqual(calls, [1, 2, 3, 1]);
+});
+
+for (const historyFirst of [false, true]) {
+  test(`initial ${historyFirst ? "history" : "live page"} displays without waiting and keeps its order when the other arrives`, async () => {
+    let releaseLive, releaseHistory;
+    const reader = new RecentUpdatesReader(
+      {
+        query: () =>
+          new Promise((resolve) => {
+            releaseLive = resolve;
+          }),
+        recentHistory: () =>
+          new Promise((resolve) => {
+            releaseHistory = resolve;
+          }),
+      },
+      scope,
+    );
+    const pending = reader.start();
+    if (historyFirst) releaseHistory(history([work(3), work(2)]));
+    else releaseLive(page(1, [1, 2]));
+    await Promise.resolve();
+    assert.deepEqual(
+      idsOf(reader.state.displayItems),
+      historyFirst ? ["3", "2"] : ["1", "2"],
+    );
+    if (historyFirst) releaseLive(page(1, [1, 2]));
+    else releaseHistory(history([work(3), work(2, { tags: ["AI作画"] })]));
+    await pending;
+    assert.deepEqual(
+      idsOf(reader.state.displayItems),
+      historyFirst ? ["3", "2", "1"] : ["1", "2", "3"],
+    );
+    if (!historyFirst)
+      assert.deepEqual(reader.state.displayItems[1].tags, ["AI作画"]);
+  });
+}
+
+test("failed refresh retains displayed order and retry resets it once, even with a late history", async () => {
+  let fail = false,
+    releaseHistory,
+    holdHistory = false;
+  let head = [1, 2];
+  const reader = new RecentUpdatesReader(
+    {
+      query: async (_scope, request) => {
+        if (fail) throw new SourceError("SOURCE_TIMEOUT");
+        return page(request.page, request.page === 1 ? head : [9, 4]);
+      },
+      recentHistory: () =>
+        holdHistory
+          ? new Promise((resolve) => {
+              releaseHistory = resolve;
+            })
+          : Promise.resolve(history([work(1), work(2), work(3), work(9)])),
+    },
+    scope,
+  );
+  await reader.start();
+  await reader.loadNext();
+  const original = reader.state.displayItems;
+  fail = true;
+  holdHistory = true;
+  const refresh = reader.refresh();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(reader.state.displayItems, original);
+  assert.equal(reader.state.phase, "error");
+  fail = false;
+  head = [2, 1];
+  await reader.retry();
+  // The previous live-only work (4) is outside the refreshed window. Saved works
+  // retain their metadata and are reordered only by the successful user refresh.
+  assert.deepEqual(idsOf(reader.state.displayItems), ["2", "1", "9", "3"]);
+  releaseHistory(history([work(8), work(3), work(9), work(2), work(1)]));
+  await refresh;
+  assert.deepEqual(idsOf(reader.state.displayItems), ["2", "1", "9", "3", "8"]);
+});
+
+test("coalescing refresh during a pending next page cannot silently reorder saved history", async () => {
+  let release;
+  const calls = [];
+  const reader = new RecentUpdatesReader(
+    {
+      recentHistory: async () => history([work(1), work(2), work(3), work(9)]),
+      query: async (_scope, request) => {
+        calls.push(request.page);
+        if (request.page === 1) return page(1, [1, 2]);
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+        return page(2, [9, 4]);
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  const next = reader.loadNext();
+  const refresh = reader.refresh();
+  release();
+  await Promise.all([next, refresh]);
+  assert.deepEqual(idsOf(reader.state.displayItems), ["1", "2", "3", "9", "4"]);
+  assert.deepEqual(calls, [1, 2]);
+});

@@ -77,6 +77,7 @@ async function install(
     covers?: boolean;
     femaleIds?: number[];
     retainedCount?: number;
+    recentPages?: number[][];
   } = {},
 ) {
   await page.addInitScript(
@@ -266,12 +267,13 @@ async function install(
                   ? [Number(args.query)]
                   : args.kind === "ranking"
                     ? [901, 902]
-                    : Array.from(
+                    : (options.recentPages?.[pageNumber - 1] ??
+                      Array.from(
                         {
                           length: Math.max(0, Math.min(20, total - start + 1)),
                         },
                         (_, i) => offset + start + i,
-                      );
+                      ));
               const response = {
                 source,
                 sessionId: session,
@@ -616,6 +618,82 @@ async function varyRecentRowMetadata(page: Page) {
     );
   await page.addStyleTag({
     content: `${selectors.join(",")} { padding-bottom: 21px; }`,
+  });
+}
+
+for (const source of ["JM", "Pica"] as const) {
+  test(`${source} overlapping live/history pages keep the visible saved work in place until explicit refresh`, async ({
+    page,
+  }) => {
+    await install(page, {
+      retainedCount: 100,
+      holdPage: 2,
+      recentPages: [
+        Array.from({ length: 20 }, (_, index) => index + 1),
+        [20, 85, ...Array.from({ length: 18 }, (_, index) => index + 21)],
+      ],
+    });
+    if (source === "JM")
+      await page.getByLabel("最近更新来源").selectOption(source);
+    const grid = page.getByTestId("recent-grid");
+    await expect(grid).toHaveAttribute("data-total-items", "100");
+    await page.getByRole("button", { name: "读取下一页", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => Boolean(window.recentTest.release)))
+      .toBe(true);
+    await grid.evaluate((element) => {
+      const main = element.closest("main")!;
+      const stride =
+        element.getBoundingClientRect().height / Math.ceil(100 / 7);
+      const offset =
+        main.scrollTop +
+        element.getBoundingClientRect().top -
+        main.getBoundingClientRect().top;
+      main.scrollTop = offset + 12 * stride;
+    });
+    await expect(recentCard(page, source, 85)).toBeInViewport();
+    const anchor = await captureRecentAnchor(page);
+    const before = await recentCard(page, source, 85).boundingBox();
+    await page.evaluate(() => window.recentTest.release!());
+    await expect(page.getByTestId("recent-counts")).toContainText(
+      "已读取 39 部",
+    );
+    await expect(grid).toHaveAttribute("data-total-items", "100");
+    await expectRecentAnchor(page, anchor);
+    await expect(recentCard(page, source, 85)).toBeInViewport();
+    await expect
+      .poll(async () =>
+        Math.abs(
+          (await recentCard(page, source, 85).boundingBox())!.y - before!.y,
+        ),
+      )
+      .toBeLessThanOrEqual(4);
+    await expectStationaryRecentGrid(page);
+    await page.getByTestId("nav-settings").click();
+    await page.getByTestId("nav-recent").click();
+    await expectRecentAnchor(page, anchor);
+    expect(await detailCalls(page)).toEqual([]);
+    expect(
+      (await recentCalls(page))
+        .filter((args) => args.source === source)
+        .map((args) => args.page),
+    ).toEqual([1, 2]);
+    await page
+      .getByRole("button", { name: "刷新最近更新", exact: true })
+      .click();
+    await expect(page.getByTestId("recent-counts")).toContainText(
+      "已读取 20 部",
+    );
+    // Explicit refresh can now move the saved work into its known live position.
+    await expect(grid.locator("article").nth(20)).toHaveAttribute(
+      "data-testid",
+      `recent-work-${source}:${source === "JM" ? "85" : "85".padStart(24, "0")}`,
+    );
+    await expect(grid).toHaveAttribute("data-total-items", "100");
+    await mkdir("visual-evidence", { recursive: true });
+    await page.screenshot({
+      path: `visual-evidence/recent-merge-${source}.png`,
+    });
   });
 }
 

@@ -15,6 +15,7 @@ export default defineConfig({
     "**/source-ui.spec.ts",
     "**/library-ui.spec.ts",
     "**/download-ui.spec.ts",
+    "**/diagnostics-ui.spec.ts",
     "**/completion-ui.spec.ts",
     "**/ranking-ui.spec.ts",
     "**/recent-ui.spec.ts",

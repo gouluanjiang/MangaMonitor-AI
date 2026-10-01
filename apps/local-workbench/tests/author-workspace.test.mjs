@@ -51,6 +51,7 @@ const page = (scope, items) => ({
 
 test("cached results publish before either source finishes; parallel sources retain metadata and failed refresh data", async () => {
   const gates = [deferred(), deferred()];
+  const saved = new Map();
   let fail = false;
   const called = [],
     revisions = [];
@@ -59,7 +60,7 @@ test("cached results publish before either source finishes; parallel sources ret
       authorPolicy: policy,
       knownAuthorWorks: async (scope) => ({
         ...scope,
-        items: [work(scope, 1)],
+        items: saved.get(scope.source) ?? [work(scope, 1)],
         checkedAt: 1000,
         historyComplete: true,
       }),
@@ -67,10 +68,12 @@ test("cached results publish before either source finishes; parallel sources ret
         called.push(scope.source);
         await gates[scope.source === "JM" ? 0 : 1].promise;
         if (fail) throw new SourceError("SOURCE_TIMEOUT");
-        return page(scope, [
+        const items = [
           work(scope, 1, { title: "Updated metadata", tags: ["中文"] }),
           work(scope, 2),
-        ]);
+        ];
+        saved.set(scope.source, items);
+        return page(scope, items);
       },
     },
     new AuthorSearchScheduler(),

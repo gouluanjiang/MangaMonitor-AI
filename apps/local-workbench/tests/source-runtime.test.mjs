@@ -39,7 +39,7 @@ test("query timings are optional for old payloads and reject invalid native meas
   for (const invalid of [-1, NaN, "40"]) {
     timing = { queueMs: 0, sourceOperationMs: invalid, localCommitMs: 0 };
     await assert.rejects(adapter.query(scope, query), {
-      code: "SOURCE_RESPONSE_INVALID",
+      code: "INVALID_RESPONSE",
     });
   }
 });

@@ -10,6 +10,7 @@ export type UiDestination =
   | "ranking"
   | "discovery"
   | "completion"
+  | "special"
   | "author-search"
   | "authors"
   | "settings";
@@ -46,6 +47,7 @@ const groups: { label: string; entries: Entry[] }[] = [
         native: true,
       },
       { id: "authors", label: "关注作者", icon: "people" },
+      { id: "special", label: "特别关注", icon: "heart", native: true },
     ],
   },
 ];
@@ -57,6 +59,7 @@ export function UiSidebar({
   collapsed,
   accounts,
   unfinished,
+  specialUnread = 0,
   onNavigate,
   onToggle,
   onOpenAccounts,
@@ -67,6 +70,7 @@ export function UiSidebar({
   collapsed: boolean;
   accounts: AccountSummary[];
   unfinished: number;
+  specialUnread?: number;
   onNavigate(destination: UiDestination): void;
   onToggle(): void;
   onOpenAccounts(): void;
@@ -94,6 +98,14 @@ export function UiSidebar({
       <span className="ui-nav-label">{label}</span>
       {id === "queue" && unfinished > 0 && (
         <span className="nav-count ui-nav-count">{unfinished}</span>
+      )}
+      {id === "special" && specialUnread > 0 && (
+        <span
+          className="nav-count ui-nav-count"
+          aria-label={`${specialUnread} 部未读作品`}
+        >
+          {specialUnread}
+        </span>
       )}
     </button>
   );

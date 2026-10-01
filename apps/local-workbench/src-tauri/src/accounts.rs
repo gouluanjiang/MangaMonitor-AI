@@ -119,7 +119,9 @@ pub(super) async fn source_accounts<R: Runtime>(
 ) -> Result<Vec<AccountSummary>, AccountError> {
     require_main(window.label())?;
     let service = service(Arc::clone(accounts.inner())).await?;
-    Ok(service.accounts(refresh.unwrap_or(false)).await)
+    let result = service.accounts(refresh.unwrap_or(false)).await;
+    service.special_cold_start();
+    Ok(result)
 }
 
 #[tauri::command]

@@ -1,4 +1,6 @@
 import { CoverInteraction } from "./reader-access.tsx";
+import { SpecialFollowButton } from "./useSpecialFollows.tsx";
+import { recordSourceVisit } from "./work-visits.ts";
 import { useCoverRetry } from "./cover-retry.tsx";
 import { AuthorLinks } from "./AuthorLinks.tsx";
 import { FloatingSelection } from "./FloatingSelection.tsx";
@@ -1206,6 +1208,11 @@ export function SourceWorkbench({
       }
       setDetail(found);
       setDetailRef(toWorkReference(found));
+      recordSourceVisit({
+        scope: captured,
+        reference: toWorkReference(found),
+        work: found,
+      });
       notifyWorks.current(captured, [found]);
     } catch (cause) {
       if (stillCurrent(captured) && request === detailRequest.current) {
@@ -2332,6 +2339,7 @@ export function SourceWorkbench({
                           >
                             搜索该作者
                           </button>
+                          <SpecialFollowButton author={author} />
                           <button
                             type="button"
                             className="text-button"

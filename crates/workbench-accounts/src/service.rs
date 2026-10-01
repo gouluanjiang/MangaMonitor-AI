@@ -157,6 +157,7 @@ impl<S> Slot<S> {
 }
 
 pub struct AccountService<B: SourceBackend, V: Vault> {
+    pub(crate) special: crate::special::SpecialControl,
     pub(crate) discovery: Arc<crate::discovery::DiscoveryControl>,
     pub(crate) recent_checks: Arc<crate::observations::RecentControl>,
     backend: B,
@@ -174,6 +175,7 @@ pub struct AccountService<B: SourceBackend, V: Vault> {
 impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     pub fn new(backend: B, vault: V, app_data_root: PathBuf) -> Self {
         Self {
+            special: crate::special::SpecialControl::default(),
             discovery: Arc::new(crate::discovery::DiscoveryControl::default()),
             recent_checks: Arc::new(crate::observations::RecentControl::default()),
             backend,
@@ -582,6 +584,30 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
         }
         Ok(())
+    }
+
+    /// Keep account generations ordered through one bounded metadata write.
+    pub(crate) async fn special_store_operation<T, F>(
+        &self,
+        context: &crate::discovery::DiscoveryContext,
+        operation: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(workbench_storage::WorkbenchStore) -> std::result::Result<T, workbench_storage::StoreError> + Send + 'static,
+    {
+        let mut jm = self.slot(Source::Jm).lock().await;
+        let mut pica = self.slot(Source::Pica).lock().await;
+        self.require_scope(&mut jm, &context.identities[0].scope.session_id)?;
+        self.require_scope(&mut pica, &context.identities[1].scope.session_id)?;
+        self.discovery_validate_context(context)?;
+        let root = context.root.clone();
+        let result = tokio::task::spawn_blocking(move || operation(workbench_storage::WorkbenchStore::open(root)?))
+            .await.map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
+            .map_err(|error| AccountError::new(error.code));
+        self.check_saved(&mut jm)?;
+        self.check_saved(&mut pica)?;
+        result
     }
 
     /// Keep account generations ordered through one fixed, cancellable metadata write.

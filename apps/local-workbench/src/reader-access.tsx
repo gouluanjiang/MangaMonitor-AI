@@ -21,6 +21,7 @@ import {
   supportsReaderWindowEvents,
 } from "./reader/window-runtime.ts";
 import { invokeDesktop } from "./runtime.ts";
+import { recordSourceVisit } from "./work-visits.ts";
 import type { ReaderRequest } from "./reader/types.ts";
 import type { WorkReference } from "./booklists.ts";
 import type { SourceScope, SourceWork } from "./source-types.ts";
@@ -436,6 +437,11 @@ export function useReaderHost(
     }
     void invokeDesktop("reader_window_open", { request: next })
       .then(() => {
+        if (next.kind === "source")
+          recordSourceVisit({
+            scope: { source: next.source, sessionId: next.sessionId },
+            reference: { source: next.source, workId: next.workId },
+          });
         if (fromMenu && isCurrent()) {
           setChoice(null);
           returnTo.current = null;
@@ -475,6 +481,11 @@ export function useReaderHost(
       remember();
       setChoice(null);
       setRequest(next);
+      if (next.kind === "source")
+        recordSourceVisit({
+          scope: { source: next.source, sessionId: next.sessionId },
+          reference: { source: next.source, workId: next.workId },
+        });
     },
   };
   const layer = (

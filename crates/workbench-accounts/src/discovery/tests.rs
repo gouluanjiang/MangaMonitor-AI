@@ -10,6 +10,7 @@ use workbench_credentials::{test_support::MemoryVault, CredentialKind, StoredCre
 use workbench_sources::{FavoritePageRequest, FavoriteUpdate};
 
 mod jm_search_boundary;
+mod special_follows;
 
 type TestService = AccountService<FakeBackend, MemoryVault>;
 type QueryKey = (String, String, u64);

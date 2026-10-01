@@ -98,6 +98,9 @@ fn native_registered_reader_windows_bind_requests_isolate_pages_and_keep_mutatio
     let before = invoke(&main, "jm_download_read", json!({})).unwrap();
     for (command, body) in [
         ("source_accounts", json!({})),
+        ("special_start", json!({})),
+        ("special_set", json!({"scopes":[],"author":"Synthetic","enabled":true})),
+        ("special_mark_read", json!({"scopes":[],"identity":null})),
         ("library_choose", json!({})),
         ("jm_download_read", json!({})),
         ("reader_window_open", json!({"request":request(0)})),

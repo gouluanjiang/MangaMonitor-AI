@@ -62,6 +62,11 @@ import {
 } from "./SourceLanguageBadge.tsx";
 import { CompletionPanel } from "./CompletionPanel.tsx";
 import { AuthorWorkspace } from "./AuthorWorkspace.tsx";
+import { SpecialFollowsPanel } from "./SpecialFollowsPanel.tsx";
+import {
+  SpecialFollowsContext,
+  useSpecialFollows,
+} from "./useSpecialFollows.tsx";
 import {
   LibraryWorkbench,
   LibrarySettingsPanel,
@@ -138,6 +143,7 @@ type Page =
   | "discovery"
   | "author-search"
   | "completion"
+  | "special"
   | "queue"
   | "authors"
   | "settings";
@@ -147,6 +153,7 @@ const pageNames: Record<Page, string> = {
   favorites: "在线收藏",
   discovery: "发现",
   completion: "作者更新",
+  special: "特别关注",
   "author-search": "作者搜索",
   queue: "下载队列",
   authors: "关注作者",
@@ -483,6 +490,7 @@ export default function App() {
     "active",
   );
   const [notice, setNotice] = useState("");
+  const special = useSpecialFollows(accounts, persistence.native, setNotice);
   const [downloadNotice, setDownloadNotice] = useState<{
     message: string;
     sequence: number;
@@ -600,7 +608,9 @@ export default function App() {
       "favorites",
       "discovery",
       "authors",
-      ...(embeddedSourceDetail ? ["completion", "author-search"] : []),
+      ...(embeddedSourceDetail
+        ? ["completion", "author-search", "special"]
+        : []),
     ].includes(page) &&
     (page !== "discovery" ||
       discoveryPane === "search" ||
@@ -660,7 +670,7 @@ export default function App() {
     creditContext?: AuthorCreditContext,
   ) {
     setRequestedAuthorContext(creditContext);
-    if (["completion", "author-search"].includes(page)) {
+    if (["completion", "author-search", "special"].includes(page)) {
       openEmbeddedWork(ref, creditContext);
       return;
     }
@@ -2384,6 +2394,7 @@ export default function App() {
         native={persistence.native}
         collapsed={sidebar.collapsed}
         accounts={accounts}
+        specialUnread={special.unread}
         unfinished={
           persistence.native
             ? unfinishedDownloadCount(downloads.snapshot.tasks)
@@ -2550,6 +2561,23 @@ export default function App() {
               }}
             />
           )}
+          {persistence.native && (
+            <SpecialFollowsPanel
+              active={page === "special" && !embeddedSourceDetail}
+              sourceAdapter={sourceAdapter}
+              library={library.snapshot}
+              inventorySnapshot={downloadLibrary.snapshot}
+              inventoryReady={
+                downloadLibrary.ready &&
+                !downloadLibrary.error &&
+                !library.error
+              }
+              density={appearance.density}
+              onOpenWork={openSourceWork}
+              onDownload={(work) => void beginDownload(work.workId, work)}
+              onOpenAccounts={() => openSettings("accounts")}
+            />
+          )}
           {persistence.native &&
             authorPages.map((authorPage) => {
               const AuthorPage =
@@ -2713,7 +2741,8 @@ export default function App() {
             page === "discovery" &&
             discoveryPane !== "search") ||
           libraryActive ||
-          (persistence.native && ["completion", "author-search"].includes(page))
+          (persistence.native &&
+            ["completion", "author-search", "special"].includes(page))
             ? null
             : currentWork
               ? renderDetail(currentWork)
@@ -2880,8 +2909,10 @@ export default function App() {
             }
           >
             <ReaderAccessProvider value={readerHost.actions}>
-              {content}
-              {readerHost.layer}
+              <SpecialFollowsContext.Provider value={special}>
+                {content}
+                {readerHost.layer}
+              </SpecialFollowsContext.Provider>
             </ReaderAccessProvider>
           </DownloadFeedbackContext.Provider>
         </AuthorSearchProvider>

@@ -4,6 +4,7 @@ mod cache;
 mod discovery;
 mod observations;
 mod service;
+mod special;
 
 pub use backend::{Authenticated, SourceBackend};
 pub use cache::{CatalogAction, CatalogResult, CatalogSnapshot};
@@ -18,6 +19,7 @@ pub use observations::{
     KnownAuthorWorksResult, RecentCheckResult, RecentCheckRun, RecentHistoryResult,
 };
 pub use service::{AccountService, DownloadSession, SessionLease};
+pub use special::{SpecialRun, SpecialSnapshot};
 pub use workbench_credentials::Source;
 pub use workbench_sources::{
     JmSearchBoundary, JmSearchBoundaryItem, SourceAccount, SourceFolder, SourceItemIssue,

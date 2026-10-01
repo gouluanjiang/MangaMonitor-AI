@@ -14,6 +14,7 @@ mod observations;
 mod phone;
 mod reader;
 mod reader_window;
+mod special;
 mod store;
 mod work_date;
 
@@ -43,6 +44,7 @@ pub use phone::{
 };
 pub use reader::ReaderPosition;
 pub use reader_window::ReaderWindowSize;
+pub use special::{SpecialAccount, SpecialAuthor, SpecialDocument, SpecialRange, SpecialUpdate};
 pub use store::{Document, WorkbenchStore, PRIVATE_DIRECTORY};
 pub use work_date::{normalize_work_date, work_date_is_valid};
 

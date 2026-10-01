@@ -27,3 +27,32 @@ Before any real-profile candidate switch, save a private byte-for-byte registrat
 Run targeted synthetic state/concurrency/browser regressions and Windows builds in existing CI only. Record performance baseline and changed timings using the same fixture; label synthetic and real-network measurements separately. Wall-clock completion and overlapping component sums are different metrics. Never describe source-operation timing (including parsing/retries) as pure wire latency. Native verification uses a manifest-verified artifact for the exact tested commit, not just matching version text.
 
 For each stage report code changes, CI/candidate evidence, measured timings or explicit unmeasured scope, failure/cancel/restart coverage, and user acceptance steps. Keep account/catalog metadata, benchmark author names and real app backups outside Git. A passing CI or draft PR is not user acceptance or a formal release.
+
+## Stage 2 implementation notes
+
+`special-follows.json` is a new private version-1 document. Existing following,
+author catalogs, ownership, downloads, sessions and reader positions keep their
+formats. Enabling a special author writes only this document and then asks the
+existing discovery executor for the required author/source pairs. An active
+manual scan is joined; cancelling the waiting special check never cancels that
+manual scan. Repeat clicks share the active special run. A process-owned
+cold-start gate survives main-window focus/reloads and reader-window creation.
+
+Baselines are separate per source and query fingerprint. Initial partial reads
+remain pending; completing the initial baseline does not announce its old works.
+Subsequent observations deduplicate by source/work ID and retain unread entries
+through errors and cancellation. Query changes establish a fresh baseline without
+erasing earlier unread works. Disabling a special author does not write ordinary
+following. Special state is scoped to the existing authenticated account pair.
+
+The main-window-only commands validate sessions and use the shared storage lock,
+following/policy revision checks and atomic writes. Reader windows cannot start
+checks or mutate special state directly. Deliberate main detail/reader navigation
+marks a known unread work; cover loading and ordinary listing never do. The
+sidebar count includes visible unread work identities rather than author count.
+Initial baseline omissions and errors remain explicit in the special column.
+
+Stage 2 requires its own CI and exact-candidate verification; these notes do not
+declare delivery. Synthetic cases cover pending baseline completion, changed
+queries, coauthor deduplication, retained read state, restart persistence, joining
+manual checks, repeated starts, cancellation and native window boundaries.

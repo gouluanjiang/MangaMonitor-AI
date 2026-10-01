@@ -295,7 +295,7 @@ impl DiscoveryContext {
         }
     }
 
-    fn policy(
+    pub(crate) fn policy(
         &self,
         source: workbench_storage::Source,
         author: &str,
@@ -323,7 +323,7 @@ impl DiscoveryContext {
         !self.confirmed_authors(record).is_empty()
     }
 
-    fn confirmed_authors(&self, record: &DiscoveryRecord) -> BTreeSet<String> {
+    pub(crate) fn confirmed_authors(&self, record: &DiscoveryRecord) -> BTreeSet<String> {
         // This previously agreed category scope applies to author results, not
         // pagination accounting. Unknown categories are not guessed from titles.
         if record.work.source == workbench_storage::Source::Jm
@@ -349,7 +349,7 @@ impl DiscoveryContext {
             .unwrap_or_default()
     }
 
-    fn scopes(&self) -> Vec<DiscoveryScope> {
+    pub(crate) fn scopes(&self) -> Vec<DiscoveryScope> {
         self.identities
             .iter()
             .map(|identity| identity.scope.clone())
@@ -1319,7 +1319,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         authors: Vec<String>,
         mode: DiscoveryMode,
     ) -> Result<DiscoveryStart> {
-        self.discovery_start_selected(scopes, authors, mode, false)
+        self.discovery_start_selected(scopes, authors, mode, false, None)
             .await
     }
 
@@ -1330,16 +1330,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         scopes: Vec<DiscoveryScope>,
         authors: Vec<String>,
     ) -> Result<DiscoveryStart> {
-        self.discovery_start_selected(scopes, authors, DiscoveryMode::Incremental, true)
+        self.discovery_start_selected(scopes, authors, DiscoveryMode::Incremental, true, None)
             .await
     }
 
-    async fn discovery_start_selected(
+    pub(crate) async fn discovery_start_selected(
         self: &Arc<Self>,
         scopes: Vec<DiscoveryScope>,
         authors: Vec<String>,
         mode: DiscoveryMode,
         only_unfinished: bool,
+        requested_ranges: Option<HashSet<(String, workbench_storage::Source)>>,
     ) -> Result<DiscoveryStart> {
         let scopes = canonical_scopes(scopes)?;
         // Reject a second start without waiting behind the active source request.
@@ -1383,17 +1384,18 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         .map_err(store_error)?;
         self.discovery_validate_context(&context)?;
         let mut snapshot = project_view(&context, &document, false);
-        let all_followed = authors.len() == context.authors.len();
+        let all_followed = requested_ranges.is_none() && authors.len() == context.authors.len();
         let ranges: Vec<_> = authors
             .into_iter()
             .flat_map(|author| [Source::Jm, Source::Pica].map(|source| (author.clone(), source)))
             .filter(|(author, source)| {
-                !only_unfinished
+                requested_ranges.as_ref().is_none_or(|requested| requested.contains(&(author.clone(), storage_source(*source))))
+                    && (!only_unfinished
                     || !snapshot.authors.iter().any(|range| {
                         range.author == *author
                             && range.source == storage_source(*source)
                             && range.state == DiscoveryRangeState::Complete
-                    })
+                    }))
             })
             .collect();
         if ranges.is_empty() {

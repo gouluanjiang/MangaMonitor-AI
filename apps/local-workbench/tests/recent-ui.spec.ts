@@ -81,6 +81,7 @@ async function install(
     covers?: boolean;
     femaleIds?: number[];
     retainedCount?: number;
+    total?: number;
     recentPages?: number[][];
     recentPagesBySource?: Partial<Record<Source, number[][]>>;
     datesBySource?: Partial<Record<Source, Record<string, string | null>>>;
@@ -106,7 +107,7 @@ async function install(
         holdPage: options.holdPage ?? null,
         failSource: null,
         holdSource: null,
-        total: 40,
+        total: options.total ?? 40,
         blIds: options.blIds ?? [],
         aiIds: options.aiIds ?? [],
         catalogIds: options.catalogIds ?? [],
@@ -495,7 +496,9 @@ test("combined first heads sort by website date, keep source identity and share 
 test("combined late source head keeps the current visible anchor and settles without flicker", async ({
   page,
 }) => {
-  await install(page);
+  // End Pica's first page so this gesture exercises the late JM head only;
+  // combined continuation/partial paging has its own separate regressions.
+  await install(page, { total: 20 });
   await expect(page.getByTestId("recent-counts")).toContainText("已读取 20 部");
   await page.evaluate(() => {
     window.recentTest.holdPage = 1;
@@ -505,9 +508,16 @@ test("combined late source head keeps the current visible anchor and settles wit
   await expect
     .poll(() => page.evaluate(() => !!window.recentTest.release))
     .toBe(true);
-  await page.getByRole("main").evaluate((element) => {
-    element.scrollTop = 700;
-  });
+  const main = page.getByRole("main");
+  // A source switch can still be restoring across frames. Real wheel input
+  // cancels that restore; assigning scrollTop bypasses the user-input path.
+  await main.hover();
+  await page.mouse.wheel(0, 700);
+  // Native wheel/compositor delivery is asynchronous. Keep JM held until the
+  // actual displacement arrives, then capture the same visible work as before.
+  await expect
+    .poll(() => main.evaluate((element) => Math.abs(element.scrollTop - 700)))
+    .toBeLessThanOrEqual(2);
   await expect(recentCard(page, "Pica", 8)).toBeInViewport();
   const anchor = await captureRecentAnchor(page);
   await page.evaluate(() => window.recentTest.release!());

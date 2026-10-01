@@ -152,7 +152,10 @@ fn download_detail_metadata(
     work_id: &str,
     items: Vec<workbench_accounts::SourceWork>,
 ) -> Result<JmDownloadMetadata, StoreError> {
-    let work = items.into_iter().next().ok_or(error("DOWNLOAD_METADATA_MISSING"))?;
+    let work = items
+        .into_iter()
+        .next()
+        .ok_or(error("DOWNLOAD_METADATA_MISSING"))?;
     if work.source != source || work.work_id != work_id {
         return Err(error("DOWNLOAD_METADATA_IDENTITY_MISMATCH"));
     }
@@ -1047,10 +1050,28 @@ mod tests {
             "sourceUpdatedAt": "2026-09-15T12:34:56.000Z"
         }))
         .unwrap();
-        assert_eq!(download_detail_metadata(Source::Pica, &work.work_id, vec![]).unwrap_err().code, "DOWNLOAD_METADATA_MISSING");
-        assert_eq!(download_detail_metadata(Source::Pica, "000000000000000000000001", vec![work.clone()]).unwrap_err().code, "DOWNLOAD_METADATA_IDENTITY_MISMATCH");
-        assert_eq!(download_detail_metadata(Source::Jm, &work.work_id, vec![work.clone()]).unwrap_err().code, "DOWNLOAD_METADATA_IDENTITY_MISMATCH");
-        assert_eq!(download_detail_metadata(Source::Pica, &work.work_id, vec![work.clone()]).unwrap(), download_metadata(work.clone()));
+        assert_eq!(
+            download_detail_metadata(Source::Pica, &work.work_id, vec![])
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_METADATA_MISSING"
+        );
+        assert_eq!(
+            download_detail_metadata(Source::Pica, "000000000000000000000001", vec![work.clone()])
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_METADATA_IDENTITY_MISMATCH"
+        );
+        assert_eq!(
+            download_detail_metadata(Source::Jm, &work.work_id, vec![work.clone()])
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_METADATA_IDENTITY_MISMATCH"
+        );
+        assert_eq!(
+            download_detail_metadata(Source::Pica, &work.work_id, vec![work.clone()]).unwrap(),
+            download_metadata(work.clone())
+        );
         let metadata = download_metadata(work.clone());
         assert_eq!(metadata.version_updated_at, work.source_updated_at);
         work.source_updated_at = Some("2026-09-20T00:00:00.000Z".into());

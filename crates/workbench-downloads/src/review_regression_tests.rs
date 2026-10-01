@@ -42,7 +42,10 @@ fn metadata_rejection_explains_the_field_without_creating_a_plan_or_changing_sav
     let library = f.store.read_library().unwrap();
     let mut metadata = record(&f).metadata;
     metadata.title = "Synthetic\ntitle".into();
-    assert_eq!(prepare_metadata(&f, metadata).unwrap_err().code, "DOWNLOAD_METADATA_TITLE_CONTROL");
+    assert_eq!(
+        prepare_metadata(&f, metadata).unwrap_err().code,
+        "DOWNLOAD_METADATA_TITLE_CONTROL"
+    );
     assert_eq!(f.store.read_downloads().unwrap(), before);
     assert_eq!(f.store.read_library().unwrap(), library);
     assert_eq!(fs::read_dir(&f.library).unwrap().count(), 0);
@@ -65,8 +68,8 @@ fn selection(plan: &DownloadPlan) -> PreparedSelection {
 fn replace_with_other_work(f: &Fixture, task: &DownloadRecord) {
     let replacement = f._temp.path().join("replacement.zip");
     let mut zip = zip::ZipWriter::new(fs::File::create(&replacement).unwrap());
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zip.start_file("0001.gif", options).unwrap();
     zip.write_all(&gif()).unwrap();
     zip.start_file("ComicInfo.xml", options).unwrap();
@@ -99,7 +102,10 @@ fn cleared_history_never_adopts_a_same_path_replacement_after_rescan() {
         let item = &library.value.records[0];
         assert_eq!(Some(&item.item.id), completed.library_entry_id.as_ref());
         assert_eq!(item.item.source_ref.as_ref().unwrap().work_id, "999999");
-        assert_eq!(item.item.state, workbench_storage::LibraryItemState::Indexed);
+        assert_eq!(
+            item.item.state,
+            workbench_storage::LibraryItemState::Indexed
+        );
         assert_ne!(
             Some(&item.identity.as_ref().unwrap().file_key),
             completed.output_identity.as_ref()

@@ -57,39 +57,58 @@ impl JmDownloadMetadata {
         {
             return Err(StoreError::new("DOWNLOAD_METADATA_ID_INVALID"));
         }
-        metadata_text(&self.title, 500, [
-            "DOWNLOAD_METADATA_TITLE_EMPTY",
-            "DOWNLOAD_METADATA_TITLE_TOO_LONG",
-            "DOWNLOAD_METADATA_TITLE_CONTROL",
-        ])?;
+        metadata_text(
+            &self.title,
+            500,
+            [
+                "DOWNLOAD_METADATA_TITLE_EMPTY",
+                "DOWNLOAD_METADATA_TITLE_TOO_LONG",
+                "DOWNLOAD_METADATA_TITLE_CONTROL",
+            ],
+        )?;
         if self.authors.len() > 100 {
             return Err(StoreError::new("DOWNLOAD_METADATA_AUTHORS_TOO_MANY"));
         }
         for author in &self.authors {
-            metadata_text(author, 200, [
-                "DOWNLOAD_METADATA_AUTHOR_EMPTY",
-                "DOWNLOAD_METADATA_AUTHOR_TOO_LONG",
-                "DOWNLOAD_METADATA_AUTHOR_CONTROL",
-            ])?;
+            metadata_text(
+                author,
+                200,
+                [
+                    "DOWNLOAD_METADATA_AUTHOR_EMPTY",
+                    "DOWNLOAD_METADATA_AUTHOR_TOO_LONG",
+                    "DOWNLOAD_METADATA_AUTHOR_CONTROL",
+                ],
+            )?;
         }
         if self.tags.len() > 200 {
             return Err(StoreError::new("DOWNLOAD_METADATA_TAGS_TOO_MANY"));
         }
         for tag in &self.tags {
-            metadata_text(tag, 200, [
-                "DOWNLOAD_METADATA_TAG_EMPTY",
-                "DOWNLOAD_METADATA_TAG_TOO_LONG",
-                "DOWNLOAD_METADATA_TAG_CONTROL",
-            ])?;
+            metadata_text(
+                tag,
+                200,
+                [
+                    "DOWNLOAD_METADATA_TAG_EMPTY",
+                    "DOWNLOAD_METADATA_TAG_TOO_LONG",
+                    "DOWNLOAD_METADATA_TAG_CONTROL",
+                ],
+            )?;
         }
-        if self.version_updated_at.as_deref().is_some_and(|date| !crate::work_date_is_valid(date)) {
+        if self
+            .version_updated_at
+            .as_deref()
+            .is_some_and(|date| !crate::work_date_is_valid(date))
+        {
             return Err(StoreError::new("DOWNLOAD_METADATA_DATE_INVALID"));
         }
         if let Some(description) = &self.description {
             if description.len() > 32768 {
                 return Err(StoreError::new("DOWNLOAD_METADATA_DESCRIPTION_TOO_LONG"));
             }
-            if description.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
+            if description
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+            {
                 return Err(StoreError::new("DOWNLOAD_METADATA_DESCRIPTION_CONTROL"));
             }
         }

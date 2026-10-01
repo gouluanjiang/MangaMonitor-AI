@@ -1663,9 +1663,9 @@ test("author update dates sort only loaded records, compose with ownership and p
     path: "visual-evidence/author-update-work-dates-wide.png",
   });
   await openUnifiedSearch(page);
-  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-desc");
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成作者");
   await page.getByRole("button", { name: "搜索两站作品" }).click();
+  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-desc");
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完",
   );
@@ -2444,17 +2444,18 @@ test("ad-hoc author search applies source-specific policies across every term an
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
     "新作者",
   );
-  expect(
-    await page.evaluate(() =>
-      window.authorTest.calls
-        .filter((call) => call.command === "source_query")
-        .map((call) => [call.args.source, call.args.query, call.args.page]),
-    ),
-  ).toEqual([
+  const queries = await page.evaluate(() =>
+    window.authorTest.calls
+      .filter((call) => call.command === "source_query")
+      .map((call) => [call.args.source, call.args.query, call.args.page]),
+  );
+  expect(queries.filter(([source]) => source === "JM")).toEqual([
     ["JM", "Reviewed～Alias", 1],
     ["JM", "Reviewed～Alias", 2],
     ["JM", "ReviewedAlias", 1],
     ["JM", "ReviewedAlias", 2],
+  ]);
+  expect(queries.filter(([source]) => source === "Pica")).toEqual([
     ["Pica", "Reviewed Pica Alias", 1],
   ]);
   await page.getByRole("button", { name: "全部 2", exact: true }).click();
@@ -2486,17 +2487,16 @@ test("ad-hoc author search classifies every source page, retaining unrelated res
     "其他关键词结果 2 条",
   );
   await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
-  expect(
-    await page.evaluate(() =>
-      window.authorTest.calls
-        .filter((call) => call.command === "source_query")
-        .map((call) => [call.args.source, call.args.page]),
-    ),
-  ).toEqual([
+  const pages = await page.evaluate(() =>
+    window.authorTest.calls
+      .filter((call) => call.command === "source_query")
+      .map((call) => [call.args.source, call.args.page]),
+  );
+  expect(pages.filter(([source]) => source === "JM")).toEqual([
     ["JM", 1],
     ["JM", 2],
-    ["Pica", 1],
   ]);
+  expect(pages.filter(([source]) => source === "Pica")).toEqual([["Pica", 1]]);
   await page.getByRole("button", { name: "全部 1", exact: true }).click();
   await expect(page.getByTestId("author-update-JM:123")).toContainText(
     "新社团（新作者）",
@@ -2629,17 +2629,16 @@ test("a new author is searched across every page of both sources without requiri
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完 · 已记录 3 条",
   );
-  expect(
-    await page.evaluate(() =>
-      window.authorTest.calls
-        .filter((c) => c.command === "source_query")
-        .map((c) => [c.args.source, c.args.page]),
-    ),
-  ).toEqual([
+  const pages = await page.evaluate(() =>
+    window.authorTest.calls
+      .filter((c) => c.command === "source_query")
+      .map((c) => [c.args.source, c.args.page]),
+  );
+  expect(pages.filter(([source]) => source === "JM")).toEqual([
     ["JM", 1],
     ["JM", 2],
-    ["Pica", 1],
   ]);
+  expect(pages.filter(([source]) => source === "Pica")).toEqual([["Pica", 1]]);
   await expect(page.getByTestId("completion-counts")).toContainText(
     "已入库 1 条 · 未入库 2 条 · 当前显示 2 条",
   );

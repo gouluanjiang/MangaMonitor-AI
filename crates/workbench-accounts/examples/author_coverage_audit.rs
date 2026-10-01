@@ -499,6 +499,7 @@ mod contract {
 
         fn detail_response(authors: &[&str]) -> QueryResult {
             QueryResult {
+                timing: Default::default(),
                 content_verified_ids: vec![],
                 content_verified_until: None,
                 source: Source::Jm,

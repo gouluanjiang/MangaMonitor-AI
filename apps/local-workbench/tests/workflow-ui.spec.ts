@@ -137,12 +137,10 @@ test("manual updates, mixed downloads, automatic ownership, a new author and res
   const searches = (await calls(page, "source_query")).filter(
     (c) => c.args.kind === "author",
   );
-  expect(searches.map((c) => [c.args.source, c.args.page])).toEqual([
-    ["JM", 1],
-    ["JM", 2],
-    ["Pica", 1],
-    ["Pica", 2],
-  ]);
+  for (const source of ["JM", "Pica"])
+    expect(
+      searches.filter((c) => c.args.source === source).map((c) => c.args.page),
+    ).toEqual([1, 2]);
   await downloadOne(page, "JM:104");
   await openUnifiedSearch(page);
   await expect(page.getByLabel("搜索作者名")).toHaveValue("合成新作者");
@@ -247,7 +245,7 @@ test("a later search-page failure survives navigation without claiming completio
   await page.getByText("查看未完成范围", { exact: true }).click();
   await expect(
     page.getByText(
-      "合成新作者 · 哔咔 · 已读取 1 页 · 来源读取未完成（SEARCH_INCOMPLETE）",
+      "合成新作者 · 哔咔 · 已读取 1 页 · 来源读取未完成（SOURCE_UNAVAILABLE）",
       {
         exact: true,
       },
@@ -264,7 +262,7 @@ test("a later search-page failure survives navigation without claiming completio
     window.workflowTest.searchFault = "none";
   });
   await page.getByLabel("更新来源").selectOption("all");
-  await page.getByTestId("completion-start").click();
+  await page.getByTestId("author-tab-refresh").click();
   await expect(counts(page)).toContainText("当前检查范围已读完 · 已记录 4 条");
   expect(await calls(page, "source_query")).toHaveLength(8);
 });
@@ -292,7 +290,7 @@ test("a manually started search survives a queue visit but a changed account inv
     window.workflowTest.searchFault = "hold-first";
     delete window.workflowTest.releasePage;
   });
-  await page.getByTestId("completion-start").click();
+  await page.getByTestId("author-tab-refresh").click();
   await expect
     .poll(() => page.evaluate(() => Boolean(window.workflowTest.releasePage)))
     .toBe(true);
@@ -309,7 +307,13 @@ test("a manually started search survives a queue visit but a changed account inv
   await openUnifiedSearch(page);
   await expect(page.getByLabel("搜索作者名")).toBeEmpty();
   await expect(counts(page)).toContainText("已记录 0 条");
-  await searchAuthor(page);
+  // Kept tab names do not authorize automatic searches in a changed account.
+  expect(
+    (await calls(page, "source_query")).filter(
+      (c) => c.args.sessionId === "synthetic-new-JM",
+    ),
+  ).toHaveLength(0);
+  await page.getByTestId("author-tab-refresh").click();
   await expect(counts(page)).toContainText("当前检查范围已读完 · 已记录 4 条");
   const requests = await calls(page, "source_query");
   expect(

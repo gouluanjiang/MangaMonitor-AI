@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { CompletionPanel } from "./CompletionPanel.tsx";
 import type { CompletionPanelProps } from "./CompletionPanel.tsx";
 import { authorQueryError, authorQueryMessage } from "./author-query.ts";
+import { accountScope } from "./source-types.ts";
 import "./author-workspace.css";
 
 type Props = Omit<CompletionPanelProps, "adapter" | "searchTabId">;
@@ -20,6 +21,11 @@ export function AuthorWorkspace(props: Props) {
   const [error, setError] = useState("");
   const serial = useRef(0);
   const handled = useRef<number | null>(null);
+  const scopeKey = JSON.stringify(props.accounts.map(accountScope));
+  useEffect(() => {
+    setQuery("");
+    setError("");
+  }, [scopeKey]);
   const tabRef = useRef(tabs);
   tabRef.current = tabs;
   function open(raw: string) {

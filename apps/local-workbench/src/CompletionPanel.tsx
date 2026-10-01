@@ -160,6 +160,7 @@ export function CompletionPanel({
     .map(accountScope)
     .filter((s): s is SourceScope => s !== null);
   const scopeKey = JSON.stringify(scopes);
+  const initializedScope = useRef(scopeKey);
   const current = useRef({ key: scopeKey, scopes, active, adapter, mode });
   current.current = { key: scopeKey, scopes, active, adapter, mode };
   const epoch = useRef(0),
@@ -354,8 +355,12 @@ export function CompletionPanel({
     readFailures.current = 0;
     setAuthor("");
     setQuery("");
-    setSearchAuthor("");
-    handledAuthorRequest.current = null;
+    setSearchAuthor(searchTabId ? (authorRequest?.name ?? "") : "");
+    // StrictMode may replay the initial mount. A real account change instead
+    // invalidates data without silently starting the old query in a new account.
+    if (initializedScope.current === scopeKey)
+      handledAuthorRequest.current = null;
+    initializedScope.current = scopeKey;
     setSource("all");
     setFilter("missing");
     setShowOther(false);

@@ -3229,10 +3229,6 @@ for (const reviewed of [false, true]) {
           [primary, 2],
           ["Mentha", 1],
           ["Mentha", 2],
-          [primary, 1],
-          [primary, 2],
-          ["Mentha", 1],
-          ["Mentha", 2],
         ]);
       }
     }

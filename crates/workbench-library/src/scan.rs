@@ -224,7 +224,11 @@ impl ScanJob {
     }
 
     pub(crate) fn retain_recycled(&mut self, records: &[LibraryRecord]) {
-        self.retained = records.iter().enumerate().map(|(index, record)| (record.item.id.clone(), index)).collect();
+        self.retained = records
+            .iter()
+            .enumerate()
+            .map(|(index, record)| (record.item.id.clone(), index))
+            .collect();
     }
 
     pub fn batch(&mut self, document: &mut LibraryDocument) -> Result<()> {
@@ -354,7 +358,11 @@ impl ScanJob {
         document.scan_baseline = if document.phase == LibraryPhase::Complete {
             Vec::new()
         } else {
-            self.previous.values().filter(|seed| !self.retained.contains_key(&seed.id)).cloned().collect()
+            self.previous
+                .values()
+                .filter(|seed| !self.retained.contains_key(&seed.id))
+                .cloned()
+                .collect()
         };
     }
 

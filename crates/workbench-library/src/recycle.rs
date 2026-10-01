@@ -136,23 +136,38 @@ impl LibraryService {
         if before.revision != request.expected_revision {
             return Err(error("LIBRARY_STALE_SNAPSHOT"));
         }
-        if matches!(before.value.phase, LibraryPhase::Reading | LibraryPhase::Paused) {
+        if matches!(
+            before.value.phase,
+            LibraryPhase::Reading | LibraryPhase::Paused
+        ) {
             return Err(error("LIBRARY_BUSY"));
         }
-        let record = before.value.records.iter()
+        let record = before
+            .value
+            .records
+            .iter()
             .find(|record| record.item.id == request.entry_id)
             .ok_or(error("LIBRARY_ENTRY_UNKNOWN"))?;
         if !matches!(record.item.format, LibraryFormat::Zip | LibraryFormat::Cbz)
-            || !Path::new(&record.item.relative_path).extension().and_then(|s| s.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("zip")
-                    || extension.eq_ignore_ascii_case("cbz"))
+            || !Path::new(&record.item.relative_path)
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("zip") || extension.eq_ignore_ascii_case("cbz")
+                })
         {
             return Err(error("LIBRARY_RECYCLE_FORMAT_UNSUPPORTED"));
         }
         if record.item.error_code.as_deref() == Some("LIBRARY_RECYCLED") {
             return Err(error("LIBRARY_ENTRY_MISSING"));
         }
-        let root = Root::restore(before.value.root.as_ref().ok_or(error("LIBRARY_NOT_CONFIGURED"))?)?;
+        let root = Root::restore(
+            before
+                .value
+                .root
+                .as_ref()
+                .ok_or(error("LIBRARY_NOT_CONFIGURED"))?,
+        )?;
         let file = root.recycle_file(&record.item.relative_path)?;
         let identity = paths::identity(&file.file)?;
         if record.identity.as_ref() != Some(&identity) {
@@ -184,25 +199,51 @@ impl LibraryService {
         // OS success alone does not establish absence. If a failure leaves the
         // original path present, do not change any stored registration.
         match target.is_missing() {
-            Ok(false) => return Err(operation.err().unwrap_or(error("LIBRARY_RECYCLE_NOT_COMPLETED"))),
+            Ok(false) => {
+                return Err(operation
+                    .err()
+                    .unwrap_or(error("LIBRARY_RECYCLE_NOT_COMPLETED")))
+            }
             Err(_) => {
                 if let Err(problem) = operation {
                     return Err(problem);
                 }
-                return Ok(Some(recycle_projection(before, request, true, "LIBRARY_RECYCLE_REFRESH_REQUIRED")));
+                return Ok(Some(recycle_projection(
+                    before,
+                    request,
+                    true,
+                    "LIBRARY_RECYCLE_REFRESH_REQUIRED",
+                )));
             }
             Ok(true) => {}
         }
         let recycled = operation.is_ok();
         let mut latest = match store.read_library() {
             Ok(latest) => latest,
-            Err(_) => return Ok(Some(recycle_projection(before, request, recycled, "LIBRARY_RECYCLE_SAVE_FAILED"))),
+            Err(_) => {
+                return Ok(Some(recycle_projection(
+                    before,
+                    request,
+                    recycled,
+                    "LIBRARY_RECYCLE_SAVE_FAILED",
+                )))
+            }
         };
         if require_scope(&latest.value, &request.root_id, request.generation).is_err() {
-            return Ok(Some(recycle_projection(before, request, recycled, "LIBRARY_RECYCLE_REFRESH_REQUIRED")));
+            return Ok(Some(recycle_projection(
+                before,
+                request,
+                recycled,
+                "LIBRARY_RECYCLE_REFRESH_REQUIRED",
+            )));
         }
         if latest.revision != before.revision {
-            return Ok(Some(recycle_projection(latest, request, recycled, "LIBRARY_RECYCLE_REFRESH_REQUIRED")));
+            return Ok(Some(recycle_projection(
+                latest,
+                request,
+                recycled,
+                "LIBRARY_RECYCLE_REFRESH_REQUIRED",
+            )));
         }
         mark_absent(&mut latest.value, request, recycled);
         latest.value.updated_at = Some(now());
@@ -214,7 +255,12 @@ impl LibraryService {
                 recycled,
                 error_code: (!recycled).then(|| "LIBRARY_RECYCLE_RESULT_UNCERTAIN".into()),
             })),
-            Err(_) => Ok(Some(recycle_projection(fallback, request, recycled, "LIBRARY_RECYCLE_SAVE_FAILED"))),
+            Err(_) => Ok(Some(recycle_projection(
+                fallback,
+                request,
+                recycled,
+                "LIBRARY_RECYCLE_SAVE_FAILED",
+            ))),
         }
     }
 }
@@ -223,11 +269,22 @@ fn mark_absent(document: &mut LibraryDocument, request: &LibraryRecycleRequest, 
     if require_scope(document, &request.root_id, request.generation).is_err() {
         return;
     }
-    if let Some(record) = document.records.iter_mut().find(|r| r.item.id == request.entry_id) {
+    if let Some(record) = document
+        .records
+        .iter_mut()
+        .find(|r| r.item.id == request.entry_id)
+    {
         // Keep identity, metadata, manual associations and admission time for
         // restore + scan. A missing path is not proof of successful recycling.
         record.item.state = LibraryItemState::Unreadable;
-        record.item.error_code = Some(if recycled { "LIBRARY_RECYCLED" } else { "LIBRARY_RECYCLE_RESULT_UNCERTAIN" }.into());
+        record.item.error_code = Some(
+            if recycled {
+                "LIBRARY_RECYCLED"
+            } else {
+                "LIBRARY_RECYCLE_RESULT_UNCERTAIN"
+            }
+            .into(),
+        );
         record.item.cover_available = false;
         record.cover = None;
     }
@@ -248,15 +305,31 @@ fn recycle_projection(
 }
 
 pub(crate) fn retained_metadata(record: &workbench_storage::LibraryRecord) -> bool {
-    record.item.state == LibraryItemState::Unreadable && record.identity.is_some()
-        && matches!(record.item.error_code.as_deref(), Some("LIBRARY_RECYCLED" | "LIBRARY_RECYCLE_RESULT_UNCERTAIN"))
+    record.item.state == LibraryItemState::Unreadable
+        && record.identity.is_some()
+        && matches!(
+            record.item.error_code.as_deref(),
+            Some("LIBRARY_RECYCLED" | "LIBRARY_RECYCLE_RESULT_UNCERTAIN")
+        )
 }
 
 fn require_no_active_download(store: &WorkbenchStore, root_id: &str) -> Result<()> {
-    if store.read_downloads_shared()?.value.tasks.iter().any(|task| {
-        task.root.id == root_id && matches!(task.phase,
-            DownloadPhase::Queued | DownloadPhase::Downloading | DownloadPhase::Verifying | DownloadPhase::Saving)
-    }) {
+    if store
+        .read_downloads_shared()?
+        .value
+        .tasks
+        .iter()
+        .any(|task| {
+            task.root.id == root_id
+                && matches!(
+                    task.phase,
+                    DownloadPhase::Queued
+                        | DownloadPhase::Downloading
+                        | DownloadPhase::Verifying
+                        | DownloadPhase::Saving
+                )
+        })
+    {
         Err(error("LIBRARY_ITEM_BUSY"))
     } else {
         Ok(())

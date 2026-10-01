@@ -13,7 +13,9 @@ mod service;
 
 pub use migration::LibraryMigrationResult;
 pub use reader::{source_reader_key, LocalReader, ReaderChapter, ReaderImage};
-pub use recycle::{LibraryRecyclePreview, LibraryRecycleRequest, LibraryRecycleResult, VerifiedRecycleTarget};
+pub use recycle::{
+    LibraryRecyclePreview, LibraryRecycleRequest, LibraryRecycleResult, VerifiedRecycleTarget,
+};
 pub use reviewed::{
     import_reviewed_library, preview_reviewed_library, reviewed_library_presence,
     ReviewedFilePresence, ReviewedLibraryImport, ReviewedLibraryPresence,

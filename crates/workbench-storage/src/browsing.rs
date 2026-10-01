@@ -149,7 +149,11 @@ mod tests {
             .unwrap();
     }
 
-    fn get(store: &WorkbenchStore, account: &str, surface: BrowsingSurface) -> Option<BrowsingBaseline> {
+    fn get(
+        store: &WorkbenchStore,
+        account: &str,
+        surface: BrowsingSurface,
+    ) -> Option<BrowsingBaseline> {
         store
             .read_browsing_markers(account, surface)
             .unwrap()
@@ -212,10 +216,17 @@ mod tests {
         assert_eq!(error.code, "SESSION_CHANGED");
         assert_eq!(std::fs::read(&path).unwrap(), original);
         assert!(store
-            .write_browsing_markers("../escape", BrowsingSurface::Recent, baseline("1"), || Ok(()))
+            .write_browsing_markers("../escape", BrowsingSurface::Recent, baseline("1"), || Ok(
+                ()
+            ))
             .is_err());
         assert!(store
-            .write_browsing_markers(&account, BrowsingSurface::Recent, baseline("../bad"), || Ok(()))
+            .write_browsing_markers(
+                &account,
+                BrowsingSurface::Recent,
+                baseline("../bad"),
+                || Ok(())
+            )
             .is_err());
         let future = String::from_utf8(original)
             .unwrap()

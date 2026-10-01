@@ -1,10 +1,10 @@
 mod accounts;
 mod browsing_markers;
-mod library_recycle;
 mod discovery;
 mod downloads;
 mod history;
 mod library;
+mod library_recycle;
 mod reader;
 mod reader_windows;
 

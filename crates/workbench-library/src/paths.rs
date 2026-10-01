@@ -152,7 +152,10 @@ impl Root {
             if redirected(&metadata) || !metadata.is_file() {
                 return Err(error("LIBRARY_UNSAFE_PATH"));
             }
-            Ok(SafeFile { file, _parent: parent })
+            Ok(SafeFile {
+                file,
+                _parent: parent,
+            })
         }
     }
 }

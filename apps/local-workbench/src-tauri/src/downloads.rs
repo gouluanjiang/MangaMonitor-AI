@@ -34,26 +34,46 @@ impl DesktopDownloads {
     // The owned read permit crosses async source queries and blocking workers.
     // Dropping the IPC future must not release a worker's outstanding admission.
     fn download_admission(&self) -> Result<Arc<tokio::sync::OwnedRwLockReadGuard<()>>, StoreError> {
-        Arc::clone(&self.admission).try_read_owned().map(Arc::new)
+        Arc::clone(&self.admission)
+            .try_read_owned()
+            .map(Arc::new)
             .map_err(|_| error("LIBRARY_ITEM_BUSY"))
     }
 
-    pub(crate) fn try_library_recycle_guard(&self) -> Result<tokio::sync::OwnedRwLockWriteGuard<()>, StoreError> {
-        let exclusive = Arc::clone(&self.admission).try_write_owned()
+    pub(crate) fn try_library_recycle_guard(
+        &self,
+    ) -> Result<tokio::sync::OwnedRwLockWriteGuard<()>, StoreError> {
+        let exclusive = Arc::clone(&self.admission)
+            .try_write_owned()
             .map_err(|_| error("LIBRARY_ITEM_BUSY"))?;
         // Never wait on the library mutex from here. A running driver keeps
         // running=true until final registration, including between queue items.
-        let scheduler = self.scheduler.lock().map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        let scheduler = self
+            .scheduler
+            .lock()
+            .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
         if scheduler.running || !scheduler.pending.is_empty() {
             return Err(error("LIBRARY_ITEM_BUSY"));
         }
         // Idle previews have no media authority. Retire them instead of letting
         // an abandoned confirmation block recycling forever. New admissions
         // cannot enter until this permit drops. Preserve every durable task.
-        let mut plans = self.plans.lock().map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
-        let mut batches = self.batches.lock().map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
-        let ids: Vec<_> = plans.keys().cloned()
-            .chain(batches.values().flat_map(|batch| batch.plans.iter().map(|plan| plan.plan_id.clone())))
+        let mut plans = self
+            .plans
+            .lock()
+            .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        let mut batches = self
+            .batches
+            .lock()
+            .map_err(|_| error("DOWNLOAD_UNAVAILABLE"))?;
+        let ids: Vec<_> = plans
+            .keys()
+            .cloned()
+            .chain(
+                batches
+                    .values()
+                    .flat_map(|batch| batch.plans.iter().map(|plan| plan.plan_id.clone())),
+            )
             .collect();
         self.service.discard_plans(&ids)?;
         plans.clear();
@@ -1190,7 +1210,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod recycle_admission_tests {
     use super::*;
@@ -1201,11 +1220,20 @@ mod recycle_admission_tests {
         let admitted = downloads.download_admission().unwrap();
         let worker = Arc::clone(&admitted);
         drop(admitted);
-        assert_eq!(downloads.try_library_recycle_guard().err().unwrap().code, "LIBRARY_ITEM_BUSY");
+        assert_eq!(
+            downloads.try_library_recycle_guard().err().unwrap().code,
+            "LIBRARY_ITEM_BUSY"
+        );
         drop(worker);
         let recycle = downloads.try_library_recycle_guard().unwrap();
-        assert_eq!(downloads.download_admission().err().unwrap().code, "LIBRARY_ITEM_BUSY");
-        assert_eq!(downloads.try_library_recycle_guard().err().unwrap().code, "LIBRARY_ITEM_BUSY");
+        assert_eq!(
+            downloads.download_admission().err().unwrap().code,
+            "LIBRARY_ITEM_BUSY"
+        );
+        assert_eq!(
+            downloads.try_library_recycle_guard().err().unwrap().code,
+            "LIBRARY_ITEM_BUSY"
+        );
         drop(recycle);
         assert!(downloads.download_admission().is_ok());
     }
@@ -1214,7 +1242,10 @@ mod recycle_admission_tests {
     fn running_driver_including_registration_blocks_recycle_without_deadlock() {
         let downloads = DesktopDownloads::default();
         downloads.scheduler.lock().unwrap().running = true;
-        assert_eq!(downloads.try_library_recycle_guard().err().unwrap().code, "LIBRARY_ITEM_BUSY");
+        assert_eq!(
+            downloads.try_library_recycle_guard().err().unwrap().code,
+            "LIBRARY_ITEM_BUSY"
+        );
         // Failed acquisition released its exclusive permit.
         assert!(downloads.download_admission().is_ok());
         downloads.scheduler.lock().unwrap().running = false;
@@ -1226,8 +1257,14 @@ mod recycle_admission_tests {
         let downloads = DesktopDownloads::default();
         let prior = downloads.preparation_epoch.load(Ordering::Acquire);
         let permit = downloads.try_library_recycle_guard().unwrap();
-        assert_eq!(downloads.preparation_epoch.load(Ordering::Acquire), prior + 1);
-        assert_eq!(require_preparation(&downloads, prior).unwrap_err().code, "DOWNLOAD_PREPARATION_CANCELLED");
+        assert_eq!(
+            downloads.preparation_epoch.load(Ordering::Acquire),
+            prior + 1
+        );
+        assert_eq!(
+            require_preparation(&downloads, prior).unwrap_err().code,
+            "DOWNLOAD_PREPARATION_CANCELLED"
+        );
         assert!(downloads.plans.lock().unwrap().is_empty());
         assert!(downloads.batches.lock().unwrap().is_empty());
         drop(permit);

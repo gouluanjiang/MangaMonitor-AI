@@ -799,6 +799,7 @@ export function CompletionPanel({
   useLayoutEffect(() => {
     if (!active || mode !== "search" || !view) return;
     let observer: IntersectionObserver | undefined;
+    let mountedCards: MutationObserver | undefined;
     const frame = requestAnimationFrame(() => {
       if (!view.run) return;
       const value = searchAdapter.rendered(
@@ -828,17 +829,25 @@ export function CompletionPanel({
                 value: visible,
               });
             observer?.disconnect();
+            mountedCards?.disconnect();
           },
           { root: root.current.closest("main") },
         );
-        root.current
-          .querySelectorAll(".source-card")
-          .forEach((card) => observer!.observe(card));
+        const observeCards = () =>
+          root.current
+            ?.querySelectorAll(".source-card")
+            .forEach((card) => observer!.observe(card));
+        observeCards();
+        // A scrollbar jump may replace every initially mounted virtual row.
+        // Track new cards until the first actual viewport intersection.
+        mountedCards = new MutationObserver(observeCards);
+        mountedCards.observe(root.current, { childList: true, subtree: true });
       }
     });
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
+      mountedCards?.disconnect();
     };
   }, [active, mode, view?.revision, searchAdapter, sortedVisible]);
   // Preserve state and memoized catalog while another page is visible.

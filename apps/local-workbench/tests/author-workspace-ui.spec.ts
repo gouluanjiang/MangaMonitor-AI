@@ -88,11 +88,23 @@ test("author tabs stream cached results, isolate state, retain positions and ign
   await expect(page.getByTestId("author-search-timings")).toContainText(
     "首次可见：尚未记录",
   );
-  await page.getByTestId("author-update-JM:1").scrollIntoViewIfNeeded();
+  // Skip the initially mounted rows, as when dragging the scrollbar to the end.
+  await page.locator("main").evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    el.dispatchEvent(new Event("scroll"));
+  });
+  await expect(
+    page.getByTestId("author-update-Pica:00000000000000000000003c"),
+  ).toBeVisible();
   await expect(page.getByTestId("author-search-timings")).not.toContainText(
     "首次可见：尚未记录",
   );
   await page.setViewportSize({ width: 1672, height: 1020 });
+  await page.locator("main").evaluate((el) => {
+    el.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll"));
+  });
+  await expect(page.getByTestId("author-update-JM:1")).toBeVisible();
   await mkdir("visual-evidence", { recursive: true });
   await writeFile(
     "visual-evidence/author-search-synthetic-timings.txt",

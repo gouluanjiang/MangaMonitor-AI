@@ -242,6 +242,6 @@ impl SourceBackend for WorkbenchSources {
     async fn cover(&self, session: &Self::Session, work_id: &str) -> Result<Option<String>> {
         WorkbenchSources::thumbnail(self, session, work_id)
             .await
-            .map_err(|error| AccountError::new(error.code))
+            .map_err(|error| AccountError::new(error.code).with_retry_after(error.retry_after_ms))
     }
 }

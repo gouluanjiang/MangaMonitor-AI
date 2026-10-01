@@ -17,6 +17,30 @@ import {
 
 const scope = { source: "JM", sessionId: "synthetic-session" };
 
+test("cover IPC keeps a valid server delay without retaining unsafe native error data", async () => {
+  for (const retryAfterMs of [12000, -1, "12000", NaN]) {
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => {
+        throw {
+          code: "SOURCE_COVER_RATE_LIMITED",
+          retryAfterMs,
+          message: "private-header",
+        };
+      },
+    });
+    await assert.rejects(adapter.cover(scope, "12"), (error) => {
+      assert.equal(error.code, "SOURCE_COVER_RATE_LIMITED");
+      assert.equal(
+        error.retryAfterMs,
+        retryAfterMs === 12000 ? 12000 : undefined,
+      );
+      assert.doesNotMatch(JSON.stringify(error), /private-header/);
+      return true;
+    });
+  }
+});
+
 test("query timings are optional for old payloads and reject invalid native measurements", async () => {
   let timing;
   const adapter = createSourceAdapter({

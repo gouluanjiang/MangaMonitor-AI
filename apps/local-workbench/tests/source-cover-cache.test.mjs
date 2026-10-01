@@ -160,7 +160,7 @@ test("queue pressure is not negatively cached and a later visible request can su
   );
 });
 
-test("fixed errors are retained briefly, explicit retry clears failures, and malformed diagnostic text never leaks", async () => {
+test("fixed errors persist across mounts, explicit retry clears failures, and malformed diagnostic text never leaks", async () => {
   const cache = new CoverSessionCache();
   let calls = 0;
   const failed = async () => {
@@ -188,6 +188,136 @@ test("fixed errors are retained briefly, explicit retry clears failures, and mal
     throw { code: "token-secret", message: "SECRET" };
   }).promise;
   assert.deepEqual(unknown, { status: "error", code: "SOURCE_UNAVAILABLE" });
+});
+
+test("transient failures retry three times with increasing jittered delays and remain exhausted across remounts", async () => {
+  let now = 1000,
+    calls = 0;
+  const delays = [];
+  const cache = new CoverSessionCache({
+    now: () => now,
+    random: () => 0.5,
+    wait: async (delay) => {
+      delays.push(delay);
+      now += delay;
+    },
+  });
+  const load = async () => {
+    calls++;
+    throw { code: "SOURCE_TIMEOUT" };
+  };
+  const a = cache.acquire(jm, "retry", load),
+    b = cache.acquire(jm, "retry", load);
+  assert.deepEqual(await a.promise, {
+    status: "error",
+    code: "SOURCE_TIMEOUT",
+  });
+  await b.promise;
+  a.release();
+  b.release();
+  assert.equal(calls, 4);
+  assert.deepEqual(delays, [1150, 2150, 4150]);
+  now += 3600000;
+  await read(cache, jm, "retry", load);
+  assert.equal(calls, 4, "scroll and elapsed time cannot start another cycle");
+  cache.retryFailure(jm, "retry");
+  assert.equal(
+    (await read(cache, jm, "retry", async () => image)).status,
+    "ready",
+  );
+});
+
+test("retry waits release network capacity, stop offscreen and retain their remaining budget", async () => {
+  let now = 0,
+    calls = 0,
+    waiting;
+  const cache = new CoverSessionCache({
+    now: () => now,
+    random: () => 0,
+    wait: (delay, signal) =>
+      new Promise((resolve) => {
+        waiting = () => {
+          now += delay;
+          resolve();
+        };
+        signal.addEventListener("abort", resolve, { once: true });
+      }),
+  });
+  const failed = async () => {
+    calls++;
+    throw { code: "SOURCE_CONNECTION_FAILED" };
+  };
+  const a = cache.acquire(jm, "paused", failed);
+  while (!waiting) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    (await read(cache, jm, "other", async () => image)).status,
+    "ready",
+  );
+  a.release();
+  assert.equal((await a.promise).status, "deferred");
+  assert.equal(calls, 1);
+  waiting = undefined;
+  const b = cache.acquire(jm, "paused", failed);
+  while (calls < 4) {
+    while (!waiting) await new Promise((resolve) => setImmediate(resolve));
+    const resume = waiting;
+    waiting = undefined;
+    resume();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal((await b.promise).status, "error");
+  b.release();
+  assert.equal(calls, 4);
+});
+
+test("server deadlines apply to automatic and manual retry, while auth, absent and invalid resources do not auto-loop", async () => {
+  let now = 0,
+    calls = 0;
+  const delays = [];
+  const cache = new CoverSessionCache({
+    now: () => now,
+    random: () => 0,
+    wait: async (delay) => {
+      delays.push(delay);
+      now += delay;
+    },
+  });
+  const result = await read(cache, jm, "limited", async () => {
+    calls++;
+    if (calls < 4)
+      throw { code: "SOURCE_COVER_RATE_LIMITED", retryAfterMs: 15000 };
+    return image;
+  });
+  assert.equal(result.status, "ready");
+  assert.deepEqual(delays, [15000, 15000, 15000]);
+  for (const code of [
+    "AUTH_REQUIRED",
+    "SESSION_EXPIRED",
+    "SOURCE_COVER_ACCESS_DENIED",
+    "SOURCE_COVER_NOT_FOUND",
+    "SOURCE_COVER_INVALID",
+  ]) {
+    let attempts = 0;
+    await read(cache, jm, code, async () => {
+      attempts++;
+      throw { code };
+    });
+    await read(cache, jm, code, async () => {
+      attempts++;
+      return image;
+    });
+    assert.equal(attempts, 1);
+  }
+  await read(cache, jm, "manual", async () => {
+    throw { code: "SOURCE_COVER_ACCESS_DENIED", retryAfterMs: 9000 };
+  });
+  cache.retryFailure(jm, "manual");
+  await read(cache, jm, "manual", async () => image);
+  assert.equal(
+    delays.at(-1),
+    9000,
+    "explicit retry cannot bypass a server deadline",
+  );
 });
 
 test("a clicked failed cover clears only that source, session and work error", async () => {

@@ -23,10 +23,17 @@ import { notifyAuthorCatalogChanged } from "./author-catalog-events.ts";
 
 export class SourceError extends Error {
   readonly code: string;
-  constructor(code: string) {
+  readonly retryAfterMs?: number;
+  constructor(code: string, retryAfterMs?: number) {
     super(code);
     this.name = "SourceError";
     this.code = code;
+    if (
+      typeof retryAfterMs === "number" &&
+      Number.isSafeInteger(retryAfterMs) &&
+      retryAfterMs >= 0
+    )
+      this.retryAfterMs = retryAfterMs;
   }
 }
 export function sourceErrorMessage(error: unknown): string {
@@ -672,7 +679,12 @@ export function createSourceAdapter(
         /^[A-Z0-9_]{1,80}$/.test(error.code)
           ? error.code
           : "SOURCE_UNAVAILABLE";
-      throw new SourceError(code); // Never retain or display raw native error text.
+      throw new SourceError(
+        code,
+        object(error) && typeof error.retryAfterMs === "number"
+          ? error.retryAfterMs
+          : undefined,
+      ); // Never retain or display raw native error text.
     }
   }
   function checkScope(scope: SourceScope) {

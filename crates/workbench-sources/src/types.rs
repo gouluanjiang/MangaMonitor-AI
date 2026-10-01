@@ -4,11 +4,17 @@ pub use workbench_credentials::Source;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct SourceError {
     pub code: &'static str,
+    #[serde(rename = "retryAfterMs", skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
 }
 
 impl SourceError {
     pub(crate) const fn new(code: &'static str) -> Self {
-        Self { code }
+        Self { code, retry_after_ms: None }
+    }
+    pub(crate) const fn with_retry_after(mut self, delay: Option<u64>) -> Self {
+        self.retry_after_ms = delay;
+        self
     }
 }
 

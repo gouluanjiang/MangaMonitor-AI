@@ -1122,7 +1122,7 @@ async fn waiting_for_local_catalog_does_not_block_covers_or_retain_a_changed_acc
     assert!(replacement.is_ok());
     assert!(matches!(
         pending.await.unwrap(),
-        Err(AccountError { code: "SESSION_CHANGED" })
+        Err(AccountError { code: "SESSION_CHANGED", .. })
     ));
 }
 

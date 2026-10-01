@@ -56,3 +56,23 @@ Stage 2 requires its own CI and exact-candidate verification; these notes do not
 declare delivery. Synthetic cases cover pending baseline completion, changed
 queries, coauthor deduplication, retained read state, restart persistence, joining
 manual checks, repeated starts, cancellation and native window boundaries.
+
+## Stage 3 implementation notes
+
+Remote cover retries share the existing thumbnail cache and four-slot network
+scheduler. Only identified transient transport, rate-limit and server failures
+retry, with at most three additional attempts and increasing jittered waits.
+Waiting consumes no network slot. Offscreen work stops waiting, and returning
+to the card resumes the remaining budget rather than creating a new cycle.
+Authentication, rejected, missing or undecodable resources require manual action.
+Failure state survives card mounts for the authenticated session; successful
+compressed covers remain memory-only. Explicit retries refresh metadata once.
+
+The credential-free cover transport forwards a validated Retry-After delay,
+including HTTP dates, without forwarding headers or credentials. This deadline
+also prevents immediate mirror failover and explicit retries from bypassing a
+server wait. Synthetic tests exercise shared consumers, exhausted remounts,
+offscreen cancellation, queue availability, scoped manual retries and deadlines.
+Local ZIP decode/missing-file failures remain explicit manual retries, since
+they are not transient network failures. CI and exact-candidate acceptance remain
+required; no source scans or real media downloads are part of these checks.

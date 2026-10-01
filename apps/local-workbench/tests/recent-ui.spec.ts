@@ -76,6 +76,7 @@ async function install(
     detailTags?: Record<string, string[]>;
     covers?: boolean;
     femaleIds?: number[];
+    retainedCount?: number;
   } = {},
 ) {
   await page.addInitScript(
@@ -164,7 +165,11 @@ async function install(
               return {
                 source: args.source,
                 sessionId: args.sessionId,
-                items: [],
+                items: Array.from(
+                  { length: options.retainedCount ?? 0 },
+                  (_, i) =>
+                    work(args.source as Source, i + 1, String(args.sessionId)),
+                ),
                 revision: 0,
                 coverage: {
                   headIds: [],
@@ -541,6 +546,148 @@ async function expectRecentAnchor(
     )
     .toBeLessThanOrEqual(4);
 }
+
+async function expectStationaryRecentGrid(page: Page) {
+  const samples = await page
+    .getByTestId("recent-grid")
+    .evaluate(async (grid) => {
+      const main = grid.closest("main")!;
+      const samples: {
+        key: string | null;
+        y: number;
+        scroll: number;
+        height: number;
+      }[] = [];
+      for (let frame = 0; frame < 90; frame++) {
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve()),
+        );
+        if (frame < 30) continue;
+        const viewport = main.getBoundingClientRect();
+        const card = Array.from(
+          grid.querySelectorAll("article[data-testid]"),
+        ).find((item) => {
+          const rect = item.getBoundingClientRect();
+          return rect.top >= viewport.top && rect.top < viewport.bottom;
+        });
+        samples.push({
+          key: card?.getAttribute("data-testid") ?? null,
+          y: card ? card.getBoundingClientRect().top - viewport.top : -1,
+          scroll: main.scrollTop,
+          height: grid.getBoundingClientRect().height,
+        });
+      }
+      return samples;
+    });
+  expect(samples.every((sample) => sample.key !== null)).toBe(true);
+  expect(new Set(samples.map((sample) => sample.key)).size).toBe(1);
+  for (const field of ["y", "scroll", "height"] as const) {
+    const values = samples.map((sample) => sample[field]);
+    expect(
+      Math.max(...values) - Math.min(...values),
+      field,
+    ).toBeLessThanOrEqual(1);
+  }
+  const geometry = await page.getByTestId("recent-grid").evaluate((grid) => {
+    const rows = Array.from(grid.querySelectorAll(".source-virtual-row"));
+    return {
+      count: grid.querySelectorAll("article").length,
+      overlaps: rows
+        .slice(1)
+        .some(
+          (row, index) =>
+            row.getBoundingClientRect().top <
+            rows[index].getBoundingClientRect().bottom - 1,
+        ),
+    };
+  });
+  expect(geometry.overlaps).toBe(false);
+  expect(geometry.count).toBeLessThan(100);
+}
+
+async function varyRecentRowMetadata(page: Page) {
+  // Real catalog rows differ in fallback-font, metadata and action heights.
+  // Deterministic extra line space models that variation on every CI platform.
+  const selectors = Array.from({ length: 1000 }, (_, index) => index + 1)
+    .filter((id) => Math.floor((id - 1) / 7) % 2 === 1)
+    .map(
+      (id) =>
+        `[data-testid="recent-work-Pica:${String(id).padStart(24, "0")}"] .source-card-state`,
+    );
+  await page.addStyleTag({
+    content: `${selectors.join(",")} { padding-bottom: 21px; }`,
+  });
+}
+
+test("deep recent history with unequal row heights stays still after scrolling and never overlaps", async ({
+  page,
+}) => {
+  await install(page, { retainedCount: 1000 });
+  await expect(page.getByTestId("recent-grid")).toHaveAttribute(
+    "data-total-items",
+    "1000",
+  );
+  await varyRecentRowMetadata(page);
+  const positions = await page.getByTestId("recent-grid").evaluate((grid) => {
+    const main = grid.closest("main")!;
+    const rows = grid.querySelectorAll(".source-virtual-row");
+    const gap = parseFloat(getComputedStyle(grid).rowGap);
+    const short = rows[0].getBoundingClientRect().height + gap;
+    const tall = rows[1].getBoundingClientRect().height + gap;
+    const offset =
+      main.scrollTop +
+      grid.getBoundingClientRect().top -
+      main.getBoundingClientRect().top;
+    // Stop on boundaries where using a different first row as the global
+    // height would alternate the short/tall samples. No wheel input follows.
+    return Array.from({ length: 60 }, (_, index) => index * 2 + 11)
+      .filter(
+        (row) => (Math.floor(((row + 2) * short + 2) / tall) - 2) % 2 === 0,
+      )
+      .slice(0, 3)
+      .map((row) => offset + (row + 2) * short + 2);
+  });
+  expect(positions).toHaveLength(3);
+  for (const top of [...positions, positions[0]]) {
+    await page.getByRole("main").evaluate((main, value) => {
+      main.scrollTop = value;
+    }, top);
+    await expectStationaryRecentGrid(page);
+  }
+  expect(await recentCalls(page)).toHaveLength(1);
+  expect(await detailCalls(page)).toEqual([]);
+});
+
+test("a taller recent row preserves the visible anchor and the grid can settle after resize and return", async ({
+  page,
+}) => {
+  await install(page, { retainedCount: 1000 });
+  await expect(page.getByTestId("recent-grid")).toHaveAttribute(
+    "data-total-items",
+    "1000",
+  );
+  await varyRecentRowMetadata(page);
+  await page.getByRole("main").evaluate((main) => {
+    main.scrollTop = 13000;
+  });
+  await expectStationaryRecentGrid(page);
+  const anchor = await captureRecentAnchor(page);
+  await page.getByTestId("recent-grid").evaluate((grid) => {
+    const row = grid.querySelector<HTMLElement>(".source-virtual-row")!;
+    row.style.minHeight = row.getBoundingClientRect().height + 48 + "px";
+  });
+  await expectRecentAnchor(page, anchor);
+  await expectStationaryRecentGrid(page);
+  await page.setViewportSize({ width: 1180, height: 920 });
+  await expect(page.getByTestId(anchor.key)).toBeInViewport();
+  await expectStationaryRecentGrid(page);
+  const resized = await captureRecentAnchor(page);
+  await page.getByTestId("nav-library").click();
+  await page.getByTestId("nav-recent").click();
+  await expectRecentAnchor(page, resized);
+  await expectStationaryRecentGrid(page);
+  expect(await recentCalls(page)).toHaveLength(1);
+});
 
 test("both recent feeds preserve source order, language and unknown dates and directly enqueue without leaving the feed", async ({
   page,

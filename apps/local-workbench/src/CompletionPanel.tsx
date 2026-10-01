@@ -182,7 +182,8 @@ export function CompletionPanel({
   } | null>(null);
   const view = result?.key === scopeKey ? result.value : null;
   const searchMetrics =
-    paintMetrics?.runId === view?.run?.id &&
+    paintMetrics !== null &&
+    paintMetrics.runId === view?.run?.id &&
     paintMetrics?.revision === view?.revision
       ? paintMetrics.value
       : view?.searchMetrics;

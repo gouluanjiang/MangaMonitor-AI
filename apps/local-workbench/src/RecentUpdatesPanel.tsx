@@ -505,7 +505,9 @@ export function RecentUpdatesPanel({
                     }
                   >
                     {source === "both" && sourceLabel(coverageSource) + " · "}
-                    已保存近期补漏范围：{sourceState.retainedCoverage.pagesRead}{" "}
+                    已保存近期补漏范围：{
+                      sourceState.retainedCoverage.pagesRead
+                    }{" "}
                     页
                     {sourceState.retainedCoverage.checkedAt
                       ? ` · ${new Date(sourceState.retainedCoverage.checkedAt).toLocaleString()}`

@@ -517,17 +517,23 @@ impl WorkbenchStore {
         } else {
             None
         };
-        let checkpoint = manifest.as_ref().and_then(|value| value.checkpoint.as_ref());
+        let checkpoint = manifest
+            .as_ref()
+            .and_then(|value| value.checkpoint.as_ref());
         let mut read_cache = self.discovery_read.lock().map_err(|_| corrupt())?;
         let cached_base_revision = checkpoint.and_then(|_| {
             read_cache.legacy.as_ref().and_then(|(hash, revision)| {
                 (base_sha256.as_ref() == Some(hash)).then_some(*revision)
             })
         });
-        let mut document: Document<DiscoveryDocument> = if let Some(revision) = cached_base_revision {
+        let mut document: Document<DiscoveryDocument> = if let Some(revision) = cached_base_revision
+        {
             // The base was validated before this exact-byte digest was retained.
             // Its records will immediately be replaced by the verified checkpoint.
-            Document { revision, value: DiscoveryDocument::default() }
+            Document {
+                revision,
+                value: DiscoveryDocument::default(),
+            }
         } else {
             self.read_unlocked(DISCOVERY_FILE, MAX_DISCOVERY_BYTES)?
         };
@@ -546,7 +552,10 @@ impl WorkbenchStore {
             if bytes.len() as u64 != checkpoint.bytes || hash(&bytes) != checkpoint.sha256 {
                 return Err(corrupt());
             }
-            let cached = read_cache.checkpoint.as_ref().filter(|(hash, _, _)| hash == &checkpoint.sha256);
+            let cached = read_cache
+                .checkpoint
+                .as_ref()
+                .filter(|(hash, _, _)| hash == &checkpoint.sha256);
             let index = if let Some((_, saved, index)) = cached {
                 document = saved.as_ref().clone();
                 index.clone()
@@ -555,7 +564,11 @@ impl WorkbenchStore {
                 document.value.migrate()?;
                 document.value.validate().map_err(|_| corrupt())?;
                 let index = RawIndex::from_document(&document.value)?;
-                read_cache.checkpoint = Some((checkpoint.sha256.clone(), Arc::new(document.clone()), index.clone()));
+                read_cache.checkpoint = Some((
+                    checkpoint.sha256.clone(),
+                    Arc::new(document.clone()),
+                    index.clone(),
+                ));
                 index
             };
             if document.revision != checkpoint.revision {

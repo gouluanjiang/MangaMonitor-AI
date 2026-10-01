@@ -54,14 +54,24 @@ fn warm_checkpoint_reads_recheck_bytes_and_observe_other_handle_commits() {
     let directory = TempDir::new().unwrap();
     let store = WorkbenchStore::open(directory.path()).unwrap();
     store.write_discovery(0, document()).unwrap();
-    store.apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "124")])).unwrap();
+    store
+        .apply_discovery_patch_for_following(1, 0, patch(vec![record(Source::Jm, "124")]))
+        .unwrap();
     store.checkpoint_discovery_for_following(2, 0).unwrap();
     let before = store.read_discovery().unwrap();
     let other = WorkbenchStore::open(directory.path()).unwrap();
     assert_eq!(other.read_discovery().unwrap(), before);
     let root = directory.path().join(PRIVATE_DIRECTORY);
-    let checkpoint = fs::read_dir(&root).unwrap().map(|entry| entry.unwrap().path())
-        .find(|path| path.file_name().unwrap().to_string_lossy().starts_with("discovery-checkpoint-")).unwrap();
+    let checkpoint = fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("discovery-checkpoint-")
+        })
+        .unwrap();
     let valid = fs::read(&checkpoint).unwrap();
     let mut corrupt = valid.clone();
     let last = corrupt.len() - 1;
@@ -72,10 +82,18 @@ fn warm_checkpoint_reads_recheck_bytes_and_observe_other_handle_commits() {
     assert_eq!(store.read_discovery().unwrap(), before);
     let mut changed = record(Source::Jm, "124");
     changed.work.title = "Updated synthetic metadata".into();
-    other.apply_discovery_patch_for_following(2, 0, patch(vec![changed.clone()])).unwrap();
+    other
+        .apply_discovery_patch_for_following(2, 0, patch(vec![changed.clone()]))
+        .unwrap();
     let after = store.read_discovery().unwrap();
     assert_eq!(after.revision, 3);
-    assert_eq!(after.value.accounts[0].records.iter().find(|row| row.work.work_id == "124"), Some(&changed));
+    assert_eq!(
+        after.value.accounts[0]
+            .records
+            .iter()
+            .find(|row| row.work.work_id == "124"),
+        Some(&changed)
+    );
     // Cached integrity never licenses reverting to an older or missing base.
     let base = root.join("discovery.json");
     let original = fs::read(&base).unwrap();

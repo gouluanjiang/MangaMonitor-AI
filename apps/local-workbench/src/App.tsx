@@ -718,7 +718,7 @@ export default function App() {
       return;
     }
     setRequestedLibraryEntryId(identity.entryId);
-    setRequestedLibraryWork(undefined);
+    setRequestedLibraryWork(null);
     navigate("library");
     setLibraryTab("all");
     setQuery("");

@@ -133,7 +133,6 @@ test("detail special follow first adds ordinary follow and cancellation keeps it
 }) => {
   await installWorkflow(page);
   await page.evaluate(() => {
-    window.workflowTest.finishCheck();
     const previous = window.__TAURI_INTERNALS__!.invoke;
     let followed = false,
       enabled = false;

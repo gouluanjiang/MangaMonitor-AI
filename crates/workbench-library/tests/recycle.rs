@@ -498,19 +498,37 @@ fn changed_file_unsupported_format_and_missing_file_never_reach_host() {
     );
 
     let mut f = fixture();
-    let mut changed = f.store.read_library().unwrap();
-    changed
-        .value
-        .records
-        .iter_mut()
-        .find(|r| r.item.file_name == "合成 Selected.CBZ")
-        .unwrap()
-        .item
-        .format = workbench_library::LibraryFormat::Directory;
-    f.store
-        .write_library(changed.revision, changed.value)
+    let directory = f.media.path().join("Synthetic Directory");
+    fs::create_dir(&directory).unwrap();
+    DynamicImage::new_rgb8(2, 3)
+        .save_with_format(directory.join("1.png"), ImageFormat::Png)
         .unwrap();
-    let request = selection_request(&f.service.read(&f.store).unwrap());
+    let started = f
+        .service
+        .scan(
+            &f.store,
+            f.ready.root_id.as_deref().unwrap(),
+            f.ready.generation,
+            ScanAction::Start,
+        )
+        .unwrap();
+    let ready = finish(&mut f.service, &f.store, started);
+    let directory_item = ready
+        .items
+        .iter()
+        .find(|item| item.file_name == "Synthetic Directory")
+        .unwrap();
+    assert_eq!(
+        directory_item.format,
+        workbench_library::LibraryFormat::Directory
+    );
+    assert_eq!(directory_item.state, LibraryItemState::Indexed);
+    let request = LibraryRecycleRequest {
+        root_id: ready.root_id.clone().unwrap(),
+        generation: ready.generation,
+        entry_id: directory_item.id.clone(),
+        expected_revision: ready.revision,
+    };
     assert_eq!(
         f.service
             .recycle_confirmed(

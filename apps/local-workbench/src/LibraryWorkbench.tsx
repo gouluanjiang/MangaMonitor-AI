@@ -312,7 +312,12 @@ export function LibraryControls({
               : error || snapshot.phase === "error"
                 ? "读取未完成"
                 : "尚未读取"}{" "}
-        · {snapshot.items.length} 个电脑作品
+        ·{" "}
+        {
+          snapshot.items.filter((item) => item.errorCode !== "LIBRARY_RECYCLED")
+            .length
+        }{" "}
+        个电脑作品
         {snapshot.skipped > 0 ? ` · 跳过 ${snapshot.skipped} 项` : ""}
         {snapshot.freshness === "cached" && !compact
           ? " · 上次目录记录，可重新读取以发现增删"

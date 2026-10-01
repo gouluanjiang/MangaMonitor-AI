@@ -1221,7 +1221,9 @@ test("library context menu exposes five actions and recycle cancellation/failure
   await menu
     .getByRole("menuitem", { name: "打开文件位置", exact: true })
     .click();
-  expect(await commands(page, "library_reveal")).toHaveLength(1);
+  await expect
+    .poll(async () => (await commands(page, "library_reveal")).length)
+    .toBe(1);
   expect(await commands(page, "library_recycle")).toHaveLength(0);
   await cover.click({ button: "right" });
   await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
@@ -1239,6 +1241,9 @@ test("library context menu exposes five actions and recycle cancellation/failure
   await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
   await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
   await expect(page.getByTestId("library-card-" + id(2))).toBeVisible();
+  await expect(page.getByTestId("library-progress")).toContainText(
+    "3 个电脑作品",
+  );
   await expect(page.getByTestId("library-file-message")).toContainText(
     "已移到回收站",
   );

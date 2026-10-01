@@ -13,9 +13,13 @@ All five implementation stages are now present as separate commits: retained
 author tabs/progressive search/timing, special baselines and unread updates,
 bounded cover retries, deliberate viewing history, and successful manual scan
 markers. See the batch contract's engineering checkpoint for exact CI evidence.
-Early native stages passed Windows CI; final combined UI/native regressions,
-performance comparison and exact-candidate acceptance remain in progress. These
-are implemented changes on draft PR #24, not delivered or accepted features.
+Early native stages passed Windows CI. The controlled, already-built-artifact
+comparison measured median first visible results of 3,057.5 → 185.2 ms and
+complete visible results of 3,057.5 → 1,481.7 ms with the same four synthetic
+source requests; this is not a real-website measurement. Final combined CI is
+being repeated for the history-switch feedback and typed reader-event fixes;
+exact-candidate acceptance remains pending. These are implemented changes on
+draft PR #24, not delivered or accepted features.
 
 Updated 2026-10-01. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
 

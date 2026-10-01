@@ -17,6 +17,13 @@ use tauri::{Emitter, Runtime, State, WebviewWindow};
 use workbench_library::{source_reader_key, LocalReader, ReaderImage};
 use workbench_storage::{LibraryReference, ReaderPosition, Source};
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReaderVisitedPayload {
+    reference: LibraryReference,
+    session_id: Option<String>,
+}
+
 #[tauri::command]
 pub(crate) async fn reader_open<R: Runtime>(
     window: WebviewWindow<R>,
@@ -72,7 +79,10 @@ pub(crate) async fn reader_open<R: Runtime>(
             let _ = window.emit_to(
                 "main",
                 "mangamonitor-reader-visited",
-                serde_json::json!({"reference":reference,"sessionId":source_session}),
+                ReaderVisitedPayload {
+                    reference: reference.clone(),
+                    session_id: source_session,
+                },
             );
         }
     }

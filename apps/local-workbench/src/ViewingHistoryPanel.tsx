@@ -15,6 +15,7 @@ export function ViewingHistoryPanel({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [confirm, setConfirm] = useState(false);
+  const [enabledDraft, setEnabledDraft] = useState<boolean | null>(null);
   useEffect(() => {
     if (active) void history.refresh();
   }, [active, history.refresh]);
@@ -33,12 +34,21 @@ export function ViewingHistoryPanel({
         <label>
           <input
             type="checkbox"
-            checked={history.snapshot?.enabled ?? true}
-            disabled={!history.snapshot || history.busy}
-            onChange={(event) => void history.setEnabled(event.target.checked)}
+            checked={enabledDraft ?? history.snapshot?.enabled ?? true}
+            disabled={
+              !history.snapshot || history.busy || enabledDraft !== null
+            }
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              setEnabledDraft(enabled);
+              void history
+                .setEnabled(enabled)
+                .finally(() => setEnabledDraft(null));
+            }}
           />
           记录浏览历史
         </label>
+        {enabledDraft !== null && <span role="status">正在保存记录设置…</span>}
         <button onClick={() => void history.refresh()} disabled={history.busy}>
           重新读取
         </button>

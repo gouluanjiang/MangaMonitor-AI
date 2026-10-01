@@ -124,10 +124,47 @@ changes, multi-author counts and independence from special-follow updates.
   Windows desktop CI `36821829795`.
 - Special-follow native changes passed Windows CI `36824949432`; cover retry
   native changes passed `36826674242`.
-- UI CI `36826674241` passed 246 browser cases with two newly registered cases
-  exposing test setup mistakes: a top control click after restored navigation,
-  and a one-record fixture expecting two unread records. `7aaac6e` corrects them;
-  revalidation is pending. Its new history compile check also identified a
-  `null`/`undefined` reset mismatch, corrected in the following revision.
-- Stages 4/5 and the final combined candidate still require CI and native
-  acceptance. No real scans, downloads, deletions, merge or release have run.
+- Combined UI CI `36829513681` passed 249 browser cases, including the corrected
+  tab-scroll and special-unread fixtures and the new successful-scan retention
+  cases. Its remaining history-switch failure exposed delayed controlled-input
+  feedback; the switch now updates immediately, displays saving and restores the
+  saved state on failure, with a dedicated delayed-failure regression.
+- Windows CI `36829513780` passed storage/account checks but caught a production
+  reader event using a test-only JSON dependency. The event now uses a typed
+  serializable payload without adding dependencies. These final corrections
+  require fresh combined UI/native CI and exact-candidate verification.
+- No real scans, downloads, deletions, merge or release have run.
+
+## Controlled search latency comparison
+
+Compared existing CI-built browser artifacts for `2f39585` and `b85f450`, using
+three alternating fresh Edge contexts on the same computer. This is a separate
+performance diagnostic, not a duplicate execution of the formal test suite.
+The synthetic fixture has two sources, two pages of 20 works each, 80 ms local
+catalog reads, 30 ms request queue delay, 350/550 ms source operations and 15 ms
+local commits. All external network access is blocked. A DOM/paint observer
+records when the first card intersects the viewport and when completion appears,
+instead of counting test-runner polling overhead.
+
+| Visible wall-clock measurement | Before, median | After, median |
+| --- | ---: | ---: |
+| First visible result | 3,057.5 ms | 185.2 ms |
+| Complete results/status visible | 3,057.5 ms | 1,481.7 ms |
+| Source page requests | 4 | 4 |
+
+All three trials completed the same range without browser exceptions. This
+demonstrates earlier cached-result publication and overlapping the two sources;
+it is not a measured website speedup or a promise about real network latency.
+The first visible result uses a saved directory, rather than waiting for a new
+network result. With no saved directory, first visibility still requires the
+first source page. Final history/reader corrections do not change these search
+files, so their unrelated code changes do not warrant repeating this benchmark.
+
+The instrumented first trial reports 333 ms cumulative local catalog work,
+34 ms query-rule reads, 120 ms queued requests, 1,800 ms source operations,
+60 ms local registration and 42 ms interface updates. These are overlapping
+operation totals, not sequential wall-clock components. Source operations include
+network/protocol parsing/retries; they are not raw wire latency. The internal
+terminal event was 1,396 ms; its status painted at 1,481.7 ms. The old artifact
+does not expose native timing, so a numeric before/after comparison of each
+native subcomponent is not claimed. Real-source measurements remain unverified.

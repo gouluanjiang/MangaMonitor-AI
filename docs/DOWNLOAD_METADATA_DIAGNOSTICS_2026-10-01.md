@@ -55,3 +55,30 @@ The exact checked revision and final workflow links are recorded in
 Synthetic engineering verification is separate from real-source acceptance.
 No real download, full author scan, installation, merge or release is part of
 this work.
+
+## Follow-up: whitespace controls in new tag metadata
+
+The diagnostic-only candidate a0e868a was installed after the user's explicit
+installation request. Its failure message confirmed the tag-control branch,
+but did not identify a particular raw tag or code point. The subsequent generic
+fix is authorized for user-operated acceptance, with synthetic engineering checks.
+
+The source reader may preserve whitespace controls in a tag while the download
+ledger forbids controls. New-plan preparation now replaces only characters that
+are both Unicode controls and whitespace (TAB, LF, VT, FF, CR and NEL) with spaces.
+It re-runs all existing bounds before collapsing the changed tag's whitespace.
+Valid metadata is returned byte-for-byte unchanged. Non-whitespace controls,
+blank or oversized tags, too many tags and unrelated invalid fields still fail.
+Words are separated, not concatenated; tags are not dropped or truncated.
+
+Normalization happens before new plan identity/approval binding and confirmation,
+in the shared single/batch service path. Saved tasks are never normalized during
+read, retry or validation. No schema migration, account action, new source request,
+content-filter rule, image pipeline or file-operation authority is added.
+
+Synthetic regressions cover both sources, all six whitespace-control types,
+non-whitespace C0/C1 controls, raw-length limits, empty labels, unchanged valid
+metadata, idempotence, preserved old records, normalized bindings, restart reads,
+and rejection without queue/library mutation. Preparation and isolated ledger
+confirmation do not execute downloads. Real-source success remains for the user
+to verify; a remaining non-whitespace control will still produce the diagnostic.

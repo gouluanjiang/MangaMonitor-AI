@@ -45,6 +45,42 @@ impl JmDownloadMetadata {
     pub fn is_valid_for(&self, source: Source) -> bool {
         self.validate_for(source).is_ok()
     }
+    /// Adapt freshly fetched tags before creating a plan. Saved records keep
+    /// strict validation and their original binding bytes; never normalize reads.
+    pub fn for_new_download(mut self, source: Source) -> Result<Self> {
+        match self.validate_for(source) {
+            Ok(()) => return Ok(self),
+            Err(error) if error.code != "DOWNLOAD_METADATA_TAG_CONTROL" => return Err(error),
+            Err(_) => {}
+        }
+        let mut changed = Vec::new();
+        for (index, tag) in self.tags.iter_mut().enumerate() {
+            if tag.chars().any(|c| c.is_control() && c.is_whitespace()) {
+                // Preserve character counts until all existing bounds are checked.
+                // Non-whitespace controls stay present and are still rejected.
+                *tag = tag
+                    .chars()
+                    .map(|c| {
+                        if c.is_control() && c.is_whitespace() {
+                            ' '
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                changed.push(index);
+            }
+        }
+        self.validate_for(source)?;
+        for index in changed {
+            self.tags[index] = self.tags[index]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+        Ok(self)
+    }
+
     /// Explain the existing admission rules without rewriting source metadata.
     /// Only stable codes cross IPC; rejected field values never enter errors.
     pub fn validate_for(&self, source: Source) -> Result<()> {

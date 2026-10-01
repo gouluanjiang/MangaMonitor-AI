@@ -84,3 +84,14 @@ The approved audit batch adds explicit abandon and separate task-staging cleanup
 Worker supervision does not auto-resume a failed task. Resume-all preserves current source/account/generation and submits bounded batches; a changed context stops the sequence. Pause messaging reflects in-flight final-save work. Existing source protocol pins and image concurrency are unchanged.
 
 The archive optimization retains all full-file hash/identity boundaries and caches only a validated layout tied to the exact manifest and file proof. A changed file, receipt or cold process requires validation. Synthetic counters, tamper cases and isolated cleanup tests are required in CI; no live manga download or deletion is part of this maintenance verification.
+
+## 2026-10-01 tag whitespace review
+
+The authorized generic follow-up changes only fresh tag metadata at the shared
+download preparation boundary. Whitespace controls become separators before plan
+and approval hashes are computed; unchanged strict validation checks original
+character bounds and still rejects non-whitespace controls. Existing task reads,
+bindings, source/credential boundaries, request accounting, image enumeration,
+staging, promotion, replacement and deletion are unchanged. Prior protocol pins
+and executor reviews remain applicable. Tests are synthetic and do not authorize
+or perform real source requests or media downloads; no persisted migration occurs.

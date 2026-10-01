@@ -1,5 +1,19 @@
 # Current development handoff
 
+## Download tag whitespace compatibility (2026-10-01)
+
+After the diagnostic-only candidate a0e868a was installed on the user's
+explicit request, the user approved a generic fix for tag-control rejection.
+New download preparation normalizes whitespace controls in tags to word
+separators, checks the original character bounds before trimming, and keeps
+non-whitespace controls rejected. Strict stored-document validation, existing
+record bytes and task bindings remain unchanged; no schema migration is needed.
+Both single and batch preparation use the same service boundary. Tests use
+synthetic metadata and isolated ledgers only, without source requests or media
+execution. Fresh CI/candidate evidence is required before user acceptance.
+The details are in [the metadata contract](DOWNLOAD_METADATA_DIAGNOSTICS_2026-10-01.md).
+Keep draft PR #24 unmerged and do not perform a real manga download for verification.
+
 ## Synthetic download metadata diagnostics (2026-10-01)
 
 The user approved generic validation, error classification and diagnostic work

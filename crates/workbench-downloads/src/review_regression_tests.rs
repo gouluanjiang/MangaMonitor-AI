@@ -51,6 +51,87 @@ fn metadata_rejection_explains_the_field_without_creating_a_plan_or_changing_sav
     assert_eq!(fs::read_dir(&f.library).unwrap().count(), 0);
 }
 
+#[test]
+fn tag_whitespace_is_normalized_before_plan_binding_without_rewriting_old_records() {
+    for source in [Source::Jm, Source::Pica] {
+        let f = zip_fixture();
+        let old = record(&f);
+        let before = f.store.read_downloads().unwrap();
+        let library = f.store.read_library().unwrap();
+        let mut metadata = old.metadata.clone();
+        metadata.work_id = match source {
+            Source::Jm => "654321".into(),
+            Source::Pica => "0123456789abcdef01234567".into(),
+        };
+        metadata.title = "Synthetic whitespace label".into();
+        metadata.tags = vec![" Example\r\n label\t".into(), "Unchanged  tag".into()];
+        let plan = f
+            .service
+            .prepare_for_source(
+                &f.store,
+                &library.value.root.as_ref().unwrap().id,
+                library.value.generation,
+                source,
+                metadata.clone(),
+            )
+            .unwrap();
+        assert_eq!(f.store.read_downloads().unwrap(), before);
+        assert_eq!(f.store.read_library().unwrap(), library);
+        assert_eq!(fs::read_dir(&f.library).unwrap().count(), 0);
+        f.service
+            .confirm(&f.store, &plan.plan_id, plan.revision)
+            .unwrap();
+        let saved = f.store.read_downloads().unwrap();
+        let added = saved
+            .value
+            .tasks
+            .iter()
+            .find(|t| t.id == plan.plan_id)
+            .unwrap();
+        metadata.tags[0] = "Example label".into();
+        assert_eq!(added.metadata, metadata);
+        assert_eq!(added.source, source);
+        assert_eq!(added.target_hash, binding(added).unwrap());
+        assert_eq!(added.phase, DownloadPhase::Queued);
+        assert_eq!(
+            saved.value.tasks.iter().find(|t| t.id == old.id),
+            Some(&old)
+        );
+        assert!(DownloadService::new().read(&f.store).is_ok());
+        assert_eq!(f.store.read_library().unwrap(), library);
+        assert_eq!(fs::read_dir(&f.library).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn unsupported_tag_controls_still_fail_without_changing_queue_or_library() {
+    for source in [Source::Jm, Source::Pica] {
+        let f = zip_fixture();
+        let before = f.store.read_downloads().unwrap();
+        let library = f.store.read_library().unwrap();
+        let mut metadata = record(&f).metadata;
+        metadata.work_id = match source {
+            Source::Jm => "654321".into(),
+            Source::Pica => "0123456789abcdef01234567".into(),
+        };
+        metadata.tags = vec!["Synthetic\nlabel\0".into()];
+        let error = f
+            .service
+            .prepare_for_source(
+                &f.store,
+                &library.value.root.as_ref().unwrap().id,
+                library.value.generation,
+                source,
+                metadata,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "DOWNLOAD_METADATA_TAG_CONTROL");
+        assert_eq!(f.store.read_downloads().unwrap(), before);
+        assert_eq!(f.store.read_library().unwrap(), library);
+        assert_eq!(fs::read_dir(&f.library).unwrap().count(), 0);
+    }
+}
+
 fn preview(f: &Fixture, id: &str, title: &str) -> DownloadPlan {
     let mut metadata = record(f).metadata;
     metadata.work_id = id.into();

@@ -221,7 +221,7 @@ impl DownloadService {
         source: Source,
         metadata: JmDownloadMetadata,
     ) -> Result<DownloadPlan> {
-        metadata.validate_for(source)?;
+        let metadata = metadata.for_new_download(source)?;
         let mut runtime = self.lock()?;
         let document = self.load_shared(store)?;
         let library = store.read_library_shared()?;

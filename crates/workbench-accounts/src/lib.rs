@@ -39,7 +39,10 @@ pub type Result<T> = std::result::Result<T, AccountError>;
 
 impl AccountError {
     pub fn new(code: &'static str) -> Self {
-        Self { code, retry_after_ms: None }
+        Self {
+            code,
+            retry_after_ms: None,
+        }
     }
     pub fn with_retry_after(mut self, delay: Option<u64>) -> Self {
         self.retry_after_ms = delay;

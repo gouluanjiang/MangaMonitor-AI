@@ -1078,7 +1078,11 @@ async fn uncertain_favorite_cannot_be_toggled_again_before_target_is_observed() 
 #[tokio::test]
 async fn waiting_for_local_catalog_does_not_block_covers_or_retain_a_changed_account() {
     let root = TempDir::new().unwrap();
-    let service = Arc::new(service(&root, FakeBackend::default(), SharedVault::default()));
+    let service = Arc::new(service(
+        &root,
+        FakeBackend::default(),
+        SharedVault::default(),
+    ));
     let session = login(&service, Source::Jm, "fixture", false).await;
     let pica = login(&service, Source::Pica, "fixture", false).await;
     query(&service, Source::Jm, &session).await.unwrap();
@@ -1122,7 +1126,10 @@ async fn waiting_for_local_catalog_does_not_block_covers_or_retain_a_changed_acc
     assert!(replacement.is_ok());
     assert!(matches!(
         pending.await.unwrap(),
-        Err(AccountError { code: "SESSION_CHANGED", .. })
+        Err(AccountError {
+            code: "SESSION_CHANGED",
+            ..
+        })
     ));
 }
 

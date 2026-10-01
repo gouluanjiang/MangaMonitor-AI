@@ -196,7 +196,9 @@ impl WorkbenchSources {
             return Err(error("SOURCE_REDIRECT_REFUSED"));
         }
         if !response.status().is_success() {
-            let delay = response.headers().get(RETRY_AFTER)
+            let delay = response
+                .headers()
+                .get(RETRY_AFTER)
                 .and_then(|header| header.to_str().ok())
                 .and_then(|value| retry_after_ms(value, chrono::Utc::now()));
             if delay.is_some() {
@@ -216,15 +218,26 @@ mod retry_after_tests {
     use super::*;
     #[test]
     fn relative_and_http_date_deadlines_are_safe() {
-        let now = chrono::DateTime::parse_from_rfc2822("Sun, 06 Nov 1994 08:49:37 GMT").unwrap().with_timezone(&chrono::Utc);
+        let now = chrono::DateTime::parse_from_rfc2822("Sun, 06 Nov 1994 08:49:37 GMT")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         assert_eq!(retry_after_ms("12", now), Some(12000));
-        assert_eq!(retry_after_ms("Sun, 06 Nov 1994 08:50:37 GMT", now), Some(60000));
-        assert_eq!(retry_after_ms("Sun, 06 Nov 1994 08:49:36 GMT", now), Some(0));
+        assert_eq!(
+            retry_after_ms("Sun, 06 Nov 1994 08:50:37 GMT", now),
+            Some(60000)
+        );
+        assert_eq!(
+            retry_after_ms("Sun, 06 Nov 1994 08:49:36 GMT", now),
+            Some(0)
+        );
         for invalid in ["", "-1", "NaN", "18446744073709551615"] {
             assert_eq!(retry_after_ms(invalid, now), None);
         }
         let encoded = serde_json::to_value(http_error(429).with_retry_after(Some(12000))).unwrap();
         assert_eq!(encoded["retryAfterMs"], 12000);
-        assert!(serde_json::to_value(http_error(404)).unwrap().get("retryAfterMs").is_none());
+        assert!(serde_json::to_value(http_error(404))
+            .unwrap()
+            .get("retryAfterMs")
+            .is_none());
     }
 }

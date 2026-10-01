@@ -10,7 +10,10 @@ pub struct SourceError {
 
 impl SourceError {
     pub(crate) const fn new(code: &'static str) -> Self {
-        Self { code, retry_after_ms: None }
+        Self {
+            code,
+            retry_after_ms: None,
+        }
     }
     pub(crate) const fn with_retry_after(mut self, delay: Option<u64>) -> Self {
         self.retry_after_ms = delay;

@@ -18,7 +18,10 @@ fn app_information_and_file_reveal_keep_native_origin_and_item_boundaries() {
         ("history_read", json!({})),
         ("history_clear", json!({})),
         ("history_set_enabled", json!({"enabled":false})),
-        ("history_record", json!({"identity":{"kind":"source","source":"JM","workId":"100"},"title":"Synthetic"})),
+        (
+            "history_record",
+            json!({"identity":{"kind":"source","source":"JM","workId":"100"},"title":"Synthetic"}),
+        ),
         (
             "library_reveal",
             json!({"rootId":"a".repeat(64),"generation":1,"entryId":"b".repeat(64)}),

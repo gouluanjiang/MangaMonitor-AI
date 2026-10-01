@@ -72,7 +72,13 @@ fn native_registered_reader_windows_bind_requests_isolate_pages_and_keep_mutatio
         json!({"requestId":"shared-token","request":request(0)}),
     )
     .unwrap();
-    assert_eq!(invoke(&main, "history_read", json!({})).unwrap()["value"]["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        invoke(&main, "history_read", json!({})).unwrap()["value"]["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     let book_b = invoke(
         &b,
         "reader_open",
@@ -81,7 +87,10 @@ fn native_registered_reader_windows_bind_requests_isolate_pages_and_keep_mutatio
     .unwrap();
     let history = invoke(&main, "history_read", json!({})).unwrap();
     assert_eq!(history["value"]["entries"].as_array().unwrap().len(), 2);
-    assert_eq!(history["value"]["entries"][0]["identity"]["entryId"], snapshot.items[1].id);
+    assert_eq!(
+        history["value"]["entries"][0]["identity"]["entryId"],
+        snapshot.items[1].id
+    );
     let book_main = invoke(
         &main,
         "reader_open",
@@ -105,7 +114,10 @@ fn native_registered_reader_windows_bind_requests_isolate_pages_and_keep_mutatio
         ("history_read", json!({})),
         ("history_clear", json!({})),
         ("history_set_enabled", json!({"enabled":false})),
-        ("history_record", json!({"identity":{"kind":"source","source":"JM","workId":"100"},"title":"Synthetic"})),
+        (
+            "history_record",
+            json!({"identity":{"kind":"source","source":"JM","workId":"100"},"title":"Synthetic"}),
+        ),
         ("special_start", json!({})),
         (
             "special_set",

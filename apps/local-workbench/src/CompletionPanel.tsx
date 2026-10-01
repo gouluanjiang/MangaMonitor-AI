@@ -90,6 +90,7 @@ export interface CompletionPanelProps {
   active?: boolean;
   mode?: "updates" | "search";
   searchTabId?: string;
+  searchInitialFilter?: InventoryFilter;
   authorRequest?: { name: string; key: number } | null;
   accounts: AccountSummary[];
   sourceAdapter: SourceAdapter;
@@ -115,6 +116,7 @@ export function CompletionPanel({
   active = true,
   mode = "updates",
   searchTabId,
+  searchInitialFilter,
   authorRequest = null,
   accounts,
   sourceAdapter,
@@ -588,7 +590,7 @@ export function CompletionPanel({
     setSource("all");
     setAuthor("");
     setQuery("");
-    setFilter("all");
+    setFilter(searchTabId ? (searchInitialFilter ?? "missing") : "all");
     startCheck("full", false, authorRequest.name);
   }, [authorRequest, mode, active, connected, busy, running]);
   useEffect(() => {

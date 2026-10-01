@@ -10,6 +10,7 @@ interface Tab {
   id: string;
   name: string;
   requestKey: number;
+  initialFilter: "all" | "missing";
 }
 
 /** Runtime-only query workspaces. Cross-source same-name reuse is user-selected;
@@ -28,7 +29,7 @@ export function AuthorWorkspace(props: Props) {
   }, [scopeKey]);
   const tabRef = useRef(tabs);
   tabRef.current = tabs;
-  function open(raw: string) {
+  function open(raw: string, initialFilter: "all" | "missing" = "missing") {
     const name = raw.trim();
     const issue = authorQueryError(name);
     if (!name || issue) {
@@ -43,7 +44,12 @@ export function AuthorWorkspace(props: Props) {
       return;
     }
     const requestKey = ++serial.current;
-    const tab = { id: `author-tab-${requestKey}`, name, requestKey };
+    const tab = {
+      id: `author-tab-${requestKey}`,
+      name,
+      requestKey,
+      initialFilter,
+    };
     tabRef.current = [...tabRef.current, tab];
     setTabs(tabRef.current);
     setSelected(tab.id);
@@ -52,7 +58,7 @@ export function AuthorWorkspace(props: Props) {
     const request = props.authorRequest;
     if (!props.active || !request || handled.current === request.key) return;
     handled.current = request.key;
-    open(request.name);
+    open(request.name, "all");
   }, [props.active, props.authorRequest]);
   function close(id: string) {
     const index = tabRef.current.findIndex((tab) => tab.id === id);
@@ -162,6 +168,7 @@ export function AuthorWorkspace(props: Props) {
             {...props}
             mode="search"
             searchTabId={tab.id}
+            searchInitialFilter={tab.initialFilter}
             active={!!props.active && selected === tab.id}
             authorRequest={{ name: tab.name, key: tab.requestKey }}
           />

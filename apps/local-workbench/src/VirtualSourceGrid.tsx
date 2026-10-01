@@ -51,11 +51,24 @@ function Grid<T>(
     const preferredIndex = preferred
       ? data.items.findIndex((item) => data.itemKey(item) === preferred)
       : -1;
+    const firstRow = Math.max(
+      0,
+      Math.floor(Math.max(0, relative) / value.rowHeight),
+    );
+    // If only the tail of a row is visible and the next row fits, anchor the
+    // complete row the user can see. Pinning the clipped row instead shifts
+    // every following card by the stride increase when metadata makes rows taller.
+    const completeRow =
+      relative - firstRow * value.rowHeight > 0.5 &&
+      (firstRow + 2) * value.rowHeight - value.gap - relative <=
+        main.clientHeight
+        ? firstRow + 1
+        : firstRow;
     const row = Math.min(
       Math.floor((data.items.length - 1) / value.columns),
       preferredIndex >= 0
         ? Math.floor(preferredIndex / value.columns)
-        : Math.max(0, Math.floor(Math.max(0, relative) / value.rowHeight)),
+        : completeRow,
     );
     const index = Math.min(data.items.length - 1, row * value.columns);
     return {

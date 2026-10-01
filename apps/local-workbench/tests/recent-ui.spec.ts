@@ -745,11 +745,23 @@ test("a taller recent row preserves the visible anchor and the grid can settle a
     "1000",
   );
   await varyRecentRowMetadata(page);
-  await page.getByRole("main").evaluate((main) => {
-    main.scrollTop = 13000;
+  await expectStationaryRecentGrid(page);
+  await page.getByTestId("recent-grid").evaluate((grid) => {
+    const main = grid.closest("main")!;
+    const rows = grid.querySelectorAll<HTMLElement>(".source-virtual-row");
+    const stride =
+      parseFloat(rows[1].style.top) - parseFloat(rows[0].style.top);
+    const offset =
+      main.scrollTop +
+      grid.getBoundingClientRect().top -
+      main.getBoundingClientRect().top;
+    // Deliberately leave a clipped row above the fully visible anchor. A fixed
+    // scrollTop can happen to align exactly with a row on another CI/font run.
+    main.scrollTop = offset + 29.8 * stride;
   });
   await expectStationaryRecentGrid(page);
   const anchor = await captureRecentAnchor(page);
+  expect(anchor.key).toBe("recent-work-Pica:000000000000000000000211");
   await page.getByTestId("recent-grid").evaluate((grid) => {
     const row = grid.querySelector<HTMLElement>(".source-virtual-row")!;
     row.style.minHeight = row.getBoundingClientRect().height + 48 + "px";

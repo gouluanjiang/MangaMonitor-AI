@@ -135,6 +135,15 @@ changes, multi-author counts and independence from special-follow updates.
   require fresh combined UI/native CI and exact-candidate verification.
 - No real scans, downloads, deletions, merge or release have run.
 
+The next combined UI run (`36831187347`) passed 250 cases including history,
+but exposed a pre-existing virtual-grid anchor boundary: when the viewport starts
+inside one row, pinning that clipped row moves the next fully visible row by the
+stride increase (48 px in the trace). The grid now prefers the first complete
+visible row when it fits, falling back to the clipped row for tall cards. The
+existing growth regression now deliberately starts inside a row rather than
+depending on a font-sensitive fixed scroll offset. Its position tolerance stays
+unchanged. This narrow follow-up preserves the accepted merge/order behavior.
+
 ## Controlled search latency comparison
 
 Compared existing CI-built browser artifacts for `2f39585` and `b85f450`, using

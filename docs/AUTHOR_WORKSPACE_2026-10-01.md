@@ -166,8 +166,8 @@ demonstrates earlier cached-result publication and overlapping the two sources;
 it is not a measured website speedup or a promise about real network latency.
 The first visible result uses a saved directory, rather than waiting for a new
 network result. With no saved directory, first visibility still requires the
-first source page. Final history/reader corrections do not change these search
-files, so their unrelated code changes do not warrant repeating this benchmark.
+first source page. This remains the evidence for the initial scheduling change;
+the later native catalog optimization is measured separately below.
 
 The instrumented first trial reports 333 ms cumulative local catalog work,
 34 ms query-rule reads, 120 ms queued requests, 1,800 ms source operations,
@@ -176,4 +176,39 @@ operation totals, not sequential wall-clock components. Source operations includ
 network/protocol parsing/retries; they are not raw wire latency. The internal
 terminal event was 1,396 ms; its status painted at 1,481.7 ms. The old artifact
 does not expose native timing, so a numeric before/after comparison of each
-native subcomponent is not claimed. Real-source measurements remain unverified.
+native subcomponent is not claimed.
+
+## Native follow-up: large catalog reads
+
+The exact `e49c1ed` candidate passed all three workflows: baseline `36832880185`,
+UI `36832880193` (323 logic and 251 browser cases), and Windows `36832880288`.
+Its eight manifested files were hash/size verified before launch. A private
+registration backup was verified while the application was closed. Bounded
+native checks confirmed restored sessions, two independent completed author
+tabs, position retention through page changes, deliberate history recording and
+an empty special-follow view. Protected library, download, following, author
+policy and reader documents remained byte-identical. No manga was downloaded or
+deleted and no full author scan was started.
+
+This native observation exposed a different bottleneck from the small synthetic
+fixture: repeated parsing, validation and index encoding of the saved catalog.
+For one dual-source query, saved records became available at 13,897 ms and the
+query completed at 58,023 ms, while cumulative source operations were 2,169 ms.
+Catalog reads totalled 62,912 ms and local commits 39,780 ms across overlapping
+tasks; these totals must not be added to infer elapsed time. The old 13,999 ms
+UI metric measured mounted records, not viewport intersection, and is explicitly
+excluded from true first-visible comparisons.
+
+The follow-up shares one immutable, validated checkpoint parse/index per open
+storage root. Reuse still reads and hashes the legacy base, checkpoint and every
+referenced journal patch, checking revisions and applying subsequent writes.
+Same-length corruption and writes through another store handle have regression
+coverage. There is no disk format change or migration. Reading one author's
+known works now merges saved observations directly without first replaying the
+whole observation pool into the author catalog. Author-update reconciliation,
+source attribution and paging completeness retain their existing contracts.
+
+The visible-result metric now requires a card to intersect the scroll viewport;
+received records, render work and completion remain separate. A low-height
+viewport regression prevents mounted-but-offscreen cards from counting as seen.
+Native measurements for this follow-up remain pending its exact tested candidate.

@@ -81,7 +81,7 @@ export function AuthorWorkspace(props: Props) {
             <label>
               作者名{" "}
               <input
-                type="search"
+                type="text"
                 aria-label="搜索作者名"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}

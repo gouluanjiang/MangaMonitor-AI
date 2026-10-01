@@ -11,7 +11,8 @@ import type { WorkReference } from "./booklists.ts";
 import { accountScope } from "./source-types.ts";
 import { invokeDesktop } from "./runtime.ts";
 import { isContentHidden } from "./content-filter.ts";
-import { subscribeSourceVisits } from "./work-visits.ts";
+import { subscribeSourceVisits, recordSourceVisit } from "./work-visits.ts";
+import { listenReaderEvent } from "./reader/window-runtime.ts";
 import { subscribeAuthorCatalogChanges } from "./author-catalog-events.ts";
 import {
   specialRunMessage,
@@ -54,6 +55,37 @@ export function useSpecialFollows(
   const run = runState?.key === key ? runState.value : snapshot?.run;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  useEffect(() => {
+    if (!native) return;
+    let stopped = false;
+    let unlisten: (() => void) | undefined;
+    void listenReaderEvent<{
+      reference?: WorkReference;
+      sessionId?: string | null;
+    }>("mangamonitor-reader-visited", (visit) => {
+      if (
+        stopped ||
+        !visit.reference ||
+        typeof visit.reference.workId !== "string"
+      )
+        return;
+      const scope = current.current.scopes.find(
+        (scope) =>
+          scope.source === visit.reference?.source &&
+          (!visit.sessionId || scope.sessionId === visit.sessionId),
+      );
+      if (scope) recordSourceVisit({ scope, reference: visit.reference });
+    })
+      .then((stop) => {
+        if (stopped) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {});
+    return () => {
+      stopped = true;
+      unlisten?.();
+    };
+  }, [native]);
   const applyRun = useCallback((value: SpecialRun, capturedKey: string) => {
     if (!alive.current || current.current.key !== capturedKey) return;
     setRun({ key: capturedKey, value });

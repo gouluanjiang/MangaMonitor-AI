@@ -8,6 +8,7 @@ mod cache;
 mod discovery;
 mod discovery_journal;
 mod downloads;
+mod history;
 mod library;
 mod model;
 mod observations;
@@ -27,6 +28,7 @@ pub use cache::{AccountCache, CacheEntry};
 pub use discovery::*;
 pub use discovery_journal::DiscoveryPagePatch;
 pub use downloads::*;
+pub use history::{HistoryEntry, HistoryIdentity, ViewingHistory};
 pub use library::*;
 pub use model::{
     AccountFollowing, AppearancePreferences, BackgroundMode, Booklist, Booklists, FollowedAccount,

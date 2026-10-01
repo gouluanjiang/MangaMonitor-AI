@@ -39,6 +39,14 @@ export async function installWorkflow(
   await page.addInitScript(
     ({ preferences, enhanceBridge }) => {
       const clone = <T>(value: T): T => structuredClone(value);
+      let history = JSON.parse(
+        localStorage.getItem("synthetic-viewing-history") ??
+          '{"version":1,"enabled":true,"entries":[]}',
+      ) as {
+        version: number;
+        enabled: boolean;
+        entries: { identity: unknown; title: string; visitedAt: number }[];
+      };
       const rootId = "a".repeat(64);
       const id = (n: number) => n.toString(16).padStart(64, "0");
       const picaId = (n: number) => n.toString().padStart(24, "0");
@@ -328,6 +336,41 @@ export async function installWorkflow(
               };
 
             switch (command) {
+              case "history_record":
+                if (history.enabled) {
+                  history.entries = history.entries.filter(
+                    (row) =>
+                      JSON.stringify(row.identity) !==
+                      JSON.stringify(args.identity),
+                  );
+                  history.entries.unshift({
+                    identity: clone(args.identity),
+                    title: String(args.title),
+                    visitedAt: Date.now(),
+                  });
+                  history.entries = history.entries.slice(0, 100);
+                }
+                localStorage.setItem(
+                  "synthetic-viewing-history",
+                  JSON.stringify(history),
+                );
+                return { revision: 1, value: clone(history) };
+              case "history_clear":
+                history.entries = [];
+                localStorage.setItem(
+                  "synthetic-viewing-history",
+                  JSON.stringify(history),
+                );
+                return { revision: 1, value: clone(history) };
+              case "history_set_enabled":
+                history.enabled = Boolean(args.enabled);
+                localStorage.setItem(
+                  "synthetic-viewing-history",
+                  JSON.stringify(history),
+                );
+                return { revision: 1, value: clone(history) };
+              case "history_read":
+                return { revision: 1, value: clone(history) };
               case "read_preferences":
                 return { revision: 0, value: preferences };
               case "source_accounts":

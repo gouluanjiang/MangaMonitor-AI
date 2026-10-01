@@ -13,7 +13,7 @@ use std::{
     collections::HashSet,
     sync::{atomic::Ordering, Arc},
 };
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{Emitter, Runtime, State, WebviewWindow};
 use workbench_library::{source_reader_key, LocalReader, ReaderImage};
 use workbench_storage::{LibraryReference, ReaderPosition, Source};
 
@@ -27,6 +27,11 @@ pub(crate) async fn reader_open<R: Runtime>(
     request_id: String,
 ) -> Result<ReaderBook> {
     let reader = reader.scope(window.label())?;
+    let history_identity = match &request {
+        ReaderRequest::Library { root_id, entry_id, .. } => workbench_storage::HistoryIdentity::Library { root_id: root_id.clone(), entry_id: entry_id.clone() },
+        ReaderRequest::Source { source, work_id, .. } => workbench_storage::HistoryIdentity::Source { source: *source, work_id: work_id.clone() },
+    };
+    let source_session = match &request { ReaderRequest::Source { session_id, .. } => Some(session_id.clone()), _ => None };
     let ticket = reader.begin_for(&request_id, &request)?;
     let generation = ticket.generation;
     let result = ticket
@@ -42,6 +47,14 @@ pub(crate) async fn reader_open<R: Runtime>(
     reader.finish_open(generation)?;
     if result.is_err() {
         restore_fullscreen_if_idle(&window, &reader)?;
+    }
+    if let Ok(book) = &result {
+        let title = book.title.clone();
+        let saved = crate::with_store(Arc::clone(store.inner()), move |store| store.record_viewing_history(history_identity, title)).await;
+        let _ = window.emit_to("main", "mangamonitor-history-changed", saved.is_ok());
+        if let Some(reference) = &book.source_ref {
+            let _ = window.emit_to("main", "mangamonitor-reader-visited", serde_json::json!({"reference":reference,"sessionId":source_session}));
+        }
     }
     result
 }

@@ -5,6 +5,7 @@ export default defineConfig({
   testMatch: [
     "**/author-workspace-ui.spec.ts",
     "**/special-ui.spec.ts",
+    "**/history-ui.spec.ts",
     "**/browse-controls-ui.spec.ts",
     "**/refined-ui.spec.ts",
     "**/reader-ui.spec.ts",

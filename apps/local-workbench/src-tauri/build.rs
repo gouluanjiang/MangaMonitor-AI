@@ -3,6 +3,10 @@ fn main() {
     // Application commands otherwise bypass Tauri's capability checks by default.
     let manifest = tauri_build::AppManifest::new().commands(&[
         "read_preferences",
+        "history_read",
+        "history_record",
+        "history_clear",
+        "history_set_enabled",
         "write_preferences",
         "read_booklists",
         "write_booklists",

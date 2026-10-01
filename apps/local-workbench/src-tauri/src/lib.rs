@@ -1,6 +1,7 @@
 mod accounts;
 mod discovery;
 mod downloads;
+mod history;
 mod library;
 mod reader;
 mod reader_windows;
@@ -179,6 +180,10 @@ fn app_builder<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         .on_window_event(reader_windows::window_event)
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            history::history_read,
+            history::history_record,
+            history::history_clear,
+            history::history_set_enabled,
             read_preferences,
             write_preferences,
             read_booklists,

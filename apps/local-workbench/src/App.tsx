@@ -63,6 +63,9 @@ import {
 import { CompletionPanel } from "./CompletionPanel.tsx";
 import { AuthorWorkspace } from "./AuthorWorkspace.tsx";
 import { SpecialFollowsPanel } from "./SpecialFollowsPanel.tsx";
+import { ViewingHistoryPanel } from "./ViewingHistoryPanel.tsx";
+import { useViewingHistory } from "./useViewingHistory.ts";
+import type { HistoryIdentity } from "./history-runtime.ts";
 import {
   SpecialFollowsContext,
   useSpecialFollows,
@@ -144,6 +147,7 @@ type Page =
   | "author-search"
   | "completion"
   | "special"
+  | "history"
   | "queue"
   | "authors"
   | "settings";
@@ -154,6 +158,7 @@ const pageNames: Record<Page, string> = {
   discovery: "发现",
   completion: "作者更新",
   special: "特别关注",
+  history: "浏览历史",
   "author-search": "作者搜索",
   queue: "下载队列",
   authors: "关注作者",
@@ -491,6 +496,7 @@ export default function App() {
   );
   const [notice, setNotice] = useState("");
   const special = useSpecialFollows(accounts, persistence.native, setNotice);
+  const viewingHistory = useViewingHistory(persistence.native);
   const [downloadNotice, setDownloadNotice] = useState<{
     message: string;
     sequence: number;
@@ -609,7 +615,7 @@ export default function App() {
       "discovery",
       "authors",
       ...(embeddedSourceDetail
-        ? ["completion", "author-search", "special"]
+        ? ["completion", "author-search", "special", "history"]
         : []),
     ].includes(page) &&
     (page !== "discovery" ||
@@ -670,7 +676,7 @@ export default function App() {
     creditContext?: AuthorCreditContext,
   ) {
     setRequestedAuthorContext(creditContext);
-    if (["completion", "author-search", "special"].includes(page)) {
+    if (["completion", "author-search", "special", "history"].includes(page)) {
       openEmbeddedWork(ref, creditContext);
       return;
     }
@@ -687,6 +693,36 @@ export default function App() {
     setLibraryNavigationKey((value) => value + 1);
     setDownloadNotice(null);
     setNotice("选择电脑漫画目录后，返回原来的作品，再点击下载。");
+  }
+  function openHistory(identity: HistoryIdentity) {
+    if (identity.kind === "source") {
+      if (
+        !accounts.some(
+          (account) =>
+            account.source === identity.source && account.state === "connected",
+        )
+      ) {
+        setNotice("请先连接该来源账号，再打开这条历史记录。");
+        return;
+      }
+      openSourceWork(identity);
+      return;
+    }
+    if (
+      library.snapshot.rootId !== identity.rootId ||
+      !library.snapshot.items.some((item) => item.id === identity.entryId)
+    ) {
+      setNotice(
+        "这条历史对应的文件暂时未在当前漫画库找到，请核对目录；历史和阅读进度保留。",
+      );
+      return;
+    }
+    setRequestedLibraryEntryId(identity.entryId);
+    setRequestedLibraryWork(undefined);
+    navigate("library");
+    setLibraryTab("all");
+    setQuery("");
+    setLibraryRequestKey((value) => value + 1);
   }
   function showDownloadLibrary(
     work: SourceWork,
@@ -2578,6 +2614,13 @@ export default function App() {
               onOpenAccounts={() => openSettings("accounts")}
             />
           )}
+          {persistence.native && (
+            <ViewingHistoryPanel
+              active={page === "history" && !embeddedSourceDetail}
+              history={viewingHistory}
+              onOpen={openHistory}
+            />
+          )}
           {persistence.native &&
             authorPages.map((authorPage) => {
               const AuthorPage =
@@ -2742,7 +2785,9 @@ export default function App() {
             discoveryPane !== "search") ||
           libraryActive ||
           (persistence.native &&
-            ["completion", "author-search", "special"].includes(page))
+            ["completion", "author-search", "special", "history"].includes(
+              page,
+            ))
             ? null
             : currentWork
               ? renderDetail(currentWork)

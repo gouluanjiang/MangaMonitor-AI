@@ -76,3 +76,24 @@ offscreen cancellation, queue availability, scoped manual retries and deadlines.
 Local ZIP decode/missing-file failures remain explicit manual retries, since
 they are not transient network failures. CI and exact-candidate acceptance remain
 required; no source scans or real media downloads are part of these checks.
+
+## Stage 4 implementation notes
+
+`viewing-history.json` is a separate version-1, atomic, bounded document. It holds
+at most 100 stable work references, titles and visit times plus its recording
+switch. No tokens, arbitrary paths, images or reading positions are stored.
+Repeated visits move the same source/work or local root/entry to the front.
+Disabling recording preserves existing history; clearing changes only history.
+Unknown versions and corrupt files are reported, never silently reset.
+
+Source details and local details notify deliberate navigation; source queries,
+covers and hovering do not. Reader visits are recorded by the native successful
+open path for both embedded and small-window readers. Failed/cancelled opens do
+not mark special updates read or add history. Reader windows cannot call history
+clear, enable, record or read commands themselves. Missing local history targets
+report an unavailable file instead of guessing by title or selecting a replacement.
+
+The sidebar history view has recording and clear controls and reuses the current
+detail/reader entry paths. Tests cover bounds, duplicates, concurrency, restart,
+disable/clear isolation, deliberate UI visits and reader command authorization.
+CI and exact-candidate checks remain required for this stage.

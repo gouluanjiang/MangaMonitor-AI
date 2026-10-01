@@ -44,3 +44,23 @@
 .author-search-timings {
   margin-block: 12px;
 }
+.viewing-history-list {
+  padding: 0;
+  list-style: none;
+}
+.viewing-history-list li {
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-bottom: 1px solid var(--border);
+}
+.viewing-history-list button {
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.viewing-history-list span {
+  color: var(--muted);
+  font-size: 12px;
+}

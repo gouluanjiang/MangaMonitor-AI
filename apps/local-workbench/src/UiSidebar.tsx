@@ -11,6 +11,7 @@ export type UiDestination =
   | "discovery"
   | "completion"
   | "special"
+  | "history"
   | "author-search"
   | "authors"
   | "settings";
@@ -26,6 +27,7 @@ const groups: { label: string; entries: Entry[] }[] = [
     entries: [
       { id: "library", label: "漫画库", icon: "library" },
       { id: "queue", label: "下载队列", icon: "download" },
+      { id: "history", label: "浏览历史", icon: "clock", native: true },
     ],
   },
   {

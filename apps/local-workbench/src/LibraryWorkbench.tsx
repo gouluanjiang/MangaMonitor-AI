@@ -1,4 +1,5 @@
 import { CoverInteraction, useReaderAccess } from "./reader-access.tsx";
+import { recordLibraryVisit } from "./work-visits.ts";
 import { useCoverRetry } from "./cover-retry.tsx";
 import { AuthorLinks } from "./AuthorLinks.tsx";
 import { useTagSearch } from "./TagSearch.tsx";
@@ -635,12 +636,18 @@ export function LibraryWorkbench({
     setDetailId(null);
   }, [query, library.snapshot.rootId]);
   useEffect(() => {
-    if (!externalWork || requestKey === 0) return;
+    if ((!externalWork && !externalEntryId) || requestKey === 0) return;
     setFilter("all");
     const exact = library.snapshot.items.find(
       (item) => item.id === externalEntryId,
     );
     setDetailId(exact?.id ?? null);
+    if (exact && library.snapshot.rootId)
+      recordLibraryVisit({
+        rootId: library.snapshot.rootId,
+        entryId: exact.id,
+        title: exact.title || exact.fileName,
+      });
   }, [requestKey]);
   useLayoutEffect(() => {
     const pending = densityAnchor.current;
@@ -654,6 +661,12 @@ export function LibraryWorkbench({
   function open(item: LibraryItem) {
     anchor.current = grid.current?.capture(item.id) ?? null;
     setDetailId(item.id);
+    if (library.snapshot.rootId)
+      recordLibraryVisit({
+        rootId: library.snapshot.rootId,
+        entryId: item.id,
+        title: item.title || item.fileName,
+      });
     root.current?.closest("main")?.scrollTo(0, 0);
   }
   function back() {

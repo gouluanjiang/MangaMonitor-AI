@@ -755,13 +755,19 @@ impl DiscoveryControl {
                 store_error(error)
             }
         })?;
-        let successful = patch.last_check.as_ref().filter(|summary| {
-            memory.record_scan_marker && summary.phase == DiscoveryCheckPhase::Complete
-        }).cloned();
+        let successful = patch
+            .last_check
+            .as_ref()
+            .filter(|summary| {
+                memory.record_scan_marker && summary.phase == DiscoveryCheckPhase::Complete
+            })
+            .cloned();
         // The final catalog commit and its receipt share cancellation/account
         // ordering. A stop after this successful terminal write is a no-op.
         if let Some(summary) = &successful {
-            store.save_successful_scan(&context.account_key, summary.clone()).map_err(store_error)?;
+            store
+                .save_successful_scan(&context.account_key, summary.clone())
+                .map_err(store_error)?;
         }
         let snapshot = memory.snapshot.as_mut().ok_or_else(unavailable)?;
         snapshot.revision = next_revision;
@@ -1031,20 +1037,21 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self.discovery_validate_context(&context)?;
         let root = context.root.clone();
         let receipt_key = context.account_key.clone();
-        let (following, policies, document, successful_check) = tokio::task::spawn_blocking(move || {
-            discovery_store_io(|| {
-                let store = WorkbenchStore::open(&root)?;
-                Ok((
-                    store.read_following()?,
-                    store.read_author_query_policies()?,
-                    store.read_discovery()?,
-                    store.read_successful_scan(&receipt_key)?,
-                ))
+        let (following, policies, document, successful_check) =
+            tokio::task::spawn_blocking(move || {
+                discovery_store_io(|| {
+                    let store = WorkbenchStore::open(&root)?;
+                    Ok((
+                        store.read_following()?,
+                        store.read_author_query_policies()?,
+                        store.read_discovery()?,
+                        store.read_successful_scan(&receipt_key)?,
+                    ))
+                })
             })
-        })
-        .await
-        .map_err(|_| unavailable())?
-        .map_err(store_error)?;
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(store_error)?;
         self.discovery_validate_context(&context)?;
         context.authors = context.followed_authors(&following.value);
         context.following_revision = following.revision;
@@ -1481,8 +1488,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         let store = Arc::new(WorkbenchStore::open(&context.root).map_err(store_error)?);
         let receipt_store = Arc::clone(&store);
         let receipt_key = context.account_key.clone();
-        snapshot.last_successful_check = tokio::task::spawn_blocking(move || receipt_store.read_successful_scan(&receipt_key))
-            .await.map_err(|_| unavailable())?.map_err(store_error)?;
+        snapshot.last_successful_check =
+            tokio::task::spawn_blocking(move || receipt_store.read_successful_scan(&receipt_key))
+                .await
+                .map_err(|_| unavailable())?
+                .map_err(store_error)?;
         let previous_memory = {
             let mut memory = self.discovery.memory.lock().map_err(|_| unavailable())?;
             if memory.active {

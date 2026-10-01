@@ -166,10 +166,15 @@ test("many author tabs wrap at narrow widths with complete names, visible close 
   await expect(page.getByTestId("completion-sort")).toHaveValue("updated-asc");
   await longTab.click();
   await expect(page.getByLabel("更新来源")).toHaveValue("Pica");
-  await page.locator("main").evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-    element.dispatchEvent(new Event("scroll"));
-  });
+  // A tab switch restores its grid anchor across frames. Real wheel input
+  // interrupts that restore; assigning scrollTop bypasses the user-input path
+  // and lets a pending restore overwrite the test's scroll on slower runners.
+  const main = page.getByRole("main");
+  await main.hover();
+  await page.mouse.wheel(
+    0,
+    await main.evaluate((element) => element.scrollHeight),
+  );
   const lastWork = page.getByTestId(
     "author-update-Pica:" + (13020).toString(16).padStart(24, "0"),
   );

@@ -176,7 +176,7 @@ mod shell {
         let value = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
         let copied = unsafe { value.to_string() };
         unsafe { CoTaskMemFree(Some(value.0.cast())) };
-        copied.map(PathBuf::from)
+        copied.map(PathBuf::from).map_err(|_| abort())
     }
 
     #[allow(non_snake_case)]

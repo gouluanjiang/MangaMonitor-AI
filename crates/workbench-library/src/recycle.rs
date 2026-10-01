@@ -205,9 +205,7 @@ impl LibraryService {
                     .unwrap_or(error("LIBRARY_RECYCLE_NOT_COMPLETED")))
             }
             Err(_) => {
-                if let Err(problem) = operation {
-                    return Err(problem);
-                }
+                operation?;
                 return Ok(Some(recycle_projection(
                     before,
                     request,

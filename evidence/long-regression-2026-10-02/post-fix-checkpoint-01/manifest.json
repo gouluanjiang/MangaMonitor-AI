@@ -1,0 +1,268 @@
+{
+  "capturedAt": "2026-10-02T09:13:37.822538+00:00",
+  "applicationCandidate": "1cba4b81eaf439de9d00c47a42aeb11027b1e1fa",
+  "sustainedRetestsComplete": false,
+  "baselineAlreadyComplete": true,
+  "files": [
+    {
+      "file": "candidate-windows-consistency.json.gz",
+      "uncompressedBytes": 943,
+      "sha256": "badc1b3280aa6a749d6c70fa2b0bb7e5148422e458884625536cf33132dbbf55"
+    },
+    {
+      "file": "candidate-frontend-consistency.json.gz",
+      "uncompressedBytes": 3361,
+      "sha256": "f8e029938c700e3fca48dab26d1593ce05b85b5aadd33806b13e02d16e9759f2"
+    },
+    {
+      "file": "observation-final-comparison-manifest.json.gz",
+      "uncompressedBytes": 3380,
+      "sha256": "c6889578faae2972fd577914d30cdb1cdc9ed7873d51ea64f52c7710d17c24b6"
+    },
+    {
+      "file": "observation-final-comparison.json.gz",
+      "uncompressedBytes": 2638,
+      "sha256": "1b4e477fed1a171882323f29cd54ebfacb2a7a7777dac26e270564402dc3155b"
+    },
+    {
+      "file": "source-render-final-comparison-manifest.json.gz",
+      "uncompressedBytes": 1359,
+      "sha256": "1d4db281eb5a6488dbb321d3738494b9c6d91806a1d4b8c9ec1743a9acd0da76"
+    },
+    {
+      "file": "source-render-final-comparison.json.gz",
+      "uncompressedBytes": 335,
+      "sha256": "2be393fc9944e6de02adb7643fa4d96bcec1ee06d49183dc56e56feb0013383f"
+    },
+    {
+      "file": "observation-resource-comparison.json.gz",
+      "uncompressedBytes": 552,
+      "sha256": "0ae6f4e370f86b6b0992bedfabd02094d66e1bc724309041158cac2875d46671"
+    },
+    {
+      "file": "request-lifetime-probe.json.gz",
+      "uncompressedBytes": 1457,
+      "sha256": "3f7c500e1b88c3ddc1f141453e3923c08821ce1a4085cf1743194798ad0c8e54"
+    },
+    {
+      "file": "build-consistency-incident.json.gz",
+      "uncompressedBytes": 686,
+      "sha256": "bc8685aa3d9a9aa52596a09ea44e530d197d7701c7f87dbc40beef27979e79a9"
+    },
+    {
+      "file": "candidate-baseline-ci.log.gz",
+      "uncompressedBytes": 209104,
+      "sha256": "f11c7994ed0b8f2a9bb61c9d714bcd55d6bf00a02503fd2a1d4ff9ae1805fed9"
+    },
+    {
+      "file": "candidate-ui-ci.log.gz",
+      "uncompressedBytes": 150788,
+      "sha256": "067f8c5418a48f444128d2744c8dc9886a3072ebe6fd3c8eb8c4f9e47d6ad9df"
+    },
+    {
+      "file": "candidate-windows-ci.log.gz",
+      "uncompressedBytes": 170624,
+      "sha256": "cf9d2a65c794862152e059ba31981d7def41887512aa17cb0a726868318aac1c"
+    },
+    {
+      "file": "candidate-windows-executor-ci.log.gz",
+      "uncompressedBytes": 36642,
+      "sha256": "83cbb6e0f984825748b796beb531499516f7494e9ee9dcfea3da03bd97a57e22"
+    },
+    {
+      "file": "candidate-ci-enospc/native-probes.log.gz",
+      "uncompressedBytes": 982,
+      "sha256": "a788a60f6e396d02c1a77c0cc2a03e90f39bd630ea93f3123ee9ff6fba907ee2"
+    },
+    {
+      "file": "candidate-ci-enospc/shim-self-check.log.gz",
+      "uncompressedBytes": 50,
+      "sha256": "467a3a5d99cb76b6850f2783cfb482ba28c99034f76665106e4aa4e99c15560c"
+    },
+    {
+      "file": "candidate-ci-enospc/summary.json.gz",
+      "uncompressedBytes": 1326,
+      "sha256": "d904509762ced9908bd9c701d43f6a31f13c91a21559f922127659c84496f7d0"
+    },
+    {
+      "file": "candidate-windows-evidence/installer-lifecycle.json.gz",
+      "uncompressedBytes": 1167,
+      "sha256": "2f1a142fa947c2e7510f32774ed5ab0f6c1eefb84c647e13fe84bbdf93346dfa"
+    },
+    {
+      "file": "candidate-windows-evidence/manifest.json.gz",
+      "uncompressedBytes": 2955,
+      "sha256": "351e47f1245f2c519a2d35d23be63cd7571dab13e73d57b6e9a222c38c8de1b8"
+    },
+    {
+      "file": "candidate-windows-evidence/reader-window-native-a.png.gz",
+      "uncompressedBytes": 7629,
+      "sha256": "9148124db221c79c278ecd6ebed2541034411bb548aadd1b97fce35045c72524"
+    },
+    {
+      "file": "candidate-windows-evidence/reader-window-native-b.png.gz",
+      "uncompressedBytes": 7629,
+      "sha256": "9148124db221c79c278ecd6ebed2541034411bb548aadd1b97fce35045c72524"
+    },
+    {
+      "file": "candidate-windows-evidence/reader-window-native-lifecycle.json.gz",
+      "uncompressedBytes": 12736,
+      "sha256": "51b860e74edf6d3264726dc6e477e31b828b90738feaf3e5fe7979b1b139ecf8"
+    },
+    {
+      "file": "candidate-windows-evidence/runtime-info.json.gz",
+      "uncompressedBytes": 112,
+      "sha256": "09d3702f0818e99239a6486886557edf0cc7bb6813ccf7200306fb661b701f11"
+    },
+    {
+      "file": "candidate-windows-evidence/webview2-runtime.json.gz",
+      "uncompressedBytes": 156,
+      "sha256": "734bd89eaa5776522a48ce4c9e64f796cc34ea12aeb2ed215484c0e242bc4f9a"
+    },
+    {
+      "file": "observation-final-1-before/latency.ndjson.gz",
+      "uncompressedBytes": 9260,
+      "sha256": "3c315836adde9083eac293d0330514a079d44104469080096d0bc74ccd576c7d"
+    },
+    {
+      "file": "observation-final-1-before/summary.json.gz",
+      "uncompressedBytes": 479,
+      "sha256": "ac379b36c1d4c6b1b92266acb3ce4257b00f8f7dff9d950e232f15dd88421883"
+    },
+    {
+      "file": "observation-final-2-after/latency.ndjson.gz",
+      "uncompressedBytes": 9244,
+      "sha256": "389fe33889d6caa51a14c77cc2d34d62debc75915f1b6f2c1594935dad730baa"
+    },
+    {
+      "file": "observation-final-2-after/summary.json.gz",
+      "uncompressedBytes": 423,
+      "sha256": "1feaee8941743c1741d59c5e4bd7786a135572270e5e622a91a751dc53a81387"
+    },
+    {
+      "file": "observation-final-3-after/latency.ndjson.gz",
+      "uncompressedBytes": 9278,
+      "sha256": "ab6404b34c60f33bf0945ddb379985c4266437b1c925eff1f31013b68aa95a65"
+    },
+    {
+      "file": "observation-final-3-after/summary.json.gz",
+      "uncompressedBytes": 423,
+      "sha256": "4b5837eb3858bac969be9c319381a6c2e6994a88201e510a8c9434e0c29c9f56"
+    },
+    {
+      "file": "observation-final-4-before/latency.ndjson.gz",
+      "uncompressedBytes": 9238,
+      "sha256": "0a4e9684d1f94487267de8f8560a2e63243b44506389cd0967ce8fe079a01c8c"
+    },
+    {
+      "file": "observation-final-4-before/summary.json.gz",
+      "uncompressedBytes": 479,
+      "sha256": "633b6cda8e88731ebd95151c6fc86695ee79bee96e8a1e20b974381658980238"
+    },
+    {
+      "file": "source-render-final-1-before/failure.png.gz",
+      "uncompressedBytes": 133709,
+      "sha256": "4f2258dd727c527f69d7b87cee18633c28457eae7a42f4fa3381762a08eb2aae"
+    },
+    {
+      "file": "source-render-final-1-before/renderer.cpuprofile.gz",
+      "uncompressedBytes": 153974,
+      "sha256": "f3bab55a7a4a4a312f8d3e57da7b54dd80da515b03d6be702e1a31fae082be7c"
+    },
+    {
+      "file": "source-render-final-1-before/summary.json.gz",
+      "uncompressedBytes": 4658,
+      "sha256": "d6001a91ed0b7451bb17715b0d44d82e893b21075004af4be269fe816cab8fe4"
+    },
+    {
+      "file": "source-render-final-2-after/renderer.cpuprofile.gz",
+      "uncompressedBytes": 135440,
+      "sha256": "074ea77bb5df77c80a7c582ef727d31f94a0aa78a9024e35acfe1e3f8b4c77f7"
+    },
+    {
+      "file": "source-render-final-2-after/summary.json.gz",
+      "uncompressedBytes": 4015,
+      "sha256": "18cd75c7ec003373b2b4110bc30da310607aab4bcef61d362591cf060c748d6b"
+    },
+    {
+      "file": "source-render-final-3-after/renderer.cpuprofile.gz",
+      "uncompressedBytes": 118811,
+      "sha256": "4bfcd9f63fcff2a43f9828bdcc4c06923ec4d7f9b237a7b851a23439bf001740"
+    },
+    {
+      "file": "source-render-final-3-after/summary.json.gz",
+      "uncompressedBytes": 4004,
+      "sha256": "ff7502e7057157989b70f5f2b16664283b2a1bc3076a33ad703fd7786dc3fa78"
+    },
+    {
+      "file": "source-render-final-4-before/failure.png.gz",
+      "uncompressedBytes": 133709,
+      "sha256": "4f2258dd727c527f69d7b87cee18633c28457eae7a42f4fa3381762a08eb2aae"
+    },
+    {
+      "file": "source-render-final-4-before/renderer.cpuprofile.gz",
+      "uncompressedBytes": 144170,
+      "sha256": "92138fe4434168adcded28f21413ae11c3e6b9f26094d81f8792ff5fb900aa47"
+    },
+    {
+      "file": "source-render-final-4-before/summary.json.gz",
+      "uncompressedBytes": 4650,
+      "sha256": "dc6323002f230fd61b1ee4e082ffd1e8e7f6f86876c9d6470c7e80ae38a4ae1d"
+    },
+    {
+      "file": "tab-lifetime-after-long/checkpoints.json.gz",
+      "uncompressedBytes": 37064,
+      "sha256": "916386c25a6c8ab69e091b6a7839db16fc8c003aaee8f36a0ca4d9ef8a6be98d"
+    },
+    {
+      "file": "performance-before/before-measurement-heap.json.gz",
+      "uncompressedBytes": 16297,
+      "sha256": "19a46b2b7c540c4b79615d34dd455fc3d3f8ea3287bc764d564ef05c74703584"
+    },
+    {
+      "file": "performance-before/checkpoint.json.gz",
+      "uncompressedBytes": 7545,
+      "sha256": "85d9d2a1531d538eb2dd7312b3d9e5286bdf1f5a494ebffde72b5d24aa43e640"
+    },
+    {
+      "file": "performance-before/coverage.ndjson.gz",
+      "uncompressedBytes": 358,
+      "sha256": "c589d00709645f9a72bac03b288cd17ad8457ee64e791344052260eda38ca4f2"
+    },
+    {
+      "file": "performance-before/events.ndjson.gz",
+      "uncompressedBytes": 994,
+      "sha256": "4877d9c18557df2e792760836fe81fd4072144d1ef1070da14f127f09d5b1e1b"
+    },
+    {
+      "file": "performance-before/latency.ndjson.gz",
+      "uncompressedBytes": 801364,
+      "sha256": "015055c83b745ca78bc6aeb35969163a74a6e78c40a44dd7697da4d0c40af782"
+    },
+    {
+      "file": "performance-before/manifest.json.gz",
+      "uncompressedBytes": 2749,
+      "sha256": "899c548b47c50891e0b0c2aa11e67d6ec1c2b82f65f976964d30c514c3f6f4c8"
+    },
+    {
+      "file": "performance-before/matrix-metrics.ndjson.gz",
+      "uncompressedBytes": 192300,
+      "sha256": "1fbddf83111ce36f2260efc1bd579db165c8080703cc1b42a9ea221a1e361d43"
+    },
+    {
+      "file": "performance-before/operations.ndjson.gz",
+      "uncompressedBytes": 621922,
+      "sha256": "e699dfd1d6805c6034e4ee57a969c540cbf7ba75d47dc9a203e62b1fb9064973"
+    },
+    {
+      "file": "performance-before/pressure-checkpoint.json.gz",
+      "uncompressedBytes": 7617,
+      "sha256": "9197e5bae0412f4bcfb5c5a325b42785f3a2ac76aa29b433093c92ec37dba24d"
+    },
+    {
+      "file": "performance-before/pressure-metrics.ndjson.gz",
+      "uncompressedBytes": 248466,
+      "sha256": "21e32be611a4041fde4c03d065a7d09b51a3f907d9d8fd174da37f91c268172c"
+    }
+  ]
+}

@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-const FILE: &str = "observed-works.json";
+pub(crate) const FILE: &str = "observed-works.json";
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_OBSERVED_WORKS: usize = 100_000;
 pub const MAX_RECENT_HISTORY: usize = 20_000;

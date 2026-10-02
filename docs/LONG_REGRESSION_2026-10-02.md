@@ -100,4 +100,62 @@ product defects and are not discarded from the external qualification logs.
 
 ## Result
 
-Preparation in progress. No baseline long-test result is claimed yet.
+The baseline completed before application edits. Frontend: **2026-10-02
+04:05:27.520–08:05:27.595 UTC**, 14,400,074.780 ms in the same process/page,
+**15,255/15,255 operations passed**, all 13 scenarios exercised, no quarantined
+scenario, blocked source request or page error. Native storage: **04:01:55.809–
+08:01:56.444 UTC**, 14,400,634 ms in the same parent process, **50,597 operations**
+across all ten scenarios. These parallel four-hour streams are **not eight hours**.
+Harness revision: `159f4f725200d639d080fd719d9d7fae2eb92936`. Complete raw logs,
+summaries, exit evidence and window analysis are preserved under
+[`baseline-complete`](../evidence/long-regression-2026-10-02/baseline-complete/manifest.json).
+
+Original controller handles were lost twice, but original process IDs/start
+times and advancing logs proved continuity. A read-only exit observer captured
+zero wait status for the browser child and the storage shell running its single
+command. No process restart or lost-controller wait time was counted as a new
+continuous segment. Functional assertions passed; rising summed browser RSS
+still requires the separate memory analysis and is not a no-leak claim.
+
+Post-baseline confirmed fixes are deliberately limited:
+
+- Closing 40 author tabs retained 40 position snapshots / 7,200 work keys after
+  GC. The hook now releases all position variants owned by a closed tab after
+  the final layout cleanup. Open/hidden tabs retain their positions. The same
+  40-tab test passed with zero retained positions; a 60-minute same-process
+  retest started at 08:35:45.972 UTC on
+  `25e3c106bc8df58563f4ce3be97298267ed72d9b` and is still in progress.
+- Twenty selection-enter/cancel pairs sorted an unchanged 2,000-work source
+  catalog 760,673 times at the comparator boundary. The derived filter/order
+  chain is memoized against actual catalog, query, inventory, explicit content
+  evidence and sort inputs. The identical probe now performs zero comparisons
+  and retains the displayed order. Final paired timing/CI evidence is pending.
+- A release probe measured roughly 95 ms for a one-record detail observation
+  commit and 105 ms for a 30-record page in a 20,000-record store. A failing
+  cache-contract test proved unchanged observed bytes were parsed again. The
+  existing exact-byte cache now includes one fixed observation-document slot;
+  file reads, schema/identity checks, revisions, CAS, atomic publication and
+  existing document/item limits remain. Same-revision replacement, corruption,
+  future schema and stale-CAS checks pass. Final paired release measurements
+  and CI remain pending.
+
+Additional qualified diagnostics include 172 direct native release loading
+checks on generated 24/2,000-ZIP catalogs and five Linux synthetic ENOSPC probes
+(ZIP/directory zero/partial writes and preferences atomic-write preservation).
+No real media or full-volume manipulation is involved. Failed writes preserve
+valid data and recover only after explicit retry. CI now executes these scoped
+fault probes and the two frontend lifetime/render probes alongside existing
+required suites.
+
+The five-round, eight-condition loading matrix completed 40 trials on the
+frozen baseline distribution. Its same-process 60-minute pressure stage began
+at **08:25:31.946 UTC** and is still in progress. It uses 256 distinct generated
+covers and 256 generated reader images; simulated scan/download progress is
+bounded IPC traffic, not actual source latency or native executor throughput.
+Preparation, matrix processes and continuous pressure duration are reported
+separately. Native queue sizes, PSS denied by the cloud sandbox, Windows WebView
+long-term memory and real special-follow notifications remain separate limits.
+
+Final status, exact candidate hashes, resolved/excluded/deferred leads, paired
+performance tables and Windows/manual acceptance boundaries will be appended
+to the evidence report after the current sustained retests and CI complete.

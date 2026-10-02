@@ -74,6 +74,7 @@ struct CachedDocument {
 struct DocumentCache {
     library: Option<CachedDocument>,
     downloads: Option<CachedDocument>,
+    observations: Option<CachedDocument>,
 }
 
 impl DocumentCache {
@@ -81,6 +82,7 @@ impl DocumentCache {
         match name {
             LIBRARY => Some(&mut self.library),
             DOWNLOADS => Some(&mut self.downloads),
+            crate::observations::FILE => Some(&mut self.observations),
             _ => None,
         }
     }
@@ -326,7 +328,7 @@ impl WorkbenchStore {
             revision,
             value: envelope.value,
         };
-        if matches!(name, LIBRARY | DOWNLOADS) {
+        if matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             self.remember_document(name, bytes, Arc::new(document.clone()));
         }
         Ok(document)
@@ -462,7 +464,7 @@ impl WorkbenchStore {
         name: &str,
         bytes: &[u8],
     ) -> Option<Arc<Document<T>>> {
-        if !matches!(name, LIBRARY | DOWNLOADS) {
+        if !matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             return None;
         }
         // A poisoned optional cache is a miss, never permission to reuse data.
@@ -480,7 +482,7 @@ impl WorkbenchStore {
         bytes: Vec<u8>,
         document: Arc<Document<T>>,
     ) {
-        if !matches!(name, LIBRARY | DOWNLOADS) {
+        if !matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             return;
         }
         let Ok(mut cache) = self.document_cache.lock() else {
@@ -496,7 +498,7 @@ impl WorkbenchStore {
     }
 
     fn forget_document(&self, name: &str) {
-        if !matches!(name, LIBRARY | DOWNLOADS) {
+        if !matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             return;
         }
         let Ok(mut cache) = self.document_cache.lock() else {
@@ -767,42 +769,126 @@ mod shared_cache_tests {
 
     #[test]
     fn writes_publish_validated_snapshots_and_cas_hits_do_not_revalidate_old_bytes() {
-        let directory = TempDir::new().unwrap();
-        let store = WorkbenchStore::open(directory.path()).unwrap();
-        let before = VALIDATIONS.load(Ordering::SeqCst);
-        store
-            .write(
-                LIBRARY,
-                1024,
-                0,
-                CountedDocument {
-                    version: 1,
-                    count: 1,
-                },
-            )
-            .unwrap();
-        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
-        let first = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
-        let same = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
-        assert!(Arc::ptr_eq(&first, &same));
-        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
+        for name in [LIBRARY, DOWNLOADS, "observed-works.json"] {
+            let directory = TempDir::new().unwrap();
+            let store = WorkbenchStore::open(directory.path()).unwrap();
+            let before = VALIDATIONS.load(Ordering::SeqCst);
+            store
+                .write(
+                    name,
+                    1024,
+                    0,
+                    CountedDocument {
+                        version: 1,
+                        count: 1,
+                    },
+                )
+                .unwrap();
+            assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
+            let first = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            let same = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            assert!(
+                Arc::ptr_eq(&first, &same),
+                "unchanged {name} was parsed again"
+            );
+            assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
 
-        store
-            .write(
-                LIBRARY,
-                1024,
-                1,
-                CountedDocument {
-                    version: 1,
-                    count: 2,
-                },
+            store
+                .write(
+                    name,
+                    1024,
+                    1,
+                    CountedDocument {
+                        version: 1,
+                        count: 2,
+                    },
+                )
+                .unwrap();
+            let next = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 2);
+            assert_eq!(next.value.count, 2);
+            assert_eq!(first.value.count, 1);
+            assert!(!Arc::ptr_eq(&first, &next));
+            // A same-revision replacement must defeat the cache; neither corruption
+            // nor a future schema may be hidden behind a previously valid snapshot.
+            let path = directory.path().join(PRIVATE_DIRECTORY).join(name);
+            let valid = fs::read(&path).unwrap();
+            let replaced = String::from_utf8(valid.clone())
+                .unwrap()
+                .replace("\"count\":2", "\"count\":3");
+            assert_ne!(replaced.as_bytes(), valid);
+            fs::write(&path, replaced).unwrap();
+            let changed = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            assert_eq!(changed.revision, next.revision);
+            assert_eq!(changed.value.count, 3);
+            assert_eq!(next.value.count, 2);
+            fs::write(&path, b"{broken").unwrap();
+            assert_eq!(
+                store
+                    .read_shared::<CountedDocument>(name, 1024)
+                    .err()
+                    .unwrap()
+                    .code,
+                "DOCUMENT_CORRUPT"
+            );
+            assert_eq!(
+                store
+                    .write(
+                        name,
+                        1024,
+                        2,
+                        CountedDocument {
+                            version: 1,
+                            count: 4
+                        }
+                    )
+                    .err()
+                    .unwrap()
+                    .code,
+                "DOCUMENT_CORRUPT"
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"{broken");
+            fs::write(
+                &path,
+                String::from_utf8(valid.clone())
+                    .unwrap()
+                    .replace("\"version\":1", "\"version\":2"),
             )
             .unwrap();
-        let next = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
-        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 2);
-        assert_eq!(next.value.count, 2);
-        assert_eq!(first.value.count, 1);
-        assert!(!Arc::ptr_eq(&first, &next));
+            assert_eq!(
+                store
+                    .read_shared::<CountedDocument>(name, 1024)
+                    .err()
+                    .unwrap()
+                    .code,
+                "UNSUPPORTED_SCHEMA"
+            );
+            fs::write(&path, valid).unwrap();
+            assert_eq!(
+                store
+                    .read_shared::<CountedDocument>(name, 1024)
+                    .unwrap()
+                    .value
+                    .count,
+                2
+            );
+            assert_eq!(
+                store
+                    .write(
+                        name,
+                        1024,
+                        1,
+                        CountedDocument {
+                            version: 1,
+                            count: 4
+                        }
+                    )
+                    .err()
+                    .unwrap()
+                    .code,
+                "REVISION_CONFLICT"
+            );
+        }
     }
 }
 

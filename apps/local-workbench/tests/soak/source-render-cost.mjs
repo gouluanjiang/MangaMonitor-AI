@@ -3,8 +3,11 @@
 import { preview } from "vite";
 import { chromium, expect } from "@playwright/test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { installSoakFixture } from "./fixture.mjs";
 
 const options = Object.fromEntries(
@@ -12,8 +15,24 @@ const options = Object.fromEntries(
 );
 const out = resolve(options.output ?? "source-render-cost-results");
 mkdirSync(out, { recursive: true });
+const dist = resolve(options.dist ?? "dist");
+const git = promisify(execFile);
+const hash = (path) =>
+  createHash("sha256").update(readFileSync(path)).digest("hex");
+const identity = {
+  harnessRevision: (await git("git", ["rev-parse", "HEAD"])).stdout.trim(),
+  workspaceStatus: (
+    await git("git", ["status", "--porcelain=v1"])
+  ).stdout.trim(),
+  harnessSha256: hash(new URL(import.meta.url)),
+  started: new Date().toISOString(),
+  assets: readdirSync(resolve(dist, "assets")).map((name) => ({
+    name,
+    sha256: hash(resolve(dist, "assets", name)),
+  })),
+};
 const server = await preview({
-  build: { outDir: resolve(options.dist ?? "dist") },
+  build: { outDir: dist },
   preview: { host: "127.0.0.1", port: 0 },
   logLevel: "error",
 });
@@ -170,6 +189,8 @@ try {
     resolve(out, "summary.json"),
     JSON.stringify(
       {
+        ...identity,
+        ended: new Date().toISOString(),
         rows,
         blocked,
         errors,

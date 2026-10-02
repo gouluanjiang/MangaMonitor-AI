@@ -1546,3 +1546,6 @@ fn approval_for_another_output_profile_cannot_reuse_an_old_staging_receipt() {
         .join("chapters/000001-123456/000001.jpg")
         .is_file());
 }
+#[cfg(target_os = "linux")]
+#[path = "fault_regression_tests.rs"]
+mod fault_regression_tests;

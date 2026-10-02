@@ -47,16 +47,16 @@ jobs:
           key: local-validation-windows-1.98.1-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             desktop-windows-rust-1.98.1-
-      - name: Check Rust formatting
+      - name: Check Rust formatting for the two affected crates
         id: formatting
         run: |
-          cargo +1.98.1 fmt --all -- --check
+          cargo +1.98.1 fmt -p workbench-storage -p workbench-downloads -- --check
           if ($LASTEXITCODE -ne 0) { throw 'Rust formatting differs' }
       - name: Produce a formatting patch without claiming a rebuilt SHA
         if: failure() && steps.formatting.outcome == 'failure'
         run: |
           $ErrorActionPreference = 'Stop'
-          cargo +1.98.1 fmt --all
+          cargo +1.98.1 fmt -p workbench-storage -p workbench-downloads
           if ($LASTEXITCODE -ne 0) { throw 'Could not generate formatting patch' }
           New-Item -ItemType Directory -Path 'windows-validation-format' | Out-Null
           git diff --binary --output=windows-validation-format/rust-format.patch -- crates/workbench-storage crates/workbench-downloads

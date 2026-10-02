@@ -822,7 +822,7 @@ test("detail title and date appear on return and survive source switches without
   await expect(
     page.getByRole("heading", { name: "详情已更新的合成标题" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "返回列表", exact: true }).click();
+  await page.getByRole("button", { name: "← 返回列表", exact: true }).click();
   await expect(card).toContainText("详情已更新的合成标题");
   await expect(card).toContainText("2026-10-02");
   await expect(card).toContainText("已汉化");

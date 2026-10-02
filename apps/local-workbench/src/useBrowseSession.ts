@@ -1,4 +1,10 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
 import {
@@ -7,6 +13,7 @@ import {
   resolveBrowseAnchor,
   saveBrowsePosition,
   saveBrowseState,
+  forgetBrowsePositions,
 } from "./browse-session.ts";
 import type { BrowsePosition } from "./browse-session.ts";
 
@@ -47,6 +54,7 @@ export function useBrowseSession({
   scope,
   active,
   enabled = true,
+  retainOnUnmount = true,
   root,
   grid,
   itemKeys,
@@ -54,10 +62,22 @@ export function useBrowseSession({
   scope: string;
   active: boolean;
   enabled?: boolean;
+  retainOnUnmount?: boolean;
   root: RefObject<HTMLElement | null>;
   grid?: RefObject<SourceGridHandle | null>;
   itemKeys: readonly string[];
 }): void {
+  const ownedScopes = useRef(new Set<string>());
+  useEffect(() => {
+    if (retainOnUnmount) return;
+    const owned = ownedScopes.current;
+    // Passive unmount cleanup follows the layout cleanup below, which saves
+    // the final position. Deleting earlier would let that save resurrect it.
+    return () => {
+      forgetBrowsePositions(owned);
+      owned.clear();
+    };
+  }, [retainOnUnmount]);
   const live = useRef({ active, enabled, itemKeys });
   live.current = { active, enabled, itemKeys };
   const last = useRef<BrowsePosition | undefined>(undefined);
@@ -67,6 +87,7 @@ export function useBrowseSession({
   const capture = useRef<() => void>(() => {});
   const restore = useRef<(position: BrowsePosition) => void>(() => {});
   useLayoutEffect(() => {
+    if (!retainOnUnmount) ownedScopes.current.add(scope);
     last.current = readBrowsePosition(scope);
     const main = root.current?.closest("main");
     if (!main || !active || !enabled) return;
@@ -178,7 +199,7 @@ export function useBrowseSession({
       main.removeEventListener("pointerdown", interrupt);
       main.removeEventListener("touchstart", interrupt);
     };
-  }, [scope, active, enabled, root, grid]);
+  }, [scope, active, enabled, root, grid, retainOnUnmount]);
   useLayoutEffect(() => {
     if (!active || !enabled) return;
     const previous = last.current;

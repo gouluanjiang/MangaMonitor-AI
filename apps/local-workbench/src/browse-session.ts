@@ -28,6 +28,12 @@ export function saveBrowsePosition(
   positions.set(scope, position);
 }
 
+/** Release only the positions owned by a workspace that has actually closed.
+ * Hidden tabs and ordinary page transitions still retain their own snapshots. */
+export function forgetBrowsePositions(scopes: Iterable<string>): void {
+  for (const scope of scopes) positions.delete(scope);
+}
+
 export function resolveBrowseAnchor(
   position: BrowsePosition,
   keys: readonly string[],

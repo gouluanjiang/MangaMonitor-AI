@@ -6,13 +6,22 @@ import { chromium, expect } from "@playwright/test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { installSoakFixture } from "./fixture.mjs";
 
 const options = Object.fromEntries(
   process.argv.slice(2).map((value) => value.replace(/^--/, "").split("=")),
 );
 const rounds = Number(options.rounds ?? 40);
+const minutes = Number(options.minutes ?? 0);
 assert(Number.isInteger(rounds) && rounds > 0 && rounds <= 5000);
+assert(minutes >= 0 && minutes <= 90);
+const git = promisify(execFile);
+const sha = (await git("git", ["rev-parse", "HEAD"])).stdout.trim();
+const workspaceStatus = (
+  await git("git", ["status", "--porcelain=v1"])
+).stdout.trim();
 const out = resolve(options.output ?? "tab-lifetime-results");
 mkdirSync(out, { recursive: true });
 const buildDir = resolve(out, "diagnostic-build");
@@ -77,6 +86,10 @@ const read = () =>
     });
   }, scopes);
 let failure;
+let started,
+  clockStart,
+  continuousMs = 0,
+  closed = 0;
 try {
   await installSoakFixture(page);
   await page.getByTestId("nav-discovery").click();
@@ -84,7 +97,23 @@ try {
     .getByRole("group", { name: "搜索方式", exact: true })
     .getByRole("button", { name: "作者", exact: true })
     .click();
-  for (let i = 0; i < rounds; i++) {
+  started = new Date().toISOString();
+  clockStart = performance.now();
+  console.log(
+    JSON.stringify({
+      event: "TAB_LIFETIME_STARTED",
+      sha,
+      started,
+      minutes,
+      rounds,
+      output: out,
+    }),
+  );
+  for (
+    let i = 0;
+    i < rounds || performance.now() - clockStart < minutes * 60000;
+    i++
+  ) {
     const name = `合成保留核验${i % 16}`;
     await page.getByLabel("搜索作者名").fill(name);
     await page.getByTestId("completion-start").click();
@@ -120,10 +149,27 @@ try {
     await expect
       .poll(async () => (await read()).at(-1).keys)
       .toBeGreaterThan(0);
+    // Keep all source variants while a tab is open; release all on close.
+    for (const source of ["JM", "Pica"]) {
+      await page.getByLabel("更新来源", { exact: true }).selectOption(source);
+      const parts = JSON.parse(scope);
+      parts[4] = source;
+      scopes.push(JSON.stringify(parts));
+      await page.getByRole("main").hover();
+      await page.mouse.wheel(0, 100);
+      await expect
+        .poll(async () => (await read()).at(-1).keys)
+        .toBeGreaterThan(0);
+    }
+    assert(
+      (await read()).slice(-3).every((value) => value.retained),
+      "switching an open tab discarded another source position",
+    );
     await page
       .getByRole("button", { name: `关闭作者标签 ${name}`, exact: true })
       .click();
     await expect(page.getByRole("tab")).toHaveCount(0);
+    closed++;
     // Flush the unmount and its position-saving layout-effect cleanup.
     await page.evaluate(
       () =>
@@ -131,10 +177,14 @@ try {
           requestAnimationFrame(() => requestAnimationFrame(resolve)),
         ),
     );
-    if ((i + 1) % 10 === 0 || i + 1 === rounds) {
+    if (
+      (i + 1) % 10 === 0 ||
+      (i + 1 >= rounds && performance.now() - clockStart >= minutes * 60000)
+    ) {
       await cdp.send("HeapProfiler.collectGarbage");
       const retained = await read();
       checkpoints.push({
+        elapsedMs: performance.now() - clockStart,
         closed: i + 1,
         retainedScopes: retained.filter((value) => value.retained).length,
         retainedKeys: retained.reduce((sum, value) => sum + value.keys, 0),
@@ -144,8 +194,15 @@ try {
         resolve(out, "checkpoints.json"),
         JSON.stringify(checkpoints, null, 2),
       );
+      console.log(
+        JSON.stringify({
+          event: "TAB_LIFETIME_CHECKPOINT",
+          ...checkpoints.at(-1),
+        }),
+      );
     }
   }
+  continuousMs = performance.now() - clockStart;
   assert.deepEqual(blocked, []);
   assert.deepEqual(errors, []);
   assert.equal(
@@ -161,6 +218,13 @@ try {
     resolve(out, "summary.json"),
     JSON.stringify(
       {
+        sha,
+        workspaceStatus,
+        started,
+        ended: new Date().toISOString(),
+        continuousMs,
+        minutes,
+        closed,
         rounds,
         checkpoints,
         blocked,

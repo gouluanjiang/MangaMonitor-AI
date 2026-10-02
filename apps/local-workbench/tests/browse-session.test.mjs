@@ -7,7 +7,33 @@ import {
   resolveBrowseAnchor,
   readBrowseState,
   saveBrowseState,
+  forgetBrowsePositions,
 } from "../src/browse-session.ts";
+
+test("closing one workspace releases all of its position variants without clearing another workspace or runtime preferences", () => {
+  const closed = [
+    browseScope("search", "tab-close", "JM"),
+    browseScope("search", "tab-close", "Pica"),
+  ];
+  const active = browseScope("search", "tab-active", "JM");
+  const position = {
+    anchor: { key: "JM:1", offset: -12 },
+    keys: ["JM:1", "Pica:1"],
+    scroll: 30,
+  };
+  for (const scope of [...closed, active]) saveBrowsePosition(scope, position);
+  saveBrowseState(active, "missing");
+  forgetBrowsePositions(closed);
+  for (const scope of closed)
+    assert.equal(readBrowsePosition(scope), undefined);
+  assert.equal(readBrowsePosition(active), position);
+  assert.equal(
+    readBrowseState(active, () => "all"),
+    "missing",
+  );
+  forgetBrowsePositions(closed);
+  assert.equal(readBrowsePosition(active), position);
+});
 
 test("browsing snapshots isolate source/query scopes and retain anchored work after earlier results disappear", () => {
   const scope = browseScope("author", "JM", "synthetic-a");

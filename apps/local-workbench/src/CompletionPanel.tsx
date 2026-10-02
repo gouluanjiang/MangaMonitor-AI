@@ -790,6 +790,7 @@ export function CompletionPanel({
     ...ranges.map((range) => authorCatalogAt(range, view?.authorPolicies) ?? 0),
   );
   useBrowseSession({
+    retainOnUnmount: !searchTabId,
     scope: JSON.stringify([
       mode,
       searchTabId ?? null,

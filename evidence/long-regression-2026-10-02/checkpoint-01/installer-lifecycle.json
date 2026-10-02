@@ -1,0 +1,23 @@
+{
+  "version": "1.0.2-rc.3",
+  "sourceRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "checkoutRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "workflowRun": "36963076140",
+  "scope": "fresh install, installed WebView startup/restart, same-version reinstall, uninstall preserving synthetic data, install again",
+  "historical034Upgrade": "not tested",
+  "interactiveInstallerPages": "not tested; silent current-user installation",
+  "binary": {
+    "builtSha256": "a5c69f1a56dbe1197c503d60daea3092829bb3547322248dd881a74a57d9dbca",
+    "installedSha256": "17e48ad0b8cdb1a3052a42fef646e45dd08601a8cfab5aae11b746976f8d9377",
+    "permittedPatch": "first __TAURI_BUNDLE_TYPE_VAR_UNK to __TAURI_BUNDLE_TYPE_VAR_NSS",
+    "patchOffset": 19882658
+  },
+  "steps": [
+    "fresh-install-registration-shortcuts-and-bundled-resource-hashes",
+    "installed-native-webview-startup-restart-and-reader-lifecycle",
+    "same-version-reinstall-preserved-synthetic-documents",
+    "uninstall-removed-executable-registration-shortcuts-and-retained-documents",
+    "install-after-uninstall-preserved-synthetic-documents"
+  ],
+  "passed": true
+}

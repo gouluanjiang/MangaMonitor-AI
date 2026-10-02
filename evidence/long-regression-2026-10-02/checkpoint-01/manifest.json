@@ -1,0 +1,88 @@
+{
+  "capturedAt": "2026-10-02T04:56:29.071043+00:00",
+  "complete": false,
+  "status": "baseline in progress; NOT a 4-hour pass",
+  "applicationBaseline": "9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827",
+  "harnessRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "controlChannelIncident": "Brief exec-server disconnection around 04:55 UTC; original PIDs/start times and continuing operations verified at 04:55:51 UTC. No workload restart.",
+  "files": [
+    {
+      "path": "baseline-ui/metrics.ndjson.gz",
+      "uncompressedBytes": 158675,
+      "sha256": "f2873d0585bb35ef8fd6607577f6ccc7fbe6ea3f6d73144e27c3efda4bc9e456"
+    },
+    {
+      "path": "baseline-ui/latency.ndjson.gz",
+      "uncompressedBytes": 29507,
+      "sha256": "fc428de3e9367b3ffe4951e6ff3d0b419b155192464c1c5d786cec1838bb77b6"
+    },
+    {
+      "path": "baseline-ui/manifest.json.gz",
+      "uncompressedBytes": 429,
+      "sha256": "d46be43a9ffb86521e56dfdcf295f6bce8ea1b0ff850858839f30f63a91eb02a"
+    },
+    {
+      "path": "baseline-ui/checkpoint.json.gz",
+      "uncompressedBytes": 5023,
+      "sha256": "bf1794c81f693d794ad3488886431544710b61e17a4473f54481dbc9acdbb744"
+    },
+    {
+      "path": "baseline-ui/events.ndjson.gz",
+      "uncompressedBytes": 70,
+      "sha256": "9ea46131f8b7599bb4d9afc336d8af34ed9e1b27310eb8b0fa50b3c18f203e75"
+    },
+    {
+      "path": "baseline-ui/operations.ndjson.gz",
+      "uncompressedBytes": 803221,
+      "sha256": "b4e7037724d479e805435e79238fb95233f4cbf8934e50e27b5a29d458a36d04"
+    },
+    {
+      "path": "baseline-storage/metrics.ndjson.gz",
+      "uncompressedBytes": 39411,
+      "sha256": "0238fa6ac17f7b7ec7b337d8fdc9f278d7d87f63fab546ffb04d22dd8b811d31"
+    },
+    {
+      "path": "baseline-storage/manifest.json.gz",
+      "uncompressedBytes": 500,
+      "sha256": "5219200b89fc4c071363ca36e240a8063f8eb1d0086fea25aa715b6e6f2e1db1"
+    },
+    {
+      "path": "baseline-storage/checkpoint.json.gz",
+      "uncompressedBytes": 730,
+      "sha256": "a066d3904d8c7c034bb7031e6a6d97cfc9cf750c65d46e84016b9d976952671e"
+    },
+    {
+      "path": "baseline-storage/operations.ndjson.gz",
+      "uncompressedBytes": 2146220,
+      "sha256": "ca15bb697a3944575a64acac762d72c4dacd9dd4a92ded83c2badc74c8772084"
+    },
+    {
+      "path": "frontend-build-comparison.json",
+      "sha256": "d4ae9fccfebbd20c68ed7dc569b5a9842f022b0dc5b64507c79185b5ef2a0383"
+    },
+    {
+      "path": "runtime-info.json",
+      "sha256": "a8ff3cac494f650d8e1daa01e2bfac7ff4fd7d234c74e42cf0221df8b7d3efaa"
+    },
+    {
+      "path": "webview2-runtime.json",
+      "sha256": "734bd89eaa5776522a48ce4c9e64f796cc34ea12aeb2ed215484c0e242bc4f9a"
+    },
+    {
+      "path": "candidate-manifest.json",
+      "sha256": "0d5c5382c2fb16f1e38df7620aad15ec05599918a3f3834b1965b0930a7f911e"
+    },
+    {
+      "path": "candidate-verification.json",
+      "sha256": "e32a02f0b6b31c1256aff23bc658176824ab84c03f48c46b220ec050d099dd3c"
+    },
+    {
+      "path": "reader-window-native-lifecycle.json",
+      "sha256": "6b217d265a212f34a228cd13ddcaca3565ccbc5e5d40283121332b5177141012"
+    },
+    {
+      "path": "installer-lifecycle.json",
+      "sha256": "c4aecb18b98b0d597e7c3eea95a97ffaf356a2e17bbb221291d6dd6aaca86bc0"
+    }
+  ]
+}

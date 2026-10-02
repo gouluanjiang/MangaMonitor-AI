@@ -1,0 +1,565 @@
+{
+  "kind": "actual-windows-webview2-synthetic-library-window-lifecycle",
+  "physicalCloseButtonTested": false,
+  "closePath": "owned HWND WM_CLOSE -> native CloseRequested -> frontend close handshake; reader_main_close IPC; final child toolbar -> reader_window_close IPC",
+  "mediaRead": false,
+  "liveSourceRequest": false,
+  "steps": [
+    {
+      "step": "two-independent-native-windows",
+      "mainHandle": "197144",
+      "aHandle": "459134",
+      "bHandle": "262716",
+      "labels": [
+        "reader-window-1",
+        "reader-window-2"
+      ]
+    },
+    {
+      "step": "main-still-operable-and-same-book-reuses-window"
+    },
+    {
+      "step": "actual-os-pin-isolated-and-reversible"
+    },
+    {
+      "step": "owned-native-close-request-posted",
+      "handle": "197144",
+      "message": "WM_CLOSE"
+    },
+    {
+      "step": "main-hidden-children-remain-live"
+    },
+    {
+      "step": "child-restores-operable-main-with-empty-download-queue"
+    },
+    {
+      "step": "owned-native-close-request-posted",
+      "handle": "459134",
+      "message": "WM_CLOSE"
+    },
+    {
+      "step": "first-child-close-preserves-other-window-and-process"
+    },
+    {
+      "step": "last-child-close-exits-native-application",
+      "exitCode": 0
+    }
+  ],
+  "windowInspections": [
+    {
+      "windows": [
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": true
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": true
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": true
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": true
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": true
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": true
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "459134",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    },
+    {
+      "windows": [
+        {
+          "handle": "262716",
+          "title": "MangaMonitor � ??????",
+          "visible": true,
+          "topmost": false
+        },
+        {
+          "handle": "197144",
+          "title": "MangaMonitor",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262532",
+          "title": "MSCTFIME UI",
+          "visible": false,
+          "topmost": false
+        },
+        {
+          "handle": "262530",
+          "title": "Default IME",
+          "visible": false,
+          "topmost": false
+        }
+      ]
+    }
+  ],
+  "passed": true
+}

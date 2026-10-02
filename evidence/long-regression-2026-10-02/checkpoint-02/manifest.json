@@ -1,0 +1,60 @@
+{
+  "capturedAt": "2026-10-02T06:12:01.579444+00:00",
+  "complete": false,
+  "status": "baseline in progress; NOT a 4-hour pass",
+  "applicationBaseline": "9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827",
+  "harnessRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "ciIdentityEvidence": "../checkpoint-01",
+  "files": [
+    {
+      "path": "baseline-ui/metrics.ndjson.gz",
+      "uncompressedBytes": 393713,
+      "sha256": "9ce5b67c922d27bf69ace8cce14cacf54ca6dcd7fc80e8e5bcb0c1e36964c67f"
+    },
+    {
+      "path": "baseline-ui/latency.ndjson.gz",
+      "uncompressedBytes": 71880,
+      "sha256": "6f24ee70e458cacc78fd92a34bb187b911cba7d3594d72062bebe1f0843ed04b"
+    },
+    {
+      "path": "baseline-ui/manifest.json.gz",
+      "uncompressedBytes": 429,
+      "sha256": "d46be43a9ffb86521e56dfdcf295f6bce8ea1b0ff850858839f30f63a91eb02a"
+    },
+    {
+      "path": "baseline-ui/checkpoint.json.gz",
+      "uncompressedBytes": 5043,
+      "sha256": "2a0e275ca01117889f4ca567db5f0a3c6ff196b75252d0bcb0a2e4dd378d5d8c"
+    },
+    {
+      "path": "baseline-ui/events.ndjson.gz",
+      "uncompressedBytes": 70,
+      "sha256": "9ea46131f8b7599bb4d9afc336d8af34ed9e1b27310eb8b0fa50b3c18f203e75"
+    },
+    {
+      "path": "baseline-ui/operations.ndjson.gz",
+      "uncompressedBytes": 1974338,
+      "sha256": "978dd02b818a50144a1d790360e13daef92c73ec11e8c53a28d5d51a4a95d18a"
+    },
+    {
+      "path": "baseline-storage/metrics.ndjson.gz",
+      "uncompressedBytes": 94226,
+      "sha256": "be52d52237b8939a8e3803096431b371b5bc74afc41cab7776befeb410b2e884"
+    },
+    {
+      "path": "baseline-storage/manifest.json.gz",
+      "uncompressedBytes": 500,
+      "sha256": "5219200b89fc4c071363ca36e240a8063f8eb1d0086fea25aa715b6e6f2e1db1"
+    },
+    {
+      "path": "baseline-storage/checkpoint.json.gz",
+      "uncompressedBytes": 730,
+      "sha256": "0bde8ae11ff883bfc5211a956e36172585c6402a89718309b7008e3761f3910b"
+    },
+    {
+      "path": "baseline-storage/operations.ndjson.gz",
+      "uncompressedBytes": 5096494,
+      "sha256": "8c72f124dcfc8ac5ec68d27d8812d3466fb868811a4208b3ee9d94d8d13b54c1"
+    }
+  ]
+}

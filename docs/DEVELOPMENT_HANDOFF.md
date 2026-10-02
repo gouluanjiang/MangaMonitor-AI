@@ -1,5 +1,44 @@
 # Current development handoff
 
+## Cloud long regression and measured fixes — candidate for local acceptance (2026-10-02)
+
+Use [the complete long-regression report](LONG_REGRESSION_2026-10-02.md) and
+[draft PR #26](https://github.com/gouluanjiang/MangaMonitor-AI/pull/26) for this
+batch. Its baseline is `9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827`, which contains
+PR #24/#25 and differs from application/test `19b50a4` only in delivery docs.
+Remote `main` remains older. Work is isolated on `codex/long-regression-20261002`;
+PRs #24, #25 and #26 are drafts and unmerged.
+
+The exact application candidate is
+`1cba4b81eaf439de9d00c47a42aeb11027b1e1fa` (`1.0.2-rc.3`). Baseline, frontend
+(356 logic / 268 browser), and Windows desktop CI all passed on that SHA. The
+[Windows candidate](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36986184306/artifacts/11218078107)
+contains installer `MangaMonitor Dev_1.0.2-rc.3_x64-setup.exe`, SHA-256
+`08c1ebf132672781719618f097bcd1c68deee9c3d5b123eedc7e211f531a3437`.
+The report gives all executable/archive hashes and source/config/manifest proof.
+Later documentation/evidence commits do not replace this candidate.
+
+The original same-process four-hour UI and parallel native-storage baselines
+completed before application edits. Three measured fixes release closed author
+tab positions, avoid unrelated large-list filter/sort work, and reuse the
+existing exact-byte cache for one observation document. Expected behavior:
+open/hidden tabs retain position; source order and explicit-label filtering stay
+the same; fresh data and CAS/atomic-write protection remain; closed tabs no
+longer retain work-key arrays. The observation cache reduces the measured large
+detail commit from 99.17 to 66.38 ms with a measured peak-RSS cost of about 66 MiB
+in the diagnostic. Whole-program memory growth is not declared fully resolved.
+
+All media/files/accounts are generated mocks or isolated CI fixtures. No real
+library, real credentials, source pressure, real manga download/delete, security
+change, merge, release or user installation occurred. Windows CI tested native
+WebView/restart, generated-file recycle and isolated silent installation, but
+the candidate is **not installed locally**. Physical reader close/media use,
+Explorer selection, interactive/historical upgrade, multi-hour Windows resource
+behavior and real future special-follow notifications remain local acceptance
+items. Per-launch fixed new badges, special unread and manual scan markers keep
+their separate meanings; synthetic success does not grant user acceptance.
+
+
 ## Library and browsing follow-ups — delivered for acceptance (2026-10-01)
 
 Application/test revision `19b50a4` on `codex/library-browse-followups` passed
@@ -92,7 +131,7 @@ and shortcuts remain unchanged. Draft PR #24 is unmerged; user acceptance and
 public release are separate. Future special updates, natural cover outages and
 later manual scan markers have synthetic evidence and still need real usage.
 
-Updated 2026-10-01. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
+Updated 2026-10-02. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
 
 ## Current maintenance batch
 

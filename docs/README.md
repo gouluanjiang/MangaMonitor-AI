@@ -13,6 +13,7 @@
 ## 开发与维护
 
 - [当前交接](DEVELOPMENT_HANDOFF.md)：接手开发先读这一份；不必顺序重读所有历史报告。
+- [2026-10-02 合成长回归与实证修复](LONG_REGRESSION_2026-10-02.md)：准确基线、连续时长、性能对比、候选产物和 Windows 待验边界。
 - [2026-09-30 维护审计修复](MAINTENANCE_AUDIT_2026-09-30.md)与 [1.0.2-rc.1 候选说明](RELEASE_NOTES_1.0.2-rc.1.md)：修复范围、格式兼容与待验收边界。
 - [贡献和问题反馈](../CONTRIBUTING.md)、[开发规则](../AGENTS.md)、[来源基线与仓库隔离](../SOURCE_BASELINE.md)。
 - [前端说明](../apps/local-workbench/README.md)与[原生桌面说明](../apps/local-workbench/src-tauri/README.md)。

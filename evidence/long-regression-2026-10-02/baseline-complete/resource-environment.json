@@ -1,0 +1,15 @@
+{
+  "at": "2026-10-02T07:37:03.790417+00:00",
+  "clockTicks": 100,
+  "reportedLogicalCpus": 5,
+  "affinityCpuCount": 5,
+  "cgroup": {
+    "memory.max": "17179869184",
+    "memory.current": "4364906496",
+    "cpu.max": "400000 100000"
+  },
+  "notes": [
+    "CPU quota is 4 cores although 5 logical CPUs are reported. Use one-core CPU units or the recorded quota for final capacity percentages.",
+    "Earlier checkpoint-03 host-capacity percentages divide by 5 reported logical CPUs, not the 4-core cgroup quota; raw CPU ticks remain authoritative."
+  ]
+}

@@ -1,0 +1,5 @@
+{"role": "storage-child", "pid": 6270, "zombieObserved": false, "rawWaitStatus": null, "goneAt": "2026-10-02T08:01:56.467518+00:00"}
+{"role": "storage-shell", "pid": 6266, "zombieObserved": true, "rawWaitStatus": 0, "at": "2026-10-02T08:01:56.467775+00:00"}
+{"role": "ui-child", "pid": 6782, "zombieObserved": true, "rawWaitStatus": 0, "at": "2026-10-02T08:05:28.370181+00:00"}
+{"role": "ui-child", "pid": 6782, "zombieObserved": true, "rawWaitStatus": 0, "at": "2026-10-02T08:05:28.370181+00:00", "goneAt": "2026-10-02T08:05:28.390624+00:00"}
+{"role": "ui-shell", "pid": 6778, "zombieObserved": true, "rawWaitStatus": 0, "at": "2026-10-02T08:05:28.390715+00:00"}

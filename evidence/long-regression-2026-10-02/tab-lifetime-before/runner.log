@@ -1,0 +1,18 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: closed author tabs retain browsing snapshots after unmount and garbage collection
+
+40 !== 0
+
+    at file:///workspace/MangaMonitor-AI/apps/local-workbench/tests/soak/tab-lifetime.mjs:137:10 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 40,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

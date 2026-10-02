@@ -1,0 +1,123 @@
+{
+  "capturedAt": "2026-10-02T08:08:14.951057+00:00",
+  "durationComplete": true,
+  "functionalAssertionsPassed": true,
+  "resourceGrowthAssessment": "pending supplemental diagnosis; this is not a no-leak claim",
+  "applicationBaseline": "9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827",
+  "harnessRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "ciIdentityEvidence": "../checkpoint-01",
+  "processExitEvidence": {
+    "ui": 0,
+    "storage": 0,
+    "evidence": {
+      "ui": {
+        "role": "ui-child",
+        "pid": 6782,
+        "zombieObserved": true,
+        "rawWaitStatus": 0,
+        "at": "2026-10-02T08:05:28.370181+00:00"
+      },
+      "storage": {
+        "role": "storage-shell",
+        "pid": 6266,
+        "zombieObserved": true,
+        "rawWaitStatus": 0,
+        "at": "2026-10-02T08:01:56.467775+00:00"
+      }
+    },
+    "method": "Read-only /proc zombie wait status. Original exec handles were lost; storage shell ran the single native command and retained its zero exit status."
+  },
+  "files": [
+    {
+      "path": "baseline-ui/checkpoint.json.gz",
+      "uncompressedBytes": 5062,
+      "sha256": "399c76de33e236b993b015bd71cf99ff8c0e0a364314e15a8577a6f0def4be20"
+    },
+    {
+      "path": "baseline-ui/events.ndjson.gz",
+      "uncompressedBytes": 70,
+      "sha256": "9ea46131f8b7599bb4d9afc336d8af34ed9e1b27310eb8b0fa50b3c18f203e75"
+    },
+    {
+      "path": "baseline-ui/latency.ndjson.gz",
+      "uncompressedBytes": 133010,
+      "sha256": "c29e45dbb68093436f43bc6bd290625440ef0eda7f154ac4cc93fe7eebbac00b"
+    },
+    {
+      "path": "baseline-ui/manifest.json.gz",
+      "uncompressedBytes": 429,
+      "sha256": "d46be43a9ffb86521e56dfdcf295f6bce8ea1b0ff850858839f30f63a91eb02a"
+    },
+    {
+      "path": "baseline-ui/metrics.ndjson.gz",
+      "uncompressedBytes": 750337,
+      "sha256": "59da84cba9e93115aa8443f5fc47f7b2b6e6716ee49ab3f310ee2e118a4a2180"
+    },
+    {
+      "path": "baseline-ui/operations.ndjson.gz",
+      "uncompressedBytes": 3762584,
+      "sha256": "d3a1e901b2b9236b0653b22400c314c625cb5abdacad0a4f9a25993459fe328b"
+    },
+    {
+      "path": "baseline-ui/runner.log.gz",
+      "uncompressedBytes": 38635,
+      "sha256": "2536798470520bfb1da526f2c7def67fdae4a825c77ae4878bc89f139e93433d"
+    },
+    {
+      "path": "baseline-ui/summary.json.gz",
+      "uncompressedBytes": 766,
+      "sha256": "f080a7690eb4a213b5c368169657609912cefd57b1467645b1db8319afa256ba"
+    },
+    {
+      "path": "baseline-ui/synthetic-browser-state.json.gz",
+      "uncompressedBytes": 9747,
+      "sha256": "1b71d7bdb5e7d6653a46dc3067e314da49ae564fda941a3365c194bb6484db5e"
+    },
+    {
+      "path": "baseline-storage/checkpoint.json.gz",
+      "uncompressedBytes": 734,
+      "sha256": "440e1183815efd00f7792c7fe18c83b40e7dab99be532a5af8c973941952f068"
+    },
+    {
+      "path": "baseline-storage/manifest.json.gz",
+      "uncompressedBytes": 500,
+      "sha256": "5219200b89fc4c071363ca36e240a8063f8eb1d0086fea25aa715b6e6f2e1db1"
+    },
+    {
+      "path": "baseline-storage/metrics.ndjson.gz",
+      "uncompressedBytes": 174936,
+      "sha256": "c7656a8ed558e06a91e0f1dd09c49d91d355a4618bf6174c4fec91eb127600ab"
+    },
+    {
+      "path": "baseline-storage/operations.ndjson.gz",
+      "uncompressedBytes": 9479887,
+      "sha256": "5e1f77044532c4f274b30c181c7e39125119f43edbb1bcc40ff11e33cb748644"
+    },
+    {
+      "path": "baseline-storage/runner.log.gz",
+      "uncompressedBytes": 17528,
+      "sha256": "f1380047e98f33c2a747c8cfcfad132dab298759b3d014c054e7de732a2ff466"
+    },
+    {
+      "path": "baseline-storage/summary.json.gz",
+      "uncompressedBytes": 286,
+      "sha256": "067f8dc7fd77a1055e561403992521c62c5e2bb77e2c09a9df089c931ea452f6"
+    },
+    {
+      "path": "baseline-memory-observer/manifest.json.gz",
+      "uncompressedBytes": 548,
+      "sha256": "62acdd361738f989921619cc923cf559ac2f277e5cefa0f5adaf5b27a60aaec9"
+    },
+    {
+      "path": "baseline-memory-observer/metrics.ndjson.gz",
+      "uncompressedBytes": 3210,
+      "sha256": "f450f82c018238dc842791bfed8e3f3deb1ce04df6447abf3273be3486fee4d9"
+    },
+    {
+      "path": "baseline-memory-observer/summary.json.gz",
+      "uncompressedBytes": 305,
+      "sha256": "300583ed8612e1930ef0650f5687454024cf8deec7ac1e25ad546750da433eee"
+    }
+  ],
+  "analysisScriptSha256": "f5e119d37e44a7a71ca68f74ff78166d448867b778e25664264fc3803d7c6d3e"
+}

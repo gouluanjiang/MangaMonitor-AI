@@ -1,0 +1,8 @@
+{
+  "applicationBaseline": "9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827",
+  "result": "confirmed: closed-tab snapshots retained after actual unmount and GC",
+  "expectedScopesAfterClose": 0,
+  "actualScopesAfterClose": 40,
+  "actualKeysAfterClose": 7200,
+  "notProven": "This does not establish the cause of all baseline RSS growth. Earlier dev-mode diagnostic never completed its initial search and was not used as product-failure evidence."
+}

@@ -831,6 +831,11 @@ test("detail title and date appear on return and survive source switches without
     .toBe(before);
   expect((await recentCalls(page)).length).toBe(calls);
   await page.getByLabel("最近更新来源").selectOption("both");
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 40 部");
+  // Switching sources restores that view's own anchor. The newer JM head can
+  // place this Pica card outside the virtual window, so browse to the tail.
+  await page.getByRole("main").hover();
+  await page.mouse.wheel(0, 8000);
   await expect(card).toContainText("详情已更新的合成标题");
   await page.getByLabel("最近更新来源").selectOption("Pica");
   await expect(card).toContainText("2026-10-02");

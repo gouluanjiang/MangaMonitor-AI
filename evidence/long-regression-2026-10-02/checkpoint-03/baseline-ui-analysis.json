@@ -1,0 +1,901 @@
+{
+  "manifest": {
+    "sha": "159f4f725200d639d080fd719d9d7fae2eb92936",
+    "seed": 20261002,
+    "started": "2026-10-02T04:05:27.520Z",
+    "targetMinutes": 240,
+    "browser": "151.0.7922.173",
+    "platform": "linux",
+    "node": "v24.19.0",
+    "pid": 6782,
+    "baseURL": "http://127.0.0.1:43019",
+    "applicationBaseline": "9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827",
+    "preparationExcluded": true,
+    "nativeBoundary": "synthetic",
+    "continuousPage": true
+  },
+  "summary": null,
+  "finished": false,
+  "durationComplete": false,
+  "metricSamples": 182,
+  "observedMetricDurationMs": 10906520.459708001,
+  "operationBegins": 11601,
+  "operationPasses": 11600,
+  "operationFailures": 0,
+  "clockTicksPerSecond": 100,
+  "logicalCpus": 5,
+  "windows": [
+    {
+      "fromMinute": 0,
+      "toMinute": 15,
+      "samples": 16,
+      "windowFullyObserved": true,
+      "operationPasses": 978,
+      "JSHeapUsedSize": {
+        "samples": 16,
+        "min": 6843304,
+        "median": 24472338.0,
+        "p95": 43136464,
+        "max": 43136464
+      },
+      "Nodes": {
+        "samples": 16,
+        "min": 1318,
+        "median": 9843.5,
+        "p95": 19853,
+        "max": 19853
+      },
+      "JSEventListeners": {
+        "samples": 16,
+        "min": 1125,
+        "median": 8957.5,
+        "p95": 37996,
+        "max": 37996
+      },
+      "Documents": {
+        "samples": 16,
+        "min": 1,
+        "median": 1.0,
+        "p95": 6,
+        "max": 6
+      },
+      "summedRssKb": {
+        "samples": 16,
+        "min": 1046576,
+        "median": 1813008.0,
+        "p95": 1968132,
+        "max": 1968132
+      },
+      "summedFds": {
+        "samples": 16,
+        "min": 358,
+        "median": 493.0,
+        "p95": 493,
+        "max": 493
+      },
+      "runnerRssBytes": {
+        "samples": 16,
+        "min": 141602816,
+        "median": 157007872.0,
+        "p95": 190144512,
+        "max": 190144512
+      },
+      "activeIPC": {
+        "samples": 16,
+        "min": 0,
+        "median": 0.0,
+        "p95": 2,
+        "max": 2
+      },
+      "rendererMainThreadCpuPercentOneCore": {
+        "samples": 15,
+        "min": 21.197685818849752,
+        "median": 25.190486439493903,
+        "p95": 37.725240219890146,
+        "max": 37.725240219890146
+      },
+      "boundaryCounterDeltas": {
+        "requests": 6920,
+        "failures": 186,
+        "injected": 187,
+        "retryAttempts": 183,
+        "secondsBetweenSamples": 847.495627751,
+        "requestsPerSecond": 8.165233864820767,
+        "boundaryErrorFraction": 0.026878612716763006
+      },
+      "catalogSizes": [
+        24
+      ],
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 15,
+        "min": 55.048854906303326,
+        "median": 68.63665751436257,
+        "p95": 85.30750776910054,
+        "max": 85.30750776910054
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 15,
+        "min": 11.009770981260665,
+        "median": 13.727331502872513,
+        "p95": 17.061501553820108,
+        "max": 17.061501553820108
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "author:not-recorded": {
+          "samples": 71,
+          "min": 182.79665899999964,
+          "median": 1076.8061489999527,
+          "p95": 1191.6988230000134,
+          "max": 1230.6483149999985
+        },
+        "detail:not-recorded": {
+          "samples": 63,
+          "min": 853.559758999967,
+          "median": 1042.228569000028,
+          "p95": 1313.7243659999804,
+          "max": 1364.6614759999793
+        },
+        "fault:not-recorded": {
+          "samples": 75,
+          "min": 644.4390929999645,
+          "median": 999.9882670000079,
+          "p95": 1190.571098000044,
+          "max": 1217.9119649999775
+        },
+        "history:not-recorded": {
+          "samples": 66,
+          "min": 31.96528500004206,
+          "median": 77.03910300001735,
+          "p95": 1070.215196999954,
+          "max": 1107.3597559999907
+        },
+        "late:not-recorded": {
+          "samples": 64,
+          "min": 1537.1305680000223,
+          "median": 1610.3611870000022,
+          "p95": 1706.4110640001018,
+          "max": 1788.6930960000027
+        },
+        "library:not-recorded": {
+          "samples": 59,
+          "min": 352.08246399999916,
+          "median": 445.71497199999976,
+          "p95": 540.2775580000598,
+          "max": 583.2927129999734
+        },
+        "queue:not-recorded": {
+          "samples": 59,
+          "min": 278.8154429999413,
+          "median": 341.41919399998733,
+          "p95": 427.90465899999253,
+          "max": 539.6423359999899
+        },
+        "reader:not-recorded": {
+          "samples": 114,
+          "min": 880.3171829999192,
+          "median": 1002.1951894999947,
+          "p95": 1073.7384619999211,
+          "max": 1181.0397629999788
+        },
+        "recent:not-recorded": {
+          "samples": 145,
+          "min": 521.3727019999642,
+          "median": 656.7169930000091,
+          "p95": 766.7198229999049,
+          "max": 857.6392860000487
+        },
+        "recycleCancel:not-recorded": {
+          "samples": 79,
+          "min": 697.7283520000055,
+          "median": 802.9421860000002,
+          "p95": 881.9892489999766,
+          "max": 910.9765219999827
+        },
+        "scan:not-recorded": {
+          "samples": 59,
+          "min": 64.52346299999954,
+          "median": 357.6925909999991,
+          "p95": 466.98671299999114,
+          "max": 563.8893009999301
+        },
+        "special:not-recorded": {
+          "samples": 63,
+          "min": 111.80475399992429,
+          "median": 189.3731990000233,
+          "p95": 224.56103400001302,
+          "max": 232.4769549999619
+        },
+        "tabs:not-recorded": {
+          "samples": 61,
+          "min": 154.32501399994362,
+          "median": 289.81091800006106,
+          "p95": 401.03545600001235,
+          "max": 1362.016395
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": {
+          "samples": 72,
+          "min": 46.82559900000342,
+          "median": 139.772354500019,
+          "p95": 179.8937709999991,
+          "max": 191.36002899997402
+        },
+        "completeMs": {
+          "samples": 72,
+          "min": 48.72479100000055,
+          "median": 929.3438574999964,
+          "p95": 977.0825040000491,
+          "max": 996.703681
+        }
+      }
+    },
+    {
+      "fromMinute": 30,
+      "toMinute": 60,
+      "samples": 30,
+      "windowFullyObserved": true,
+      "operationPasses": 1904,
+      "JSHeapUsedSize": {
+        "samples": 30,
+        "min": 21017044,
+        "median": 32245394.0,
+        "p95": 47321904,
+        "max": 56736960
+      },
+      "Nodes": {
+        "samples": 30,
+        "min": 7080,
+        "median": 11791.5,
+        "p95": 30010,
+        "max": 33598
+      },
+      "JSEventListeners": {
+        "samples": 30,
+        "min": 2130,
+        "median": 14121.5,
+        "p95": 62294,
+        "max": 62660
+      },
+      "Documents": {
+        "samples": 30,
+        "min": 1,
+        "median": 1.0,
+        "p95": 1,
+        "max": 1
+      },
+      "summedRssKb": {
+        "samples": 30,
+        "min": 2203004,
+        "median": 2321342.0,
+        "p95": 2422444,
+        "max": 2445852
+      },
+      "summedFds": {
+        "samples": 30,
+        "min": 493,
+        "median": 493.0,
+        "p95": 493,
+        "max": 493
+      },
+      "runnerRssBytes": {
+        "samples": 30,
+        "min": 281989120,
+        "median": 305352704.0,
+        "p95": 321961984,
+        "max": 328110080
+      },
+      "activeIPC": {
+        "samples": 30,
+        "min": 0,
+        "median": 0.0,
+        "p95": 1,
+        "max": 1
+      },
+      "rendererMainThreadCpuPercentOneCore": {
+        "samples": 29,
+        "min": 23.727595944654055,
+        "median": 26.658294525031213,
+        "p95": 29.41824664365025,
+        "max": 31.217667599209708
+      },
+      "boundaryCounterDeltas": {
+        "requests": 13033,
+        "failures": 228,
+        "injected": 247,
+        "retryAttempts": 229,
+        "secondsBetweenSamples": 1756.321554106,
+        "requestsPerSecond": 7.420622931792258,
+        "boundaryErrorFraction": 0.01749405355635694
+      },
+      "catalogSizes": [
+        2000
+      ],
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 29,
+        "min": 61.70966159724268,
+        "median": 70.43219190518974,
+        "p95": 78.7359651463627,
+        "max": 83.56408993271233
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 29,
+        "min": 12.341932319448535,
+        "median": 14.086438381037947,
+        "p95": 15.747193029272541,
+        "max": 16.71281798654247
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "author:not-recorded": {
+          "samples": 125,
+          "min": 184.49191999994218,
+          "median": 1085.8409720002674,
+          "p95": 1189.0565920001827,
+          "max": 1234.3137999996543
+        },
+        "detail:not-recorded": {
+          "samples": 116,
+          "min": 858.4883980001323,
+          "median": 1047.6040775000583,
+          "p95": 1314.5196989998221,
+          "max": 1403.0392040000297
+        },
+        "fault:not-recorded": {
+          "samples": 120,
+          "min": 646.4447309998795,
+          "median": 1006.7191005002242,
+          "p95": 1170.206104000099,
+          "max": 1254.3161520003341
+        },
+        "history:not-recorded": {
+          "samples": 134,
+          "min": 31.650475999806076,
+          "median": 81.29718900006264,
+          "p95": 1086.0741849998012,
+          "max": 1265.2462730000261
+        },
+        "late:not-recorded": {
+          "samples": 136,
+          "min": 1529.8089990001172,
+          "median": 1641.7634009998292,
+          "p95": 1737.0417860001326,
+          "max": 1797.9553690003231
+        },
+        "library:not-recorded": {
+          "samples": 127,
+          "min": 378.94008299987763,
+          "median": 493.1482449998148,
+          "p95": 578.5485439999029,
+          "max": 719.2942599998787
+        },
+        "queue:not-recorded": {
+          "samples": 140,
+          "min": 343.372199999867,
+          "median": 407.5635809999658,
+          "p95": 471.48663099994883,
+          "max": 515.1548040001653
+        },
+        "reader:not-recorded": {
+          "samples": 249,
+          "min": 883.6675999998115,
+          "median": 1021.1207910003141,
+          "p95": 1201.8832910000347,
+          "max": 1600.1028829999268
+        },
+        "recent:not-recorded": {
+          "samples": 238,
+          "min": 522.9116779998876,
+          "median": 670.6527795000002,
+          "p95": 806.5131210000254,
+          "max": 929.2355980002321
+        },
+        "recycleCancel:not-recorded": {
+          "samples": 139,
+          "min": 740.5078500001691,
+          "median": 868.1898300000466,
+          "p95": 1079.3094819998369,
+          "max": 1486.8894790001214
+        },
+        "scan:not-recorded": {
+          "samples": 122,
+          "min": 243.67287999996915,
+          "median": 403.8604489999125,
+          "p95": 470.89289700007066,
+          "max": 509.55307500017807
+        },
+        "special:not-recorded": {
+          "samples": 116,
+          "min": 150.5002839998342,
+          "median": 193.26566099992488,
+          "p95": 245.30580599978566,
+          "max": 284.8014829996973
+        },
+        "tabs:not-recorded": {
+          "samples": 142,
+          "min": 182.6046319999732,
+          "median": 305.23454800015315,
+          "p95": 399.2961490000598,
+          "max": 449.26189800025895
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": {
+          "samples": 125,
+          "min": 50.91155199985951,
+          "median": 125.29182699974626,
+          "p95": 175.40255700005218,
+          "max": 200.18770200014114
+        },
+        "completeMs": {
+          "samples": 125,
+          "min": 52.46379099972546,
+          "median": 924.4860400003381,
+          "p95": 970.7046260000207,
+          "max": 1000.912092000246
+        }
+      }
+    },
+    {
+      "fromMinute": 90,
+      "toMinute": 120,
+      "samples": 29,
+      "windowFullyObserved": true,
+      "operationPasses": 1885,
+      "JSHeapUsedSize": {
+        "samples": 29,
+        "min": 24083668,
+        "median": 38714452,
+        "p95": 52521836,
+        "max": 52743548
+      },
+      "Nodes": {
+        "samples": 29,
+        "min": 6467,
+        "median": 13974,
+        "p95": 28904,
+        "max": 40366
+      },
+      "JSEventListeners": {
+        "samples": 29,
+        "min": 2340,
+        "median": 22298,
+        "p95": 55867,
+        "max": 75032
+      },
+      "Documents": {
+        "samples": 29,
+        "min": 1,
+        "median": 1,
+        "p95": 1,
+        "max": 1
+      },
+      "summedRssKb": {
+        "samples": 29,
+        "min": 2513232,
+        "median": 2684956,
+        "p95": 2748464,
+        "max": 2754236
+      },
+      "summedFds": {
+        "samples": 29,
+        "min": 492,
+        "median": 493,
+        "p95": 493,
+        "max": 493
+      },
+      "runnerRssBytes": {
+        "samples": 29,
+        "min": 239726592,
+        "median": 349257728,
+        "p95": 361287680,
+        "max": 362172416
+      },
+      "activeIPC": {
+        "samples": 29,
+        "min": 0,
+        "median": 0,
+        "p95": 1,
+        "max": 2
+      },
+      "rendererMainThreadCpuPercentOneCore": {
+        "samples": 28,
+        "min": 24.72605188792904,
+        "median": 27.40551691423144,
+        "p95": 31.60622999387284,
+        "max": 31.7154427515533
+      },
+      "boundaryCounterDeltas": {
+        "requests": 12467,
+        "failures": 248,
+        "injected": 243,
+        "retryAttempts": 248,
+        "secondsBetweenSamples": 1699.7305377579992,
+        "requestsPerSecond": 7.334692013267224,
+        "boundaryErrorFraction": 0.019892516242881207
+      },
+      "catalogSizes": [
+        2000
+      ],
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 28,
+        "min": 60.08391763930118,
+        "median": 71.70788180138818,
+        "p95": 82.3301313148042,
+        "max": 86.7381718609566
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 28,
+        "min": 12.016783527860236,
+        "median": 14.341576360277637,
+        "p95": 16.466026262960842,
+        "max": 17.34763437219132
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "author:not-recorded": {
+          "samples": 113,
+          "min": 163.1971720000729,
+          "median": 1088.0476740002632,
+          "p95": 1182.9073760006577,
+          "max": 1312.2158580003306
+        },
+        "detail:not-recorded": {
+          "samples": 138,
+          "min": 860.9399170000106,
+          "median": 1083.0003364998847,
+          "p95": 1352.8967949999496,
+          "max": 1470.770204000175
+        },
+        "fault:not-recorded": {
+          "samples": 139,
+          "min": 638.5364119997248,
+          "median": 1024.706930999644,
+          "p95": 1180.756121000275,
+          "max": 1235.6678029997274
+        },
+        "history:not-recorded": {
+          "samples": 117,
+          "min": 28.950582000426948,
+          "median": 80.03627599962056,
+          "p95": 1112.510271999985,
+          "max": 1311.9205229999498
+        },
+        "late:not-recorded": {
+          "samples": 117,
+          "min": 1549.0594140002504,
+          "median": 1632.0392140001059,
+          "p95": 1761.9976129997522,
+          "max": 1798.814774000086
+        },
+        "library:not-recorded": {
+          "samples": 120,
+          "min": 360.61802799999714,
+          "median": 490.29910949990153,
+          "p95": 608.7248259996995,
+          "max": 631.965991999954
+        },
+        "queue:not-recorded": {
+          "samples": 130,
+          "min": 337.987351000309,
+          "median": 412.0982059999369,
+          "p95": 478.9263720000163,
+          "max": 528.5332480007783
+        },
+        "reader:not-recorded": {
+          "samples": 255,
+          "min": 891.032349999994,
+          "median": 1037.420949999243,
+          "p95": 1211.736806999892,
+          "max": 1661.651317000389
+        },
+        "recent:not-recorded": {
+          "samples": 256,
+          "min": 528.7540359999985,
+          "median": 680.0280694998801,
+          "p95": 806.956283999607,
+          "max": 864.904263000004
+        },
+        "recycleCancel:not-recorded": {
+          "samples": 132,
+          "min": 732.0538379997015,
+          "median": 890.1379420002922,
+          "p95": 982.1734409993514,
+          "max": 1196.7217140002176
+        },
+        "scan:not-recorded": {
+          "samples": 121,
+          "min": 252.6262369994074,
+          "median": 403.939105999656,
+          "p95": 495.28751199971884,
+          "max": 570.7862060004845
+        },
+        "special:not-recorded": {
+          "samples": 121,
+          "min": 149.04614199977368,
+          "median": 197.6387550001964,
+          "p95": 236.5964469993487,
+          "max": 252.92620300035924
+        },
+        "tabs:not-recorded": {
+          "samples": 126,
+          "min": 189.9731480004266,
+          "median": 314.17194400029257,
+          "p95": 425.03034000005573,
+          "max": 471.352684000507
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": {
+          "samples": 113,
+          "min": 48.64278300013393,
+          "median": 121.3059670003131,
+          "p95": 185.33152700029314,
+          "max": 206.76720399968326
+        },
+        "completeMs": {
+          "samples": 113,
+          "min": 50.33513400051743,
+          "median": 920.7246160004288,
+          "p95": 982.1678269999102,
+          "max": 1028.4276389991865
+        }
+      }
+    },
+    {
+      "fromMinute": 150,
+      "toMinute": 180,
+      "samples": 30,
+      "windowFullyObserved": true,
+      "operationPasses": 1902,
+      "JSHeapUsedSize": {
+        "samples": 30,
+        "min": 27822496,
+        "median": 41423102.0,
+        "p95": 54779184,
+        "max": 55417260
+      },
+      "Nodes": {
+        "samples": 30,
+        "min": 7445,
+        "median": 18055.0,
+        "p95": 39402,
+        "max": 42169
+      },
+      "JSEventListeners": {
+        "samples": 30,
+        "min": 6149,
+        "median": 31755.0,
+        "p95": 89730,
+        "max": 97976
+      },
+      "Documents": {
+        "samples": 30,
+        "min": 1,
+        "median": 1.0,
+        "p95": 1,
+        "max": 1
+      },
+      "summedRssKb": {
+        "samples": 30,
+        "min": 2882880,
+        "median": 2977666.0,
+        "p95": 3110412,
+        "max": 3110936
+      },
+      "summedFds": {
+        "samples": 30,
+        "min": 493,
+        "median": 493.0,
+        "p95": 493,
+        "max": 493
+      },
+      "runnerRssBytes": {
+        "samples": 30,
+        "min": 291954688,
+        "median": 362520576.0,
+        "p95": 412999680,
+        "max": 413741056
+      },
+      "activeIPC": {
+        "samples": 30,
+        "min": 0,
+        "median": 0.0,
+        "p95": 1,
+        "max": 1
+      },
+      "rendererMainThreadCpuPercentOneCore": {
+        "samples": 29,
+        "min": 24.282015135850603,
+        "median": 28.338338643677695,
+        "p95": 31.173186222644055,
+        "max": 31.31418310991198
+      },
+      "boundaryCounterDeltas": {
+        "requests": 12966,
+        "failures": 286,
+        "injected": 252,
+        "retryAttempts": 286,
+        "secondsBetweenSamples": 1757.2800480790008,
+        "requestsPerSecond": 7.378448309462111,
+        "boundaryErrorFraction": 0.02205768934135431
+      },
+      "catalogSizes": [
+        2000
+      ],
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 29,
+        "min": 62.467658560132755,
+        "median": 72.0413525678624,
+        "p95": 78.26437819824874,
+        "max": 79.16007854277673
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 29,
+        "min": 12.49353171202655,
+        "median": 14.40827051357248,
+        "p95": 15.652875639649746,
+        "max": 15.832015708555346
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "author:not-recorded": {
+          "samples": 120,
+          "min": 222.73873999901116,
+          "median": 1077.466359499842,
+          "p95": 1183.2061000000685,
+          "max": 1308.293680999428
+        },
+        "detail:not-recorded": {
+          "samples": 132,
+          "min": 859.3527989983559,
+          "median": 1070.8281699996442,
+          "p95": 1346.902735998854,
+          "max": 1450.6220990009606
+        },
+        "fault:not-recorded": {
+          "samples": 148,
+          "min": 659.9280639998615,
+          "median": 1031.2849019998685,
+          "p95": 1185.8507660012692,
+          "max": 1307.6687560006976
+        },
+        "history:not-recorded": {
+          "samples": 125,
+          "min": 34.89513900130987,
+          "median": 84.82675999961793,
+          "p95": 1096.8577109985054,
+          "max": 1482.2477349992841
+        },
+        "late:not-recorded": {
+          "samples": 111,
+          "min": 1574.8276260010898,
+          "median": 1649.7909789998084,
+          "p95": 1765.2931549996138,
+          "max": 1834.4938460011035
+        },
+        "library:not-recorded": {
+          "samples": 105,
+          "min": 366.4733649995178,
+          "median": 507.9825079999864,
+          "p95": 613.6149620003998,
+          "max": 757.711304999888
+        },
+        "queue:not-recorded": {
+          "samples": 123,
+          "min": 351.1654480006546,
+          "median": 414.9524769987911,
+          "p95": 478.8999339994043,
+          "max": 560.8299410007894
+        },
+        "reader:not-recorded": {
+          "samples": 256,
+          "min": 900.6038309987634,
+          "median": 1038.7159735001624,
+          "p95": 1226.9032180011272,
+          "max": 1423.199070001021
+        },
+        "recent:not-recorded": {
+          "samples": 238,
+          "min": 513.2182999998331,
+          "median": 687.4716689996421,
+          "p95": 808.0872520003468,
+          "max": 1068.7343320008367
+        },
+        "recycleCancel:not-recorded": {
+          "samples": 126,
+          "min": 738.0878689996898,
+          "median": 878.6344799995422,
+          "p95": 990.1978730000556,
+          "max": 1141.5719119999558
+        },
+        "scan:not-recorded": {
+          "samples": 151,
+          "min": 292.8911589998752,
+          "median": 411.20486399903893,
+          "p95": 476.500320000574,
+          "max": 514.6535080000758
+        },
+        "special:not-recorded": {
+          "samples": 146,
+          "min": 145.70212199911475,
+          "median": 203.625417499803,
+          "p95": 249.94935500063002,
+          "max": 286.9827060010284
+        },
+        "tabs:not-recorded": {
+          "samples": 121,
+          "min": 177.21450999937952,
+          "median": 324.70535799860954,
+          "p95": 410.3416630011052,
+          "max": 536.1274360008538
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": {
+          "samples": 120,
+          "min": 50.54527400061488,
+          "median": 125.84810349997133,
+          "p95": 179.74780100025237,
+          "max": 201.16987599991262
+        },
+        "completeMs": {
+          "samples": 120,
+          "min": 52.209883000701666,
+          "median": 920.2257495000958,
+          "p95": 975.6716989986598,
+          "max": 1027.4792660009116
+        }
+      }
+    },
+    {
+      "fromMinute": 210,
+      "toMinute": 240,
+      "samples": 0,
+      "windowFullyObserved": false,
+      "operationPasses": 0,
+      "operationDurationMsByScenarioAndSize": {},
+      "authorLatencyMs": {
+        "firstMs": null,
+        "completeMs": null
+      }
+    }
+  ],
+  "warnings": [],
+  "limits": [
+    "A completed duration is not a claim of passed coverage; inspect failures, exclusions and summary.",
+    "IPC error counts include deliberate faults and cancellations, not a product defect rate.",
+    "IPC counts describe the synthetic boundary, not hidden native worker queues.",
+    "Summed RSS can double-count shared pages; process CPU uses supplied measured-host CLK_TCK.",
+    "CPU observations omit processes that start and exit between samples; native CPU is parent-only.",
+    "Renderer TaskDuration is main-thread work, not total Chromium CPU.",
+    "No same-process continuity may be inferred across output directories.",
+    "Warm windows compare one fixed catalog size; random scenario proportions can still differ.",
+    "Timing is a synthetic diagnostic and is not actual source/network or Windows startup latency."
+  ],
+  "pidsPresentInEverySample": [
+    6782,
+    6802,
+    6819,
+    6820,
+    6840,
+    6859,
+    6860,
+    6891,
+    6900,
+    6901
+  ],
+  "latencyMs": {
+    "firstMs": {
+      "samples": 752,
+      "min": 46.82559900000342,
+      "median": 124.23325999965891,
+      "p95": 179.74780100025237,
+      "max": 524.5812850007787
+    },
+    "completeMs": {
+      "samples": 752,
+      "min": 48.72479100000055,
+      "median": 921.013248000294,
+      "p95": 974.8882969999686,
+      "max": 1319.5921860001981
+    }
+  }
+}

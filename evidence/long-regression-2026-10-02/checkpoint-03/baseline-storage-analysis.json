@@ -1,0 +1,811 @@
+{
+  "manifest": {
+    "event": "STORAGE_STARTED",
+    "pid": 6270,
+    "root": "/workspace/mangamonitor-soak/baseline-storage/synthetic-storage-VOaQGC",
+    "seconds": 14400,
+    "seed": 20261002,
+    "startedUnixMs": 1790913715809,
+    "sha": "159f4f725200d639d080fd719d9d7fae2eb92936",
+    "applicationBaseline": "9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827",
+    "preparationExcluded": true,
+    "buildProfile": "debug",
+    "toolchain": "1.98.1",
+    "executableSha256": "8ff9dd5f4d344fca2e4085ff11d5e6fdcf531cac558ca25d869765de8ee796d6"
+  },
+  "summary": null,
+  "finished": false,
+  "durationComplete": false,
+  "metricSamples": 186,
+  "observedMetricDurationMs": 11116635,
+  "operationBegins": 39324,
+  "operationPasses": 39324,
+  "operationFailures": 0,
+  "clockTicksPerSecond": 100,
+  "logicalCpus": 5,
+  "windows": [
+    {
+      "fromMinute": 0,
+      "toMinute": 15,
+      "samples": 15,
+      "windowFullyObserved": true,
+      "operationPasses": 3026,
+      "rssKb": {
+        "samples": 15,
+        "min": 24104,
+        "median": 84200,
+        "p95": 84208,
+        "max": 84208
+      },
+      "threads": {
+        "samples": 15,
+        "min": 1,
+        "median": 1,
+        "p95": 1,
+        "max": 1
+      },
+      "fds": {
+        "samples": 15,
+        "min": 6,
+        "median": 6,
+        "p95": 6,
+        "max": 6
+      },
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 14,
+        "min": 33.13081131885468,
+        "median": 39.58342759651497,
+        "p95": 55.735505823845045,
+        "max": 55.735505823845045
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 14,
+        "min": 6.6261622637709365,
+        "median": 7.916685519302995,
+        "p95": 11.147101164769008,
+        "max": 11.147101164769008
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "0:20000": {
+          "samples": 156,
+          "min": 4,
+          "median": 11.0,
+          "p95": 17,
+          "max": 28
+        },
+        "0:32": {
+          "samples": 158,
+          "min": 4,
+          "median": 10.0,
+          "p95": 19,
+          "max": 50
+        },
+        "1:20000": {
+          "samples": 180,
+          "min": 847,
+          "median": 900.0,
+          "p95": 950,
+          "max": 2243
+        },
+        "1:32": {
+          "samples": 137,
+          "min": 1,
+          "median": 3,
+          "p95": 9,
+          "max": 14
+        },
+        "2:20000": {
+          "samples": 159,
+          "min": 857,
+          "median": 906,
+          "p95": 2629,
+          "max": 3955
+        },
+        "2:32": {
+          "samples": 148,
+          "min": 4,
+          "median": 7.0,
+          "p95": 16,
+          "max": 20
+        },
+        "3:20000": {
+          "samples": 147,
+          "min": 1,
+          "median": 1,
+          "p95": 4,
+          "max": 6
+        },
+        "3:32": {
+          "samples": 145,
+          "min": 1,
+          "median": 1,
+          "p95": 3,
+          "max": 7
+        },
+        "4:20000": {
+          "samples": 146,
+          "min": 2,
+          "median": 8.0,
+          "p95": 14,
+          "max": 21
+        },
+        "4:32": {
+          "samples": 144,
+          "min": 3,
+          "median": 8.0,
+          "p95": 15,
+          "max": 20
+        },
+        "5:20000": {
+          "samples": 161,
+          "min": 8,
+          "median": 9,
+          "p95": 15,
+          "max": 26
+        },
+        "5:32": {
+          "samples": 168,
+          "min": 8,
+          "median": 9.0,
+          "p95": 16,
+          "max": 129
+        },
+        "6:20000": {
+          "samples": 153,
+          "min": 12,
+          "median": 32,
+          "p95": 49,
+          "max": 107
+        },
+        "6:32": {
+          "samples": 124,
+          "min": 12,
+          "median": 31.0,
+          "p95": 47,
+          "max": 54
+        },
+        "7:20000": {
+          "samples": 167,
+          "min": 0,
+          "median": 1,
+          "p95": 3,
+          "max": 133
+        },
+        "7:32": {
+          "samples": 144,
+          "min": 0,
+          "median": 1.0,
+          "p95": 4,
+          "max": 7
+        },
+        "8:20000": {
+          "samples": 145,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 1
+        },
+        "8:32": {
+          "samples": 150,
+          "min": 0,
+          "median": 0.0,
+          "p95": 0,
+          "max": 3
+        },
+        "9:20000": {
+          "samples": 142,
+          "min": 1,
+          "median": 1.0,
+          "p95": 3,
+          "max": 5
+        },
+        "9:32": {
+          "samples": 152,
+          "min": 1,
+          "median": 1.0,
+          "p95": 4,
+          "max": 7
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": null,
+        "completeMs": null
+      }
+    },
+    {
+      "fromMinute": 30,
+      "toMinute": 60,
+      "samples": 30,
+      "windowFullyObserved": true,
+      "operationPasses": 6556,
+      "rssKb": {
+        "samples": 30,
+        "min": 84216,
+        "median": 84216.0,
+        "p95": 84216,
+        "max": 84216
+      },
+      "threads": {
+        "samples": 30,
+        "min": 1,
+        "median": 1.0,
+        "p95": 1,
+        "max": 1
+      },
+      "fds": {
+        "samples": 30,
+        "min": 6,
+        "median": 6.0,
+        "p95": 6,
+        "max": 6
+      },
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 29,
+        "min": 22.29780174201576,
+        "median": 35.24243846824492,
+        "p95": 40.69165804319525,
+        "max": 43.12183417755266
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 29,
+        "min": 4.459560348403152,
+        "median": 7.048487693648984,
+        "p95": 8.13833160863905,
+        "max": 8.624366835510532
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "0:20000": {
+          "samples": 324,
+          "min": 4,
+          "median": 9.0,
+          "p95": 19,
+          "max": 37
+        },
+        "0:32": {
+          "samples": 337,
+          "min": 4,
+          "median": 12,
+          "p95": 19,
+          "max": 37
+        },
+        "1:20000": {
+          "samples": 279,
+          "min": 854,
+          "median": 904,
+          "p95": 957,
+          "max": 1005
+        },
+        "1:32": {
+          "samples": 344,
+          "min": 1,
+          "median": 3.0,
+          "p95": 8,
+          "max": 25
+        },
+        "2:20000": {
+          "samples": 320,
+          "min": 853,
+          "median": 906.0,
+          "p95": 2616,
+          "max": 2815
+        },
+        "2:32": {
+          "samples": 348,
+          "min": 4,
+          "median": 7.0,
+          "p95": 14,
+          "max": 73
+        },
+        "3:20000": {
+          "samples": 347,
+          "min": 1,
+          "median": 1,
+          "p95": 4,
+          "max": 258
+        },
+        "3:32": {
+          "samples": 320,
+          "min": 1,
+          "median": 1.0,
+          "p95": 4,
+          "max": 7
+        },
+        "4:20000": {
+          "samples": 324,
+          "min": 2,
+          "median": 7.0,
+          "p95": 14,
+          "max": 22
+        },
+        "4:32": {
+          "samples": 340,
+          "min": 2,
+          "median": 8.0,
+          "p95": 15,
+          "max": 30
+        },
+        "5:20000": {
+          "samples": 314,
+          "min": 7,
+          "median": 10.0,
+          "p95": 17,
+          "max": 81
+        },
+        "5:32": {
+          "samples": 329,
+          "min": 7,
+          "median": 9,
+          "p95": 18,
+          "max": 38
+        },
+        "6:20000": {
+          "samples": 356,
+          "min": 12,
+          "median": 32.0,
+          "p95": 47,
+          "max": 65
+        },
+        "6:32": {
+          "samples": 321,
+          "min": 11,
+          "median": 33,
+          "p95": 47,
+          "max": 62
+        },
+        "7:20000": {
+          "samples": 334,
+          "min": 0,
+          "median": 1.0,
+          "p95": 4,
+          "max": 26
+        },
+        "7:32": {
+          "samples": 342,
+          "min": 0,
+          "median": 1.0,
+          "p95": 4,
+          "max": 55
+        },
+        "8:20000": {
+          "samples": 330,
+          "min": 0,
+          "median": 0.0,
+          "p95": 0,
+          "max": 1
+        },
+        "8:32": {
+          "samples": 316,
+          "min": 0,
+          "median": 0.0,
+          "p95": 0,
+          "max": 2
+        },
+        "9:20000": {
+          "samples": 295,
+          "min": 1,
+          "median": 1,
+          "p95": 4,
+          "max": 6
+        },
+        "9:32": {
+          "samples": 336,
+          "min": 1,
+          "median": 1.0,
+          "p95": 4,
+          "max": 98
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": null,
+        "completeMs": null
+      }
+    },
+    {
+      "fromMinute": 90,
+      "toMinute": 120,
+      "samples": 30,
+      "windowFullyObserved": true,
+      "operationPasses": 6245,
+      "rssKb": {
+        "samples": 30,
+        "min": 84216,
+        "median": 84216.0,
+        "p95": 84228,
+        "max": 84228
+      },
+      "threads": {
+        "samples": 30,
+        "min": 1,
+        "median": 1.0,
+        "p95": 1,
+        "max": 1
+      },
+      "fds": {
+        "samples": 30,
+        "min": 6,
+        "median": 6.0,
+        "p95": 6,
+        "max": 6
+      },
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 29,
+        "min": 24.25137773056238,
+        "median": 37.439978509788126,
+        "p95": 44.54634243241901,
+        "max": 44.73316475911632
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 29,
+        "min": 4.850275546112476,
+        "median": 7.487995701957625,
+        "p95": 8.909268486483802,
+        "max": 8.946632951823265
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "0:20000": {
+          "samples": 343,
+          "min": 4,
+          "median": 10,
+          "p95": 18,
+          "max": 53
+        },
+        "0:32": {
+          "samples": 299,
+          "min": 4,
+          "median": 10,
+          "p95": 17,
+          "max": 25
+        },
+        "1:20000": {
+          "samples": 311,
+          "min": 855,
+          "median": 909,
+          "p95": 972,
+          "max": 1031
+        },
+        "1:32": {
+          "samples": 317,
+          "min": 1,
+          "median": 4,
+          "p95": 12,
+          "max": 30
+        },
+        "2:20000": {
+          "samples": 307,
+          "min": 856,
+          "median": 926,
+          "p95": 2675,
+          "max": 2918
+        },
+        "2:32": {
+          "samples": 313,
+          "min": 4,
+          "median": 8,
+          "p95": 18,
+          "max": 158
+        },
+        "3:20000": {
+          "samples": 315,
+          "min": 1,
+          "median": 1,
+          "p95": 3,
+          "max": 9
+        },
+        "3:32": {
+          "samples": 319,
+          "min": 1,
+          "median": 1,
+          "p95": 4,
+          "max": 24
+        },
+        "4:20000": {
+          "samples": 320,
+          "min": 2,
+          "median": 9.0,
+          "p95": 17,
+          "max": 133
+        },
+        "4:32": {
+          "samples": 284,
+          "min": 2,
+          "median": 7.0,
+          "p95": 14,
+          "max": 25
+        },
+        "5:20000": {
+          "samples": 351,
+          "min": 7,
+          "median": 10,
+          "p95": 17,
+          "max": 34
+        },
+        "5:32": {
+          "samples": 321,
+          "min": 7,
+          "median": 9,
+          "p95": 16,
+          "max": 25
+        },
+        "6:20000": {
+          "samples": 294,
+          "min": 11,
+          "median": 31.0,
+          "p95": 48,
+          "max": 112
+        },
+        "6:32": {
+          "samples": 321,
+          "min": 12,
+          "median": 32,
+          "p95": 49,
+          "max": 167
+        },
+        "7:20000": {
+          "samples": 305,
+          "min": 0,
+          "median": 1,
+          "p95": 4,
+          "max": 359
+        },
+        "7:32": {
+          "samples": 278,
+          "min": 0,
+          "median": 1.0,
+          "p95": 4,
+          "max": 47
+        },
+        "8:20000": {
+          "samples": 311,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 1
+        },
+        "8:32": {
+          "samples": 324,
+          "min": 0,
+          "median": 0.0,
+          "p95": 0,
+          "max": 1
+        },
+        "9:20000": {
+          "samples": 315,
+          "min": 1,
+          "median": 1,
+          "p95": 4,
+          "max": 9
+        },
+        "9:32": {
+          "samples": 297,
+          "min": 1,
+          "median": 1,
+          "p95": 4,
+          "max": 135
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": null,
+        "completeMs": null
+      }
+    },
+    {
+      "fromMinute": 150,
+      "toMinute": 180,
+      "samples": 30,
+      "windowFullyObserved": true,
+      "operationPasses": 6526,
+      "rssKb": {
+        "samples": 30,
+        "min": 84228,
+        "median": 84232.0,
+        "p95": 84232,
+        "max": 84232
+      },
+      "threads": {
+        "samples": 30,
+        "min": 1,
+        "median": 1.0,
+        "p95": 1,
+        "max": 1
+      },
+      "fds": {
+        "samples": 30,
+        "min": 6,
+        "median": 6.0,
+        "p95": 6,
+        "max": 6
+      },
+      "sampledProcessCpuPercentOneCore": {
+        "samples": 29,
+        "min": 28.36867618397162,
+        "median": 34.213486863873996,
+        "p95": 40.61376411606826,
+        "max": 45.98982069791424
+      },
+      "sampledProcessCpuPercentHostCapacity": {
+        "samples": 29,
+        "min": 5.6737352367943235,
+        "median": 6.842697372774799,
+        "p95": 8.122752823213652,
+        "max": 9.197964139582847
+      },
+      "operationDurationMsByScenarioAndSize": {
+        "0:20000": {
+          "samples": 306,
+          "min": 4,
+          "median": 9.0,
+          "p95": 19,
+          "max": 90
+        },
+        "0:32": {
+          "samples": 337,
+          "min": 4,
+          "median": 9,
+          "p95": 18,
+          "max": 30
+        },
+        "1:20000": {
+          "samples": 329,
+          "min": 852,
+          "median": 914,
+          "p95": 979,
+          "max": 1090
+        },
+        "1:32": {
+          "samples": 357,
+          "min": 1,
+          "median": 4,
+          "p95": 9,
+          "max": 22
+        },
+        "2:20000": {
+          "samples": 279,
+          "min": 858,
+          "median": 923,
+          "p95": 2661,
+          "max": 3017
+        },
+        "2:32": {
+          "samples": 347,
+          "min": 3,
+          "median": 7,
+          "p95": 15,
+          "max": 64
+        },
+        "3:20000": {
+          "samples": 332,
+          "min": 1,
+          "median": 1.0,
+          "p95": 4,
+          "max": 9
+        },
+        "3:32": {
+          "samples": 311,
+          "min": 1,
+          "median": 1,
+          "p95": 4,
+          "max": 8
+        },
+        "4:20000": {
+          "samples": 313,
+          "min": 2,
+          "median": 7,
+          "p95": 16,
+          "max": 57
+        },
+        "4:32": {
+          "samples": 354,
+          "min": 2,
+          "median": 6.0,
+          "p95": 15,
+          "max": 46
+        },
+        "5:20000": {
+          "samples": 348,
+          "min": 7,
+          "median": 10.0,
+          "p95": 16,
+          "max": 24
+        },
+        "5:32": {
+          "samples": 337,
+          "min": 7,
+          "median": 10,
+          "p95": 16,
+          "max": 186
+        },
+        "6:20000": {
+          "samples": 300,
+          "min": 12,
+          "median": 31.5,
+          "p95": 48,
+          "max": 67
+        },
+        "6:32": {
+          "samples": 315,
+          "min": 11,
+          "median": 33,
+          "p95": 50,
+          "max": 71
+        },
+        "7:20000": {
+          "samples": 366,
+          "min": 1,
+          "median": 1.0,
+          "p95": 3,
+          "max": 9
+        },
+        "7:32": {
+          "samples": 311,
+          "min": 0,
+          "median": 1,
+          "p95": 4,
+          "max": 11
+        },
+        "8:20000": {
+          "samples": 326,
+          "min": 0,
+          "median": 0.0,
+          "p95": 0,
+          "max": 4
+        },
+        "8:32": {
+          "samples": 313,
+          "min": 0,
+          "median": 0,
+          "p95": 0,
+          "max": 4
+        },
+        "9:20000": {
+          "samples": 325,
+          "min": 1,
+          "median": 1,
+          "p95": 3,
+          "max": 13
+        },
+        "9:32": {
+          "samples": 320,
+          "min": 1,
+          "median": 1.0,
+          "p95": 4,
+          "max": 173
+        }
+      },
+      "authorLatencyMs": {
+        "firstMs": null,
+        "completeMs": null
+      }
+    },
+    {
+      "fromMinute": 210,
+      "toMinute": 240,
+      "samples": 0,
+      "windowFullyObserved": false,
+      "operationPasses": 0,
+      "operationDurationMsByScenarioAndSize": {},
+      "authorLatencyMs": {
+        "firstMs": null,
+        "completeMs": null
+      }
+    }
+  ],
+  "warnings": [],
+  "limits": [
+    "A completed duration is not a claim of passed coverage; inspect failures, exclusions and summary.",
+    "IPC error counts include deliberate faults and cancellations, not a product defect rate.",
+    "IPC counts describe the synthetic boundary, not hidden native worker queues.",
+    "Summed RSS can double-count shared pages; process CPU uses supplied measured-host CLK_TCK.",
+    "CPU observations omit processes that start and exit between samples; native CPU is parent-only.",
+    "Renderer TaskDuration is main-thread work, not total Chromium CPU.",
+    "No same-process continuity may be inferred across output directories.",
+    "Warm windows compare one fixed catalog size; random scenario proportions can still differ.",
+    "Timing is a synthetic diagnostic and is not actual source/network or Windows startup latency."
+  ],
+  "observedNativePids": [
+    6270
+  ],
+  "latencyMs": {
+    "firstMs": null,
+    "completeMs": null
+  }
+}

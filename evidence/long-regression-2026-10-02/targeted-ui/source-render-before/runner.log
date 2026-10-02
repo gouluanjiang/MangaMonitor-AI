@@ -1,0 +1,18 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: unrelated selection repeatedly sorts the unchanged full catalog
+
+760673 !== 0
+
+    at file:///workspace/MangaMonitor-AI/apps/local-workbench/tests/soak/source-render-cost.mjs:68:10 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 760673,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

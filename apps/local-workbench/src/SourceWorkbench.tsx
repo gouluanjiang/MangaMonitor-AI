@@ -14,6 +14,8 @@ import {
   rememberContentWork,
   retainedContentTags,
   inheritContentTags,
+  getContentFilterRevision,
+  subscribeContentFilter,
 } from "./content-filter.ts";
 import type { ReactNode } from "react";
 import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
@@ -37,6 +39,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { LibrarySnapshot } from "./library-types.ts";
 import type { DownloadInventorySnapshot } from "./download-types.ts";
@@ -385,6 +388,10 @@ export function SourceWorkbench({
 }: SourceWorkbenchProps) {
   const readerAccess = useReaderAccess();
   const tagSearch = useTagSearch();
+  const contentRevision = useSyncExternalStore(
+    subscribeContentFilter,
+    getContentFilterRevision,
+  );
   const handledSearch = useRef<number | null>(null);
   const tagCategory = useRef(false);
   const inventory = useMemo(
@@ -1318,18 +1325,22 @@ export function SourceWorkbench({
       }
     }
   }
-  const followedWorks: SourceWork[] = (following?.works ?? []).map((work) => ({
-    source,
-    workId: work.workId,
-    title: work.title,
-    authors: [],
-    description: null,
-    tags: [],
-    favorite: null,
-    chapterCount: null,
-    pageCount: null,
-    coverAvailable: false,
-  }));
+  const followedWorks: SourceWork[] = useMemo(
+    () =>
+      (following?.works ?? []).map((work) => ({
+        source,
+        workId: work.workId,
+        title: work.title,
+        authors: [],
+        description: null,
+        tags: [],
+        favorite: null,
+        chapterCount: null,
+        pageCount: null,
+        coverAvailable: false,
+      })),
+    [following?.works, source],
+  );
   const authorResults = useMemo(
     () =>
       authorQuery
@@ -1370,26 +1381,37 @@ export function SourceWorkbench({
           ? authorResults.other
           : authorResults.confirmed
         : items;
-  const searchedWorks = browsingWorks
-    .filter(
-      (work) =>
-        !isContentHidden(work) && !(searching && isOutsideJmAuthorScope(work)),
-    )
-    .filter(
-      (work) =>
-        searching ||
-        (work.title + " " + work.authors.join(" "))
-          .toLocaleLowerCase()
-          .includes(query.trim().toLocaleLowerCase()),
-    );
+  const searchedWorks = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return browsingWorks
+      .filter(
+        (work) =>
+          !isContentHidden(work) &&
+          !(searching && isOutsideJmAuthorScope(work)),
+      )
+      .filter(
+        (work) =>
+          searching ||
+          (work.title + " " + work.authors.join(" "))
+            .toLocaleLowerCase()
+            .includes(normalizedQuery),
+      );
+  }, [browsingWorks, searching, query, contentRevision]);
   const inventoryByKey = useMemo(
     () => new Map(items.map((work) => [sourceWorkKey(work), inventory(work)])),
     [items, inventory],
   );
-  const inventoryFor = (work: SourceWork) =>
-    inventoryByKey.get(sourceWorkKey(work)) ?? inventory(work);
-  const filtered = searchedWorks.filter((work) =>
-    inventoryFilterMatches(inventoryFor(work), inventoryFilter),
+  const inventoryFor = useCallback(
+    (work: SourceWork) =>
+      inventoryByKey.get(sourceWorkKey(work)) ?? inventory(work),
+    [inventoryByKey, inventory],
+  );
+  const filtered = useMemo(
+    () =>
+      searchedWorks.filter((work) =>
+        inventoryFilterMatches(inventoryFor(work), inventoryFilter),
+      ),
+    [searchedWorks, inventoryFor, inventoryFilter],
   );
 
   const completeIndex = collectionState.snapshot?.complete ?? false;
@@ -1402,19 +1424,22 @@ export function SourceWorkbench({
   const collectionDuplicates = collectionNormalRecords - collectionWorks;
   const reversePreparing =
     view === "favorites" && sort === "source-reverse" && !completeIndex;
-  const visible =
-    sort === "updated-desc" || sort === "updated-asc"
-      ? sortByWorkDate(filtered, (work) => work.sourceUpdatedAt, sort)
-      : sort === "title" || sort === "title-desc"
-        ? [...filtered].sort(
-            (a, b) =>
-              (a.title.localeCompare(b.title, "zh-CN") ||
-                sourceWorkKey(a).localeCompare(sourceWorkKey(b))) *
-              (sort === "title-desc" ? -1 : 1),
-          )
-        : sort === "source-reverse" && !reversePreparing
-          ? [...filtered].reverse()
-          : filtered;
+  const visible = useMemo(
+    () =>
+      sort === "updated-desc" || sort === "updated-asc"
+        ? sortByWorkDate(filtered, (work) => work.sourceUpdatedAt, sort)
+        : sort === "title" || sort === "title-desc"
+          ? [...filtered].sort(
+              (a, b) =>
+                (a.title.localeCompare(b.title, "zh-CN") ||
+                  sourceWorkKey(a).localeCompare(sourceWorkKey(b))) *
+                (sort === "title-desc" ? -1 : 1),
+            )
+          : sort === "source-reverse" && !reversePreparing
+            ? [...filtered].reverse()
+            : filtered,
+    [filtered, sort, reversePreparing],
+  );
   const selectionKeys = new Set(selection);
   useEffect(() => {
     if (inventoryFilter === "all" || !selection.length) return;

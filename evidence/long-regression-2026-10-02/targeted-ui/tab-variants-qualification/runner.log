@@ -1,0 +1,2 @@
+{"event":"TAB_LIFETIME_STARTED","sha":"87086719600aa5be632785adad49672b16692f41","started":"2026-10-02T08:33:20.104Z","minutes":0,"rounds":3,"output":"/workspace/mangamonitor-soak/tab-variants-qualification"}
+{"event":"TAB_LIFETIME_CHECKPOINT","elapsedMs":4417.001442,"closed":3,"retainedScopes":0,"retainedKeys":0,"heap":{"usedSize":6595900,"totalSize":7954432,"embedderHeapUsedSize":2386152,"backingStorageSize":628635}}

@@ -36,11 +36,11 @@ mod queue_tests;
 mod rescan_tests;
 #[path = "review_regression_tests.rs"]
 mod review_regression_tests;
-#[path = "zip_tests.rs"]
-mod zip_tests;
 #[cfg(windows)]
 #[path = "windows_local_validation.rs"]
 mod windows_local_validation;
+#[path = "zip_tests.rs"]
+mod zip_tests;
 
 struct Fixture {
     _temp: TempDir,

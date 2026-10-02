@@ -398,6 +398,10 @@ fn complete_file(target: &mut std::fs::File, source: &mut impl Read, size: u64) 
         if consumed > size {
             return Err(error("DOWNLOAD_STAGING_CHANGED"));
         }
+        #[cfg(all(test, windows))]
+        crate::windows_validation_io::write_all(target, &buffer[existing..n])
+            .map_err(|_| error("DOWNLOAD_WRITE_FAILED"))?;
+        #[cfg(not(all(test, windows)))]
         target
             .write_all(&buffer[existing..n])
             .map_err(|_| error("DOWNLOAD_WRITE_FAILED"))?;

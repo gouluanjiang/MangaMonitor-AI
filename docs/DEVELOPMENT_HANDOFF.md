@@ -1,5 +1,15 @@
 # Current development handoff
 
+## Windows local follow-up — validation in progress (2026-10-02)
+
+The authorized local follow-up fixes stale recent-card metadata after opening
+details and adds test-only Windows fault probes. See
+[the follow-up contract](WINDOWS_LOCAL_VALIDATION_FOLLOWUP_2026-10-02.md).
+It is isolated on `codex/windows-metadata-validation-20261002`, based on the
+cloud handoff below. CI, exact-candidate local retests and user acceptance are
+still pending. No merge, release or shortcut replacement has occurred. The
+original local development checkout is unchanged.
+
 ## Cloud long regression and measured fixes — candidate for local acceptance (2026-10-02)
 
 Use [the complete long-regression report](LONG_REGRESSION_2026-10-02.md) and

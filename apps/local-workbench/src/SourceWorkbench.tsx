@@ -1,6 +1,7 @@
 import { CoverInteraction } from "./reader-access.tsx";
 import { SpecialFollowButton } from "./useSpecialFollows.tsx";
 import { recordSourceVisit } from "./work-visits.ts";
+import { notifySourceDetail } from "./source-detail-events.ts";
 import { useCoverRetry } from "./cover-retry.tsx";
 import { AuthorLinks } from "./AuthorLinks.tsx";
 import { FloatingSelection } from "./FloatingSelection.tsx";
@@ -1221,6 +1222,7 @@ export function SourceWorkbench({
         work: found,
       });
       notifyWorks.current(captured, [found]);
+      notifySourceDetail(captured, found);
     } catch (cause) {
       if (stillCurrent(captured) && request === detailRequest.current) {
         setDetailError(sourceErrorMessage(cause));

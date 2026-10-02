@@ -78,6 +78,7 @@ async function install(
     holdDetails?: boolean;
     detailFailIds?: number[];
     detailTags?: Record<string, string[]>;
+    detailMetadata?: Record<string, Partial<SourceWork>>;
     covers?: boolean;
     femaleIds?: number[];
     retainedCount?: number;
@@ -314,6 +315,9 @@ async function install(
                   ...work(source, id, session),
                   ...(args.kind === "detail" && options.detailTags?.[String(id)]
                     ? { tags: options.detailTags[String(id)] }
+                    : {}),
+                  ...(args.kind === "detail"
+                    ? options.detailMetadata?.[String(id)]
                     : {}),
                 })),
                 contentVerifiedIds: hooks.unverified
@@ -794,6 +798,44 @@ const recentCard = (page: Page, source: Source, id: number) =>
   page.getByTestId(
     `recent-work-${source}:${source === "JM" ? String(id) : String(id).padStart(24, "0")}`,
   );
+
+test("detail title and date appear on return and survive source switches without another list request", async ({
+  page,
+}) => {
+  await install(page, {
+    total: 20,
+    detailMetadata: {
+      "15": {
+        title: "详情已更新的合成标题",
+        sourceUpdatedAt: "2026-10-02",
+        tags: ["中文"],
+      },
+    },
+  });
+  const card = recentCard(page, "Pica", 15);
+  await card.scrollIntoViewIfNeeded();
+  const before = await page
+    .getByRole("main")
+    .evaluate((main) => main.scrollTop);
+  const calls = (await recentCalls(page)).length;
+  await card.getByRole("button", { name: /^Pica 合成最近更新 15 ·/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "详情已更新的合成标题" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "返回列表", exact: true }).click();
+  await expect(card).toContainText("详情已更新的合成标题");
+  await expect(card).toContainText("2026-10-02");
+  await expect(card).toContainText("已汉化");
+  await expect
+    .poll(() => page.getByRole("main").evaluate((main) => main.scrollTop))
+    .toBe(before);
+  expect((await recentCalls(page)).length).toBe(calls);
+  await page.getByLabel("最近更新来源").selectOption("both");
+  await expect(card).toContainText("详情已更新的合成标题");
+  await page.getByLabel("最近更新来源").selectOption("Pica");
+  await expect(card).toContainText("2026-10-02");
+  expect(await detailCalls(page)).toHaveLength(1);
+});
 
 async function captureRecentAnchor(page: Page) {
   const anchor = await page.getByTestId("recent-grid").evaluate((grid) => {

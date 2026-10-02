@@ -8,6 +8,11 @@ mod materialize;
 mod naming;
 mod presence;
 mod service;
+#[cfg(all(test, windows))]
+mod windows_validation_io;
+#[cfg(all(test, windows))]
+#[path = "../../workbench-storage/src/windows_validation_support.rs"]
+mod windows_validation_support;
 pub use inventory::{DownloadInventoryItem, DownloadInventorySnapshot};
 pub use presence::LocalFiles;
 pub use service::{

@@ -41,6 +41,43 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+test("detail enrichment is shared by single/combined views without resorting or extra queries", async () => {
+  let calls = 0;
+  const adapter = {
+    query: async (requested) => {
+      calls++;
+      return page(requested.source, 1, [work(requested.source, 1)], false);
+    },
+  };
+  const jm = new RecentUpdatesReader(adapter, scope("JM"));
+  const pica = new RecentUpdatesReader(adapter, scope("Pica"));
+  const combined = new RecentUpdatesView("both", [jm, pica]);
+  const single = new RecentUpdatesView("JM", [jm]);
+  await combined.start();
+  const before = keys(combined.state.displayItems);
+  jm.applyDetail(
+    scope("JM"),
+    work("JM", 1, "2030-10-01", {
+      title: "Opened detail title",
+    }),
+  );
+  assert.deepEqual(keys(combined.state.displayItems), before);
+  assert.equal(single.state.displayItems[0].title, "Opened detail title");
+  assert.equal(
+    combined.state.displayItems.find((w) => w.source === "JM").title,
+    "Opened detail title",
+  );
+  assert.equal(
+    combined.state.displayItems.find((w) => w.source === "Pica").title,
+    "Synthetic Pica 1",
+  );
+  assert.equal(calls, 2);
+  combined.dispose();
+  single.dispose();
+  jm.dispose();
+  pica.dispose();
+});
+
 test("combined identity uses source plus ID, dates sort only new windows and metadata updates stay in place", () => {
   const jm = work("JM", 1, "2026-09-30");
   const pica = work("Pica", 1, "2026-10-01");

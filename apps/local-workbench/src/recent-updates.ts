@@ -11,6 +11,7 @@ import {
   compactWork,
   jsonBytes,
   SOURCE_MEMORY_BYTES,
+  sameSourceWork,
 } from "./source-memory.ts";
 
 export const MAX_RECENT_ITEMS = 20000;
@@ -142,6 +143,8 @@ export class RecentUpdatesReader {
   private retryPage = 1;
   private historyTask: Promise<void> | null = null;
   private refreshOrder: SourceWork[] | null = null;
+  private detailRevision = 0;
+  private details = new Map<string, { revision: number; work: SourceWork }>();
   private listeners = new Set<(state: RecentUpdatesState) => void>();
   private adapter: SourceAdapter;
   readonly scope: SourceScope;
@@ -158,17 +161,57 @@ export class RecentUpdatesReader {
   }
   dispose() {
     this.disposed = true;
+    this.details.clear();
     this.listeners.clear();
   }
-  private publish(change: Partial<RecentUpdatesState>, order?: SourceWork[]) {
+  /** Enrich an already visible identity without changing pagination or its place. */
+  applyDetail(scope: SourceScope, work: SourceWork) {
+    if (
+      this.disposed ||
+      scope.source !== this.scope.source ||
+      scope.sessionId !== this.scope.sessionId ||
+      work.source !== scope.source
+    )
+      return;
+    const key = sourceWorkKey(work);
+    const previous = this.state.displayItems.find(
+      (item) => sourceWorkKey(item) === key,
+    );
+    if (!previous) return;
+    const merged = mergeSourceWorks([previous], [compactWork(work)])[0];
+    if (sameSourceWork(previous, merged)) return;
+    // Only loaded identities are retained, and these objects are shared with
+    // displayItems. No second catalog or background requests are introduced.
+    this.details.set(key, { revision: ++this.detailRevision, work: merged });
+    this.publish({}, undefined, true);
+  }
+  private publish(
+    change: Partial<RecentUpdatesState>,
+    order?: SourceWork[],
+    metadataChanged = false,
+  ) {
     if (this.disposed) return;
     const next = { ...this.state, ...change };
-    if (change.snapshot !== undefined || change.retainedItems !== undefined) {
+    if (
+      metadataChanged ||
+      change.snapshot !== undefined ||
+      change.retainedItems !== undefined
+    ) {
       next.displayItems = mergeDisplayItems(
         order ?? this.state.displayItems,
         next.snapshot?.items ?? [],
         next.retainedItems ?? [],
       );
+      if (this.details.size) {
+        const retainedKeys = new Set<string>();
+        next.displayItems = next.displayItems.map((work) => {
+          const key = sourceWorkKey(work);
+          retainedKeys.add(key);
+          return this.details.get(key)?.work ?? work;
+        });
+        for (const key of this.details.keys())
+          if (!retainedKeys.has(key)) this.details.delete(key);
+      }
     }
     this.state = next;
     for (const listener of this.listeners) listener(this.state);
@@ -243,6 +286,7 @@ export class RecentUpdatesReader {
     return this.task;
   }
   private async run(number: number) {
+    const detailRevision = this.detailRevision;
     try {
       const page = await this.adapter.query(this.scope, {
         kind: "recent",
@@ -260,6 +304,24 @@ export class RecentUpdatesReader {
         number === 1 ? null : this.state.snapshot,
         page,
       );
+      // A successful explicit head refresh may supersede earlier details for
+      // those returned identities. Paging/history (possibly older or sparse)
+      // cannot roll back a detail, nor can a refresh started before that detail.
+      if (number === 1)
+        for (const work of page.items) {
+          const key = sourceWorkKey(work);
+          const detail = this.details.get(key);
+          if (detail && detail.revision <= detailRevision) {
+            const index = snapshot.items.findIndex(
+              (item) => sourceWorkKey(item) === key,
+            );
+            snapshot.items[index] = mergeSourceWorks(
+              [detail.work],
+              [snapshot.items[index]],
+            )[0];
+            this.details.delete(key);
+          }
+        }
       const uncommitted = new Set(this.state.uncommittedIds ?? []);
       for (const work of page.items) {
         if (page.observationErrorCode) uncommitted.add(sourceWorkKey(work));

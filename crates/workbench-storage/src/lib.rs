@@ -20,6 +20,10 @@ mod scan_receipt;
 mod special;
 mod store;
 mod work_date;
+#[cfg(all(test, windows))]
+mod windows_local_validation;
+#[cfg(all(test, windows))]
+mod windows_validation_support;
 
 pub use author_evidence::{
     author_credit_matches, discovery_record_matches_author, AuthorCreditIndex,

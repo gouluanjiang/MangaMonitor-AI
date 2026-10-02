@@ -38,6 +38,9 @@ mod rescan_tests;
 mod review_regression_tests;
 #[path = "zip_tests.rs"]
 mod zip_tests;
+#[cfg(windows)]
+#[path = "windows_local_validation.rs"]
+mod windows_local_validation;
 
 struct Fixture {
     _temp: TempDir,

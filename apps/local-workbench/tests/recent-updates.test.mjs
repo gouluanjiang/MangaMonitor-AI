@@ -5,6 +5,10 @@ import {
   RecentUpdatesReader,
 } from "../src/recent-updates.ts";
 import { SourceError } from "../src/source-runtime.ts";
+import {
+  notifySourceDetail,
+  subscribeSourceDetails,
+} from "../src/source-detail-events.ts";
 
 const scope = { source: "JM", sessionId: "synthetic-recent" };
 const work = (id, overrides = {}) => ({
@@ -29,6 +33,128 @@ const page = (number, ids, overrides = {}) => ({
   hasMore: true,
   folders: [],
   ...overrides,
+});
+
+test("opened details update only loaded identities in the same session without pagination or order changes", async () => {
+  const reader = new RecentUpdatesReader(
+    { query: async () => page(1, [3, 2, 1]) },
+    scope,
+  );
+  await reader.start();
+  const snapshot = reader.state.snapshot;
+  const stop = subscribeSourceDetails((scope, work) =>
+    reader.applyDetail(scope, work),
+  );
+  const detail = work(2, {
+    title: "Updated title",
+    authors: ["Updated credit"],
+    sourceUpdatedAt: "2026-10-02",
+    tags: ["中文"],
+  });
+  notifySourceDetail({ ...scope, sessionId: "other-account" }, detail);
+  notifySourceDetail(scope, { ...detail, source: "Pica" });
+  notifySourceDetail(scope, { ...detail, workId: "unknown" });
+  assert.equal(reader.state.displayItems[1].title, "Synthetic work 2");
+  notifySourceDetail(scope, detail);
+  assert.deepEqual(
+    reader.state.displayItems.map((item) => item.workId),
+    ["3", "2", "1"],
+  );
+  assert.equal(reader.state.snapshot, snapshot);
+  assert.deepEqual(reader.state.displayItems[1], detail);
+  const current = reader.state;
+  notifySourceDetail(scope, detail);
+  assert.equal(reader.state, current);
+  stop();
+  notifySourceDetail(scope, { ...detail, title: "Unsubscribed" });
+  assert.equal(reader.state, current);
+  reader.dispose();
+  reader.applyDetail(scope, { ...detail, title: "Disposed" });
+  assert.equal(reader.state, current);
+});
+
+test("late sparse paging and history cannot undo detail metadata; a successful later head refresh can", async () => {
+  let releasePage;
+  let head = page(1, [2, 1]);
+  const reader = new RecentUpdatesReader(
+    {
+      query: async (_, query) =>
+        query.page === 1
+          ? head
+          : new Promise((resolve) => {
+              releasePage = resolve;
+            }),
+      recentHistory: async () => ({ ...scope, items: [work(9)], coverage: [] }),
+    },
+    scope,
+  );
+  await reader.start();
+  const pending = reader.loadNext();
+  const detail = work(2, {
+    title: "Opened detail",
+    sourceUpdatedAt: "2026-10-02",
+    tags: ["中文"],
+  });
+  reader.applyDetail(scope, detail);
+  releasePage(page(2, [2, 4]));
+  await pending;
+  await reader.refreshHistory();
+  assert.deepEqual(
+    reader.state.displayItems.map((item) => item.workId),
+    ["2", "1", "9", "4"],
+  );
+  assert.deepEqual(reader.state.displayItems[0], detail);
+  head = page(1, [], {
+    items: [work(2, { title: "Explicit refresh" }), work(5)],
+  });
+  await reader.refresh();
+  assert.equal(reader.state.displayItems[0].title, "Explicit refresh");
+  assert.equal(reader.state.displayItems[0].sourceUpdatedAt, "2026-10-02");
+  assert.deepEqual(reader.state.displayItems[0].tags, ["中文"]);
+});
+
+test("a head/history request begun before a detail cannot roll it back and refresh failure retains it", async () => {
+  let resolveHead;
+  let resolveHistory;
+  let hold = false;
+  let fail = false;
+  const reader = new RecentUpdatesReader(
+    {
+      query: async () => {
+        if (fail) throw new SourceError("SOURCE_UNAVAILABLE");
+        return hold
+          ? new Promise((resolve) => {
+              resolveHead = resolve;
+            })
+          : page(1, [1]);
+      },
+      recentHistory: async () =>
+        hold
+          ? new Promise((resolve) => {
+              resolveHistory = resolve;
+            })
+          : { ...scope, items: [work(8)], coverage: [] },
+    },
+    scope,
+  );
+  await reader.start();
+  hold = true;
+  const pending = reader.refresh();
+  reader.applyDetail(scope, work(1, { title: "Fresh head detail" }));
+  reader.applyDetail(scope, work(8, { title: "Fresh saved detail" }));
+  resolveHead(page(1, [1]));
+  resolveHistory({ ...scope, items: [work(8)], coverage: [] });
+  await pending;
+  assert.deepEqual(
+    reader.state.displayItems.map((item) => item.title),
+    ["Fresh head detail", "Fresh saved detail"],
+  );
+  hold = false;
+  fail = true;
+  await reader.refresh();
+  assert.equal(reader.state.phase, "error");
+  assert.equal(reader.state.displayItems[0].title, "Fresh head detail");
+  assert.equal(reader.state.displayItems[1].title, "Fresh saved detail");
 });
 
 test("moving recent pages merge duplicate identities without reordering earlier works or requiring an unchanged site total", () => {

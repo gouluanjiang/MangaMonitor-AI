@@ -1,0 +1,153 @@
+name: Windows local validation helpers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["codex/windows-metadata-validation-*"]
+    paths:
+      - "crates/workbench-storage/**"
+      - "crates/workbench-downloads/**"
+      - ".github/workflows/windows-local-validation.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-local-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-probes:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up the existing pinned Rust toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+      - name: Restore existing native dependency cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: local-validation-windows-1.98.1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            desktop-windows-rust-1.98.1-
+      - name: Check Rust formatting
+        id: formatting
+        run: |
+          cargo +1.98.1 fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { throw 'Rust formatting differs' }
+      - name: Produce a formatting patch without claiming a rebuilt SHA
+        if: failure() && steps.formatting.outcome == 'failure'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo +1.98.1 fmt --all
+          if ($LASTEXITCODE -ne 0) { throw 'Could not generate formatting patch' }
+          New-Item -ItemType Directory -Path 'windows-validation-format' | Out-Null
+          git diff --binary --output=windows-validation-format/rust-format.patch -- crates/workbench-storage crates/workbench-downloads
+          [IO.File]::WriteAllText((Join-Path $PWD 'windows-validation-format/source-revision.txt'), (git rev-parse HEAD).Trim())
+          # The original formatting gate stays failed. Compilation/qualification
+          # below is skipped; applying the patch requires a new source commit.
+      - uses: actions/upload-artifact@v4
+        if: failure() && steps.formatting.outcome == 'failure'
+        with:
+          name: windows-validation-rust-format-${{ github.sha }}
+          path: windows-validation-format/
+          if-no-files-found: error
+      - name: Lint the two affected crates
+        run: |
+          cargo +1.98.1 clippy --locked -p workbench-storage -p workbench-downloads --lib --tests -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Validation probe lint failed' }
+      - name: Compile and identify exact Windows test executables
+        id: compile
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $PWD 'windows-local-validation-artifact'
+          New-Item -ItemType Directory -Path $output | Out-Null
+          $artifacts = [Collections.Generic.List[object]]::new()
+          foreach ($package in @('workbench-storage', 'workbench-downloads')) {
+            $messages = Join-Path $output "$package.compiler.jsonl"
+            cargo +1.98.1 test --locked -p $package --lib --no-run --message-format=json | Set-Content -LiteralPath $messages -Encoding utf8
+            if ($LASTEXITCODE -ne 0) { throw "Could not compile $package" }
+            $compiled = @(Get-Content -LiteralPath $messages | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object {
+              $_.reason -eq 'compiler-artifact' -and $_.profile.test -and $_.executable -and $_.target.name -eq $package.Replace('-', '_')
+            })
+            if ($compiled.Count -ne 1) { throw "Expected exactly one library test executable for $package" }
+            $name = "$package-windows-validation.exe"
+            $destination = Join-Path $output $name
+            Copy-Item -LiteralPath $compiled[0].executable -Destination $destination
+            $tests = & $destination --list | Where-Object { $_ -like '*windows_local_validation::*: test' }
+            if ($LASTEXITCODE -ne 0 -or @($tests).Count -lt 3) { throw "Probe discovery failed for $package" }
+            $tests | Set-Content -LiteralPath (Join-Path $output "$package.tests.txt") -Encoding utf8
+            $artifacts.Add([ordered]@{
+              package = $package
+              file = $name
+              sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+              size = (Get-Item -LiteralPath $destination).Length
+              filter = 'windows_local_validation::'
+              testNames = @($tests | ForEach-Object { $_ -replace ': test$', '' })
+            })
+          }
+          $manifest = [ordered]@{
+            schemaVersion = 1
+            sourceRevision = (git rev-parse HEAD).Trim()
+            runId = $env:GITHUB_RUN_ID
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            builtAtUtc = [DateTime]::UtcNow.ToString('o')
+            toolchain = '1.98.1'
+            target = 'x86_64-pc-windows-msvc'
+            kind = 'test-only synthetic diagnostics; not a candidate application'
+            markerFile = '.mangamonitor-windows-validation'
+            markerText = 'synthetic Windows validation only; no application profile or credentials'
+            rootEnvironment = 'MANGAMONITOR_WINDOWS_VALIDATION_ROOT'
+            rootNamePrefix = 'mangamonitor-windows-validation-'
+            artifacts = $artifacts
+            notCovered = @('real accounts or media', 'native UI or recycle bin', 'HTTP transport/Retry-After', 'real disk exhaustion')
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $output 'manifest.json') -Encoding utf8
+      - name: Qualify only the new synthetic Windows probes
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $PWD 'windows-local-validation-artifact'
+          $manifest = Get-Content -Raw -LiteralPath (Join-Path $output 'manifest.json') | ConvertFrom-Json
+          $root = Join-Path $env:RUNNER_TEMP "mangamonitor-windows-validation-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Path $root | Out-Null
+          [IO.File]::WriteAllText((Join-Path $root $manifest.markerFile), $manifest.markerText, [Text.UTF8Encoding]::new($false))
+          $env:MANGAMONITOR_WINDOWS_VALIDATION_ROOT = $root
+          foreach ($artifact in $manifest.artifacts) {
+            $executable = Join-Path $output $artifact.file
+            if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant() -cne $artifact.sha256) { throw 'Probe hash changed' }
+            & $executable 'windows_local_validation::' --ignored --nocapture --test-threads=1 2>&1 | Tee-Object -FilePath (Join-Path $output "$($artifact.package).qualification.log")
+            if ($LASTEXITCODE -ne 0) { throw "Synthetic probes failed: $($artifact.package)" }
+          }
+      - name: Hash all delivery and qualification files
+        if: always()
+        run: |
+          $output = Join-Path $PWD 'windows-local-validation-artifact'
+          if (Test-Path -LiteralPath $output) {
+            Get-ChildItem -LiteralPath $output -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object {
+              "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+            } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding utf8
+          }
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.compile.outcome != 'skipped'
+        with:
+          name: windows-local-validation-${{ github.sha }}
+          path: windows-local-validation-artifact/
+          if-no-files-found: error
+          retention-days: 14

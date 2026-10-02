@@ -40,6 +40,7 @@ import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
 import { isContentHidden, rememberContentWork } from "./content-filter.ts";
 import { useAuthorCatalogMembership } from "./author-catalog-membership.ts";
 import { subscribeAuthorCatalogChanges } from "./author-catalog-events.ts";
+import { subscribeSourceDetails } from "./source-detail-events.ts";
 import {
   BrowsingMarkerNote,
   BrowsingNewBadge,
@@ -130,6 +131,23 @@ export function RecentUpdatesPanel({
   );
   const currentView = useRef({ active, scopeKey });
   currentView.current = { active, scopeKey };
+  useEffect(
+    () =>
+      subscribeSourceDetails((scope, work) => {
+        if (
+          !accounts.some(
+            (account) =>
+              account.source === scope.source &&
+              account.state === "connected" &&
+              account.sessionId === scope.sessionId,
+          )
+        )
+          return;
+        const entry = readers.current.get(JSON.stringify(scope));
+        if (entry?.adapter === adapter) entry.reader.applyDetail(scope, work);
+      }),
+    [accounts, adapter],
+  );
   useEffect(() => {
     setSelection([]);
     setSelectionMode(false);

@@ -514,6 +514,8 @@ impl WorkbenchStore {
         let destination = self.root.join(name);
         check_optional_regular(&destination)?;
         let (temporary_path, mut temporary) = self.create_temporary(name)?;
+        #[cfg(all(test, windows))]
+        crate::windows_local_validation::checkpoint(&self.root, "before-write")?;
         let preparation = (|| {
             temporary
                 .write_all(bytes)
@@ -527,8 +529,12 @@ impl WorkbenchStore {
         // Closing before rename also works on Windows. No old destination is removed first.
         drop(temporary);
         preparation?;
+        #[cfg(all(test, windows))]
+        crate::windows_local_validation::checkpoint(&self.root, "before-rename")?;
         fs::rename(&temporary_path, &destination)
             .map_err(|_| StoreError::new("STORE_WRITE_FAILED"))?;
+        #[cfg(all(test, windows))]
+        crate::windows_local_validation::checkpoint(&self.root, "after-rename")?;
         #[cfg(unix)]
         File::open(&self.root)
             .and_then(|directory| directory.sync_all())

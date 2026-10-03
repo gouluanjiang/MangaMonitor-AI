@@ -1,4 +1,6 @@
 import type { DiscoverySnapshot } from "./completion-types.ts";
+import { authorQueryError } from "./author-query.ts";
+import { isOutsideJmAuthorScope } from "./content-filter.ts";
 import type {
   AuthorQueryPolicy,
   AuthorWorkCredit,
@@ -12,7 +14,19 @@ const normalize = (name: string) =>
   name.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 
 type CreditWork = Pick<SourceWork, "authors"> &
-  Partial<Pick<SourceWork, "source" | "workId" | "authorCreditReview">>;
+  Partial<
+    Pick<
+      SourceWork,
+      "source" | "workId" | "authorCreditReview" | "tags" | "categories"
+    >
+  >;
+const excludedAuthorScope = (work: CreditWork) =>
+  work.source !== undefined &&
+  isOutsideJmAuthorScope({
+    ...work,
+    source: work.source,
+    workId: work.workId ?? "",
+  });
 const creditSet = (authors: string[]) =>
   JSON.stringify([...new Set(authors.map(normalize))].sort());
 const expectedCreditSets = (rule: AuthorWorkCredit) =>
@@ -132,6 +146,11 @@ export function workHasAuthor(
   query: string,
   policy?: AuthorQueryPolicy,
 ): boolean {
+  if (
+    excludedAuthorScope(work) ||
+    authorQueryError(query) === "AUTHOR_QUERY_PLACEHOLDER"
+  )
+    return false;
   const applicable =
     policy?.author === query && policy.source === work.source
       ? policy
@@ -167,6 +186,7 @@ export function partitionAuthorWorks(
   const applicable = policy?.author === query ? policy : undefined;
   const project = creditProjector(applicable ? [applicable] : []);
   for (const raw of works) {
+    if (isOutsideJmAuthorScope(raw)) continue;
     const work = project(raw);
     (authorsMatch(
       work.authors,
@@ -185,48 +205,92 @@ export function partitionAuthorRecords(
   author = "",
   source: Source | "all" = "all",
   policies: AuthorQueryPolicy[] = [],
+  followedAuthors?: string[],
 ): { confirmed: DiscoveryRecord[]; other: DiscoveryRecord[] } {
   const confirmed: DiscoveryRecord[] = [],
     other: DiscoveryRecord[] = [];
-  const policiesByAuthor = new Map(
-    policies.map((policy) => [
-      JSON.stringify([policy.source, policy.author]),
-      policy,
+  // The caller supplies the current followed set, not the queries that happened
+  // to discover each work. Legacy callers still get an explicit local universe.
+  const names = followedAuthors ?? [
+    ...new Set([
+      ...records.flatMap((record) => record.matchedAuthors),
+      ...policies.map((policy) => policy.author),
+      ...(author ? [author] : []),
     ]),
-  );
-  const project = creditProjector(policies);
-  const policiesBySource = new Map<Source, AuthorQueryPolicy[]>();
-  for (const policy of policies) {
-    const entries = policiesBySource.get(policy.source) ?? [];
-    entries.push(policy);
-    policiesBySource.set(policy.source, entries);
-  }
+  ];
+  const followed = new Set(names);
+  const classify = createAuthorMembershipProjector(names, policies);
   for (const record of records) {
     if (source !== "all" && record.work.source !== source) continue;
-    const work = project(record.work);
-    const memberships = new Set(record.matchedAuthors);
-    // A reviewed work already saved under a wrong query can appear for the
-    // actual followed author. This is a view only, not search coverage evidence.
-    if (work.authorCreditReview)
-      for (const policy of policiesBySource.get(work.source) ?? [])
-        if (authorsMatch(work.authors, policy.author, policy))
-          memberships.add(policy.author);
-    const queries = [...memberships].filter(
-      (name) => !author || name === author,
+    if (isOutsideJmAuthorScope(record.work)) continue;
+    const { work, authors } = classify(record.work);
+    const matches = author ? authors.includes(author) : authors.length > 0;
+    const foundBySelectedQuery = record.matchedAuthors.some(
+      (name) => followed.has(name) && (!author || name === author),
     );
-    if (!queries.length) continue;
-    // Query membership and the legacy authorVerified flag are not authorship.
-    // Derive from current metadata even for results saved by older versions.
-    const matches = queries.some((query) =>
-      authorsMatch(
-        work.authors,
-        query,
-        policiesByAuthor.get(JSON.stringify([record.work.source, query])),
-      ),
-    );
+    if (!matches && !foundBySelectedQuery) continue;
     (matches ? confirmed : other).push(
       work === record.work ? record : { ...record, work },
     );
   }
   return { confirmed, other };
+}
+
+/** Compile exact signature tokens once, rather than comparing every work with
+ * every followed name. Discovery query membership is intentionally irrelevant. */
+export function createAuthorMembershipProjector(
+  followedAuthors: string[],
+  policies: AuthorQueryPolicy[] = [],
+) {
+  const project = creditProjector(policies);
+  const byPolicy = new Map(
+    policies.map((policy) => [
+      JSON.stringify([policy.source, policy.author]),
+      policy,
+    ]),
+  );
+  const tokenIndex = new Map<Source, Map<string, Set<string>>>();
+  const exactIndex = new Map<Source, Map<string, Set<string>>>();
+  const add = (
+    index: Map<string, Set<string>>,
+    token: string,
+    author: string,
+  ) => {
+    if (!token) return;
+    const authors = index.get(token) ?? new Set<string>();
+    authors.add(author);
+    index.set(token, authors);
+  };
+  for (const source of ["JM", "Pica"] as const) {
+    const tokens = new Map<string, Set<string>>();
+    const exact = new Map<string, Set<string>>();
+    for (const author of new Set(followedAuthors)) {
+      if (authorQueryError(author) === "AUTHOR_QUERY_PLACEHOLDER") continue;
+      const policy = byPolicy.get(JSON.stringify([source, author]));
+      for (const name of [author, ...(policy?.verifiedAliases ?? [])]) {
+        add(tokens, normalize(name), author);
+        for (const member of nameParts(name).members)
+          add(tokens, member, author);
+      }
+      for (const credit of policy?.exactCredits ?? [])
+        add(exact, normalize(credit), author);
+    }
+    tokenIndex.set(source, tokens);
+    exactIndex.set(source, exact);
+  }
+  return <T extends CreditWork>(raw: T): { work: T; authors: string[] } => {
+    const work = project(raw),
+      authors = new Set<string>();
+    if (!work.source || excludedAuthorScope(work)) return { work, authors: [] };
+    for (const credit of work.authors) {
+      for (const token of nameParts(credit).names)
+        for (const author of tokenIndex.get(work.source)?.get(token) ?? [])
+          authors.add(author);
+      for (const author of exactIndex
+        .get(work.source)
+        ?.get(normalize(credit)) ?? [])
+        authors.add(author);
+    }
+    return { work, authors: [...authors] };
+  };
 }

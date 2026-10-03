@@ -15,11 +15,14 @@ type PhoneLibrarySnapshot = {
 test.use({ storageState: { cookies: [], origins: [] } });
 type Call = { command: string; args: Record<string, unknown> };
 type Options = {
+  archives?: boolean;
+  recycleResults?: ("cancel" | "busy" | "success")[];
   failRevealOnce?: boolean;
   failPreferences?: boolean;
   pcCount?: number;
   phoneCount?: number;
   covers?: boolean;
+  failCoverOnce?: boolean;
   unicode?: boolean;
   selectCount?: number;
   cancelChoose?: boolean;
@@ -33,6 +36,8 @@ type Options = {
   usability?: boolean;
   workDates?: boolean;
   languageTags?: string[][];
+  libraryReferences?: LibrarySnapshot["items"][number]["sourceRef"][];
+  libraryLinks?: LibrarySnapshot["items"][number]["links"][];
   workbenchVersion?: string;
 };
 type Hooks = {
@@ -97,16 +102,17 @@ async function installMock(page: Page, options: Options = {}) {
               : "[合成作者] Café A [翻译乙]"
             : "合成电脑作品 " + String(number).padStart(4, "0");
       const reference: LibrarySnapshot["items"][number]["sourceRef"] =
-        options.namespaceMarks && number <= 2
+        options.libraryReferences?.[number - 1] ??
+        (options.namespaceMarks && number <= 2
           ? number === 1
             ? { source: "JM", workId: "123" }
             : { source: "Pica", workId: "0123456789abcdef01234567" }
-          : null;
+          : null);
       return {
         id: id(number),
         relativePath: reference ? reference.source + "/" + base : base,
         fileName: base,
-        format: "directory",
+        format: options.archives ? "zip" : "directory",
         title: base,
         authors: ["合成作者"],
         description: null,
@@ -127,6 +133,9 @@ async function installMock(page: Page, options: Options = {}) {
           options.usability && number === 3 ? "LIBRARY_FILE_CHANGED" : null,
         sourceRef: reference,
         identityEvidence: reference ? "manual" : null,
+        ...(options.libraryLinks?.[number - 1]
+          ? { links: options.libraryLinks[number - 1] }
+          : {}),
       };
     };
     const savedPC = localStorage.getItem("synthetic.library.pc");
@@ -212,6 +221,7 @@ async function installMock(page: Page, options: Options = {}) {
     };
     const booklists = { revision: 0, value: { version: 1, lists: [] } };
     let revealFailed = false;
+    let recycleIndex = 0;
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {
@@ -225,6 +235,37 @@ async function installMock(page: Page, options: Options = {}) {
               revision: "b".repeat(40),
               platform: "windows",
             };
+          if (command === "library_recycle") {
+            const result = options.recycleResults?.[recycleIndex++] ?? "cancel";
+            if (
+              args.rootId !== hooks.pc.rootId ||
+              args.generation !== hooks.pc.generation ||
+              args.expectedRevision !== hooks.pc.revision
+            )
+              throw { code: "LIBRARY_STALE_SNAPSHOT" };
+            if (result === "cancel") return null;
+            if (result === "busy") throw { code: "LIBRARY_ITEM_BUSY" };
+            hooks.pc = {
+              ...hooks.pc,
+              revision: hooks.pc.revision + 1,
+              items: hooks.pc.items.map((item) =>
+                item.id === args.entryId
+                  ? {
+                      ...item,
+                      state: "unreadable",
+                      errorCode: "LIBRARY_RECYCLED",
+                      coverAvailable: false,
+                    }
+                  : item,
+              ),
+            };
+            savePC();
+            return {
+              snapshot: clone(hooks.pc),
+              recycled: true,
+              errorCode: null,
+            };
+          }
           if (command === "library_reveal") {
             if (
               args.rootId !== hooks.pc.rootId ||
@@ -371,6 +412,16 @@ async function installMock(page: Page, options: Options = {}) {
           }
           if (command === "library_cover") {
             if (
+              options.failCoverOnce &&
+              args.entryId === id(1) &&
+              hooks.calls.filter(
+                (call) =>
+                  call.command === "library_cover" &&
+                  call.args.entryId === id(1),
+              ).length === 1
+            )
+              throw { code: "LIBRARY_UNAVAILABLE" };
+            if (
               args.rootId !== hooks.pc.rootId ||
               args.generation !== hooks.pc.generation ||
               !hooks.pc.items.some((entry) => entry.id === args.entryId)
@@ -472,6 +523,31 @@ async function installMock(page: Page, options: Options = {}) {
   await expect(page.getByTestId("library-workbench")).toBeVisible();
 }
 
+test("library hides explicit BL and AI metadata and leaves unknown or negative labels visible without changing files or fetching source details", async ({
+  page,
+}) => {
+  await installMock(page, {
+    pcCount: 4,
+    languageTags: [["耽美花園"], ["ＡＩ"], [], ["中文", "非AI", "maid"]],
+  });
+  await expect(page.getByTestId("library-grid")).toHaveAttribute(
+    "data-total-items",
+    "2",
+  );
+  await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(2))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(3))).toBeVisible();
+  await expect(page.getByTestId("library-card-" + id(4))).toBeVisible();
+  expect(await page.evaluate(() => window.libraryTest.pc.items.length)).toBe(4);
+  expect(
+    await page.evaluate(() =>
+      window.libraryTest.calls.filter(
+        ({ command }) => command === "source_detail",
+      ),
+    ),
+  ).toEqual([]);
+});
+
 test("library languages use saved version tags and leave linked historical versions unknown without source requests", async ({
   page,
 }) => {
@@ -496,10 +572,10 @@ test("library languages use saved version tags and leave linked historical versi
   expect(
     await page.evaluate(() => window.libraryTest.pc.items[0].sourceRef),
   ).toEqual({ source: "JM", workId: "123" });
-  await page.getByTestId("library-open-" + id(1)).click();
+  await page.getByTestId("library-open-" + id(1)).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
@@ -534,10 +610,10 @@ test("library detail reveals only the selected item and retains missing-file fee
 }) => {
   await page.setViewportSize({ width: 1672, height: 941 });
   await installMock(page, { pcCount: 3, failRevealOnce: true });
-  await page.getByTestId("library-open-" + id(1)).click();
+  await page.getByTestId("library-open-" + id(1)).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   expect(await commands(page, "library_reveal")).toEqual([]);
   await page.getByTestId("library-reveal").click();
@@ -718,10 +794,10 @@ test("library admission sorting and state filters combine with search and preser
   await expect(cards).toHaveCount(3);
   await page.getByTestId("search-input").fill("0004");
   await expect(cards).toHaveCount(1);
-  await page.getByTestId("library-open-" + id(4)).click();
+  await page.getByTestId("library-open-" + id(4)).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("library-added-at")).toContainText(
     "历史记录未知",
@@ -763,10 +839,10 @@ test("library version and admission dates display independently, compose with fi
   await expect(cards.last()).toContainText("版本时间未知");
   await page.getByTestId("search-input").fill("0004");
   await expect(cards).toHaveCount(1);
-  await page.getByTestId("library-open-" + id(4)).click();
+  await page.getByTestId("library-open-" + id(4)).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("library-version-updated-at")).toHaveText(
     "版本更新：2026-09-02",
@@ -903,6 +979,20 @@ test("scan errors retain the partial catalog across settings and require an expl
     "data-total-items",
     "20",
   );
+  await expect(page.getByTestId("library-filter-owned")).toHaveText(
+    "文件可用 0",
+  );
+  await expect(page.getByTestId("library-filter-review")).toHaveText(
+    "文件待核对 20",
+  );
+  await expect(page.getByTestId("library-card-" + id(1))).toContainText(
+    "文件待核对",
+  );
+  await page.getByTestId("library-filter-owned").click();
+  await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
+  await page.getByTestId("library-filter-review").click();
+  await expect(page.getByTestId("library-card-" + id(1))).toBeVisible();
+  await page.getByTestId("library-filter-all").click();
   const before = (await commands(page, "library_scan")).length;
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("nav-library").click();
@@ -913,11 +1003,42 @@ test("scan errors retain the partial catalog across settings and require an expl
     "data-total-items",
     "60",
   );
+  await expect(page.getByTestId("library-filter-owned")).toHaveText(
+    "文件可用 60",
+  );
+  await expect(page.getByTestId("library-filter-review")).toHaveText(
+    "文件待核对 0",
+  );
   expect(
     (await commands(page, "library_scan")).some(
       (call) => call.args.action === "start",
     ),
   ).toBe(true);
+});
+
+test("clicking a failed library cover retries only its image without entering detail or reading", async ({
+  page,
+}) => {
+  await installMock(page, { pcCount: 3, covers: true, failCoverOnce: true });
+  const cover = page.getByTestId("library-cover-" + id(1));
+  await expect(cover).toContainText("点击封面重试");
+  await cover.click();
+  await expect(cover.locator("img")).toBeVisible();
+  expect(
+    (await commands(page, "library_cover")).filter(
+      (call) => call.args.entryId === id(1),
+    ),
+  ).toHaveLength(2);
+  await expect(page.getByTestId("reader-cover-actions")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.libraryTest.calls.filter(
+        (call) =>
+          call.command.startsWith("reader_") ||
+          call.command === "library_detail",
+      ),
+    ),
+  ).toEqual([]);
 });
 
 test("decoded offscreen covers release while compressed covers survive scrolling, detail and settings", async ({
@@ -942,10 +1063,10 @@ test("decoded offscreen covers release while compressed covers survive scrolling
     grid.closest("main")!.scrollTop = 0;
   });
   await expect(firstCover).toBeVisible();
-  await page.getByTestId("library-open-" + id(1)).click();
+  await page.getByTestId("library-open-" + id(1)).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("library-detail").locator("img")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
@@ -1008,10 +1129,10 @@ test("PC density changes and a detail return retain a deep catalog anchor", asyn
       await page.getByTestId("library-grid").locator("article").count(),
     ).toBeLessThan(90);
   }
-  await page.getByTestId("library-open-" + anchor).click();
+  await page.getByTestId("library-open-" + anchor).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
@@ -1039,10 +1160,10 @@ test("retired phone and classification lists neither appear nor load, while PC s
   ).toHaveCount(0);
   expect(await commands(page, "phone_library_read")).toEqual([]);
   expect(await commands(page, "read_booklists")).toEqual([]);
-  await page.getByTestId("library-open-" + id(1)).click();
+  await page.getByTestId("library-open-" + id(1)).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("library-source-id")).toHaveCount(0);
   await expect(page.getByTestId("library-link")).toHaveCount(0);
@@ -1052,10 +1173,10 @@ test("retired phone and classification lists neither appear nor load, while PC s
     .innerText();
   await expect(page.getByTestId("phone-mark")).toHaveCount(0);
   await page.reload();
-  await page.getByTestId("library-open-" + id(1)).click();
+  await page.getByTestId("library-open-" + id(1)).click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(
     page.getByTestId("library-detail").getByRole("heading", { level: 1 }),
@@ -1066,4 +1187,115 @@ test("retired phone and classification lists neither appear nor load, while PC s
   await expect(page.getByTestId("library-detail-stock")).toContainText(
     "已入库 · 电脑漫画库",
   );
+});
+
+test("female-oriented library tags require JM source evidence and never hide unrelated Pica or unknown files", async ({
+  page,
+}) => {
+  await installMock(page, {
+    pcCount: 4,
+    languageTags: [["女性向"], ["女性向"], ["女性向"], ["女性向"]],
+    libraryReferences: [
+      { source: "JM", workId: "12345" },
+      { source: "Pica", workId: "0123456789abcdef01234567" },
+      null,
+      null,
+    ],
+    libraryLinks: [
+      [],
+      [],
+      [],
+      [
+        {
+          reference: { source: "JM", workId: "12346" },
+          evidence: "manual",
+          linkedAt: 1,
+        },
+      ],
+    ],
+  });
+  await expect(page.getByTestId("library-grid")).toHaveAttribute(
+    "data-total-items",
+    "2",
+  );
+  await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(4))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(2))).toBeVisible();
+  await expect(page.getByTestId("library-card-" + id(3))).toBeVisible();
+  expect(await page.evaluate(() => window.libraryTest.pc.items.length)).toBe(4);
+  expect(await commands(page, "source_query")).toEqual([]);
+});
+
+test("library context menu exposes five actions and recycle cancellation/failure preserve the card", async ({
+  page,
+}) => {
+  await installMock(page, {
+    pcCount: 4,
+    archives: true,
+    recycleResults: ["cancel", "busy", "success"],
+  });
+  const cover = page.getByTestId("library-open-" + id(1));
+  await cover.click({ button: "right" });
+  const menu = page.getByTestId("reader-cover-actions");
+  await expect(menu.getByRole("menuitem")).toHaveCount(5);
+  await menu
+    .getByRole("menuitem", { name: "打开文件位置", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await commands(page, "library_reveal")).length)
+    .toBe(1);
+  expect(await commands(page, "library_recycle")).toHaveLength(0);
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
+  await expect
+    .poll(async () => (await commands(page, "library_recycle")).length)
+    .toBe(1);
+  await expect(cover).toBeVisible();
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
+  await expect(page.getByTestId("library-file-message")).toContainText(
+    "正在被读取",
+  );
+  await expect(cover).toBeVisible();
+  await expect(page.getByTestId("library-card-" + id(1))).toContainText(
+    "已入库",
+  );
+  await expect(page.getByTestId("library-card-" + id(1))).not.toContainText(
+    "文件待核对",
+  );
+  await expect(page.getByTestId("library-filter-owned")).toHaveText(
+    "文件可用 4",
+  );
+  await expect(page.getByTestId("library-filter-review")).toHaveText(
+    "文件待核对 0",
+  );
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "作品详细", exact: true }).click();
+  await expect(page.getByTestId("library-detail-stock")).toContainText(
+    "已入库",
+  );
+  await page.getByTestId("library-detail-back").click();
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
+  await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
+  await expect(page.getByTestId("library-card-" + id(2))).toBeVisible();
+  await expect(page.getByTestId("library-progress")).toContainText(
+    "3 个电脑作品",
+  );
+  await expect(page.getByTestId("library-file-message")).toContainText(
+    "已移到回收站",
+  );
+  await expect(page.getByTestId("library-file-message")).not.toContainText(
+    "正在被读取",
+  );
+  const calls = await commands(page, "library_recycle");
+  expect(calls).toHaveLength(3);
+  expect(calls[0].args).toEqual({
+    rootId: "a".repeat(64),
+    generation: 1,
+    entryId: id(1),
+    expectedRevision: 1,
+  });
+  expect(await commands(page, "reader_window_open")).toHaveLength(0);
+  expect(await commands(page, "reader_open")).toHaveLength(0);
 });

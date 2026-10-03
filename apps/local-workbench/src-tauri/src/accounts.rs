@@ -2,7 +2,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{Emitter, Runtime, State, WebviewWindow};
 use workbench_accounts::{
     AccountError, AccountService, AccountSummary, CatalogAction, CatalogResult, CatalogSnapshot,
     CoverResult, FavoriteResult, FollowKind, FollowingSnapshot, QueryKind, QueryResult, Source,
@@ -59,6 +59,14 @@ impl workbench_credentials::Vault for PlatformVault {
 
 type Service = AccountService<WorkbenchSources, PlatformVault>;
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthorCatalogChanged {
+    source: Source,
+    session_id: String,
+    revision: u64,
+}
+
 pub(super) struct DesktopAccounts {
     root: Result<PathBuf, AccountError>,
     cached: Mutex<Option<Arc<Service>>>,
@@ -111,7 +119,9 @@ pub(super) async fn source_accounts<R: Runtime>(
 ) -> Result<Vec<AccountSummary>, AccountError> {
     require_main(window.label())?;
     let service = service(Arc::clone(accounts.inner())).await?;
-    Ok(service.accounts(refresh.unwrap_or(false)).await)
+    let result = service.accounts(refresh.unwrap_or(false)).await;
+    service.special_cold_start();
+    Ok(result)
 }
 
 #[tauri::command]
@@ -169,7 +179,7 @@ pub(super) async fn source_query<R: Runtime>(
 ) -> Result<QueryResult, AccountError> {
     require_main(window.label())?;
     let service = service(Arc::clone(accounts.inner())).await?;
-    service
+    let result = service
         .query_ordered(
             source,
             &session_id,
@@ -179,7 +189,24 @@ pub(super) async fn source_query<R: Runtime>(
             page,
             reverse.unwrap_or(false),
         )
-        .await
+        .await?;
+    if let Some(revision) = result
+        .discovery_revision
+        .filter(|_| result.observation_error_code.is_none())
+    {
+        // A lost notification cannot roll back committed metadata. Responses and
+        // subsequent local reads remain authoritative; reader windows receive no event.
+        let _ = window.emit_to(
+            "main",
+            "author-catalog-changed",
+            AuthorCatalogChanged {
+                source: result.source,
+                session_id: result.session_id.clone(),
+                revision,
+            },
+        );
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -224,10 +251,18 @@ pub(super) async fn source_cover<R: Runtime>(
     source: Source,
     session_id: String,
     work_id: String,
+    refresh_metadata: Option<bool>,
 ) -> Result<CoverResult, AccountError> {
     require_main(window.label())?;
     let service = service(Arc::clone(accounts.inner())).await?;
-    service.cover(source, &session_id, &work_id).await
+    service
+        .cover_with_refresh(
+            source,
+            &session_id,
+            &work_id,
+            refresh_metadata.unwrap_or(false),
+        )
+        .await
 }
 
 #[tauri::command]
@@ -307,5 +342,34 @@ pub(super) async fn source_author_policy<R: Runtime>(
     service(Arc::clone(accounts.inner()))
         .await?
         .author_query_policy(source, &session_id, &author)
+        .await
+}
+
+#[tauri::command]
+pub(super) async fn source_recent_history<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    source: Source,
+    session_id: String,
+) -> Result<workbench_accounts::RecentHistoryResult, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .source_recent_history(source, &session_id)
+        .await
+}
+
+#[tauri::command]
+pub(super) async fn source_author_known_works<R: Runtime>(
+    window: WebviewWindow<R>,
+    accounts: State<'_, Arc<DesktopAccounts>>,
+    source: Source,
+    session_id: String,
+    author: String,
+) -> Result<workbench_accounts::KnownAuthorWorksResult, AccountError> {
+    require_main(window.label())?;
+    service(Arc::clone(accounts.inner()))
+        .await?
+        .source_author_known_works(source, &session_id, &author)
         .await
 }

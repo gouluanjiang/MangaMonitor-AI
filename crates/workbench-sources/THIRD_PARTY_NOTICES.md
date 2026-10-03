@@ -31,6 +31,6 @@ THE SOFTWARE.
 
 Supplementary account-only reference: Miuzarte/PicaComic-go, fixed commit
 25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb, Apache License 2.0. Only the request
-route/method and response field facts were consulted; no Go implementation
+route/method (including native tag browsing) and response field facts were consulted; no Go implementation
 was copied or adapted. Its license is available at:
 https://github.com/Miuzarte/PicaComic-go/blob/25d20c875b69c94f7980fad8d8d5b06c7ef3d1cb/LICENSE

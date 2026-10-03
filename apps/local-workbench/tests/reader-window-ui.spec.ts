@@ -1,3 +1,4 @@
+import { openUnifiedSearch } from "./browse-ui-helpers.ts";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import {
@@ -6,7 +7,9 @@ import {
 } from "./reader-window-fixture.ts";
 
 const harnesses = new WeakMap<Page, ReaderWindowHarness>();
+const authorizedDownloads = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ context, page }) => {
+  authorizedDownloads.set(page, []);
   await page.setViewportSize({ width: 1280, height: 900 });
   harnesses.set(page, await installReaderWindows(context, page));
 });
@@ -17,15 +20,24 @@ test.afterEach(async ({ page }) => {
   expect(
     await page.evaluate(() => window.workflowTest.unexpectedCommands),
   ).toEqual([]);
-  expect(await page.evaluate(() => window.workflowTest.queue.tasks)).toEqual(
-    [],
-  );
+  const authorized = authorizedDownloads.get(page) ?? [];
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.queue.tasks.map((task) => task.workId),
+    ),
+  ).toEqual(authorized);
+  expect(
+    await page.evaluate(
+      () =>
+        window.workflowTest.calls.filter(
+          ({ command }) => command === "jm_download_confirm",
+        ).length,
+    ),
+  ).toBe(authorized.length);
   expect(
     await page.evaluate(() =>
       window.workflowTest.calls.filter(({ command }) =>
-        /confirm|source_(follow|favorite)$|delete|promote|replace/.test(
-          command,
-        ),
+        /source_(follow|favorite)$|delete|promote|replace/.test(command),
       ),
     ),
   ).toEqual([]);
@@ -35,12 +47,12 @@ async function localCover(main: Page) {
   await main.getByTestId("nav-library").click();
   await main
     .getByRole("button", { name: "打开《已保存作品》", exact: true })
-    .click();
+    .click({ button: "right" });
   await expect(main.getByTestId("reader-cover-actions")).toBeVisible();
 }
 async function openLocalWindow(main: Page) {
   await localCover(main);
-  await main.getByRole("button", { name: "手机小框阅读", exact: true }).click();
+  await main.getByRole("menuitem", { name: "小窗阅读", exact: true }).click();
   await expect(main.getByTestId("reader-cover-actions")).toHaveCount(0);
 }
 async function openOnlineWindow(main: Page, workId = "102") {
@@ -48,8 +60,8 @@ async function openOnlineWindow(main: Page, workId = "102") {
   await main
     .getByTestId(`source-card-JM:${workId}`)
     .getByRole("button", { name: /打开/ })
-    .click();
-  await main.getByRole("button", { name: "手机小框阅读", exact: true }).click();
+    .click({ button: "right" });
+  await main.getByRole("menuitem", { name: "小窗阅读", exact: true }).click();
   await expect(main.getByTestId("reader-cover-actions")).toHaveCount(0);
 }
 async function toolbar(page: Page) {
@@ -88,29 +100,71 @@ function expectPageStart(
   expect(offset).toBeCloseTo(0, 10);
 }
 
+test("cover single click stays in the list, double click opens a small reader, and the right-click menu is anchored and keyboard accessible", async ({
+  page,
+}) => {
+  const harness = harnesses.get(page)!;
+  await page.getByTestId("nav-library").click();
+  const cover = page.getByRole("button", {
+    name: "打开《已保存作品》",
+    exact: true,
+  });
+  await cover.click();
+  await expect(cover).toBeFocused();
+  await expect(page.getByTestId("reader-cover-actions")).toHaveCount(0);
+  await expect(page.getByTestId("library-detail")).toHaveCount(0);
+  expect(
+    harness.calls.filter(({ command }) => command === "reader_window_open"),
+  ).toHaveLength(0);
+  await cover.click({ button: "right", position: { x: 20, y: 30 } });
+  const menu = page.getByRole("menu", { name: "打开漫画" });
+  await expect(menu).toBeVisible();
+  const coverBounds = (await cover.boundingBox())!;
+  const menuBounds = (await menu.boundingBox())!;
+  expect(Math.abs(menuBounds.x - coverBounds.x - 20)).toBeLessThan(2);
+  expect(Math.abs(menuBounds.y - coverBounds.y - 30)).toBeLessThan(2);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(cover).toBeFocused();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu.getByRole("menuitem", { name: "作品详细" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    menu.getByRole("menuitem", { name: "程序内阅读" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await cover.dblclick();
+  await harness.child(1);
+  await expect(page.getByTestId("library-detail")).toHaveCount(0);
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  await expect(menu).toHaveCount(0);
+});
+
 test("three cover choices preserve details and cancellation; independent small readers leave the main application usable", async ({
   page,
 }) => {
   const harness = harnesses.get(page)!;
   await localCover(page);
   const menu = page.getByTestId("reader-cover-actions");
-  for (const name of ["漫画详细", "程序内阅读", "手机小框阅读"])
-    await expect(menu.getByRole("button", { name, exact: true })).toBeVisible();
-  await menu.getByRole("button", { name: "取消", exact: true }).click();
+  for (const name of ["作品详细", "程序内阅读", "小窗阅读"])
+    await expect(
+      menu.getByRole("menuitem", { name, exact: true }),
+    ).toBeVisible();
+  await page.keyboard.press("Escape");
   expect(
     harness.calls.filter(({ command }) =>
       /reader_(open|window_open)$/.test(command),
     ),
   ).toEqual([]);
   await localCover(page);
-  await menu.getByRole("button", { name: "漫画详细", exact: true }).click();
+  await menu.getByRole("menuitem", { name: "作品详细", exact: true }).click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
   await openLocalWindow(page);
   const first = await harness.child(1);
   await expect(page.locator(".app-shell")).not.toHaveAttribute("inert", "");
   await expect(page.getByTestId("comic-reader")).toHaveCount(0);
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成新作者");
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
     "合成新作者",
@@ -155,7 +209,7 @@ test("three cover choices preserve details and cancellation; independent small r
       ({ label, command }) => label === "main" && command === "reader_open",
     ),
   ).toEqual([]);
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
     "合成新作者",
   );
@@ -165,6 +219,54 @@ test("three cover choices preserve details and cancellation; independent small r
   await first.screenshot({
     path: "visual-evidence/reader-window-vertical.png",
   });
+});
+
+test("native window close keeps a failed position available for retry or explicit discard", async ({
+  page,
+}) => {
+  const harness = harnesses.get(page)!;
+  await openLocalWindow(page);
+  const first = await harness.child(1);
+  harness.failSave.add("reader-window-1");
+  await jump(first, 3, 6);
+  await harness.emit("reader-window-1", "reader-window-close-requested");
+  await expect(
+    first.getByRole("button", { name: "重试保存并退出", exact: true }),
+  ).toBeVisible();
+  expect(harness.closed.has("reader-window-1")).toBe(false);
+  expect(
+    harness.calls.filter(
+      (call) =>
+        call.label === "reader-window-1" && call.command === "reader_close",
+    ),
+  ).toEqual([]);
+  harness.failSave.delete("reader-window-1");
+  await first
+    .getByRole("button", { name: "重试保存并退出", exact: true })
+    .click();
+  await expect.poll(() => harness.closed.has("reader-window-1")).toBe(true);
+  expect(
+    harness.saved.get(harness.key(harness.requests.get("reader-window-1")!))
+      ?.pageIndex,
+  ).toBe(2);
+
+  await openOnlineWindow(page);
+  const second = await harness.child(2);
+  harness.failSave.add("reader-window-2");
+  await jump(second, 2, 6);
+  await harness.emit("reader-window-2", "reader-window-close-requested");
+  await expect(
+    second.getByRole("button", { name: "放弃未保存位置并退出", exact: true }),
+  ).toBeVisible();
+  expect(harness.closed.has("reader-window-2")).toBe(false);
+  await second
+    .getByRole("button", { name: "放弃未保存位置并退出", exact: true })
+    .click();
+  await expect.poll(() => harness.closed.has("reader-window-2")).toBe(true);
+  expect(
+    harness.saved.get(harness.key(harness.requests.get("reader-window-2")!))
+      ?.pageIndex,
+  ).not.toBe(1);
 });
 
 test("pin failure remains visibly off, windows keep independent positions and native close flushes before closing only its reader", async ({
@@ -359,37 +461,47 @@ test("small-window controls remain usable; a main-close request does not end rea
   await expect(child.getByTestId("comic-reader")).toBeVisible();
   await harness.emit("main", "reader-main-close-requested");
   await expect.poll(() => harness.mainHidden).toBe(true);
+  authorizedDownloads.set(page, ["102"]);
   await child.getByRole("button", { name: "下载这本", exact: true }).click();
   await expect.poll(() => harness.mainHidden).toBe(false);
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-confirmation")).toContainText(
-    "本次选择的 JM 作品",
-  );
-  await expect(page.getByTestId("download-plan-destination")).toContainText(
-    ".zip",
-  );
-  expect(
-    await page.evaluate(() =>
-      window.workflowTest.calls.filter(
-        ({ command }) => command === "jm_download_prepare",
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.workflowTest.queue.tasks.map((task) => task.workId),
       ),
+    )
+    .toEqual(["102"]);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  expect(
+    await page.evaluate(
+      () => window.workflowTest.queue.tasks[0].destinationDisplay,
     ),
-  ).toHaveLength(1);
+  ).toContain(".zip");
+  const reads = await page.evaluate(
+    () =>
+      window.workflowTest.calls.filter(
+        ({ command }) => command === "jm_download_read",
+      ).length,
+  );
   await child.getByRole("button", { name: "下载这本", exact: true }).click();
-  await expect(
-    page.getByText("请先处理主界面中已有的下载确认，再准备其他作品。", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workflowTest.calls.filter(
+            ({ command }) => command === "jm_download_read",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(reads);
   expect(
     await page.evaluate(() =>
-      window.workflowTest.calls.filter(
-        ({ command }) => command === "jm_download_prepare",
-      ),
+      window.workflowTest.calls
+        .filter(({ command }) => command === "jm_download_prepare")
+        .map(({ args }) => args.input),
     ),
-  ).toHaveLength(1);
-  await page.getByTestId("download-cancel").click();
+  ).toEqual(["102"]);
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   await expect(child.getByLabel("当前页码")).toHaveText("2 / 6");
   await harness.emit("main", "reader-main-close-requested");
@@ -401,7 +513,7 @@ test("small-window controls remain usable; a main-close request does not end rea
   // process exit is covered separately by the Windows WebView/IPC smoke.
 });
 
-test("simultaneous reader download handoffs keep one preparation while the queue recheck is pending", async ({
+test("simultaneous reader download requests wait for the queue recheck and enqueue both authorized books once", async ({
   page,
 }) => {
   const harness = harnesses.get(page)!;
@@ -414,6 +526,7 @@ test("simultaneous reader download handoffs keep one preparation while the queue
   await page.evaluate(() => {
     window.readerWindowHarness.holdQueueRead = true;
   });
+  authorizedDownloads.set(page, ["102", "103"]);
   await first.getByRole("button", { name: "下载这本", exact: true }).click();
   await expect
     .poll(() =>
@@ -421,9 +534,6 @@ test("simultaneous reader download handoffs keep one preparation while the queue
     )
     .toBe(true);
   await second.getByRole("button", { name: "下载这本", exact: true }).click();
-  await expect(
-    page.getByText("其他下载正在准备，请稍后再试。", { exact: true }),
-  ).toBeVisible();
   expect(
     await page.evaluate(() =>
       window.workflowTest.calls.filter(
@@ -432,20 +542,20 @@ test("simultaneous reader download handoffs keep one preparation while the queue
     ),
   ).toEqual([]);
   await page.evaluate(() => window.readerWindowHarness.releaseQueueRead());
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
-  await expect(page.getByTestId("download-confirmation")).toContainText(
-    "本次选择的 JM 作品",
-  );
   await expect
     .poll(() =>
       page.evaluate(() =>
-        window.workflowTest.calls
-          .filter(({ command }) => command === "jm_download_prepare")
-          .map(({ args }) => args.input),
+        window.workflowTest.queue.tasks.map((task) => task.workId),
       ),
     )
-    .toEqual(["102"]);
-  await page.getByTestId("download-cancel").click();
+    .toEqual(["102", "103"]);
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.calls
+        .filter(({ command }) => command === "jm_download_prepare")
+        .map(({ args }) => args.input),
+    ),
+  ).toEqual(["102", "103"]);
   await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
   await expect(first.getByLabel("当前页码")).toHaveText("1 / 6");
   await expect(second.getByLabel("当前页码")).toHaveText("1 / 6");

@@ -5,6 +5,10 @@ import {
   RecentUpdatesReader,
 } from "../src/recent-updates.ts";
 import { SourceError } from "../src/source-runtime.ts";
+import {
+  notifySourceDetail,
+  subscribeSourceDetails,
+} from "../src/source-detail-events.ts";
 
 const scope = { source: "JM", sessionId: "synthetic-recent" };
 const work = (id, overrides = {}) => ({
@@ -29,6 +33,128 @@ const page = (number, ids, overrides = {}) => ({
   hasMore: true,
   folders: [],
   ...overrides,
+});
+
+test("opened details update only loaded identities in the same session without pagination or order changes", async () => {
+  const reader = new RecentUpdatesReader(
+    { query: async () => page(1, [3, 2, 1]) },
+    scope,
+  );
+  await reader.start();
+  const snapshot = reader.state.snapshot;
+  const stop = subscribeSourceDetails((scope, work) =>
+    reader.applyDetail(scope, work),
+  );
+  const detail = work(2, {
+    title: "Updated title",
+    authors: ["Updated credit"],
+    sourceUpdatedAt: "2026-10-02",
+    tags: ["中文"],
+  });
+  notifySourceDetail({ ...scope, sessionId: "other-account" }, detail);
+  notifySourceDetail(scope, { ...detail, source: "Pica" });
+  notifySourceDetail(scope, { ...detail, workId: "unknown" });
+  assert.equal(reader.state.displayItems[1].title, "Synthetic work 2");
+  notifySourceDetail(scope, detail);
+  assert.deepEqual(
+    reader.state.displayItems.map((item) => item.workId),
+    ["3", "2", "1"],
+  );
+  assert.equal(reader.state.snapshot, snapshot);
+  assert.deepEqual(reader.state.displayItems[1], detail);
+  const current = reader.state;
+  notifySourceDetail(scope, detail);
+  assert.equal(reader.state, current);
+  stop();
+  notifySourceDetail(scope, { ...detail, title: "Unsubscribed" });
+  assert.equal(reader.state, current);
+  reader.dispose();
+  reader.applyDetail(scope, { ...detail, title: "Disposed" });
+  assert.equal(reader.state, current);
+});
+
+test("late sparse paging and history cannot undo detail metadata; a successful later head refresh can", async () => {
+  let releasePage;
+  let head = page(1, [2, 1]);
+  const reader = new RecentUpdatesReader(
+    {
+      query: async (_, query) =>
+        query.page === 1
+          ? head
+          : new Promise((resolve) => {
+              releasePage = resolve;
+            }),
+      recentHistory: async () => ({ ...scope, items: [work(9)], coverage: [] }),
+    },
+    scope,
+  );
+  await reader.start();
+  const pending = reader.loadNext();
+  const detail = work(2, {
+    title: "Opened detail",
+    sourceUpdatedAt: "2026-10-02",
+    tags: ["中文"],
+  });
+  reader.applyDetail(scope, detail);
+  releasePage(page(2, [2, 4]));
+  await pending;
+  await reader.refreshHistory();
+  assert.deepEqual(
+    reader.state.displayItems.map((item) => item.workId),
+    ["2", "1", "9", "4"],
+  );
+  assert.deepEqual(reader.state.displayItems[0], detail);
+  head = page(1, [], {
+    items: [work(2, { title: "Explicit refresh" }), work(5)],
+  });
+  await reader.refresh();
+  assert.equal(reader.state.displayItems[0].title, "Explicit refresh");
+  assert.equal(reader.state.displayItems[0].sourceUpdatedAt, "2026-10-02");
+  assert.deepEqual(reader.state.displayItems[0].tags, ["中文"]);
+});
+
+test("a head/history request begun before a detail cannot roll it back and refresh failure retains it", async () => {
+  let resolveHead;
+  let resolveHistory;
+  let hold = false;
+  let fail = false;
+  const reader = new RecentUpdatesReader(
+    {
+      query: async () => {
+        if (fail) throw new SourceError("SOURCE_UNAVAILABLE");
+        return hold
+          ? new Promise((resolve) => {
+              resolveHead = resolve;
+            })
+          : page(1, [1]);
+      },
+      recentHistory: async () =>
+        hold
+          ? new Promise((resolve) => {
+              resolveHistory = resolve;
+            })
+          : { ...scope, items: [work(8)], coverage: [] },
+    },
+    scope,
+  );
+  await reader.start();
+  hold = true;
+  const pending = reader.refresh();
+  reader.applyDetail(scope, work(1, { title: "Fresh head detail" }));
+  reader.applyDetail(scope, work(8, { title: "Fresh saved detail" }));
+  resolveHead(page(1, [1]));
+  resolveHistory({ ...scope, items: [work(8)], coverage: [] });
+  await pending;
+  assert.deepEqual(
+    reader.state.displayItems.map((item) => item.title),
+    ["Fresh head detail", "Fresh saved detail"],
+  );
+  hold = false;
+  fail = true;
+  await reader.refresh();
+  assert.equal(reader.state.phase, "error");
+  assert.equal(reader.state.displayItems[0].title, "Fresh head detail");
+  assert.equal(reader.state.displayItems[1].title, "Fresh saved detail");
 });
 
 test("moving recent pages merge duplicate identities without reordering earlier works or requiring an unchanged site total", () => {
@@ -223,4 +349,225 @@ test("refresh replaces only on success and a disposed or different-session reade
   release();
   await pending;
   assert.equal(reader.state, beforeDispose);
+});
+
+test("a slow saved history cannot delay live results or cause extra detail requests", async () => {
+  let releaseHistory;
+  const calls = [];
+  const reader = new RecentUpdatesReader(
+    {
+      query: async (_scope, request) => {
+        calls.push(request.kind);
+        return page(1, [1, 2]);
+      },
+      recentHistory: () =>
+        new Promise((resolve) => {
+          releaseHistory = resolve;
+        }),
+    },
+    scope,
+  );
+  const started = reader.start();
+  await Promise.resolve();
+  assert.equal(reader.state.phase, "ready");
+  assert.deepEqual(calls, ["recent"]);
+  const live = reader.state.snapshot;
+  releaseHistory({ ...scope, items: [work(3)], coverage: {}, revision: 1 });
+  await started;
+  assert.equal(reader.state.snapshot, live);
+  assert.equal(reader.state.retainedItems[0].workId, "3");
+  assert.deepEqual(calls, ["recent"]);
+});
+
+test("failed supplementary history preserves a successful live page", async () => {
+  const reader = new RecentUpdatesReader(
+    {
+      query: async () => page(1, [1, 2]),
+      recentHistory: async () => {
+        throw new SourceError("STORE_BUSY");
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  assert.equal(reader.state.historyError, true);
+  assert.equal(reader.state.historyErrorCode, "STORE_BUSY");
+  assert.equal(reader.state.phase, "ready");
+  assert.equal(reader.state.snapshot.items.length, 2);
+});
+
+test("history diagnostics discard raw errors and clear after recovery", async () => {
+  let failed = true;
+  const reader = new RecentUpdatesReader(
+    {
+      query: async () => page(1, [1, 2]),
+      recentHistory: async () => {
+        if (failed) throw new Error("private path and account data");
+        return { ...scope, items: [work(3)], coverage: {}, revision: 2 };
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  assert.equal(reader.state.historyErrorCode, "SOURCE_UNAVAILABLE");
+  assert.equal(JSON.stringify(reader.state).includes("private path"), false);
+  failed = false;
+  await reader.refreshHistory();
+  assert.equal(reader.state.historyError, false);
+  assert.equal(reader.state.historyErrorCode, null);
+  assert.equal(reader.state.retainedItems[0].workId, "3");
+});
+
+const idsOf = (items) => items.map((item) => item.workId);
+const range = (first, last) =>
+  Array.from({ length: last - first + 1 }, (_, index) => first + index);
+const history = (items) => ({ ...scope, items, coverage: {}, revision: 1 });
+
+test("live pages enrich saved works in place; only explicit refresh adopts their known source order", async () => {
+  const saved = range(1, 400).map((id) =>
+    work(id, id === 332 ? { tags: ["中文"] } : {}),
+  );
+  const pages = [
+    range(1, 80),
+    range(81, 160),
+    [...range(161, 178), 332, ...range(179, 239)],
+  ];
+  const calls = [];
+  const reader = new RecentUpdatesReader(
+    {
+      recentHistory: async () => history(saved),
+      query: async (_scope, request) => {
+        calls.push(request.page);
+        return page(request.page, pages[request.page - 1], {
+          total: 500,
+          pages: 7,
+          items: pages[request.page - 1].map((id) =>
+            work(id, id === 332 ? { title: "Updated synthetic title" } : {}),
+          ),
+        });
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  const original = idsOf(reader.state.displayItems);
+  await reader.loadNext();
+  await reader.loadNext();
+  assert.equal(idsOf(reader.state.snapshot.items).indexOf("332"), 178);
+  assert.equal(idsOf(reader.state.displayItems).indexOf("332"), 331);
+  assert.deepEqual(idsOf(reader.state.displayItems), original);
+  assert.equal(reader.state.displayItems[331].title, "Updated synthetic title");
+  assert.deepEqual(reader.state.displayItems[331].tags, ["中文"]);
+  assert.equal(reader.state.snapshot.items.length, 240);
+  assert.equal(new Set(idsOf(reader.state.displayItems)).size, 400);
+
+  await reader.refresh();
+  assert.equal(idsOf(reader.state.displayItems).indexOf("332"), 178);
+  assert.equal(reader.state.snapshot.items.length, 80);
+  const refreshed = idsOf(reader.state.displayItems);
+  saved.reverse();
+  saved.unshift(work(501));
+  await reader.refreshHistory();
+  assert.deepEqual(idsOf(reader.state.displayItems), [...refreshed, "501"]);
+  assert.deepEqual(calls, [1, 2, 3, 1]);
+});
+
+for (const historyFirst of [false, true]) {
+  test(`initial ${historyFirst ? "history" : "live page"} displays without waiting and establishes the current source head exactly once`, async () => {
+    let releaseLive, releaseHistory;
+    const reader = new RecentUpdatesReader(
+      {
+        query: () =>
+          new Promise((resolve) => {
+            releaseLive = resolve;
+          }),
+        recentHistory: () =>
+          new Promise((resolve) => {
+            releaseHistory = resolve;
+          }),
+      },
+      scope,
+    );
+    const pending = reader.start();
+    if (historyFirst) releaseHistory(history([work(3), work(2)]));
+    else releaseLive(page(1, [1, 2]));
+    await Promise.resolve();
+    assert.deepEqual(
+      idsOf(reader.state.displayItems),
+      historyFirst ? ["3", "2"] : ["1", "2"],
+    );
+    if (historyFirst) releaseLive(page(1, [1, 2]));
+    else releaseHistory(history([work(3), work(2, { tags: ["AI作画"] })]));
+    await pending;
+    assert.deepEqual(idsOf(reader.state.displayItems), ["1", "2", "3"]);
+    if (!historyFirst)
+      assert.deepEqual(reader.state.displayItems[1].tags, ["AI作画"]);
+  });
+}
+
+test("failed refresh retains displayed order and retry resets it once, even with a late history", async () => {
+  let fail = false,
+    releaseHistory,
+    holdHistory = false;
+  let head = [1, 2];
+  const reader = new RecentUpdatesReader(
+    {
+      query: async (_scope, request) => {
+        if (fail) throw new SourceError("SOURCE_TIMEOUT");
+        return page(request.page, request.page === 1 ? head : [9, 4]);
+      },
+      recentHistory: () =>
+        holdHistory
+          ? new Promise((resolve) => {
+              releaseHistory = resolve;
+            })
+          : Promise.resolve(history([work(1), work(2), work(3), work(9)])),
+    },
+    scope,
+  );
+  await reader.start();
+  await reader.loadNext();
+  const original = reader.state.displayItems;
+  fail = true;
+  holdHistory = true;
+  const refresh = reader.refresh();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(reader.state.displayItems, original);
+  assert.equal(reader.state.phase, "error");
+  fail = false;
+  head = [2, 1];
+  await reader.retry();
+  // The previous live-only work (4) is outside the refreshed window. Saved works
+  // retain their metadata and are reordered only by the successful user refresh.
+  assert.deepEqual(idsOf(reader.state.displayItems), ["2", "1", "9", "3"]);
+  releaseHistory(history([work(8), work(3), work(9), work(2), work(1)]));
+  await refresh;
+  assert.deepEqual(idsOf(reader.state.displayItems), ["2", "1", "9", "3", "8"]);
+});
+
+test("coalescing refresh during a pending next page cannot silently reorder saved history", async () => {
+  let release;
+  const calls = [];
+  const reader = new RecentUpdatesReader(
+    {
+      recentHistory: async () => history([work(1), work(2), work(3), work(9)]),
+      query: async (_scope, request) => {
+        calls.push(request.page);
+        if (request.page === 1) return page(1, [1, 2]);
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+        return page(2, [9, 4]);
+      },
+    },
+    scope,
+  );
+  await reader.start();
+  const next = reader.loadNext();
+  const refresh = reader.refresh();
+  release();
+  await Promise.all([next, refresh]);
+  assert.deepEqual(idsOf(reader.state.displayItems), ["1", "2", "3", "9", "4"]);
+  assert.deepEqual(calls, [1, 2]);
 });

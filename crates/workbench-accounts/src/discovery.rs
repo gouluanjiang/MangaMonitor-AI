@@ -13,16 +13,16 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use workbench_credentials::Vault;
-use workbench_sources::{inherit_language_tags, retained_language_tags};
+use workbench_sources::{inherit_content_tags, retained_content_tags};
 pub use workbench_storage::DiscoveryMode;
 use workbench_storage::{
-    discovery_author_is_valid, discovery_record_matches_author, AuthorQueryDocument,
-    AuthorQueryPolicy, DiscoveryAccount, DiscoveryAuthorRange, DiscoveryBaseline,
-    DiscoveryCheckPhase, DiscoveryCheckSummary, DiscoveryDocument, DiscoveryItemIssue,
-    DiscoveryItemIssueCode, DiscoveryPagePatch, DiscoveryQueryBaseline, DiscoveryRangeState,
-    DiscoveryRecord, DiscoveryWork, Document, WorkbenchStore, MAX_DISCOVERY_AUTHORS,
-    MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_ISSUE_SAMPLES, MAX_DISCOVERY_PAGES,
-    MAX_DISCOVERY_RAW_RECORDS, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
+    discovery_author_is_valid, discovery_record_matches_author, AuthorCreditIndex,
+    AuthorQueryDocument, AuthorQueryPolicy, DiscoveryAccount, DiscoveryAuthorRange,
+    DiscoveryBaseline, DiscoveryCheckPhase, DiscoveryCheckSummary, DiscoveryDocument,
+    DiscoveryItemIssue, DiscoveryItemIssueCode, DiscoveryPagePatch, DiscoveryQueryBaseline,
+    DiscoveryRangeState, DiscoveryRecord, DiscoveryWork, Document, WorkbenchStore,
+    MAX_DISCOVERY_AUTHORS, MAX_DISCOVERY_HEAD_IDS, MAX_DISCOVERY_ISSUE_SAMPLES,
+    MAX_DISCOVERY_PAGES, MAX_DISCOVERY_RAW_RECORDS, MAX_DISCOVERY_RECORDS, MAX_SAFE_INTEGER,
 };
 
 const DISCOVERY_QUERY_VERSION: u32 = 1;
@@ -112,13 +112,19 @@ pub struct DiscoveryRun {
 pub struct DiscoverySnapshot {
     pub scopes: Vec<DiscoveryScope>,
     pub revision: u64,
+    pub followed_authors: Vec<String>,
+    pub following_revision: u64,
+    pub policy_revision: u64,
     pub run: Option<DiscoveryRun>,
     pub last_check: Option<DiscoveryCheckSummary>,
+    pub last_successful_check: Option<DiscoveryCheckSummary>,
     pub authors: Vec<DiscoveryAuthorRange>,
     pub author_policies: Vec<AuthorQueryPolicy>,
     pub records: Vec<DiscoveryRecord>,
     pub other_record_count: usize,
     pub includes_other: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_error_code: Option<String>,
 }
 
 /// Frequent progress reads never copy or serialize saved work metadata.
@@ -127,12 +133,18 @@ pub struct DiscoverySnapshot {
 pub struct DiscoveryProgress {
     pub scopes: Vec<DiscoveryScope>,
     pub revision: u64,
+    pub followed_authors: Vec<String>,
+    pub following_revision: u64,
+    pub policy_revision: u64,
     pub run: Option<DiscoveryRun>,
     pub last_check: Option<DiscoveryCheckSummary>,
+    pub last_successful_check: Option<DiscoveryCheckSummary>,
     pub authors: Vec<DiscoveryAuthorRange>,
     pub author_policies: Vec<AuthorQueryPolicy>,
     pub record_count: usize,
     pub other_record_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_error_code: Option<String>,
 }
 
 impl From<&DiscoverySnapshot> for DiscoveryProgress {
@@ -140,8 +152,12 @@ impl From<&DiscoverySnapshot> for DiscoveryProgress {
         Self {
             scopes: snapshot.scopes.clone(),
             revision: snapshot.revision,
+            followed_authors: snapshot.followed_authors.clone(),
+            following_revision: snapshot.following_revision,
+            policy_revision: snapshot.policy_revision,
             run: snapshot.run.clone(),
             last_check: snapshot.last_check.clone(),
+            last_successful_check: snapshot.last_successful_check.clone(),
             authors: snapshot.authors.clone(),
             author_policies: snapshot.author_policies.clone(),
             record_count: snapshot.records.len()
@@ -151,6 +167,7 @@ impl From<&DiscoverySnapshot> for DiscoveryProgress {
                     snapshot.other_record_count
                 },
             other_record_count: snapshot.other_record_count,
+            observation_error_code: snapshot.observation_error_code.clone(),
         }
     }
 }
@@ -177,6 +194,7 @@ pub(crate) struct DiscoveryContext {
     pub following_revision: u64,
     pub policy_revision: u64,
     policies: HashMap<workbench_storage::Source, HashMap<String, AuthorQueryPolicy>>,
+    credit_indexes: HashMap<workbench_storage::Source, AuthorCreditIndex>,
     work_credits:
         HashMap<workbench_storage::Source, HashMap<String, workbench_storage::AuthorWorkCredit>>,
     pub authors: Vec<String>,
@@ -202,6 +220,7 @@ impl DiscoveryContext {
             following_revision: following.revision,
             policy_revision: policies.revision,
             policies: HashMap::new(),
+            credit_indexes: HashMap::new(),
             work_credits: HashMap::new(),
             authors: vec![],
             account_key: format!("{:x}", digest.finalize()),
@@ -235,6 +254,7 @@ impl DiscoveryContext {
     fn set_policies(&mut self, document: &Document<AuthorQueryDocument>) {
         self.policy_revision = document.revision;
         self.policies.clear();
+        self.credit_indexes.clear();
         self.work_credits.clear();
         for identity in &self.identities {
             let source = storage_source(identity.scope.source);
@@ -264,10 +284,21 @@ impl DiscoveryContext {
                     })
                     .collect(),
             );
+            let mut credits = AuthorCreditIndex::default();
+            for policy in self.policies[&source].values() {
+                if author_query_error(&policy.author) != Some("AUTHOR_QUERY_PLACEHOLDER") {
+                    credits.insert(
+                        &policy.author,
+                        &policy.verified_aliases,
+                        &policy.exact_credits,
+                    );
+                }
+            }
+            self.credit_indexes.insert(source, credits);
         }
     }
 
-    fn policy(
+    pub(crate) fn policy(
         &self,
         source: workbench_storage::Source,
         author: &str,
@@ -292,39 +323,36 @@ impl DiscoveryContext {
     }
 
     fn record_matches(&self, record: &DiscoveryRecord) -> bool {
-        self.corrected_record_matches(record)
-            || record.matched_authors.iter().any(|author| {
-                self.policy(record.work.source, author)
-                    .is_some_and(|policy| {
-                        policy_error(policy).is_none()
-                            && policy
-                                .matches_work_credits(&record.work.work_id, &record.work.authors)
-                    })
-            })
+        !self.confirmed_authors(record).is_empty()
     }
 
-    /// A reviewed work can have been discovered only under an incorrect author.
-    /// Admit its actual currently followed author without inventing a query hit
-    /// or altering that author's pagination/baseline. The indexed guard keeps
-    /// ordinary records on their original attribution path.
-    fn corrected_record_matches(&self, record: &DiscoveryRecord) -> bool {
-        self.work_credits
+    pub(crate) fn confirmed_authors(&self, record: &DiscoveryRecord) -> BTreeSet<String> {
+        // This previously agreed category scope applies to author results, not
+        // pagination accounting. Unknown categories are not guessed from titles.
+        if record.work.source == workbench_storage::Source::Jm
+            && record
+                .work
+                .tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
+        {
+            return BTreeSet::new();
+        }
+        let credits = self
+            .work_credits
             .get(&record.work.source)
             .and_then(|rules| rules.get(&record.work.work_id))
             .filter(|rule| rule.matches_expected(&record.work.authors))
-            .is_some_and(|rule| {
-                self.policies
-                    .get(&record.work.source)
-                    .is_some_and(|policies| {
-                        policies.values().any(|policy| {
-                            policy_error(policy).is_none()
-                                && policy.matches_credits(&rule.corrected_authors)
-                        })
-                    })
-            })
+            .map_or(record.work.authors.as_slice(), |rule| {
+                rule.corrected_authors.as_slice()
+            });
+        self.credit_indexes
+            .get(&record.work.source)
+            .map(|index| index.matching_authors(credits))
+            .unwrap_or_default()
     }
 
-    fn scopes(&self) -> Vec<DiscoveryScope> {
+    pub(crate) fn scopes(&self) -> Vec<DiscoveryScope> {
         self.identities
             .iter()
             .map(|identity| identity.scope.clone())
@@ -339,6 +367,7 @@ pub(crate) struct DiscoveryControl {
 
 #[derive(Default)]
 struct DiscoveryMemory {
+    record_scan_marker: bool,
     context: Option<DiscoveryContext>,
     snapshot: Option<DiscoveryProgress>,
     active: bool,
@@ -410,7 +439,19 @@ fn policy_error(policy: &AuthorQueryPolicy) -> Option<&'static str> {
 fn invalidate_changed_query(range: &mut DiscoveryAuthorRange, policy: &AuthorQueryPolicy) {
     let unchanged = match &range.query_fingerprint {
         Some(fingerprint) => fingerprint == &policy.query_fingerprint,
-        None => policy.is_original_query(),
+        // A legacy JM checkpoint predates the dedicated author endpoint even
+        // when the literal query did not change. Pica's protocol is unchanged.
+        // A genuinely unstarted row still remains Idle, not a failed check.
+        None => {
+            policy.is_original_query()
+                && (range.source == workbench_storage::Source::Pica
+                    || (range.state == DiscoveryRangeState::Idle
+                        && range.last_attempt_at.is_none()
+                        && range.last_complete_at.is_none()
+                        && range.last_checked_at.is_none()
+                        && range.baseline.is_none()
+                        && range.query_baselines.is_empty()))
+        }
     };
     if !unchanged {
         range.state = DiscoveryRangeState::Partial;
@@ -479,8 +520,12 @@ fn project_view(
         }
     }
     let mut snapshot = DiscoverySnapshot {
+        last_successful_check: None,
         scopes: context.scopes(),
         revision: document.revision,
+        followed_authors: context.authors.clone(),
+        following_revision: context.following_revision,
+        policy_revision: context.policy_revision,
         run: None,
         last_check: account
             .and_then(|account| account.last_check.clone())
@@ -499,7 +544,7 @@ fn project_view(
                     .records
                     .iter()
                     .filter_map(|record| {
-                        if context.corrected_record_matches(record) {
+                        if context.record_matches(record) {
                             return Some(record.clone());
                         }
                         if !record
@@ -520,6 +565,7 @@ fn project_view(
             .unwrap_or_default(),
         other_record_count: 0,
         includes_other: include_other,
+        observation_error_code: None,
     };
     project_author_query_guards(context, &mut snapshot);
     snapshot.other_record_count = snapshot
@@ -541,7 +587,7 @@ fn record_counts(
     record: &DiscoveryRecord,
     followed: &HashSet<&str>,
 ) -> (usize, usize) {
-    if context.corrected_record_matches(record) {
+    if context.record_matches(record) {
         return (1, 0);
     }
     let mut projected = record.clone();
@@ -573,7 +619,7 @@ fn project_author_query_guards(context: &DiscoveryContext, snapshot: &mut Discov
         })
         .collect();
     for record in &mut snapshot.records {
-        if context.corrected_record_matches(record) {
+        if context.record_matches(record) {
             continue;
         }
         record
@@ -582,7 +628,7 @@ fn project_author_query_guards(context: &DiscoveryContext, snapshot: &mut Discov
     }
     snapshot
         .records
-        .retain(|record| !record.matched_authors.is_empty());
+        .retain(|record| context.record_matches(record) || !record.matched_authors.is_empty());
 }
 
 impl DiscoveryControl {
@@ -709,10 +755,27 @@ impl DiscoveryControl {
                 store_error(error)
             }
         })?;
+        let successful = patch
+            .last_check
+            .as_ref()
+            .filter(|summary| {
+                memory.record_scan_marker && summary.phase == DiscoveryCheckPhase::Complete
+            })
+            .cloned();
+        // The final catalog commit and its receipt share cancellation/account
+        // ordering. A stop after this successful terminal write is a no-op.
+        if let Some(summary) = &successful {
+            store
+                .save_successful_scan(&context.account_key, summary.clone())
+                .map_err(store_error)?;
+        }
         let snapshot = memory.snapshot.as_mut().ok_or_else(unavailable)?;
         snapshot.revision = next_revision;
         snapshot.record_count = record_count;
         snapshot.other_record_count = other_record_count;
+        if let Some(summary) = successful {
+            snapshot.last_successful_check = Some(summary);
+        }
         if let Some(summary) = patch.last_check {
             snapshot.last_check = Some(summary);
         }
@@ -831,6 +894,15 @@ impl DiscoveryControl {
 }
 
 impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
+    pub(crate) fn discovery_is_active(&self) -> Result<bool> {
+        Ok(self
+            .discovery
+            .memory
+            .lock()
+            .map_err(|_| unavailable())?
+            .active)
+    }
+
     /// Fast verification uses native identity leases and saved credential fingerprints.
     /// It never waits behind a remote metadata request or accepts an account key.
     pub fn discovery_validate_scopes(&self, scopes: &[DiscoveryScope]) -> Result<()> {
@@ -926,6 +998,29 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         scopes: Vec<DiscoveryScope>,
         include_other: bool,
     ) -> Result<DiscoverySnapshot> {
+        let observation_error = self
+            .discovery_replay_observations(scopes.clone())
+            .await
+            .err();
+        let mut snapshot = self
+            .discovery_read_view_inner(scopes, include_other)
+            .await?;
+        snapshot.observation_error_code = observation_error.map(|error| error.code.into());
+        if let Ok(mut memory) = self.discovery.memory.lock() {
+            if let Some(cached) = memory.snapshot.as_mut().filter(|cached| {
+                cached.scopes == snapshot.scopes && cached.revision == snapshot.revision
+            }) {
+                cached.observation_error_code = snapshot.observation_error_code.clone();
+            }
+        }
+        Ok(snapshot)
+    }
+
+    pub(crate) async fn discovery_read_view_inner(
+        &self,
+        scopes: Vec<DiscoveryScope>,
+        include_other: bool,
+    ) -> Result<DiscoverySnapshot> {
         let scopes = canonical_scopes(scopes)?;
         let cached_context = {
             let memory = self.discovery.memory.lock().map_err(|_| unavailable())?;
@@ -941,24 +1036,38 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         };
         self.discovery_validate_context(&context)?;
         let root = context.root.clone();
-        let (following, policies, document) = tokio::task::spawn_blocking(move || {
-            discovery_store_io(|| {
-                let store = WorkbenchStore::open(&root)?;
-                Ok((
-                    store.read_following()?,
-                    store.read_author_query_policies()?,
-                    store.read_discovery()?,
-                ))
+        let receipt_key = context.account_key.clone();
+        let (following, policies, document, successful_check) =
+            tokio::task::spawn_blocking(move || {
+                discovery_store_io(|| {
+                    let store = WorkbenchStore::open(&root)?;
+                    Ok((
+                        store.read_following()?,
+                        store.read_author_query_policies()?,
+                        store.read_discovery()?,
+                        store.read_successful_scan(&receipt_key)?,
+                    ))
+                })
             })
-        })
-        .await
-        .map_err(|_| unavailable())?
-        .map_err(store_error)?;
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(store_error)?;
         self.discovery_validate_context(&context)?;
         context.authors = context.followed_authors(&following.value);
         context.following_revision = following.revision;
         context.set_policies(&policies);
         let mut snapshot = project_view(&context, &document, include_other);
+        if successful_check.as_ref().is_some_and(|receipt| {
+            snapshot.last_check.as_ref().is_none_or(|catalog| {
+                receipt.started_at > catalog.started_at
+                    || (receipt.id == catalog.id && catalog.phase != DiscoveryCheckPhase::Complete)
+            })
+        }) {
+            // A completed receipt raced an older catalog read. Retry the read;
+            // never pair fresh markers with a stale set of works.
+            return Err(AccountError::new("BUSY"));
+        }
+        snapshot.last_successful_check = successful_check;
         let mut memory = self.discovery.memory.lock().map_err(|_| unavailable())?;
         if memory.context.as_ref().is_some_and(|cached| {
             cached.scopes() == scopes
@@ -1043,6 +1152,148 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         Ok(snapshot)
     }
 
+    /// Persist records observed outside author pagination. Callers keep their
+    /// source-account observation journal until Some(revision) is returned.
+    /// None means an active scan owns the catalog; replay after it finishes.
+    /// This writes no author range, pagination baseline or check summary.
+    pub(crate) async fn discovery_observe(
+        &self,
+        scopes: Vec<DiscoveryScope>,
+        works: Vec<SourceWork>,
+        detail: bool,
+        observed_at: u64,
+    ) -> Result<Option<u64>> {
+        if works.len() > 1000 || observed_at > MAX_SAFE_INTEGER {
+            return Err(AccountError::new("INVALID_INPUT"));
+        }
+        let observations = works
+            .into_iter()
+            .map(|work| workbench_storage::ObservedWork {
+                categories: work.categories.clone(),
+                work: discovery_work_from_source(work),
+                observed_at,
+                metadata_detail_at: detail.then_some(observed_at),
+                via: vec![if detail { "detail" } else { "search" }.into()],
+            })
+            .collect();
+        self.discovery_observe_records(scopes, observations).await
+    }
+
+    /// Replay an account-isolated observation pool in one bounded read/merge.
+    /// Writes remain page-sized, and a partial storage failure is replayable.
+    pub(crate) async fn discovery_observe_records(
+        &self,
+        scopes: Vec<DiscoveryScope>,
+        observations: Vec<workbench_storage::ObservedWork>,
+    ) -> Result<Option<u64>> {
+        if observations.len() > workbench_storage::MAX_OBSERVED_WORKS {
+            return Err(AccountError::new("INVALID_INPUT"));
+        }
+        if self
+            .discovery
+            .memory
+            .lock()
+            .map_err(|_| unavailable())?
+            .active
+        {
+            return Ok(None);
+        }
+        let context = self.discovery_context(scopes).await?;
+        self.discovery_validate_context(&context)?;
+        let control = Arc::clone(&self.discovery);
+        let captured = context.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let mut memory = control.memory.lock().map_err(|_| unavailable())?;
+            if memory.active {
+                return Ok(None);
+            }
+            for identity in &captured.identities {
+                identity.lease.require_current()?;
+            }
+            let store = WorkbenchStore::open(&captured.root).map_err(store_error)?;
+            let document = store
+                .read_discovery_for_observation(
+                    captured.following_revision,
+                    captured.policy_revision,
+                )
+                .map_err(store_error)?;
+            let saved: HashMap<_, _> = document
+                .value
+                .accounts
+                .iter()
+                .find(|account| account.account_key == captured.account_key)
+                .into_iter()
+                .flat_map(|account| &account.records)
+                .map(|record| ((record.work.source, record.work.work_id.clone()), record))
+                .collect();
+            let mut changed = HashMap::new();
+            for observation in observations {
+                let work = observation.work;
+                let observed_at = observation.observed_at;
+                if !work.is_valid()
+                    || observed_at > MAX_SAFE_INTEGER
+                    || observation
+                        .metadata_detail_at
+                        .is_some_and(|at| at > observed_at)
+                {
+                    return Err(AccountError::new("SOURCE_RESPONSE_INVALID"));
+                }
+                let key = (work.source, work.work_id.clone());
+                let prior = changed.get(&key).or_else(|| saved.get(&key).copied());
+                let incoming = observation_record(
+                    &captured.account_key,
+                    work,
+                    observed_at,
+                    observation.metadata_detail_at,
+                );
+                let merged = merged_record(prior, incoming);
+                // Unfollowed or unknown works stay in the source observation
+                // pool. A later follow replays that evidence into this catalog.
+                // Existing entries still accept reliable attribution corrections.
+                if prior.is_none() && !captured.record_matches(&merged) {
+                    continue;
+                }
+                if prior != Some(&merged) {
+                    changed.insert(key, merged);
+                }
+            }
+            if changed.is_empty() {
+                return Ok(Some(document.revision));
+            }
+            let records: Vec<_> = changed.into_values().collect();
+            let mut revision = document.revision;
+            for records in records.chunks(1000) {
+                for identity in &captured.identities {
+                    identity.lease.require_current()?;
+                }
+                revision = store
+                    .apply_discovery_patch_for_policy(
+                        revision,
+                        captured.following_revision,
+                        Some(captured.policy_revision),
+                        DiscoveryPagePatch {
+                            account_key: captured.account_key.clone(),
+                            authors: vec![],
+                            records: records.to_vec(),
+                            retain_authors: None,
+                            last_check: None,
+                        },
+                    )
+                    .map_err(store_error)?;
+                memory.snapshot = None;
+            }
+            // Invalidate counts only after durable success. No run, range or
+            // last-check metadata is manufactured by this supplemental write.
+            memory.context = Some(captured);
+            memory.snapshot = None;
+            Ok(Some(revision))
+        })
+        .await
+        .map_err(|_| unavailable())?;
+        self.discovery_validate_context(&context)?;
+        outcome
+    }
+
     /// Local polling copies only author-range metadata, never the work catalog.
     pub async fn discovery_progress(
         &self,
@@ -1104,7 +1355,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         authors: Vec<String>,
         mode: DiscoveryMode,
     ) -> Result<DiscoveryStart> {
-        self.discovery_start_selected(scopes, authors, mode, false)
+        self.discovery_start_selected(scopes, authors, mode, false, None)
             .await
     }
 
@@ -1115,16 +1366,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         scopes: Vec<DiscoveryScope>,
         authors: Vec<String>,
     ) -> Result<DiscoveryStart> {
-        self.discovery_start_selected(scopes, authors, DiscoveryMode::Incremental, true)
+        self.discovery_start_selected(scopes, authors, DiscoveryMode::Incremental, true, None)
             .await
     }
 
-    async fn discovery_start_selected(
+    pub(crate) async fn discovery_start_selected(
         self: &Arc<Self>,
         scopes: Vec<DiscoveryScope>,
         authors: Vec<String>,
         mode: DiscoveryMode,
         only_unfinished: bool,
+        requested_ranges: Option<HashSet<(String, workbench_storage::Source)>>,
     ) -> Result<DiscoveryStart> {
         let scopes = canonical_scopes(scopes)?;
         // Reject a second start without waiting behind the active source request.
@@ -1168,17 +1420,19 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         .map_err(store_error)?;
         self.discovery_validate_context(&context)?;
         let mut snapshot = project_view(&context, &document, false);
-        let all_followed = authors.len() == context.authors.len();
+        let all_followed = requested_ranges.is_none() && authors.len() == context.authors.len();
         let ranges: Vec<_> = authors
             .into_iter()
             .flat_map(|author| [Source::Jm, Source::Pica].map(|source| (author.clone(), source)))
             .filter(|(author, source)| {
-                !only_unfinished
+                requested_ranges.as_ref().is_none_or(|requested| {
+                    requested.contains(&(author.clone(), storage_source(*source)))
+                }) && (!only_unfinished
                     || !snapshot.authors.iter().any(|range| {
                         range.author == *author
                             && range.source == storage_source(*source)
                             && range.state == DiscoveryRangeState::Complete
-                    })
+                    }))
             })
             .collect();
         if ranges.is_empty() {
@@ -1232,6 +1486,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             storage_warning_code: None,
         });
         let store = Arc::new(WorkbenchStore::open(&context.root).map_err(store_error)?);
+        let receipt_store = Arc::clone(&store);
+        let receipt_key = context.account_key.clone();
+        snapshot.last_successful_check =
+            tokio::task::spawn_blocking(move || receipt_store.read_successful_scan(&receipt_key))
+                .await
+                .map_err(|_| unavailable())?
+                .map_err(store_error)?;
         let previous_memory = {
             let mut memory = self.discovery.memory.lock().map_err(|_| unavailable())?;
             if memory.active {
@@ -1240,6 +1501,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             std::mem::replace(
                 &mut *memory,
                 DiscoveryMemory {
+                    record_scan_marker: requested_ranges.is_none(),
                     context: Some(context.clone()),
                     snapshot: Some(DiscoveryProgress::from(&snapshot)),
                     active: true,
@@ -1317,11 +1579,19 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             .snapshot
             .as_mut()
             .ok_or(AccountError::new("DISCOVERY_RUN_CHANGED"))?;
+        let committed_success = snapshot.last_check.as_ref().is_some_and(|summary| {
+            summary.id == run_id && summary.phase == DiscoveryCheckPhase::Complete
+        });
         let run = snapshot
             .run
             .as_mut()
             .filter(|run| run.id == run_id)
             .ok_or(AccountError::new("DISCOVERY_RUN_CHANGED"))?;
+        if committed_success {
+            let mut completed = run.clone();
+            completed.phase = DiscoveryPhase::Complete;
+            return Ok(completed);
+        }
         if run.phase != DiscoveryPhase::Checking {
             return Ok(run.clone());
         }
@@ -1391,10 +1661,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             self.discovery
                 .progress(run_id, author, source, page, true)?;
             let result = self
-                .query(
+                .query_unobserved(
                     source,
                     &scope.session_id,
-                    QueryKind::Search,
+                    QueryKind::Author,
                     query,
                     None,
                     page,
@@ -1523,14 +1793,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         self.discovery_commit(
             context,
             run_id,
-            store,
+            Arc::clone(&store),
             progress.revision,
             DiscoveryPagePatch {
                 account_key: context.account_key.clone(),
                 authors: vec![],
                 records: vec![],
                 retain_authors: None,
-                last_check: Some(summary),
+                last_check: Some(summary.clone()),
             },
             progress.record_count,
             progress.other_record_count,
@@ -1814,7 +2084,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     let mut other_record_count = state.other_record_count;
                     let mut confirmed_count = state.confirmed_count;
                     let mut added = 0usize;
-                    let works = response.items.into_iter().skip(accepted.skipped_leading_work);
+                    let works = response
+                        .items
+                        .into_iter()
+                        .skip(accepted.skipped_leading_work);
                     for work in works {
                         let verified = work.authors.iter().any(|name| name.trim() == author.trim());
                         let incoming = DiscoveryRecord {
@@ -1822,6 +2095,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                             matched_authors: vec![author.clone()],
                             author_verified: verified,
                             observed_at: now()?,
+                            metadata_detail_at: None,
                             scan_id: run_id.into(),
                             first_discovered_run_id: Some(run_id.into()),
                         };
@@ -2037,6 +2311,20 @@ fn clean_text(text: String) -> String {
 
 /// Stable metadata projection used when comparing a later source detail read.
 pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
+    let mut tags = inherit_content_tags(&work.tags, work.categories.as_deref().unwrap_or_default());
+    if work.source == Source::Jm
+        && work
+            .categories
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|label| workbench_sources::is_jm_english_category(label))
+        && !tags
+            .iter()
+            .any(|label| workbench_sources::is_jm_english_category(label))
+    {
+        tags.push("English Manga".into());
+    }
     DiscoveryWork {
         source: storage_source(work.source),
         work_id: work.work_id,
@@ -2048,8 +2336,7 @@ pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
             .filter(|author| !author.trim().is_empty())
             .collect(),
         description: work.description.map(clean_text),
-        tags: work
-            .tags
+        tags: tags
             .into_iter()
             .map(clean_text)
             .filter(|tag| !tag.trim().is_empty())
@@ -2062,7 +2349,29 @@ pub fn discovery_work_from_source(work: SourceWork) -> DiscoveryWork {
     }
 }
 
-fn merged_record(
+pub(crate) fn observation_record(
+    account_key: &str,
+    work: DiscoveryWork,
+    observed_at: u64,
+    metadata_detail_at: Option<u64>,
+) -> DiscoveryRecord {
+    let mut digest = Sha256::new();
+    digest.update(b"discovery-observation-v1\0");
+    digest.update(account_key.as_bytes());
+    digest.update(observed_at.to_be_bytes());
+    digest.update(work.work_id.as_bytes());
+    DiscoveryRecord {
+        work,
+        matched_authors: vec![],
+        author_verified: false,
+        observed_at,
+        metadata_detail_at,
+        scan_id: format!("{:x}", digest.finalize()),
+        first_discovered_run_id: None,
+    }
+}
+
+pub(crate) fn merged_record(
     existing: Option<&DiscoveryRecord>,
     mut incoming: DiscoveryRecord,
 ) -> DiscoveryRecord {
@@ -2072,8 +2381,57 @@ fn merged_record(
     }) {
         // None is meaningful: pre-feature records stay in the historical baseline.
         incoming.first_discovered_run_id = existing.first_discovered_run_id.clone();
-        let fresh_language_tags = retained_language_tags(&incoming.work.tags);
-        let tags = inherit_language_tags(&incoming.work.tags, &existing.work.tags);
+        let older = incoming.observed_at < existing.observed_at;
+        let preserve_detail = existing.metadata_detail_at.is_some_and(|saved| {
+            incoming
+                .metadata_detail_at
+                .is_none_or(|fresh| fresh < saved)
+        });
+        // Evidence rank and request observation time are separate. A slow old
+        // detail reply may enrich a list, but can never overwrite a newer detail;
+        // an abbreviated list cannot undo a previously verified detail credit.
+        if preserve_detail || (older && incoming.metadata_detail_at.is_none()) {
+            let incoming_tags = incoming.work.tags.clone();
+            let incoming_date = incoming.work.source_updated_at.clone();
+            incoming.work = existing.work.clone();
+            incoming.work.tags = inherit_content_tags(&existing.work.tags, &incoming_tags);
+            if !older && incoming_date.is_some() {
+                incoming.work.source_updated_at = incoming_date;
+            }
+        }
+        incoming.metadata_detail_at =
+            match (existing.metadata_detail_at, incoming.metadata_detail_at) {
+                (Some(saved), Some(fresh)) => Some(saved.max(fresh)),
+                (saved, fresh) => saved.or(fresh),
+            };
+        if older {
+            incoming.observed_at = existing.observed_at;
+            incoming.scan_id = existing.scan_id.clone();
+        }
+        let fresh_content_tags = retained_content_tags(&incoming.work.tags);
+        let mut tags = inherit_content_tags(&incoming.work.tags, &existing.work.tags);
+        if existing.work.source == workbench_storage::Source::Jm
+            && existing
+                .work
+                .tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
+            && !tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
+        {
+            tags.push("English Manga".into());
+        }
+        let mut compact_content_tags = retained_content_tags(&tags);
+        if tags
+            .iter()
+            .any(|tag| workbench_sources::is_jm_english_category(tag))
+            && !compact_content_tags
+                .iter()
+                .any(|tag| workbench_sources::is_jm_english_category(tag))
+        {
+            compact_content_tags.push("English Manga".into());
+        }
         let source_updated_at = incoming
             .work
             .source_updated_at
@@ -2090,14 +2448,18 @@ fn merged_record(
         // reuses the older work. Do not inherit unrelated historical tags.
         let original_tags = std::mem::replace(&mut incoming.work.tags, tags);
         if !incoming.work.is_valid() {
-            if fresh_language_tags.is_empty() {
+            if fresh_content_tags.is_empty()
+                && !compact_content_tags
+                    .iter()
+                    .any(|tag| workbench_sources::is_blocked_tag(tag))
+            {
                 // Optional inheritance can yield to the existing work budget.
                 incoming.work.tags = original_tags;
             } else {
                 // The missing-author fallback may carry a large old description.
-                // Keep fresh language evidence, including conflicts, rather than
-                // restoring an older single-language conclusion.
-                incoming.work.tags = fresh_language_tags;
+                // Keep fresh language and inherited content evidence rather
+                // than making a previously known blocked record visible again.
+                incoming.work.tags = compact_content_tags;
                 if !incoming.work.is_valid() {
                     incoming.work.description = None;
                 }
@@ -2114,13 +2476,14 @@ fn merged_record(
             }
         }
         // This legacy evidence flag remains strict; it is not a display filter.
-        incoming.author_verified = incoming.matched_authors.iter().all(|author| {
-            incoming
-                .work
-                .authors
-                .iter()
-                .any(|name| name.trim() == author.trim())
-        });
+        incoming.author_verified = !incoming.matched_authors.is_empty()
+            && incoming.matched_authors.iter().all(|author| {
+                incoming
+                    .work
+                    .authors
+                    .iter()
+                    .any(|name| name.trim() == author.trim())
+            });
     }
     incoming
 }
@@ -2198,29 +2561,174 @@ impl IncrementalBoundary {
 }
 
 #[derive(Default)]
-struct Traversal {
+pub(crate) struct Traversal {
     page: u64,
     total: Option<u64>,
     pages: Option<u64>,
     ids: HashSet<String>,
     head_ids: Vec<String>,
-    /// Effective source slots, excluding only verified JM boundary overlaps.
+    /// Effective source slots, excluding only verified JM overlaps/replays.
     record_count: usize,
     /// Every raw slot still consumes the unchanged request budget.
     raw_record_count: usize,
     last_jm_boundary: Option<(SourceWork, crate::JmSearchBoundaryItem)>,
+    recent_replay: RecentReplay,
+}
+
+#[derive(Default)]
+struct RecentReplay {
+    records: Vec<(SourceWork, crate::JmSearchBoundaryItem)>,
+    positions: HashMap<String, usize>,
+    pending: Option<RecentReplayCursor>,
+    full_pages: usize,
+}
+
+#[derive(Clone, Copy)]
+struct RecentReplayCursor {
+    next: usize,
+    tail: usize,
+}
+
+struct RecentReplayPage {
+    skipped: usize,
+    additions: Vec<(SourceWork, crate::JmSearchBoundaryItem)>,
+    pending: Option<RecentReplayCursor>,
+    full_pages: usize,
+}
+
+impl RecentReplay {
+    /// Native per-row evidence is deliberately unavailable after serialization.
+    /// Plan the entire page before either the common traversal or this history
+    /// changes. A replay must reach its frozen tail before any new suffix.
+    fn prepare(&self, page: &SourcePage) -> Result<RecentReplayPage> {
+        let invalid = || AccountError::new("DISCOVERY_PAGINATION_CHANGED");
+        let boundary = page.jm_search_boundary.as_ref().ok_or_else(invalid)?;
+        let proofs = boundary.recent_rows.as_ref().ok_or_else(invalid)?;
+        if !page.issues.is_empty()
+            || page.items.is_empty()
+            || page.record_count() > 1000
+            || page.pages.is_some()
+            || page.has_more.is_some()
+            || !crate::service::jm_search_boundary_is_valid(page)
+            || proofs.len() != page.items.len()
+            || boundary.first.as_ref() != proofs.first()
+            || boundary.last.as_ref() != proofs.last()
+            || proofs.iter().zip(&page.items).any(|(proof, work)| {
+                work.source != Source::Jm
+                    || proof.work_id != work.work_id
+                    || proof.fingerprint.len() != 64
+                    || !proof
+                        .fingerprint
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        {
+            return Err(invalid());
+        }
+        let mut cursor = self.pending.unwrap_or_else(|| RecentReplayCursor {
+            next: self
+                .positions
+                .get(&page.items[0].work_id)
+                .copied()
+                .unwrap_or(self.records.len()),
+            tail: self.records.len(),
+        });
+        let mut additions = vec![];
+        let mut incoming = HashSet::new();
+        let mut skipped = 0;
+        for (work, proof) in page.items.iter().zip(proofs) {
+            if let Some(position) = self.positions.get(&work.work_id) {
+                if !additions.is_empty()
+                    || cursor.next >= cursor.tail
+                    || *position != cursor.next
+                    || self
+                        .records
+                        .get(cursor.next)
+                        .is_none_or(|(saved, evidence)| saved != work || evidence != proof)
+                {
+                    return Err(invalid());
+                }
+                cursor.next += 1;
+                skipped += 1;
+            } else {
+                if cursor.next != cursor.tail || !incoming.insert(work.work_id.as_str()) {
+                    return Err(invalid());
+                }
+                additions.push((work.clone(), proof.clone()));
+            }
+        }
+        let full_pages = if additions.is_empty() {
+            self.full_pages + 1
+        } else {
+            0
+        };
+        if full_pages > 3 {
+            return Err(AccountError::new("RECENT_RANGE_INCOMPLETE"));
+        }
+        Ok(RecentReplayPage {
+            skipped,
+            // Even a replay ending exactly at the tail must show new progress
+            // before it may establish a successful bounded coverage window.
+            pending: additions.is_empty().then_some(cursor),
+            additions,
+            full_pages,
+        })
+    }
+
+    fn commit(&mut self, page: RecentReplayPage) {
+        self.pending = page.pending;
+        self.full_pages = page.full_pages;
+        for (work, proof) in page.additions {
+            self.positions
+                .insert(work.work_id.clone(), self.records.len());
+            self.records.push((work, proof));
+        }
+    }
 }
 
 #[derive(Debug)]
-struct TraversedPage {
-    complete: bool,
+pub(crate) struct TraversedPage {
+    pub(crate) complete: bool,
     /// The original page and issue positions stay intact. Every consumer uses
     /// this same filtered work view after the whole page has been validated.
-    skipped_leading_work: usize,
+    pub(crate) skipped_leading_work: usize,
 }
 
 impl Traversal {
-    fn append(&mut self, page: &SourcePage) -> Result<TraversedPage> {
+    pub(crate) fn append(&mut self, page: &SourcePage) -> Result<TraversedPage> {
+        self.append_with_total_policy(page, false, None)
+    }
+
+    pub(crate) fn append_recent(&mut self, page: &SourcePage) -> Result<TraversedPage> {
+        // JM's all-category recent endpoint reports 10,000 even while later
+        // pages keep returning new works. It is a listing ceiling, not proof
+        // that the source ended. Author/search traversal remains exact.
+        let capped_jm_total = page.total == Some(10_000)
+            && !page.items.is_empty()
+            && page.items.iter().all(|work| work.source == Source::Jm);
+        if capped_jm_total {
+            let replay = self.recent_replay.prepare(page)?;
+            let accepted = self.append_with_total_policy(page, true, Some(replay.skipped))?;
+            self.recent_replay.commit(replay);
+            Ok(accepted)
+        } else {
+            if !self.recent_replay.records.is_empty() {
+                return Err(AccountError::new("DISCOVERY_PAGINATION_CHANGED"));
+            }
+            self.append_with_total_policy(page, false, None)
+        }
+    }
+
+    pub(crate) fn recent_can_checkpoint(&self) -> bool {
+        self.recent_replay.pending.is_none()
+    }
+
+    fn append_with_total_policy(
+        &mut self,
+        page: &SourcePage,
+        capped_total: bool,
+        proven_recent_skip: Option<usize>,
+    ) -> Result<TraversedPage> {
         let invalid = || AccountError::new("DISCOVERY_PAGINATION_CHANGED");
         if page.page != self.page + 1
             || page.page > MAX_DISCOVERY_PAGES
@@ -2235,22 +2743,25 @@ impl Traversal {
             return Err(invalid());
         }
         let boundary_valid = crate::service::jm_search_boundary_is_valid(page);
-        let skipped_leading_work = usize::from(
-            self.page > 0
-                && self.total.is_some()
-                && boundary_valid
-                && self.last_jm_boundary.as_ref().is_some_and(|(prior, edge)| {
-                    page.items.first().is_some_and(|work| work == prior)
-                        && page
-                            .jm_search_boundary
-                            .as_ref()
-                            .and_then(|boundary| boundary.first.as_ref())
-                            == Some(edge)
-                }),
-        );
-        // An issue is not progress. A repeated singleton or a full repeated page
-        // must not advance pagination by consuming only the exception itself.
-        if skipped_leading_work > 0
+        let skipped_leading_work = proven_recent_skip.unwrap_or_else(|| {
+            usize::from(
+                self.page > 0
+                    && self.total.is_some()
+                    && boundary_valid
+                    && self.last_jm_boundary.as_ref().is_some_and(|(prior, edge)| {
+                        page.items.first().is_some_and(|work| work == prior)
+                            && page
+                                .jm_search_boundary
+                                .as_ref()
+                                .and_then(|boundary| boundary.first.as_ref())
+                                == Some(edge)
+                    }),
+            )
+        });
+        // Without native recent replay proof, a repeated singleton or a full
+        // repeated page cannot advance pagination using only the exception.
+        if proven_recent_skip.is_none()
+            && skipped_leading_work > 0
             && !page
                 .items
                 .iter()
@@ -2282,16 +2793,19 @@ impl Traversal {
         let terminal = page.pages.is_some_and(|pages| page.page == pages.max(1));
         let complete = page.has_more == Some(false)
             || (terminal && page.has_more != Some(true))
-            || page.total == Some(count as u64);
-        if page.total.is_some_and(|total| {
-            count as u64 > total
-                || ((page.has_more == Some(false) || terminal) && count as u64 != total)
-                || (page.has_more == Some(true) && count as u64 >= total)
-        }) || page.pages.is_some_and(|pages| {
-            page.page > pages.max(1)
-                || (complete && pages > page.page)
-                || (terminal && page.has_more == Some(true))
-        }) {
+            || (!capped_total && page.total == Some(count as u64));
+        if (!capped_total
+            && page.total.is_some_and(|total| {
+                count as u64 > total
+                    || ((page.has_more == Some(false) || terminal) && count as u64 != total)
+                    || (page.has_more == Some(true) && count as u64 >= total)
+            }))
+            || page.pages.is_some_and(|pages| {
+                page.page > pages.max(1)
+                    || (complete && pages > page.page)
+                    || (terminal && page.has_more == Some(true))
+            })
+        {
             return Err(invalid());
         }
         if !complete && (raw_count == MAX_DISCOVERY_RECORDS || page.page == MAX_DISCOVERY_PAGES) {

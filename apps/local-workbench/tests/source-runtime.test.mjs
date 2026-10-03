@@ -17,6 +17,57 @@ import {
 
 const scope = { source: "JM", sessionId: "synthetic-session" };
 
+test("cover IPC keeps a valid server delay without retaining unsafe native error data", async () => {
+  for (const retryAfterMs of [12000, -1, "12000", NaN]) {
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async () => {
+        throw {
+          code: "SOURCE_COVER_RATE_LIMITED",
+          retryAfterMs,
+          message: "private-header",
+        };
+      },
+    });
+    await assert.rejects(adapter.cover(scope, "12"), (error) => {
+      assert.equal(error.code, "SOURCE_COVER_RATE_LIMITED");
+      assert.equal(
+        error.retryAfterMs,
+        retryAfterMs === 12000 ? 12000 : undefined,
+      );
+      assert.doesNotMatch(JSON.stringify(error), /private-header/);
+      return true;
+    });
+  }
+});
+
+test("query timings are optional for old payloads and reject invalid native measurements", async () => {
+  let timing;
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async () => ({
+      ...scope,
+      items: [],
+      page: 1,
+      pages: 1,
+      total: 0,
+      hasMore: false,
+      folders: [],
+      ...(timing === undefined ? {} : { timing }),
+    }),
+  });
+  const query = { kind: "author", query: "Synthetic", page: 1, folderId: null };
+  assert.equal((await adapter.query(scope, query)).timing, undefined);
+  timing = { queueMs: 12, sourceOperationMs: 40, localCommitMs: 3 };
+  assert.deepEqual((await adapter.query(scope, query)).timing, timing);
+  for (const invalid of [-1, NaN, "40"]) {
+    timing = { queueMs: 0, sourceOperationMs: invalid, localCommitMs: 0 };
+    await assert.rejects(adapter.query(scope, query), {
+      code: "INVALID_RESPONSE",
+    });
+  }
+});
+
 test("author policy IPC preserves original query spellings and validates the exact source and author", async () => {
   const calls = [];
   const policy = {
@@ -549,6 +600,26 @@ test("favorite writes require matching identity and read-back confirmation of th
     },
   });
   assert.equal((await adapter.favorite(scope, "123", true)).verified, true);
+});
+
+test("only explicit cover retries ask native code to refresh metadata", async () => {
+  const calls = [];
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push({ command, args });
+      return { ...scope, workId: "123", dataUrl: null };
+    },
+  });
+  await adapter.cover(scope, "123");
+  await adapter.cover(scope, "123", true);
+  assert.deepEqual(
+    calls.map(({ command, args }) => [command, args.refreshMetadata]),
+    [
+      ["source_cover", false],
+      ["source_cover", true],
+    ],
+  );
 });
 
 test("only data images or null leave the native cover adapter", async () => {

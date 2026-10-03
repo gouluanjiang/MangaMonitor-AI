@@ -45,7 +45,13 @@ export function createInventoryMatcher(
     const download = registered.get(work.source + ":" + work.workId);
     const item = download && entries.get(download.libraryEntryId);
     const items = item ? [item] : [];
-    if (!download || download.localFiles === "missing")
+    if (item?.errorCode === "LIBRARY_RECYCLE_RESULT_UNCERTAIN")
+      return { kind: "unknown", items };
+    if (
+      item?.errorCode === "LIBRARY_RECYCLED" ||
+      !download ||
+      download.localFiles === "missing"
+    )
       return { kind: "missing", items: [] };
     return {
       kind: download.localFiles === "present" ? "owned" : "unknown",

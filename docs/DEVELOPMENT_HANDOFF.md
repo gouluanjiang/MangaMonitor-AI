@@ -1,6 +1,213 @@
 # Current development handoff
 
-Updated 2026-09-29. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
+## 1.0.2 formal release closure (2026-10-03)
+
+The user has explicitly authorized merging, publishing and replacing the desktop
+shortcut installation with the formal build. Release work is isolated on
+`codex/release-1.0.2-20261003`, starting at
+`8cb85a67dafdb1c1850bb50ae81fd7f2414ec561`; the original development checkouts
+remain unchanged. This includes the cumulative PR #23–#27 application changes.
+Only version metadata and delivery documentation change in release preparation.
+See [the release record](RELEASE_1.0.2_2026-10-03.md) for gates and actual evidence;
+preparation is not a completed release or installation.
+
+The exact `068b66b` candidate was installed by explicit user authorization on
+2026-10-03. The generated validation files have subsequently been moved outside
+the real library, and only the identified test registrations were removed.
+File/document integrity evidence is private; the cleanup UI recheck was stopped
+by the user and is not counted as UI acceptance.
+
+The final local matrix is 28 PASS, 0 FAIL, 0 BLOCKED, 8 WAIVED, 1 UNTESTED.
+R05/D02/P01/P02/P03/P04/B03/B05 were explicitly waived; do not restart them.
+B06 remains the user's future natural-update experience. LOCAL-03 is unresolved,
+not repaired by an unchanged-SHA successful retry. Historical sections below
+describe their original dates and no longer override this release authority.
+
+## Windows local follow-up — recycle rejection repair (2026-10-03)
+
+The authorized local follow-up fixes stale recent-card metadata after opening
+details and adds test-only Windows fault probes. See
+[the follow-up contract](WINDOWS_LOCAL_VALIDATION_FOLLOWUP_2026-10-02.md).
+It is isolated on `codex/windows-metadata-validation-20261002`, based on the
+cloud handoff below. The metadata fix passed CI and targeted exact-frontend
+retests at `161348698ce746ce719420b65a635676d4eb6175`; that exact Windows
+candidate was also used for the authorized native checks. The cumulative local
+matrix is 28 passed, 8 not fully covered, and 1 natural-update notification case
+still requiring user experience. Evidence remains revision- and layer-qualified;
+this is not 37 native passes on one candidate.
+
+Native validation found LOCAL-02: a reader-busy recycle rejection incorrectly
+invalidated every displayed library status. The user authorized a narrow repair.
+Pre-operation busy/unsupported refusals now report through the existing file-action
+message and retain inventory readiness. Unknown failures and uncertain recycle
+outcomes remain conservative; actual inventory errors also make the counts and
+filters agree with the pending-verification cards. Synthetic controller/browser
+regressions were added. Candidate
+`068b66b9ee0a9684472318af10bb60b08384e443` passed baseline, frontend (362 logic /
+269 browser, frontend attempt 2) and Windows desktop CI. Its manifest, all eight
+payload hashes and runtime source revision were verified before the targeted
+native retest. On 2026-10-03 the generated ZIP passed two occupied-file refusals,
+available-filter and detail consistency, reader-close recovery, and cancellation
+of the native recycle confirmation. File hashes and protected library records
+remained intact. No deletion was confirmed in this retest. See the follow-up
+contract for candidate hashes, run links and remaining limitations.
+
+The first frontend attempt also recorded LOCAL-03: an existing recent-feed test
+observed scrollTop 15 instead of 0 after cold reload. The unchanged-SHA retry
+passed, without relaxing the assertion. Its trace is retained; the root cause
+is unresolved and must not be reported as repaired. The cumulative 28/8/1 matrix
+still retains each case's actual revision and test layer.
+
+No merge, release or shortcut replacement has occurred. The original local
+development checkout is unchanged. No further test-isolation application code
+or test-only production bypass is authorized by this repair.
+
+## Cloud long regression and measured fixes — candidate for local acceptance (2026-10-02)
+
+Use [the complete long-regression report](LONG_REGRESSION_2026-10-02.md) and
+[draft PR #26](https://github.com/gouluanjiang/MangaMonitor-AI/pull/26) for this
+batch. Its baseline is `9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827`, which contains
+PR #24/#25 and differs from application/test `19b50a4` only in delivery docs.
+Remote `main` remains older. Work is isolated on `codex/long-regression-20261002`;
+PRs #24, #25 and #26 are drafts and unmerged.
+
+The exact application candidate is
+`1cba4b81eaf439de9d00c47a42aeb11027b1e1fa` (`1.0.2-rc.3`). Baseline, frontend
+(356 logic / 268 browser), and Windows desktop CI all passed on that SHA. The
+[Windows candidate](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36986184306/artifacts/11218078107)
+contains installer `MangaMonitor Dev_1.0.2-rc.3_x64-setup.exe`, SHA-256
+`08c1ebf132672781719618f097bcd1c68deee9c3d5b123eedc7e211f531a3437`.
+The report gives all executable/archive hashes and source/config/manifest proof.
+Later documentation/evidence commits do not replace this candidate.
+
+The original same-process four-hour UI and parallel native-storage baselines
+completed before application edits. Three measured fixes release closed author
+tab positions, avoid unrelated large-list filter/sort work, and reuse the
+existing exact-byte cache for one observation document. Expected behavior:
+open/hidden tabs retain position; source order and explicit-label filtering stay
+the same; fresh data and CAS/atomic-write protection remain; closed tabs no
+longer retain work-key arrays. The observation cache reduces the measured large
+detail commit from 99.17 to 66.38 ms with a measured peak-RSS cost of about 66 MiB
+in the diagnostic. Whole-program memory growth is not declared fully resolved.
+
+All media/files/accounts are generated mocks or isolated CI fixtures. No real
+library, real credentials, source pressure, real manga download/delete, security
+change, merge, release or user installation occurred. Windows CI tested native
+WebView/restart, generated-file recycle and isolated silent installation, but
+the candidate is **not installed locally**. Physical reader close/media use,
+Explorer selection, interactive/historical upgrade, multi-hour Windows resource
+behavior and real future special-follow notifications remain local acceptance
+items. Per-launch fixed new badges, special unread and manual scan markers keep
+their separate meanings; synthetic success does not grant user acceptance.
+
+
+## Library and browsing follow-ups — delivered for acceptance (2026-10-01)
+
+Application/test revision `19b50a4` on `codex/library-browse-followups` passed
+baseline, 355 logic / 268 browser cases, Windows native IPC/Clippy and isolated
+installer/WebView/restart/data-preservation checks. Draft PR #25 is stacked on
+#24 and remains unmerged. See [this batch contract](LIBRARY_BROWSING_FOLLOWUPS_2026-10-01.md)
+for run links, exact candidate hash, compatibility and acceptance steps.
+
+The user resumed after a Codex restart and added naturally wrapping author tabs.
+The delivered batch includes history covers, five-action local menus with
+confirmed recoverable recycling, detail special follow, combined recent feeds,
+and independent previous-browsing new badges. No overall UI redesign, full
+author scan or real manga download/deletion was used in verification.
+
+After fresh permission to close the current windows, the hash-verified candidate
+updated the existing Dev desktop entry. Bounded native checks confirmed startup,
+history covers, five-action menu/cancel, combined source browsing/position and
+first-use baselines. Existing protected records remained byte-identical. The
+main window is open. User acceptance, real special-follow future updates, and
+natural browse-new changes remain pending; do not mark these accepted based on
+synthetic CI. No merge or public release was performed. Existing document formats
+remain; optional per-account/source/surface sidecars are independent of special
+unread and successful scan markers.
+
+## Download tag whitespace compatibility (2026-10-01)
+
+After the diagnostic-only candidate a0e868a was installed on the user's
+explicit request, the user approved a generic fix for tag-control rejection.
+New download preparation normalizes whitespace controls in tags to word
+separators, checks the original character bounds before trimming, and keeps
+non-whitespace controls rejected. Strict stored-document validation, existing
+record bytes and task bindings remain unchanged; no schema migration is needed.
+Both single and batch preparation use the same service boundary. Tests use
+synthetic metadata and isolated ledgers only, without source requests or media
+execution. Source `0fdc8fc` passed its CI and exact-candidate installation; the
+user explicitly accepted the correction. That acceptance is separate from the
+new library/browsing batch.
+The details are in [the metadata contract](DOWNLOAD_METADATA_DIAGNOSTICS_2026-10-01.md).
+Keep draft PR #24 unmerged and do not perform a real manga download for verification.
+
+## Synthetic download metadata diagnostics (2026-10-01)
+
+The user approved generic validation, error classification and diagnostic work
+with synthetic data only. See [the scoped change](DOWNLOAD_METADATA_DIAGNOSTICS_2026-10-01.md).
+The implementation preserves the existing admission rules and all persisted
+formats, adds redacted field-specific preparation errors, and retains at most
+20 preparation diagnostics for the current process. It does not normalize
+rejected metadata, request real source data or recover a particular work.
+The exact checked revision and current CI evidence for this follow-up are
+tracked in [draft PR #24](https://github.com/gouluanjiang/MangaMonitor-AI/pull/24).
+Browser discovery explicitly includes the diagnostic-panel regressions. Keep
+the draft unmerged; synthetic verification does not establish live acceptance
+or authorize installing against the real profile.
+
+## Active author workspace batch (2026-10-01)
+
+The user approved six improvements in five sequential stages; see
+[the implementation contract](AUTHOR_WORKSPACE_2026-10-01.md). Work is on
+`codex/author-workspace-improvements`, based on the already CI-verified PR #23
+head `2f39585`. Do not replace the outstanding recent-list repair or merge/release
+this batch. Cross-source identical full author names reuse a runtime search tab
+by explicit user choice; this is not author identity or ownership consolidation.
+
+All five implementation stages are now present as separate commits: retained
+author tabs/progressive search/timing, special baselines and unread updates,
+bounded cover retries, deliberate viewing history, and successful manual scan
+markers. See the batch contract's engineering checkpoint for exact CI evidence.
+Early native stages passed Windows CI. The controlled, already-built-artifact
+comparison measured median first visible results of 3,057.5 → 185.2 ms and
+complete visible results of 3,057.5 → 1,481.7 ms with the same four synthetic
+source requests; this is not a real-website measurement. Combined revision
+`e49c1ed` passed baseline, 323 logic / 251 browser cases and Windows checks,
+including the corrected clipped-row anchor boundary. Exact-candidate native
+checks preserved sessions, library state, independent tabs, history semantics,
+and recent-feed positions; protected data hashes remained unchanged.
+
+Native timings exposed repeated large-catalog parsing as the remaining search
+bottleneck. The follow-up shares a verified immutable checkpoint parse per root,
+still checking disk bytes and revisions on every reuse, and avoids whole-pool
+replay before returning an author's known observations. It also measures actual
+card viewport intersection, including virtual row replacement. No stored format
+or author-attribution rule changes. Final application revision `4b18417` passed
+baseline `36839431821`, UI `36839431796` (323 logic / 251 browser cases), and
+Windows `36839431921`. Its hash-verified candidate passed bounded native cold
+startup/history/session/position checks. The same real-profile author query
+improved from 13,897 to 6,182 ms for first records and from 58,023 to 20,572 ms
+for completion, retaining result and ownership counts; live network conditions
+were not controlled. Protected records stayed byte-identical. Formal install
+and shortcuts remain unchanged. Draft PR #24 is unmerged; user acceptance and
+public release are separate. Future special updates, natural cover outages and
+later manual scan markers have synthetic evidence and still need real usage.
+
+Updated 2026-10-02. This is the continuation entry point. Read [project status](PROJECT_STATUS.md) for current product scope and [the documentation index](README.md) for supporting contracts. Historical plans do not restore cancelled features or grant execution authority.
+
+## Current maintenance batch
+
+The user authorized the [independently reviewed maintenance fixes](MAINTENANCE_AUDIT_2026-09-30.md) and subsequently rejected the latency/failures of proactive recent-feed label verification. The accepted replacement uses existing explicit tags only: unknown works display and remain operable immediately, no filtering detail requests or verification placeholders, natural metadata updates filter lists without interrupting an open reader. JM female-category filtering remains. Version `1.0.2-rc.2` carries this correction; it is a candidate, not a release declaration.
+
+Library, download and author-catalog format changes were explicitly approved: old data migrates in memory only on read; ordinary CAS/atomic writes use version 2; old programs reject unsupported formats. The user later removed the source/isolated-validation-only restriction and authorized overnight fixes, native verification and routine useful optimizations. Do not launch an older app against newly saved data. Live inspection confirmed an outdated shortcut caused `UNSUPPORTED_SCHEMA`; a compatible candidate reads the existing catalog correctly. Preserve backed-up records and verify the final shortcut target and cold restart. Application revision `d50e91204f4c38827d8427600aec5950633aaff8` passed its engineering checks, but its strict label-gating experience was rejected. New rc.2 changes require fresh CI and native evidence. No public release, manga deletion or unrequested download is part of the overnight work.
+
+Overnight scope and validation are tracked in [the performance follow-up](NIGHT_MAINTENANCE_2026-10-01.md). The follow-up `1.0.2-rc.3` adds per-root in-process storage queuing and releases account guards during local context reads after rc.2 native browsing exposed intermittent supplement/history warnings. Source `d12056c` passed UI CI (308 logic and 242 browser tests), baseline and desktop CI. Native JM/Pica/catalog checks, manifest verification, protected-record comparison and actual desktop-shortcut cold startup passed; both Dev launchers select the compatible candidate. The overnight heartbeat is paused. This is agent verification, not user acceptance or public release.
+
+The user then reported recent-feed flicker and authorized Computer Use diagnosis and repair. Native observation reproduced cards alternating between two positions with no scroll input. The uniform virtual grid repeatedly resampled the first mounted row as its global stride; unequal row heights could change which row was measured and cause a feedback loop. The current correction observes all mounted rows, keeps a stable maximum stride for the current width and preserves the visible anchor when measurements grow. A real resize may shrink/recompute the stride. New deep-history stability/growth/resize regressions and the shared-grid suites require CI and native verification. Do not start a full source scan for this layout fix. The user explicitly requested no further quota checks during this follow-up.
+
+Flicker correction `b3262f1` passed baseline/desktop/UI CI (308 logic and 244 browser tests), candidate integrity, protected-record comparison, bounded native JM/Pica browsing and shortcut cold-start checks. User acceptance remains separate. A subsequent read-only investigation reproduced another issue: merging later live pages ahead of retained history moved a saved work to an earlier location without any filtering change. The user authorized its repair on 2026-10-01, keeping AI filtering unchanged. The reader now owns the displayed order separately from pagination and metadata. Automatic pages/history enrich records in place and append new identities; a successful explicit refresh may rebuild the known source order. Failures preserve the previous list, and late history must not cause a second reorder. The affected synthetic regressions and candidate delivery require fresh verification; do not repeat the full author campaign or claim the user's unrecorded disappearance was conclusively caused by this reproduced movement.
+
+The earlier author coverage campaign has completed its private checks: all 28 known works, both sources for the 826 followed authors, continuous recent-feed supplementation and residual evidence review. This records that bounded campaign, not a guarantee about every work on either website. It does not require another full scan for unrelated maintenance.
 
 ## Delivered version
 
@@ -16,15 +223,25 @@ See the [1.0.1 release record](RELEASE_1.0.1_2026-09-29.md) for CI links, hashes
 
 ## Known boundary and future work
 
+2026-09-29 acceptance follow-up: the user accepted most of the browsing/download candidate and requested five targeted corrections: an opaque selection dock outside the scrolling canvas, full context-menu titles, Pica's explicit BL category variants, explicit AI-label filtering, and direct failed-cover retries including stale metadata. See [the batch contract](BROWSING_DOWNLOAD_EXPERIENCE_2026-09-29.md). These corrections require their own CI and candidate acceptance. General typography/button/UI redesign is deferred for discussion after this batch; do not expand this fix into that redesign.
+
 One source record still lacks usable metadata. Its scope remains explicitly partial while valid results remain available; this is not an unfinished product feature or a promise to recover missing website data. Source availability, unencountered failures and future website changes are not guaranteed by the completed acceptance.
 
 No agreed V1 development item remains open. Continue with actual maintenance issues or newly approved requirements. The in-app updater is for later discussion; cloud monitoring stays disabled and `production_enabled=false` is unchanged. Do not restart cancelled matching, phone-list, classification-booklist or other historical proposals. The reader and integrated UI have already shipped.
 
+## Implemented experience batch awaiting acceptance
+
+The user approved the [browsing and download experience plan](BROWSING_DOWNLOAD_EXPERIENCE_2026-09-29.md). Implementation is on `codex/browsing-download-experience` from `01274ab1`; [draft PR #23](https://github.com/gouluanjiang/MangaMonitor-AI/pull/23) records the current CI result and candidate revision. User acceptance remains pending. All manga browsing views preserve position for this run, including details and downloaded lists. This is a new maintenance batch, not part of the already accepted 1.0.1 payload. Do not merge, publish or replace the installed formal payload merely because the synthetic checks pass.
+
+For this batch, the user explicitly removed the second confirmation for both single and batch downloads. Clicking download authorizes those selected works; source/session/root/revision checks, no-overwrite behavior, and download history remain. This current instruction supersedes historical requirements to show another download confirmation. No release or replacement of installed 1.0.1 has occurred.
+
 ## Continuing development
+
+The user additionally authorized the [author catalog coverage repair](AUTHOR_CATALOG_COVERAGE_2026-09-29.md), followed by individual known-gap retests, saved-evidence cross-checks, both-source full checks of the current following list, continuous recent-feed supplementation and investigation of newly found discrepancies. The privately maintained acceptance list contains 28 works (the user's initial “8” was explicitly corrected to 28). That bounded verification campaign is complete as recorded above; user acceptance remains pending. Metadata observations may supplement the author catalog, but must not change ownership, download history or source pagination baselines. Real plans, account metadata and results stay outside Git.
 
 - Use the canonical `MangaMonitor-AI` checkout and refresh current `main`, status and applicable instructions before editing. Retired dated worktrees and historical EXE paths are not continuation targets. The currently installed app remains the reviewed formal version.
 - Read [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md). Formal suites/builds run in CI; do not duplicate them locally or trigger full source scans for documentation maintenance.
-- Preserve local data identity, verified ownership, source uncertainty, download confirmation and file-operation authority. Apply the [download thaw gate](DOWNLOAD_EXECUTOR_THAW_GATE.md) when changing download behavior or authority.
+- Preserve local data identity, verified ownership, source uncertainty and file-operation authority; apply the current download-click authorization described above. Apply the [download thaw gate](DOWNLOAD_EXECUTOR_THAW_GATE.md) when changing download behavior or authority.
 - Private account, book, library, installation and cleanup evidence stays outside Git. Local cleanup receipts are not product payloads or public documentation.
 - Repository organization changes documentation and navigation only. Do not rebuild, republish or replace 1.0.1 assets for these text changes.
 

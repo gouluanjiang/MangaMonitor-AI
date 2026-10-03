@@ -1,4 +1,10 @@
-import { useReaderAccess } from "./reader-access.tsx";
+import { CoverInteraction, useReaderAccess } from "./reader-access.tsx";
+import { recordLibraryVisit } from "./work-visits.ts";
+import { useCoverRetry } from "./cover-retry.tsx";
+import { AuthorLinks } from "./AuthorLinks.tsx";
+import { useTagSearch } from "./TagSearch.tsx";
+import { browseScope } from "./browse-session.ts";
+import { useBrowseSession, useBrowseSessionState } from "./useBrowseSession.ts";
 import type { ReactNode } from "react";
 import {
   useCallback,
@@ -7,6 +13,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   LibraryAdapter,
@@ -14,7 +21,7 @@ import type {
   LibrarySnapshot,
 } from "./library-types.ts";
 import { LibraryController, libraryErrorMessage } from "./library-runtime.ts";
-import { filterLibraryItems, normalizeLibraryText } from "./library-model.ts";
+import { searchLibraryItems, sortLibraryItems } from "./library-model.ts";
 import {
   formatTimestamp,
   formatWorkDate,
@@ -33,6 +40,14 @@ import type { SourceWork } from "./source-types.ts";
 import type { SourceGridHandle, GridAnchor } from "./VirtualSourceGrid.tsx";
 import { VirtualSourceGrid } from "./VirtualSourceGrid.tsx";
 import { SourceLanguageBadge } from "./SourceLanguageBadge.tsx";
+import {
+  getContentFilterRevision,
+  isBlockedTagged,
+  isJmFemaleTag,
+  isContentHidden,
+  rememberContentWork,
+  subscribeContentFilter,
+} from "./content-filter.ts";
 import "./library-workbench.css";
 import {
   libraryFilterLabels,
@@ -63,7 +78,7 @@ export function useLibrary(adapter: LibraryAdapter, enabled: boolean) {
   return { ...state, controller };
 }
 export type LibraryState = ReturnType<typeof useLibrary>;
-function LibraryCover({
+export function LibraryCover({
   adapter,
   snapshot,
   item,
@@ -77,6 +92,15 @@ function LibraryCover({
   const [result, setResult] = useState<LibraryCoverResult>(),
     [visible, setVisible] = useState(false),
     [retry, setRetry] = useState(0);
+  const retryCover = useCallback(() => {
+    if (!snapshot.rootId) return;
+    cache.retry(snapshot.rootId, snapshot.generation, item.id);
+    setResult(undefined);
+    setRetry((value) => value + 1);
+  }, [cache, snapshot.rootId, snapshot.generation, item.id]);
+  const retryGesture = useCoverRetry(
+    result?.status === "error" ? retryCover : null,
+  );
   useEffect(() => {
     let disposed = false,
       shown = false,
@@ -182,21 +206,23 @@ function LibraryCover({
                   : "封面未读取"}
         </span>
       )}
-      {result?.status === "error" && (
-        <button
-          type="button"
-          className="library-cover-retry"
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (snapshot.rootId)
-              cache.retry(snapshot.rootId, snapshot.generation, item.id);
-            setRetry((value) => value + 1);
-          }}
-        >
-          重试封面
-        </button>
-      )}
+      {result?.status === "error" &&
+        !retryGesture.selectionMode &&
+        (retryGesture.managed ? (
+          <span className="cover-retry-hint">点击封面重试</span>
+        ) : (
+          <button
+            type="button"
+            className="library-cover-retry"
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              retryCover();
+            }}
+          >
+            重试封面
+          </button>
+        ))}
     </div>
   );
 }
@@ -286,7 +312,12 @@ export function LibraryControls({
               : error || snapshot.phase === "error"
                 ? "读取未完成"
                 : "尚未读取"}{" "}
-        · {snapshot.items.length} 个电脑作品
+        ·{" "}
+        {
+          snapshot.items.filter((item) => item.errorCode !== "LIBRARY_RECYCLED")
+            .length
+        }{" "}
+        个电脑作品
         {snapshot.skipped > 0 ? ` · 跳过 ${snapshot.skipped} 项` : ""}
         {snapshot.freshness === "cached" && !compact
           ? " · 上次目录记录，可重新读取以发现增删"
@@ -340,6 +371,7 @@ function LibraryDetail({
   onBack(): void;
 }) {
   const readerAccess = useReaderAccess();
+  const searchTag = useTagSearch();
   const [opening, setOpening] = useState(false);
   const [locationMessage, setLocationMessage] = useState("");
   const request = useRef(0);
@@ -397,14 +429,22 @@ function LibraryDetail({
               : item.format.toUpperCase()}
           </p>
           <h1>{item.title}</h1>
-          <p>
-            {item.authors.length ? item.authors.join("、") : "作者资料未取得"}
-          </p>
+          <AuthorLinks authors={item.authors} />
           <div className="source-tags">
             <SourceLanguageBadge tags={item.tags} localVersion inline />
-            {item.tags.map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
+            {item.tags.map((tag) =>
+              item.sourceRef && searchTag ? (
+                <button
+                  className="tag-search"
+                  key={tag}
+                  onClick={() => searchTag(item.sourceRef!.source, tag)}
+                >
+                  {tag}
+                </button>
+              ) : (
+                <span key={tag}>{tag}</span>
+              ),
+            )}
           </div>
           <dl className="source-facts">
             <div>
@@ -505,6 +545,7 @@ export function LibraryWorkbench({
   externalEntryId,
   requestKey = 0,
   searchControl,
+  onNotice,
 }: {
   library: LibraryState;
   active: boolean;
@@ -516,21 +557,15 @@ export function LibraryWorkbench({
   externalEntryId?: string | null;
   requestKey?: number;
   searchControl?: ReactNode;
+  onNotice?(message: string): void;
 }) {
-  const readerAccess = useReaderAccess();
-  const choose = (item: LibraryItem) => {
-    const { rootId, generation } = library.snapshot;
-    if (!rootId) return open(item);
-    readerAccess.choose(
-      { kind: "library", rootId, generation, entryId: item.id },
-      item.title,
-      () => open(item),
-    );
-  };
   const [sort, setSort] = useState<LibrarySort>(() =>
       readSortPreference("library", librarySorts, "added-desc"),
     ),
-    [filter, setFilter] = useState<LibraryFilter>("all"),
+    [filter, setFilter] = useBrowseSessionState<LibraryFilter>(
+      browseScope("library-filter", library.snapshot.rootId),
+      "all",
+    ),
     [detailId, setDetailId] = useState<string | null>(null),
     [densitySaving, setDensitySaving] = useState(false);
   const grid = useRef<SourceGridHandle>(null),
@@ -539,29 +574,108 @@ export function LibraryWorkbench({
     densityAnchor = useRef<{
       density: 5 | 7 | 9;
       anchor: GridAnchor | null;
-    } | null>(null),
-    scroll = useRef(0),
-    activeRef = useRef(active);
-  activeRef.current = active;
+    } | null>(null);
+  const fileAction = useRef(false);
+  const [fileMessage, setFileMessage] = useState("");
+  const reportFileAction = (message: string) => {
+    setFileMessage(message);
+    onNotice?.(message);
+  };
+  const contentRevision = useSyncExternalStore(
+    subscribeContentFilter,
+    getContentFilterRevision,
+    getContentFilterRevision,
+  );
+  useEffect(() => {
+    for (const item of library.snapshot.items) {
+      if (!isBlockedTagged(item.tags)) continue;
+      if (item.sourceRef)
+        rememberContentWork({ ...item.sourceRef, tags: item.tags });
+      for (const link of item.links ?? [])
+        rememberContentWork({ ...link.reference, tags: item.tags });
+    }
+  }, [library.snapshot.items]);
+  const visibleItems = useMemo(
+    () =>
+      library.snapshot.items.filter(
+        (item) =>
+          item.errorCode !== "LIBRARY_RECYCLED" &&
+          !isBlockedTagged(item.tags) &&
+          !(
+            (item.sourceRef?.source === "JM" ||
+              (item.links ?? []).some(
+                (link) => link.reference.source === "JM",
+              )) &&
+            item.tags.some(isJmFemaleTag)
+          ) &&
+          !(item.sourceRef && isContentHidden(item.sourceRef)) &&
+          !(item.links ?? []).some((link) => isContentHidden(link.reference)),
+      ),
+    [library.snapshot.items, contentRevision],
+  );
+  const inventoryFailed = Boolean(library.error);
+  const searched = useMemo(() => {
+    const result = searchLibraryItems(visibleItems, query);
+    return inventoryFailed
+      ? {
+          ...result,
+          counts: {
+            all: result.items.length,
+            owned: 0,
+            review: result.items.length,
+          },
+        }
+      : result;
+  }, [visibleItems, query, inventoryFailed]);
   const items = useMemo(
-    () => filterLibraryItems(library.snapshot.items, query, sort, filter),
-    [library.snapshot.items, query, sort, filter],
+    () =>
+      sortLibraryItems(
+        searched.items.filter((item) =>
+          inventoryFailed
+            ? filter !== "owned"
+            : libraryFilterMatches(item, filter),
+        ),
+        sort,
+      ),
+    [searched, sort, filter, inventoryFailed],
   );
-  const detail = library.snapshot.items.find((item) => item.id === detailId);
-  const searchedItems = useMemo(
-    () => filterLibraryItems(library.snapshot.items, query),
-    [library.snapshot.items, query],
-  );
+  const detail = visibleItems.find((item) => item.id === detailId);
+  const itemKeys = useMemo(() => items.map((item) => item.id), [items]);
+  useBrowseSession({
+    scope: browseScope("library", library.snapshot.rootId, query, filter, sort),
+    active,
+    enabled: !detail,
+    root,
+    grid,
+    itemKeys,
+  });
+  useBrowseSession({
+    scope: browseScope(
+      "library-detail",
+      library.snapshot.rootId,
+      detail?.id ?? null,
+    ),
+    active,
+    enabled: Boolean(detail),
+    root,
+    itemKeys: [],
+  });
   useEffect(() => {
     setDetailId(null);
   }, [query, library.snapshot.rootId]);
   useEffect(() => {
-    if (!externalWork || requestKey === 0) return;
+    if ((!externalWork && !externalEntryId) || requestKey === 0) return;
     setFilter("all");
     const exact = library.snapshot.items.find(
       (item) => item.id === externalEntryId,
     );
     setDetailId(exact?.id ?? null);
+    if (exact && library.snapshot.rootId)
+      recordLibraryVisit({
+        rootId: library.snapshot.rootId,
+        entryId: exact.id,
+        title: exact.title || exact.fileName,
+      });
   }, [requestKey]);
   useLayoutEffect(() => {
     const pending = densityAnchor.current;
@@ -572,28 +686,59 @@ export function LibraryWorkbench({
       densityAnchor.current = null;
     }
   }, [density]);
-  useLayoutEffect(() => {
-    const main = root.current?.closest("main");
-    if (!main) return;
-    const remember = () => {
-      if (activeRef.current) scroll.current = main.scrollTop;
-    };
-    main.addEventListener("scroll", remember, { passive: true });
-    return () => main.removeEventListener("scroll", remember);
-  }, []);
-  useLayoutEffect(() => {
-    if (active) {
-      const frame = requestAnimationFrame(() => {
-        const main = root.current?.closest("main");
-        if (main) main.scrollTop = scroll.current;
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [active]);
   function open(item: LibraryItem) {
     anchor.current = grid.current?.capture(item.id) ?? null;
     setDetailId(item.id);
+    if (library.snapshot.rootId)
+      recordLibraryVisit({
+        rootId: library.snapshot.rootId,
+        entryId: item.id,
+        title: item.title || item.fileName,
+      });
     root.current?.closest("main")?.scrollTo(0, 0);
+  }
+  async function fileOperation(
+    item: LibraryItem,
+    action: "reveal" | "recycle",
+    expected: LibrarySnapshot,
+  ) {
+    if (fileAction.current || !expected.rootId) return;
+    fileAction.current = true;
+    setFileMessage("");
+    const savedAnchor = grid.current?.capture() ?? null;
+    try {
+      if (action === "reveal") {
+        await library.controller.adapter.reveal(
+          expected.rootId,
+          expected.generation,
+          item.id,
+        );
+      } else {
+        const result = await library.controller.recycle(item.id, expected);
+        if (result) {
+          reportFileAction(
+            result.errorCode
+              ? libraryErrorMessage(result.errorCode)
+              : result.recycled
+                ? "漫画已移到回收站，入库状态已更新；恢复文件后重新读取漫画库即可。"
+                : "漫画未移到回收站，请核对文件后重试。",
+          );
+        }
+      }
+    } catch (cause) {
+      reportFileAction(libraryErrorMessage(cause));
+    } finally {
+      fileAction.current = false;
+      requestAnimationFrame(() => {
+        const current = library.controller.getState().snapshot;
+        if (
+          !root.current?.hidden &&
+          current.rootId === expected.rootId &&
+          current.generation === expected.generation
+        )
+          grid.current?.restore(savedAnchor);
+      });
+    }
   }
   function back() {
     setDetailId(null);
@@ -606,6 +751,15 @@ export function LibraryWorkbench({
       className="library-workbench"
       data-testid="library-workbench"
     >
+      {fileMessage && (
+        <p
+          className="source-notice"
+          role="status"
+          data-testid="library-file-message"
+        >
+          {fileMessage}
+        </p>
+      )}
       {detail ? (
         <LibraryDetail
           key={detail.id}
@@ -671,13 +825,7 @@ export function LibraryWorkbench({
                     }}
                   >
                     {libraryFilterLabels[value]}{" "}
-                    <span>
-                      {
-                        searchedItems.filter((item) =>
-                          libraryFilterMatches(item, value),
-                        ).length
-                      }
-                    </span>
+                    <span>{searched.counts[value]}</span>
                   </button>
                 ),
               )}
@@ -758,18 +906,32 @@ export function LibraryWorkbench({
                     data-library-id={item.id}
                   >
                     <div className="source-card-cover">
-                      <div
+                      <CoverInteraction
                         className="library-cover-open source-language-cover"
-                        role="button"
-                        tabIndex={0}
-                        aria-label={"打开《" + item.title + "》"}
-                        data-testid={"library-open-" + item.id}
-                        onClick={() => choose(item)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            choose(item);
-                          }
+                        title={item.title}
+                        testId={"library-open-" + item.id}
+                        request={
+                          library.snapshot.rootId
+                            ? {
+                                kind: "library",
+                                rootId: library.snapshot.rootId,
+                                generation: library.snapshot.generation,
+                                entryId: item.id,
+                              }
+                            : null
+                        }
+                        onDetails={() => open(item)}
+                        localActions={{
+                          reveal: () =>
+                            fileOperation(item, "reveal", library.snapshot),
+                          recycle: () =>
+                            fileOperation(item, "recycle", library.snapshot),
+                          recycleDisabled:
+                            library.busy ||
+                            !["zip", "cbz"].includes(item.format) ||
+                            ["reading", "paused"].includes(
+                              library.snapshot.phase,
+                            ),
                         }}
                       >
                         <LibraryCover
@@ -778,16 +940,15 @@ export function LibraryWorkbench({
                           item={item}
                         />
                         <SourceLanguageBadge tags={item.tags} localVersion />
-                      </div>
+                      </CoverInteraction>
                     </div>
                     <h3>
                       <button onClick={() => open(item)}>{item.title}</button>
                     </h3>
-                    <p>
-                      {item.authors.length
-                        ? item.authors.join("、")
-                        : item.fileName}
-                    </p>
+                    <AuthorLinks
+                      authors={item.authors}
+                      fallback={item.fileName}
+                    />
                     <p className="source-card-state">
                       {library.error ? "文件待核对" : libraryItemStatus(item)}
                       {item.state !== "indexed"

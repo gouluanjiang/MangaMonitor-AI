@@ -59,6 +59,10 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Test the mock workbench in Chromium
         run: pnpm test:ui
+      - name: Check closed-tab lifetime and unchanged-catalog rendering
+        run: |
+          node tests/soak/tab-lifetime.mjs --rounds=12 --output=visual-evidence/tab-lifetime
+          node tests/soak/source-render-cost.mjs --output=visual-evidence/source-render-cost
       - name: Upload synthetic UI visual review
         if: always()
         uses: actions/upload-artifact@v4

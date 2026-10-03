@@ -27,6 +27,8 @@ pub enum Control {
     Pause,
     Resume,
     Retry,
+    Abandon,
+    Cleanup,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +62,8 @@ pub struct DownloadTask {
     pub source: Source,
     pub work_id: String,
     pub title: String,
+    pub tags: Vec<String>,
+    pub root_id: String,
     pub phase: DownloadPhase,
     pub files_done: u64,
     pub files_total: Option<u64>,
@@ -113,6 +117,7 @@ struct Runtime {
     queued: BTreeMap<String, Admission>,
     local_files: BTreeMap<String, (u64, LocalFiles)>,
     library_revision: Option<u64>,
+    worker_interrupted: bool,
 }
 #[derive(Default)]
 pub struct DownloadService {
@@ -122,6 +127,49 @@ pub struct DownloadService {
 impl DownloadService {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Called only after the sole driver has joined/unwound. Rebuild transient
+    /// state rather than trusting poisoned admissions; durable task epochs remain
+    /// authoritative and nothing resumes automatically.
+    pub fn worker_interrupted(&self, store: &WorkbenchStore) -> Result<()> {
+        let mut runtime = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *runtime = Runtime {
+            worker_interrupted: true,
+            ..Runtime::default()
+        };
+        self.runtime.clear_poison();
+        let mut cached = self
+            .validated_downloads
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *cached = None;
+        self.validated_downloads.clear_poison();
+        drop(cached);
+        let mut document = store.read_downloads()?;
+        validate_downloads(&document)?;
+        let mut changed = false;
+        for task in &mut document.value.tasks {
+            if matches!(
+                task.phase,
+                DownloadPhase::Queued
+                    | DownloadPhase::Downloading
+                    | DownloadPhase::Verifying
+                    | DownloadPhase::Saving
+            ) {
+                task.phase = DownloadPhase::Error;
+                task.error_code = Some("DOWNLOAD_WORKER_INTERRUPTED".into());
+                task.revision = next(task.revision)?;
+                task.updated_at = now()?;
+                changed = true;
+            }
+        }
+        if changed {
+            store.write_downloads(document.revision, document.value)?;
+        }
+        Ok(())
     }
     /// Read completion receipts and stat only their recorded files. Keep this
     /// separate from queue polling so a large completed library is not checked
@@ -173,9 +221,7 @@ impl DownloadService {
         source: Source,
         metadata: JmDownloadMetadata,
     ) -> Result<DownloadPlan> {
-        if !metadata.is_valid_for(source) {
-            return Err(error("DOWNLOAD_METADATA_INVALID"));
-        }
+        let metadata = metadata.for_new_download(source)?;
         let mut runtime = self.lock()?;
         let document = self.load_shared(store)?;
         let library = store.read_library_shared()?;
@@ -193,7 +239,14 @@ impl DownloadService {
         if root.id != root_id || library.value.generation != generation {
             return Err(error("DOWNLOAD_ROOT_CHANGED"));
         }
-        if document.value.tasks.len() >= MAX_DOWNLOAD_TASKS {
+        if document
+            .value
+            .tasks
+            .iter()
+            .filter(|task| task.phase != DownloadPhase::Abandoned)
+            .count()
+            >= MAX_DOWNLOAD_TASKS
+        {
             return Err(error("DOWNLOAD_LIMIT_REACHED"));
         }
         let destination = crate::naming::zip_name(&metadata);
@@ -355,7 +408,15 @@ impl DownloadService {
         }
         let mut runtime = self.lock()?;
         let mut document = self.load(store)?;
-        if document.value.tasks.len() + selections.len() > MAX_DOWNLOAD_TASKS {
+        if document
+            .value
+            .tasks
+            .iter()
+            .filter(|task| task.phase != DownloadPhase::Abandoned)
+            .count()
+            + selections.len()
+            > MAX_DOWNLOAD_TASKS
+        {
             return Err(error("DOWNLOAD_LIMIT_REACHED"));
         }
         let library = store.read_library_shared()?;
@@ -468,6 +529,12 @@ impl DownloadService {
     ) -> Result<DownloadSnapshot> {
         let mut runtime = self.lock()?;
         let mut document = self.load(store)?;
+        let abandoned_count = document
+            .value
+            .tasks
+            .iter()
+            .filter(|task| task.phase == DownloadPhase::Abandoned)
+            .count();
         let task = document
             .value
             .tasks
@@ -481,6 +548,37 @@ impl DownloadService {
             .active
             .as_ref()
             .is_some_and(|a| a.task_id == task_id);
+        let orphan = !active
+            && runtime
+                .queued
+                .get(&task.id)
+                .map(|admission| admission.revision)
+                != Some(task.revision)
+            && matches!(
+                task.phase,
+                DownloadPhase::Queued
+                    | DownloadPhase::Downloading
+                    | DownloadPhase::Verifying
+                    | DownloadPhase::Saving
+            );
+        if action == Control::Cleanup {
+            if task.phase != DownloadPhase::Abandoned || runtime.active.is_some() {
+                return Err(error("DOWNLOAD_WORKER_BUSY"));
+            }
+            let abandoned = task.clone();
+            // Lock the shared staging workspace as well as the service runtime.
+            // No task/queue record disappears until exact temporary cleanup succeeds.
+            let workspace = store.open_download_workspace()?;
+            materialize::cleanup_abandoned(&abandoned, workspace.path())?;
+            document.value.tasks.retain(|task| task.id != task_id);
+            let saved = store.write_downloads(document.revision, document.value)?;
+            return Ok(snapshot(
+                &saved,
+                &mut runtime,
+                false,
+                store.read_library_shared()?.as_ref(),
+            ));
+        }
         let mut library_generation = None;
         match action {
             Control::Pause => {
@@ -492,21 +590,28 @@ impl DownloadService {
                 }
                 task.phase = DownloadPhase::Paused;
             }
+            Control::Abandon => {
+                if active
+                    || !(orphan
+                        || matches!(
+                            task.phase,
+                            DownloadPhase::Paused | DownloadPhase::Error | DownloadPhase::Queued
+                        ))
+                {
+                    return Err(error("DOWNLOAD_CONTROL_INVALID"));
+                }
+                if abandoned_count >= workbench_storage::MAX_ABANDONED_DOWNLOAD_TASKS {
+                    return Err(error("DOWNLOAD_ABANDONED_LIMIT_REACHED"));
+                }
+                task.phase = DownloadPhase::Abandoned;
+            }
+            Control::Cleanup => return Err(error("DOWNLOAD_CONTROL_INVALID")),
             Control::Resume | Control::Retry => {
                 // Other tasks may join the queue while the current worker runs.
                 // This same task cannot restart before its old worker unwinds.
                 if active {
                     return Err(error("DOWNLOAD_WORKER_BUSY"));
                 }
-                let orphan = !active
-                    && runtime.queued.get(&task.id).map(|a| a.revision) != Some(task.revision)
-                    && matches!(
-                        task.phase,
-                        DownloadPhase::Queued
-                            | DownloadPhase::Downloading
-                            | DownloadPhase::Verifying
-                            | DownloadPhase::Saving
-                    );
                 if !((action == Control::Resume && (task.phase == DownloadPhase::Paused || orphan))
                     || (action == Control::Retry && task.phase == DownloadPhase::Error))
                 {
@@ -521,7 +626,7 @@ impl DownloadService {
         task.updated_at = now()?;
         let revision = task.revision;
         let saved = store.write_downloads(document.revision, document.value)?;
-        if action == Control::Pause {
+        if matches!(action, Control::Pause | Control::Abandon) {
             runtime.queued.remove(task_id);
         } else if let Some(library_generation) = library_generation {
             runtime.queued.insert(
@@ -1090,7 +1195,7 @@ impl DownloadService {
         &self,
         store: &WorkbenchStore,
         expected: &AwaitingIndexReceipt,
-        _code: &'static str,
+        code: &'static str,
     ) -> Result<DownloadSnapshot> {
         let _guard = RunGuard {
             service: self,
@@ -1112,7 +1217,15 @@ impl DownloadService {
                 return Err(error("DOWNLOAD_TASK_STALE"));
             }
             t.phase = DownloadPhase::Error;
-            t.error_code = Some("DOWNLOAD_INDEX_FAILED".into());
+            t.error_code = Some(match code {
+                "LIBRARY_BUSY"
+                | "LIBRARY_LIMIT_REACHED"
+                | "LIBRARY_IDENTITY_CONFLICT"
+                | "LIBRARY_FILE_CHANGED"
+                | "DOWNLOAD_OUTPUT_CHANGED"
+                | "DOWNLOAD_ROOT_CHANGED" => format!("DOWNLOAD_INDEX_{code}"),
+                _ => "DOWNLOAD_INDEX_FAILED".into(),
+            });
             Ok(())
         })?;
         self.clear(&expected.task_id, expected.task_revision);
@@ -1421,8 +1534,9 @@ fn snapshot(
                     DownloadPhase::Queued
                     | DownloadPhase::Downloading
                     | DownloadPhase::Verifying => vec![Control::Pause],
-                    DownloadPhase::Paused if !active => vec![Control::Resume],
-                    DownloadPhase::Error if !active => vec![Control::Retry],
+                    DownloadPhase::Paused if !active => vec![Control::Resume, Control::Abandon],
+                    DownloadPhase::Error if !active => vec![Control::Retry, Control::Abandon],
+                    DownloadPhase::Abandoned if runtime.active.is_none() => vec![Control::Cleanup],
                     _ => Vec::new(),
                 };
                 let relocated = presence::relocation(t, &library.value);
@@ -1432,11 +1546,20 @@ fn snapshot(
                     source: t.source,
                     work_id: t.metadata.work_id.clone(),
                     title: t.metadata.title.clone(),
+                    tags: t.metadata.tags.clone(),
+                    root_id: t.root.id.clone(),
                     phase,
                     files_done: t.files_done,
                     files_total: t.files_total,
                     bytes_done: t.bytes_done,
-                    error_code: t.error_code.clone(),
+                    error_code: if runtime.worker_interrupted
+                        && t.error_code.is_none()
+                        && matches!(phase, DownloadPhase::Paused | DownloadPhase::Error)
+                    {
+                        Some("DOWNLOAD_WORKER_INTERRUPTED".into())
+                    } else {
+                        t.error_code.clone()
+                    },
                     allowed_actions,
                     library_entry_id: relocated
                         .map(|v| v.new_item_id.clone())

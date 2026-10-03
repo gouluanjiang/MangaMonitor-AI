@@ -76,3 +76,40 @@ Implement within the reviewed scope, updating meaningful regressions for changed
 Live checks require applicable authorization and local execution. Preserve each gate's staging/proof and human-acceptance prerequisites; synthetic tests do not satisfy them. Inventory, promotion, replacement and deletion remain separately gated; production requires explicit final acceptance.
 
 Missing approval or integrity evidence blocks the affected real action. Identify the gap and continue independent authorized work.
+
+## 2026-09-30 maintenance review
+
+The approved audit batch adds explicit abandon and separate task-staging cleanup actions, not automatic deletion on failure. Cleanup requires the selected abandoned task, current root and command identity, isolated staging lock, and an allowlist proved by validated command/checkpoint metadata; unknown files, unknown directories and links stop cleanup. No final library ZIP is opened or removed. Failure keeps the task available for diagnosis. Implementing these controls does not authorize running them on a user's real files.
+
+Worker supervision does not auto-resume a failed task. Resume-all preserves current source/account/generation and submits bounded batches; a changed context stops the sequence. Pause messaging reflects in-flight final-save work. Existing source protocol pins and image concurrency are unchanged.
+
+The archive optimization retains all full-file hash/identity boundaries and caches only a validated layout tied to the exact manifest and file proof. A changed file, receipt or cold process requires validation. Synthetic counters, tamper cases and isolated cleanup tests are required in CI; no live manga download or deletion is part of this maintenance verification.
+
+## 2026-10-01 tag whitespace review
+
+The authorized generic follow-up changes only fresh tag metadata at the shared
+download preparation boundary. Whitespace controls become separators before plan
+and approval hashes are computed; unchanged strict validation checks original
+character bounds and still rejects non-whitespace controls. Existing task reads,
+bindings, source/credential boundaries, request accounting, image enumeration,
+staging, promotion, replacement and deletion are unchanged. Prior protocol pins
+and executor reviews remain applicable. Tests are synthetic and do not authorize
+or perform real source requests or media downloads; no persisted migration occurs.
+
+## 2026-10-01 explicit library recycle review
+
+The user approved a local-cover delete action with native confirmation and
+recoverable Windows Recycle Bin semantics. See
+[the batch contract](LIBRARY_BROWSING_FOLLOWUPS_2026-10-01.md#recycle-only-boundary).
+The selected root/generation/item/revision and verified archive identity remain
+authoritative through confirmation. This is not automatic download cleanup,
+replacement, directory deletion, or permission to delete real books for tests.
+
+New download admission shares a read/exclusive gate with the recycle command.
+Active source preparation, confirmation, queue/driver registration blocks the
+operation; idle temporary previews may be retired without changing durable
+tasks. No source protocol, image enumeration, execution proof or limit changes.
+Stored links/history/progress survive a recycled-file tombstone and can be reused
+only for the same restored file identity. Uncertain operation/storage outcomes
+are explicitly reported. Synthetic CI and user-operated real acceptance remain
+different gates; production monitoring stays disabled.

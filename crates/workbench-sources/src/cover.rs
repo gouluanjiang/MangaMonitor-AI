@@ -6,7 +6,7 @@ use crate::{
 };
 use protocol::error;
 use reqwest::{
-    header::{ACCEPT, LOCATION, USER_AGENT},
+    header::{ACCEPT, LOCATION, RETRY_AFTER, USER_AGENT},
     Url,
 };
 use std::{collections::HashSet, time::Duration};
@@ -38,6 +38,15 @@ fn http_error(status: u16) -> SourceError {
 
 fn retryable_transport(cause: &SourceError) -> bool {
     matches!(cause.code, "SOURCE_CONNECTION_FAILED" | "SOURCE_TIMEOUT")
+}
+
+fn retry_after_ms(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<u64> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return value.parse::<u64>().ok()?.checked_mul(1000);
+    }
+    let until = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    Some(until.signed_duration_since(now).num_milliseconds().max(0) as u64)
 }
 
 fn lookup(session: &SourceSession, id: &str) -> SourceResult<CoverLookup> {
@@ -187,10 +196,48 @@ impl WorkbenchSources {
             return Err(error("SOURCE_REDIRECT_REFUSED"));
         }
         if !response.status().is_success() {
+            let delay = response
+                .headers()
+                .get(RETRY_AFTER)
+                .and_then(|header| header.to_str().ok())
+                .and_then(|value| retry_after_ms(value, chrono::Utc::now()));
+            if delay.is_some() {
+                // A server deadline suppresses immediate mirror failover as well.
+                return Err(http_error(response.status().as_u16()).with_retry_after(delay));
+            }
             return Ok(CoverResponse::HttpFailure(response.status().as_u16()));
         }
         Ok(CoverResponse::Bytes(
             bounded_bytes(response, thumbnail::MAX_COVER_BYTES).await?,
         ))
+    }
+}
+
+#[cfg(test)]
+mod retry_after_tests {
+    use super::*;
+    #[test]
+    fn relative_and_http_date_deadlines_are_safe() {
+        let now = chrono::DateTime::parse_from_rfc2822("Sun, 06 Nov 1994 08:49:37 GMT")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(retry_after_ms("12", now), Some(12000));
+        assert_eq!(
+            retry_after_ms("Sun, 06 Nov 1994 08:50:37 GMT", now),
+            Some(60000)
+        );
+        assert_eq!(
+            retry_after_ms("Sun, 06 Nov 1994 08:49:36 GMT", now),
+            Some(0)
+        );
+        for invalid in ["", "-1", "NaN", "18446744073709551615"] {
+            assert_eq!(retry_after_ms(invalid, now), None);
+        }
+        let encoded = serde_json::to_value(http_error(429).with_retry_after(Some(12000))).unwrap();
+        assert_eq!(encoded["retryAfterMs"], 12000);
+        assert!(serde_json::to_value(http_error(404))
+            .unwrap()
+            .get("retryAfterMs")
+            .is_none());
     }
 }

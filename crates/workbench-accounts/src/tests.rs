@@ -52,6 +52,8 @@ struct FakeState {
     restore_release: Notify,
     query_calls: AtomicUsize,
     recent_calls: AtomicUsize,
+    tag_calls: AtomicUsize,
+    category_calls: AtomicUsize,
     favorite_calls: AtomicUsize,
     favorite: AtomicBool,
     unknown_write: AtomicBool,
@@ -65,6 +67,9 @@ struct FakeState {
     cover_started: Notify,
     cover_release: Notify,
     detail_calls: AtomicUsize,
+    detail_failure: Mutex<Option<&'static str>>,
+    detail_work_id: Mutex<Option<String>>,
+    detail_cover_image: Mutex<Option<String>>,
     cover_calls: AtomicUsize,
     cover_missing_once: AtomicBool,
     cover_metadata: AtomicBool,
@@ -102,6 +107,7 @@ fn work(source: Source, favorite: bool) -> SourceWork {
         authors: vec!["Synthetic Author".into()],
         description: None,
         tags: vec![],
+        categories: None,
         favorite: Some(favorite),
         chapter_count: None,
         page_count: None,
@@ -259,16 +265,52 @@ impl SourceBackend for FakeBackend {
         )
         .await
     }
+    async fn tag(&self, session: &Self::Session, _: &str, page: u64) -> Result<SourcePage> {
+        self.0.tag_calls.fetch_add(1, Ordering::SeqCst);
+        self.favorites(
+            session,
+            FavoritePageRequest {
+                page,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+    }
+    async fn category(&self, session: &Self::Session, _: &str, page: u64) -> Result<SourcePage> {
+        self.0.category_calls.fetch_add(1, Ordering::SeqCst);
+        self.favorites(
+            session,
+            FavoritePageRequest {
+                page,
+                folder_id: None,
+                reverse: false,
+            },
+        )
+        .await
+    }
     async fn detail(&self, session: &Self::Session, id: &str) -> Result<SourceWork> {
         self.0.detail_calls.fetch_add(1, Ordering::SeqCst);
         if self.0.block_detail.load(Ordering::SeqCst) {
             self.0.detail_started.notify_one();
             self.0.detail_release.notified().await;
         }
+        if let Some(code) = *self.0.detail_failure.lock().unwrap() {
+            return Err(AccountError::new(code));
+        }
+        if let Some(image) = self.0.detail_cover_image.lock().unwrap().clone() {
+            *self.0.cover_image.lock().unwrap() = Some(image);
+        }
         let mut item = work(session.source, self.0.favorite.load(Ordering::SeqCst));
         item.source_updated_at = self.0.source_updated_at.lock().unwrap().clone();
         item.tags = self.0.work_tags.lock().unwrap().clone();
-        item.work_id = id.into();
+        item.work_id = self
+            .0
+            .detail_work_id
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| id.into());
         Ok(item)
     }
     async fn favorite(
@@ -430,6 +472,111 @@ async fn recent_query_is_bounded_session_scoped_and_does_not_mutate_follows_or_f
         ),
         "SESSION_EXPIRED"
     );
+}
+
+#[tokio::test]
+async fn tag_queries_use_a_separate_session_scoped_backend_without_mutating_follows() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture-tag", false).await;
+    backend.0.query_batch_size.store(2, Ordering::SeqCst);
+    let before = service.following(Source::Jm, &session).await.unwrap();
+    let result = service
+        .query(Source::Jm, &session, QueryKind::Tag, "Fixture tag", None, 2)
+        .await
+        .unwrap();
+    assert_eq!(result.page.page, 2);
+    assert_eq!(backend.0.tag_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        service
+            .following(Source::Jm, &session)
+            .await
+            .unwrap()
+            .revision,
+        before.revision
+    );
+    assert_eq!(
+        error(
+            service
+                .query(
+                    Source::Jm,
+                    "old-session",
+                    QueryKind::Tag,
+                    "Fixture",
+                    None,
+                    1
+                )
+                .await
+        ),
+        "SESSION_CHANGED"
+    );
+    for (query, folder) in [("", None), ("Fixture", Some("1".into()))] {
+        assert_eq!(
+            error(
+                service
+                    .query(Source::Jm, &session, QueryKind::Tag, query, folder, 1)
+                    .await
+            ),
+            "QUERY_INVALID"
+        );
+    }
+    assert_eq!(backend.0.tag_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn pica_category_query_has_a_distinct_backend_and_jm_is_refused_before_query() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let pica = login(&service, Source::Pica, "fixture-category", false).await;
+    service
+        .query(Source::Pica, &pica, QueryKind::Category, "Fixture", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(backend.0.category_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.tag_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        error(
+            service
+                .query(
+                    Source::Jm,
+                    "missing",
+                    QueryKind::Category,
+                    "Fixture",
+                    None,
+                    1
+                )
+                .await
+        ),
+        "QUERY_INVALID"
+    );
+    assert_eq!(backend.0.category_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn bl_metadata_survives_lightweight_responses_for_only_the_same_work() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "fixture-bl", false).await;
+    *backend.0.work_tags.lock().unwrap() = vec!["ＢＬ".into(), "中文".into()];
+    service
+        .query(Source::Jm, &session, QueryKind::Detail, "123", None, 1)
+        .await
+        .unwrap();
+    backend.0.work_tags.lock().unwrap().clear();
+    let same = query(&service, Source::Jm, &session).await.unwrap();
+    assert_eq!(same.page.items[0].tags, ["中文", "ＢＬ"]);
+    let other = service
+        .query(Source::Jm, &session, QueryKind::Detail, "124", None, 1)
+        .await
+        .unwrap();
+    assert!(other.page.items[0].tags.is_empty());
+    assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -600,7 +747,7 @@ async fn query_retains_language_only_for_the_exact_current_session_work_without_
 }
 
 #[tokio::test]
-async fn query_boundary_evidence_is_forwarded_only_for_jm_search() {
+async fn query_boundary_evidence_is_forwarded_only_for_jm_ordered_lists() {
     let root = TempDir::new().unwrap();
     let backend = FakeBackend::default();
     let service = service(&root, backend.clone(), SharedVault::default());
@@ -613,19 +760,35 @@ async fn query_boundary_evidence_is_forwarded_only_for_jm_search() {
     let boundary = JmSearchBoundary {
         first: Some(edge.clone()),
         last: Some(edge),
+        recent_rows: None,
     };
     *backend.0.query_boundary.lock().unwrap() = Some(boundary.clone());
     let result = service
         .query(Source::Jm, &jm, QueryKind::Search, "Author", None, 1)
         .await
         .unwrap();
-    assert_eq!(result.page.jm_search_boundary, Some(boundary));
+    assert_eq!(result.page.jm_search_boundary, Some(boundary.clone()));
     let dto = serde_json::to_value(&result).unwrap();
     assert_eq!(dto["jmSearchBoundary"]["first"]["workId"], "123");
-    assert_eq!(dto["jmSearchBoundary"]["first"]["fingerprint"], "a".repeat(64));
+    assert_eq!(
+        dto["jmSearchBoundary"]["first"]["fingerprint"],
+        "a".repeat(64)
+    );
+    for kind in [QueryKind::Author, QueryKind::Tag, QueryKind::Recent] {
+        let query = if matches!(kind, QueryKind::Recent) {
+            ""
+        } else {
+            "Author"
+        };
+        let result = service
+            .query(Source::Jm, &jm, kind, query, None, 1)
+            .await
+            .unwrap();
+        assert_eq!(result.page.jm_search_boundary, Some(boundary.clone()));
+    }
     for (source, session, kind) in [
         (Source::Jm, &jm, QueryKind::Favorites),
-        (Source::Jm, &jm, QueryKind::Recent),
+        (Source::Pica, &pica, QueryKind::Recent),
         (Source::Pica, &pica, QueryKind::Search),
         (Source::Pica, &pica, QueryKind::Favorites),
     ] {
@@ -910,6 +1073,135 @@ async fn uncertain_favorite_cannot_be_toggled_again_before_target_is_observed() 
             .unwrap()
             .changed
     );
+}
+
+#[tokio::test]
+async fn waiting_for_local_catalog_does_not_block_covers_or_retain_a_changed_account() {
+    let root = TempDir::new().unwrap();
+    let service = Arc::new(service(
+        &root,
+        FakeBackend::default(),
+        SharedVault::default(),
+    ));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    let pica = login(&service, Source::Pica, "fixture", false).await;
+    query(&service, Source::Jm, &session).await.unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.path().join("workbench-preview-v1/.workbench.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move {
+            service
+                .discovery_context(vec![
+                    crate::DiscoveryScope {
+                        source: Source::Jm,
+                        session_id: session,
+                    },
+                    crate::DiscoveryScope {
+                        source: Source::Pica,
+                        session_id: pica,
+                    },
+                ])
+                .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let cover = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        service.cover(Source::Jm, &session, "123"),
+    )
+    .await;
+    let replacement = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        login(&service, Source::Jm, "replacement", false),
+    )
+    .await;
+    lock.unlock().unwrap();
+    assert!(cover.is_ok_and(|result| result.is_ok()));
+    assert!(replacement.is_ok());
+    assert!(matches!(
+        pending.await.unwrap(),
+        Err(AccountError {
+            code: "SESSION_CHANGED",
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn slow_detail_does_not_block_known_covers_and_cannot_commit_to_a_new_session() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    query(&service, Source::Jm, &session).await.unwrap();
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move {
+            service
+                .query(Source::Jm, &session, QueryKind::Detail, "456", None, 1)
+                .await
+        })
+    };
+    backend.0.detail_started.notified().await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.cover(Source::Jm, &session, "123"),
+    )
+    .await
+    .expect("A blocked detail must not hold up a known cover")
+    .unwrap();
+    let replacement = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        login(&service, Source::Jm, "replacement", false),
+    )
+    .await
+    .expect("Account switching must not wait for an old detail");
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    assert_eq!(
+        error(
+            service
+                .favorite(Source::Jm, &replacement, "456", true)
+                .await
+        ),
+        "WORK_NOT_LOADED"
+    );
+}
+
+#[tokio::test]
+async fn late_detail_auth_failure_cannot_expire_a_replacement_session() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "fixture", false).await;
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    *backend.0.detail_failure.lock().unwrap() = Some("SESSION_EXPIRED");
+    let pending = {
+        let service = Arc::clone(&service);
+        tokio::spawn(async move {
+            service
+                .query(Source::Jm, &session, QueryKind::Detail, "123", None, 1)
+                .await
+        })
+    };
+    backend.0.detail_started.notified().await;
+    let replacement = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        login(&service, Source::Jm, "replacement", false),
+    )
+    .await
+    .unwrap();
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    query(&service, Source::Jm, &replacement).await.unwrap();
 }
 
 #[tokio::test]
@@ -1216,6 +1508,130 @@ async fn retained_cover_metadata_skips_detail_without_granting_action_authority(
         "WORK_NOT_LOADED"
     );
     assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn explicit_cover_refresh_replaces_missing_or_bad_retained_data_without_action_authority() {
+    for stale in [None, Some("data:image/jpeg;base64,AA==".to_owned())] {
+        let root = TempDir::new().unwrap();
+        let backend = FakeBackend::default();
+        let service = service(&root, backend.clone(), SharedVault::default());
+        let session = login(&service, Source::Pica, "synthetic", false).await;
+        backend.0.cover_metadata.store(true, Ordering::SeqCst);
+        *backend.0.cover_image.lock().unwrap() = stale.clone();
+        let first = service.cover(Source::Pica, &session, "123").await;
+        if stale.is_some() {
+            assert_eq!(error(first), "SOURCE_COVER_INVALID");
+        } else {
+            assert!(first.unwrap().data_url.is_none());
+        }
+        assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 0);
+
+        let image = cover_image();
+        *backend.0.detail_cover_image.lock().unwrap() = Some(image.clone());
+        assert_eq!(
+            service
+                .cover_with_refresh(Source::Pica, &session, "123", true)
+                .await
+                .unwrap()
+                .data_url,
+            Some(image.clone())
+        );
+        assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            service
+                .cover(Source::Pica, &session, "123")
+                .await
+                .unwrap()
+                .data_url,
+            Some(image)
+        );
+        assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            error(service.favorite(Source::Pica, &session, "123", true).await),
+            "WORK_NOT_LOADED"
+        );
+        assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(backend.0.query_calls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn explicit_cover_refresh_is_one_detail_even_for_a_loaded_work() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "synthetic", false).await;
+    query(&service, Source::Jm, &session).await.unwrap();
+    backend.0.cover_missing_once.store(true, Ordering::SeqCst);
+    assert_eq!(
+        error(
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        ),
+        "WORK_NOT_LOADED"
+    );
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn failed_or_mismatched_explicit_cover_detail_never_requests_the_image() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = service(&root, backend.clone(), SharedVault::default());
+    let session = login(&service, Source::Jm, "synthetic", false).await;
+    backend.0.cover_metadata.store(true, Ordering::SeqCst);
+    *backend.0.detail_failure.lock().unwrap() = Some("SOURCE_TIMEOUT");
+    assert_eq!(
+        error(
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        ),
+        "SOURCE_TIMEOUT"
+    );
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
+    *backend.0.detail_failure.lock().unwrap() = None;
+    *backend.0.detail_work_id.lock().unwrap() = Some("456".into());
+    assert_eq!(
+        error(
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        ),
+        "SOURCE_RESPONSE_INVALID"
+    );
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(backend.0.favorite_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn logout_during_explicit_cover_refresh_stops_before_the_image_request() {
+    let root = TempDir::new().unwrap();
+    let backend = FakeBackend::default();
+    let service = Arc::new(service(&root, backend.clone(), SharedVault::default()));
+    let session = login(&service, Source::Jm, "synthetic", false).await;
+    backend.0.cover_metadata.store(true, Ordering::SeqCst);
+    backend.0.block_detail.store(true, Ordering::SeqCst);
+    let pending = {
+        let service = Arc::clone(&service);
+        let session = session.clone();
+        tokio::spawn(async move {
+            service
+                .cover_with_refresh(Source::Jm, &session, "123", true)
+                .await
+        })
+    };
+    backend.0.detail_started.notified().await;
+    service.logout(Source::Jm, Some(&session)).await.unwrap();
+    backend.0.detail_release.notify_one();
+    assert_eq!(error(pending.await.unwrap()), "SESSION_CHANGED");
+    assert_eq!(backend.0.detail_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(backend.0.cover_calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

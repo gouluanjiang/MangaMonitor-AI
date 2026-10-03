@@ -15,7 +15,7 @@ use std::{
 };
 use tokio::sync::{Mutex, OnceCell, Semaphore};
 use workbench_credentials::{CredentialKind, StoredCredential, Vault};
-use workbench_sources::{inherit_language_tags, FavoritePageRequest};
+use workbench_sources::{inherit_content_tags, FavoritePageRequest};
 use zeroize::Zeroizing;
 
 const MAX_QUERY_ITEMS: usize = 1000;
@@ -157,11 +157,15 @@ impl<S> Slot<S> {
 }
 
 pub struct AccountService<B: SourceBackend, V: Vault> {
+    pub(crate) special: crate::special::SpecialControl,
     pub(crate) discovery: Arc<crate::discovery::DiscoveryControl>,
+    pub(crate) recent_checks: Arc<crate::observations::RecentControl>,
     backend: B,
     vault: Arc<V>,
     root: PathBuf,
     slots: [Mutex<Slot<B::Session>>; 2],
+    // Keep query/favorite results ordered without holding account state across I/O.
+    query_operations: [Mutex<()>; 2],
     cover_slots: Semaphore,
     // Catalog writes and explicitly requested cleanup share the fixed file lock.
     cache_io: Arc<Mutex<()>>,
@@ -171,7 +175,9 @@ pub struct AccountService<B: SourceBackend, V: Vault> {
 impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     pub fn new(backend: B, vault: V, app_data_root: PathBuf) -> Self {
         Self {
+            special: crate::special::SpecialControl::default(),
             discovery: Arc::new(crate::discovery::DiscoveryControl::default()),
+            recent_checks: Arc::new(crate::observations::RecentControl::default()),
             backend,
             vault: Arc::new(vault),
             root: app_data_root,
@@ -179,6 +185,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             cover_slots: Semaphore::new(4),
             cache_io: Arc::new(Mutex::new(())),
             legacy_cover_cleanup: OnceCell::new(),
+            query_operations: [Mutex::new(()), Mutex::new(())],
             slots: [
                 Mutex::new(Slot::new(Source::Jm)),
                 Mutex::new(Slot::new(Source::Pica)),
@@ -210,6 +217,13 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
 
     fn slot(&self, source: Source) -> &Mutex<Slot<B::Session>> {
         &self.slots[match source {
+            Source::Jm => 0,
+            Source::Pica => 1,
+        }]
+    }
+
+    fn query_operation(&self, source: Source) -> &Mutex<()> {
+        &self.query_operations[match source {
             Source::Jm => 0,
             Source::Pica => 1,
         }]
@@ -469,6 +483,40 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
     }
 
     /// Captures both verified identities together. It performs no remote IO.
+    /// Desktop browsing sidecars reuse this identity and revocable lease;
+    /// renderers never select the persisted account namespace or root path.
+    pub async fn observation_identity(
+        &self,
+        source: Source,
+        session_id: &str,
+    ) -> Result<(String, PathBuf, SessionLease)> {
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
+        let account = slot
+            .account
+            .as_ref()
+            .ok_or(AccountError::new("AUTH_REQUIRED"))?;
+        Ok((
+            account_key(source, &account.account_id),
+            self.root.clone(),
+            slot.lease.clone(),
+        ))
+    }
+
+    pub(crate) async fn current_discovery_scopes(&self) -> Result<Vec<crate::DiscoveryScope>> {
+        let mut result = Vec::new();
+        for source in [Source::Jm, Source::Pica] {
+            let mut slot = self.slot(source).lock().await;
+            self.check_saved(&mut slot)?;
+            let session_id = slot
+                .session_id
+                .clone()
+                .ok_or(AccountError::new("AUTH_REQUIRED"))?;
+            result.push(crate::DiscoveryScope { source, session_id });
+        }
+        Ok(result)
+    }
+
     pub(crate) async fn discovery_context(
         &self,
         scopes: Vec<crate::DiscoveryScope>,
@@ -496,6 +544,11 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             },
         );
         let [jm_identity, pica_identity] = identities;
+        let identities = [jm_identity?, pica_identity?];
+        // These are revocable identity leases, not account guards. A queued
+        // local catalog read must not stall covers or account replacement.
+        drop(pica);
+        drop(jm);
         let root = self.root.clone();
         let (following, policies) = tokio::task::spawn_blocking(move || {
             crate::discovery::discovery_store_io(|| {
@@ -506,14 +559,14 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         .await
         .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
         .map_err(|error| AccountError::new(error.code))?;
-        self.check_saved(&mut jm)?;
-        self.check_saved(&mut pica)?;
-        Ok(crate::discovery::DiscoveryContext::new(
-            [jm_identity?, pica_identity?],
+        let context = crate::discovery::DiscoveryContext::new(
+            identities,
             self.root.clone(),
             following,
             policies,
-        ))
+        );
+        self.discovery_validate_context(&context)?;
+        Ok(context)
     }
 
     /// Independent of the source request locks, including external vault changes.
@@ -533,6 +586,37 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             }
         }
         Ok(())
+    }
+
+    /// Keep account generations ordered through one bounded metadata write.
+    pub(crate) async fn special_store_operation<T, F>(
+        &self,
+        context: &crate::discovery::DiscoveryContext,
+        operation: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(
+                workbench_storage::WorkbenchStore,
+            ) -> std::result::Result<T, workbench_storage::StoreError>
+            + Send
+            + 'static,
+    {
+        let mut jm = self.slot(Source::Jm).lock().await;
+        let mut pica = self.slot(Source::Pica).lock().await;
+        self.require_scope(&mut jm, &context.identities[0].scope.session_id)?;
+        self.require_scope(&mut pica, &context.identities[1].scope.session_id)?;
+        self.discovery_validate_context(context)?;
+        let root = context.root.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            operation(workbench_storage::WorkbenchStore::open(root)?)
+        })
+        .await
+        .map_err(|_| AccountError::new("STORE_UNAVAILABLE"))?
+        .map_err(|error| AccountError::new(error.code));
+        self.check_saved(&mut jm)?;
+        self.check_saved(&mut pica)?;
+        result
     }
 
     /// Keep account generations ordered through one fixed, cancellable metadata write.
@@ -761,10 +845,66 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         page: u64,
         reverse: bool,
     ) -> Result<QueryResult> {
+        let observed_at = cache::now_ms()?;
+        let mut result = self
+            .query_ordered_unobserved(source, session_id, kind, query, folder_id, page, reverse)
+            .await?;
+        let commit_started = std::time::Instant::now();
+        match self
+            .observe_query(source, session_id, kind, &mut result.page, observed_at)
+            .await
+        {
+            Ok((revision, verified, until)) => {
+                result.discovery_revision = revision;
+                result.content_verified_ids = verified;
+                result.content_verified_until = until;
+            }
+            Err(error) => result.observation_error_code = Some(error.code.into()),
+        }
+        result.timing.local_commit_ms = commit_started.elapsed().as_millis() as u64;
+        Ok(result)
+    }
+
+    /// A discovery scan already owns its page transaction. Do not double-ingest
+    /// its query replies through the independent observed-work inbox.
+    pub(crate) async fn query_unobserved(
+        &self,
+        source: Source,
+        session_id: &str,
+        kind: QueryKind,
+        query: &str,
+        folder_id: Option<String>,
+        page: u64,
+    ) -> Result<QueryResult> {
+        self.query_ordered_unobserved(source, session_id, kind, query, folder_id, page, false)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn query_ordered_unobserved(
+        &self,
+        source: Source,
+        session_id: &str,
+        kind: QueryKind,
+        query: &str,
+        folder_id: Option<String>,
+        page: u64,
+        reverse: bool,
+    ) -> Result<QueryResult> {
         if reverse && !matches!(kind, QueryKind::Favorites) {
             return Err(AccountError::new("QUERY_INVALID"));
         }
         if matches!(kind, QueryKind::Recent) && (!query.is_empty() || folder_id.is_some()) {
+            return Err(AccountError::new("QUERY_INVALID"));
+        }
+        if matches!(
+            kind,
+            QueryKind::Author | QueryKind::Tag | QueryKind::Category
+        ) && (query.trim().is_empty() || folder_id.is_some())
+        {
+            return Err(AccountError::new("QUERY_INVALID"));
+        }
+        if matches!(kind, QueryKind::Category) && source != Source::Pica {
             return Err(AccountError::new("QUERY_INVALID"));
         }
         if !(1..=1000).contains(&page)
@@ -776,17 +916,27 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         {
             return Err(AccountError::new("QUERY_INVALID"));
         }
-        let mut slot = self.slot(source).lock().await;
-        self.require_scope(&mut slot, session_id)?;
-        let session = slot
-            .session
-            .as_ref()
-            .ok_or(AccountError::new("AUTH_REQUIRED"))?;
+        let queued_at = std::time::Instant::now();
+        let _operation = self.query_operation(source).lock().await;
+        let session = {
+            let mut slot = self.slot(source).lock().await;
+            self.require_scope(&mut slot, session_id)?;
+            Arc::clone(
+                slot.session
+                    .as_ref()
+                    .ok_or(AccountError::new("AUTH_REQUIRED"))?,
+            )
+        };
+        // Source requests retain their own ordering, but their network wait must
+        // not hold the account-state lock needed by covers and logout. Recheck
+        // the generation before accepting results or applying an auth failure.
+        let queue_ms = queued_at.elapsed().as_millis() as u64;
+        let source_started = std::time::Instant::now();
         let result = match kind {
             QueryKind::Favorites => {
                 self.backend
                     .favorites(
-                        session,
+                        &session,
                         FavoritePageRequest {
                             page,
                             folder_id,
@@ -795,19 +945,22 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     )
                     .await
             }
-            QueryKind::Search => self.backend.search(session, query.trim(), page).await,
-            QueryKind::Recent => self.backend.recent(session, page).await,
+            QueryKind::Search => self.backend.search(&session, query.trim(), page).await,
+            QueryKind::Author => self.backend.author(&session, query.trim(), page).await,
+            QueryKind::Tag => self.backend.tag(&session, query.trim(), page).await,
+            QueryKind::Category => self.backend.category(&session, query.trim(), page).await,
+            QueryKind::Recent => self.backend.recent(&session, page).await,
             QueryKind::Ranking => {
                 if page != 1 {
                     return Err(AccountError::new("QUERY_INVALID"));
                 }
                 self.backend
-                    .ranking(session, folder_id.as_deref(), query)
+                    .ranking(&session, folder_id.as_deref(), query)
                     .await
             }
             QueryKind::Detail => self
                 .backend
-                .detail(session, query.trim())
+                .detail(&session, query.trim())
                 .await
                 .map(|work| SourcePage {
                     items: vec![work],
@@ -820,6 +973,9 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                     jm_search_boundary: None,
                 }),
         };
+        let source_operation_ms = source_started.elapsed().as_millis() as u64;
+        let mut slot = self.slot(source).lock().await;
+        self.require_scope(&mut slot, session_id)?;
         let mut result = self.finish(&mut slot, result)?;
         let mut issue_slots = std::collections::HashSet::new();
         let mut previous_issue = 0;
@@ -827,7 +983,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             || result.items.iter().any(|work| work.source != source)
             || (result.jm_search_boundary.is_some()
                 && (source != Source::Jm
-                    || !matches!(kind, QueryKind::Search)
+                    || !matches!(
+                        kind,
+                        QueryKind::Search | QueryKind::Author | QueryKind::Tag | QueryKind::Recent
+                    )
                     || !jm_search_boundary_is_valid(&result)))
             || (matches!(kind, QueryKind::Detail) && !result.issues.is_empty())
             || result.issues.iter().any(|issue| {
@@ -860,7 +1019,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
                 if work.source_updated_at.is_none() {
                     work.source_updated_at = known.source_updated_at.clone();
                 }
-                let tags = inherit_language_tags(&work.tags, &known.tags);
+                let tags = inherit_content_tags(&work.tags, &known.tags);
                 if tags != work.tags {
                     let original_tags = std::mem::replace(&mut work.tags, tags);
                     if cache::validate_work(source, work).is_err() {
@@ -887,9 +1046,18 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             slot.works.insert(work.clone(), bytes);
         }
         Ok(QueryResult {
+            timing: crate::SourceQueryTiming {
+                queue_ms,
+                source_operation_ms,
+                local_commit_ms: 0,
+            },
             source,
             session_id: session_id.to_owned(),
             page: result,
+            discovery_revision: None,
+            observation_error_code: None,
+            content_verified_ids: vec![],
+            content_verified_until: None,
         })
     }
 
@@ -900,6 +1068,7 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         work_id: &str,
         desired: bool,
     ) -> Result<FavoriteResult> {
+        let _operation = self.query_operation(source).lock().await;
         let mut slot = self.slot(source).lock().await;
         self.require_scope(&mut slot, session_id)?;
         if !slot.works.contains_key(work_id) {
@@ -952,6 +1121,17 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
         session_id: &str,
         work_id: &str,
     ) -> Result<CoverResult> {
+        self.cover_with_refresh(source, session_id, work_id, false)
+            .await
+    }
+
+    pub async fn cover_with_refresh(
+        &self,
+        source: Source,
+        session_id: &str,
+        work_id: &str,
+        refresh_metadata: bool,
+    ) -> Result<CoverResult> {
         let (session, known) = {
             let mut slot = self.slot(source).lock().await;
             self.require_scope(&mut slot, session_id)?;
@@ -984,7 +1164,10 @@ impl<B: SourceBackend, V: Vault + 'static> AccountService<B, V> {
             let mut hydrated = false;
             // Full work metadata may be evicted before its small cover descriptor.
             // Reuse the native session descriptor without restoring action authority.
-            if !known && !self.backend.has_cover_metadata(&session, work_id) {
+            // An explicit failed-cover retry refreshes even a retained stale URL
+            // or cached missing descriptor. Ordinary loading keeps the fast path;
+            // this read does not populate the favorite/follow authority cache.
+            if refresh_metadata || (!known && !self.backend.has_cover_metadata(&session, work_id)) {
                 let work = self.backend.detail(&session, work_id).await?;
                 cache::validate_work(source, &work)?;
                 if work.work_id != work_id {

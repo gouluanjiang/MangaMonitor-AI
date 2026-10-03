@@ -1,0 +1,129 @@
+{
+  "artifactId": 11209075918,
+  "commit": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "zipSha256": "e8e260e0a3ed4fa68697fbbc411f56c037b84767c025c4d476e5b6b63f574fe7",
+  "files": [
+    {
+      "path": "assets/App-t5EdYceS.css",
+      "ciSha256": "63ccd49e3fc8ad833a19a893467923d96aaab5dfb1899d1c014e340c3beb28ce",
+      "localSha256": "63ccd49e3fc8ad833a19a893467923d96aaab5dfb1899d1c014e340c3beb28ce",
+      "equal": true
+    },
+    {
+      "path": "assets/ReaderWindow-D9h9GGXF.js",
+      "ciSha256": "fd605d85849aeb794f80d86cb0d7c06d8ecfdfcc90ad71ebdb964f919fa05122",
+      "localSha256": "fd605d85849aeb794f80d86cb0d7c06d8ecfdfcc90ad71ebdb964f919fa05122",
+      "equal": true
+    },
+    {
+      "path": "assets/App-Kevw1_jG.js",
+      "ciSha256": "526d8d199af7e3e05b54e4fb70971974bb229c908326cee765fef8e4b67e9ca1",
+      "localSha256": "526d8d199af7e3e05b54e4fb70971974bb229c908326cee765fef8e4b67e9ca1",
+      "equal": true
+    },
+    {
+      "path": "assets/core-CYtF6UP-.js",
+      "ciSha256": "4d69e7aa648379ac89135129aedfa144c3aaf9723f66721ed9f0e2acc24c0d4e",
+      "localSha256": "4d69e7aa648379ac89135129aedfa144c3aaf9723f66721ed9f0e2acc24c0d4e",
+      "equal": true
+    },
+    {
+      "path": "assets/event-DrJ9mqYy.js",
+      "ciSha256": "de7ad403187efe1749c20d4145f7e44a6b9883ac9079831a6fac9d5017190ea4",
+      "localSha256": "de7ad403187efe1749c20d4145f7e44a6b9883ac9079831a6fac9d5017190ea4",
+      "equal": true
+    },
+    {
+      "path": "assets/index-CkVeqKzc.js",
+      "ciSha256": "ae08a4ef6c68ac8e48fd5595efb664e909b575d7a13c2931dc20d7a458003e0f",
+      "localSha256": "ae08a4ef6c68ac8e48fd5595efb664e909b575d7a13c2931dc20d7a458003e0f",
+      "equal": true
+    },
+    {
+      "path": "assets/index-DGU8a3Op.css",
+      "ciSha256": "ec12eed2ab3265a79180d69ff3346d5f3f7fa0ab893814f0620e03f11e184035",
+      "localSha256": "ec12eed2ab3265a79180d69ff3346d5f3f7fa0ab893814f0620e03f11e184035",
+      "equal": true
+    },
+    {
+      "path": "assets/window-D4mQiB-l.js",
+      "ciSha256": "eede25924b5a6f79a073ba65fb7f0ace55d9c47b3e0ad0760e7656a7417fb7ba",
+      "localSha256": "eede25924b5a6f79a073ba65fb7f0ace55d9c47b3e0ad0760e7656a7417fb7ba",
+      "equal": true
+    },
+    {
+      "path": "assets/window-runtime-AGPOoB4X.js",
+      "ciSha256": "7e55ab28a51b37a799444576c5787bd169d8eb2f26ef9dbd44019e114c6ea1a2",
+      "localSha256": "7e55ab28a51b37a799444576c5787bd169d8eb2f26ef9dbd44019e114c6ea1a2",
+      "equal": true
+    },
+    {
+      "path": "assets/window-runtime-WW_lp9w8.css",
+      "ciSha256": "473a808b5df9e2178a67ddde2161870b0525bb96141bfb13f3244af6a092b9d7",
+      "localSha256": "473a808b5df9e2178a67ddde2161870b0525bb96141bfb13f3244af6a092b9d7",
+      "equal": true
+    },
+    {
+      "path": "covers/echo.svg",
+      "ciSha256": "d13f6f165bf565187cfcf6675796afe8f6522324015ac5686956e719922ffc35",
+      "localSha256": "d13f6f165bf565187cfcf6675796afe8f6522324015ac5686956e719922ffc35",
+      "equal": true
+    },
+    {
+      "path": "covers/bookshop.svg",
+      "ciSha256": "08a774b7ec724e283c452849ac5b51a8865dd4434ab2f0f7588cd06e15a2a89d",
+      "localSha256": "08a774b7ec724e283c452849ac5b51a8865dd4434ab2f0f7588cd06e15a2a89d",
+      "equal": true
+    },
+    {
+      "path": "covers/flight.svg",
+      "ciSha256": "32f6fe063278b0aeeb6519d24d3ff3738b54d65b0da5e74f8d28c79e8daa51b8",
+      "localSha256": "32f6fe063278b0aeeb6519d24d3ff3738b54d65b0da5e74f8d28c79e8daa51b8",
+      "equal": true
+    },
+    {
+      "path": "covers/moon.svg",
+      "ciSha256": "43c800a1491d9d3120db09d2a8248eee6d9ff29106d3dd7f28fad47a13a49094",
+      "localSha256": "43c800a1491d9d3120db09d2a8248eee6d9ff29106d3dd7f28fad47a13a49094",
+      "equal": true
+    },
+    {
+      "path": "covers/rain.svg",
+      "ciSha256": "ebd55f5b5f2985f330b9ad1b971e53494f32e9e84ba4ed3829d53d1fef6ddd31",
+      "localSha256": "ebd55f5b5f2985f330b9ad1b971e53494f32e9e84ba4ed3829d53d1fef6ddd31",
+      "equal": true
+    },
+    {
+      "path": "covers/sea.svg",
+      "ciSha256": "469a3dc7b8c8a8fa3ff9c2516ad7af867aa3d77a23f1085b556134e48d99c58c",
+      "localSha256": "469a3dc7b8c8a8fa3ff9c2516ad7af867aa3d77a23f1085b556134e48d99c58c",
+      "equal": true
+    },
+    {
+      "path": "covers/summer.svg",
+      "ciSha256": "4a3b57216c2c3fb8cae4fd02a1b6b7c6cc866c0dad0864ecb40760d3639aa3dd",
+      "localSha256": "4a3b57216c2c3fb8cae4fd02a1b6b7c6cc866c0dad0864ecb40760d3639aa3dd",
+      "equal": true
+    },
+    {
+      "path": "covers/train.svg",
+      "ciSha256": "a5df7a7448f68c1d5ee77c1e68b2f39ff5d88b6e64ea307ed859658c8a5e31a3",
+      "localSha256": "a5df7a7448f68c1d5ee77c1e68b2f39ff5d88b6e64ea307ed859658c8a5e31a3",
+      "equal": true
+    },
+    {
+      "path": "favicon.svg",
+      "ciSha256": "4ff12ae73c7b5487082cc19482786646c45909bbaf39b5f436bf13ee7613a266",
+      "localSha256": "4ff12ae73c7b5487082cc19482786646c45909bbaf39b5f436bf13ee7613a266",
+      "equal": true
+    },
+    {
+      "path": "index.html",
+      "ciSha256": "76424ee81426e552f2cba7e9a5b36f7ec1bc1ba2956e2a592b7c04751043d75d",
+      "localSha256": "76424ee81426e552f2cba7e9a5b36f7ec1bc1ba2956e2a592b7c04751043d75d",
+      "equal": true
+    }
+  ],
+  "allFilesEqual": true,
+  "fileSetsEqual": true
+}

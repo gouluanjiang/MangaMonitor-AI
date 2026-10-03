@@ -1,7 +1,7 @@
 //! Exact author-credit components, shared by the native discovery projection.
 //! Mirrors the UI's author-evidence.ts; never guesses from a title or substring.
 use crate::DiscoveryRecord;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
 fn whitespace(c: char) -> bool {
@@ -135,6 +135,56 @@ pub fn author_credit_matches(query: &str, credit: &str) -> bool {
             .any(|member| candidate.names.contains(member))
 }
 
+/// An indexed form of the exact component rules above. Query provenance never
+/// constrains authorship: a work found through another author can still belong
+/// to any currently followed, explicitly credited author.
+#[derive(Clone, Debug, Default)]
+pub struct AuthorCreditIndex {
+    components: HashMap<String, BTreeSet<String>>,
+    exact: HashMap<String, BTreeSet<String>>,
+}
+
+impl AuthorCreditIndex {
+    pub fn insert(&mut self, author: &str, aliases: &[String], exact_credits: &[String]) {
+        for name in std::iter::once(author).chain(aliases.iter().map(String::as_str)) {
+            let expected = normalize(name);
+            if !expected.is_empty() {
+                self.components
+                    .entry(expected)
+                    .or_default()
+                    .insert(author.to_owned());
+                for member in name_parts(name).members {
+                    self.components
+                        .entry(member)
+                        .or_default()
+                        .insert(author.to_owned());
+                }
+            }
+        }
+        for credit in exact_credits {
+            self.exact
+                .entry(normalize(credit))
+                .or_default()
+                .insert(author.to_owned());
+        }
+    }
+
+    pub fn matching_authors(&self, credits: &[String]) -> BTreeSet<String> {
+        let mut result = BTreeSet::new();
+        for credit in credits {
+            if let Some(authors) = self.exact.get(&normalize(credit)) {
+                result.extend(authors.iter().cloned());
+            }
+            for component in name_parts(credit).names {
+                if let Some(authors) = self.components.get(&component) {
+                    result.extend(authors.iter().cloned());
+                }
+            }
+        }
+        result
+    }
+}
+
 /// Query association and the historical author_verified flag are not authorship.
 pub fn discovery_record_matches_author(record: &DiscoveryRecord) -> bool {
     record.matched_authors.iter().any(|query| {
@@ -150,6 +200,59 @@ pub fn discovery_record_matches_author(record: &DiscoveryRecord) -> bool {
 mod tests {
     use super::*;
     use crate::{DiscoveryWork, Source};
+
+    #[test]
+    fn indexed_followed_credits_equal_existing_exact_component_rules() {
+        let authors = [
+            "Writer",
+            "Circle (Writer)",
+            "Coauthor",
+            "が",
+            "P",
+            "Author Name",
+        ];
+        let mut index = AuthorCreditIndex::default();
+        for author in authors {
+            index.insert(author, &[], &[]);
+        }
+        for credit in [
+            "Ｃｉｒｃｌｅ（ＷＲＩＴＥＲ）",
+            "Circle [Writer, Coauthor]",
+            "Writer & Coauthor",
+            "Writer/Coauthor",
+            "Circle (Writer",
+            "Circle (Writer...)",
+            "Writer Two",
+            "Writer",
+            "Circle",
+            "か\u{3099}",
+            "か",
+            "Author\u{3000} Name",
+            "P",
+            "Painter",
+        ] {
+            let expected: BTreeSet<_> = authors
+                .iter()
+                .filter(|author| author_credit_matches(author, credit))
+                .map(|author| (*author).to_owned())
+                .collect();
+            assert_eq!(
+                index.matching_authors(&[credit.to_owned()]),
+                expected,
+                "{credit}"
+            );
+        }
+        index.insert("Verified", &["Alias".into()], &["Combined Credit".into()]);
+        assert!(index
+            .matching_authors(&["Circle (Alias)".into()])
+            .contains("Verified"));
+        assert!(index
+            .matching_authors(&["Combined Credit".into()])
+            .contains("Verified"));
+        assert!(!index
+            .matching_authors(&["Combined Credit Extra".into()])
+            .contains("Verified"));
+    }
 
     #[test]
     fn native_author_credit_matches_ui_components_without_title_guessing() {
@@ -196,6 +299,7 @@ mod tests {
             matched_authors: vec!["Writer".into()],
             author_verified: true,
             observed_at: 1,
+            metadata_detail_at: None,
             scan_id: "a".repeat(64),
             first_discovered_run_id: None,
         };

@@ -3,6 +3,10 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   testMatch: [
+    "**/author-workspace-ui.spec.ts",
+    "**/special-ui.spec.ts",
+    "**/history-ui.spec.ts",
+    "**/browse-controls-ui.spec.ts",
     "**/refined-ui.spec.ts",
     "**/reader-ui.spec.ts",
     "**/reader-window-ui.spec.ts",
@@ -11,6 +15,7 @@ export default defineConfig({
     "**/source-ui.spec.ts",
     "**/library-ui.spec.ts",
     "**/download-ui.spec.ts",
+    "**/diagnostics-ui.spec.ts",
     "**/completion-ui.spec.ts",
     "**/ranking-ui.spec.ts",
     "**/recent-ui.spec.ts",
@@ -21,6 +26,9 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   workers: 1,
   retries: 0,
+  // A failing batch should emit its traces promptly; a green run still executes
+  // every scenario. This does not retry or hide any failed assertion.
+  maxFailures: process.env.CI ? 10 : 0,
   timeout: 30_000,
   expect: { timeout: 5_000 },
   reporter: [["list"], ["html", { open: "never" }]],

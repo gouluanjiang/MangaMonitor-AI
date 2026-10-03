@@ -1,3 +1,14 @@
+import { TagSearchProvider } from "./TagSearch.tsx";
+import { useSyncExternalStore } from "react";
+import {
+  subscribeContentFilter,
+  getContentFilterRevision,
+  rememberContentWork,
+} from "./content-filter.ts";
+import { AuthorSearchProvider } from "./AuthorLinks.tsx";
+import { DownloadFeedbackContext } from "./DownloadWorkButton.tsx";
+import { downloadActionState } from "./download-runtime.ts";
+import { downloadMetadataCode } from "./download-metadata-problems.ts";
 import { RankingPanel } from "./RankingPanel.tsx";
 import { ReaderAccessProvider, useReaderHost } from "./reader-access.tsx";
 import { ReaderDownloadError } from "./reader/runtime.ts";
@@ -21,6 +32,8 @@ import type { DemoTask, TaskStage, Work } from "./types.ts";
 import { Icon } from "./icons.tsx";
 import { WorkbenchSettings } from "./WorkbenchSettings.tsx";
 import { DiagnosticsPanel } from "./DiagnosticsPanel.tsx";
+import { createDiagnosticProblem } from "./diagnostics.ts";
+import type { DiagnosticProblem } from "./diagnostics.ts";
 import type { SettingsPage } from "./settings-navigation.ts";
 import {
   initialPreferences,
@@ -49,6 +62,15 @@ import {
   SourceLanguageProvider,
 } from "./SourceLanguageBadge.tsx";
 import { CompletionPanel } from "./CompletionPanel.tsx";
+import { AuthorWorkspace } from "./AuthorWorkspace.tsx";
+import { SpecialFollowsPanel } from "./SpecialFollowsPanel.tsx";
+import { ViewingHistoryPanel } from "./ViewingHistoryPanel.tsx";
+import { useViewingHistory } from "./useViewingHistory.ts";
+import type { HistoryIdentity } from "./history-runtime.ts";
+import {
+  SpecialFollowsContext,
+  useSpecialFollows,
+} from "./useSpecialFollows.tsx";
 import {
   LibraryWorkbench,
   LibrarySettingsPanel,
@@ -125,6 +147,8 @@ type Page =
   | "discovery"
   | "author-search"
   | "completion"
+  | "special"
+  | "history"
   | "queue"
   | "authors"
   | "settings";
@@ -134,6 +158,8 @@ const pageNames: Record<Page, string> = {
   favorites: "在线收藏",
   discovery: "发现",
   completion: "作者更新",
+  special: "特别关注",
+  history: "浏览历史",
   "author-search": "作者搜索",
   queue: "下载队列",
   authors: "关注作者",
@@ -202,45 +228,19 @@ function Dialog({
 }
 
 export default function App() {
-  const readerDownloadPending = useRef(false);
+  useSyncExternalStore(subscribeContentFilter, getContentFilterRevision);
   const readerHost = useReaderHost(
     persistence.native,
     async (reference) => {
-      if (readerDownloadPending.current)
-        throw new ReaderDownloadError("其他下载正在准备，请稍后再试。");
-      readerDownloadPending.current = true;
-      try {
-        if (!getDownloadScope(accountsRef.current, reference.source))
-          throw new ReaderDownloadError(
-            "请返回设置连接对应来源账号，再准备下载。",
-          );
-        if (!library.controller.getState().snapshot.rootId)
-          throw new ReaderDownloadError(
-            "请先在设置中选择漫画库目录，再准备下载。",
-          );
-        const state = downloads.controller.getState();
-        if (state.plan || state.batchPlan)
-          throw new ReaderDownloadError(
-            "请先处理主界面中已有的下载确认，再准备其他作品。",
-          );
-        if (state.busy)
-          throw new ReaderDownloadError("其他下载正在准备，请稍后再试。");
-        await beginDownload(
-          reference.workId,
-          undefined,
-          reference.source,
-          true,
+      const accepted = await beginDownload(
+        reference.workId,
+        undefined,
+        reference.source,
+      );
+      if (!accepted.length)
+        throw new ReaderDownloadError(
+          "未能加入下载，请查看主窗口提示或下载队列。",
         );
-        const current = downloads.controller.getState();
-        if (current.error)
-          throw new ReaderDownloadError(downloadErrorMessage(current.error));
-        if (!current.plan)
-          throw new ReaderDownloadError(
-            "暂时无法准备下载，请返回下载队列查看状态。",
-          );
-      } finally {
-        readerDownloadPending.current = false;
-      }
     },
     (message) => setNotice(message),
   );
@@ -272,6 +272,8 @@ export default function App() {
   );
   const [loadingAccounts, setLoadingAccounts] = useState(persistence.native);
   const [accountsError, setAccountsError] = useState("");
+  const [accountDiagnostic, setAccountDiagnostic] =
+    useState<DiagnosticProblem | null>(null);
   const accountsRef = useRef(accounts);
   accountsRef.current = accounts;
   const contextForSource = (source: DownloadSource): DownloadContext | null => {
@@ -293,6 +295,7 @@ export default function App() {
     persistence.native,
     downloadContexts,
     () => setDownloadLibraryRefresh(true),
+    (attention) => showDownloadNotice(attention.message),
   );
   useEffect(() => {
     if (!downloadLibraryRefresh || library.busy) return;
@@ -347,6 +350,7 @@ export default function App() {
         const next = { ...previous };
         for (const work of incoming)
           if (work.source === scope.source) {
+            rememberContentWork(work);
             const key = sourceWorkKey(work);
             const known = previous[key];
             const merged =
@@ -371,7 +375,10 @@ export default function App() {
         if (!disposed) mergeAccounts(updates);
       })
       .catch((cause) => {
-        if (!disposed) setAccountsError(sourceErrorMessage(cause));
+        if (!disposed) {
+          setAccountsError(sourceErrorMessage(cause));
+          setAccountDiagnostic(createDiagnosticProblem("accounts", cause));
+        }
       })
       .finally(() => {
         if (!disposed) setLoadingAccounts(false);
@@ -385,6 +392,46 @@ export default function App() {
   );
   const [page, setPage] = useState<Page>("library");
   const [authorPages, setAuthorPages] = useState<Page[]>([]);
+  const [unifiedSearchMode, setUnifiedSearchMode] = useState<
+    "author" | "search" | "detail" | "tag"
+  >("author");
+  const [tagRequest, setTagRequest] = useState<{
+    source: Source;
+    tag: string;
+    key: number;
+    category?: boolean;
+  } | null>(null);
+  function openTagSearch(source: Source, tag: string, category = false) {
+    setUnifiedSearchMode("tag");
+    setTagRequest((previous) => ({
+      source,
+      tag,
+      category,
+      key: (previous?.key ?? 0) + 1,
+    }));
+    setRequestedWork(undefined);
+    setDismissSourceDetailKey((value) => value + 1);
+    setDiscoveryPane("search");
+    navigate("discovery");
+  }
+  function chooseSearchMode(mode: "author" | "search" | "detail" | "tag") {
+    setRequestedWork(undefined);
+    setRequestedAuthorContext(undefined);
+    setDismissSourceDetailKey((value) => value + 1);
+    setUnifiedSearchMode(mode);
+    setDiscoveryPane("search");
+    navigate(mode === "author" ? "author-search" : "discovery");
+  }
+  const [authorRequest, setAuthorRequest] = useState<{
+    name: string;
+    key: number;
+  } | null>(null);
+  function openAuthorSearch(name: string) {
+    setUnifiedSearchMode("author");
+    setAuthorRequest((previous) => ({ name, key: (previous?.key ?? 0) + 1 }));
+    navigate("author-search");
+  }
+
   useEffect(() => {
     if (page === "completion" || page === "author-search")
       setAuthorPages((previous) =>
@@ -404,14 +451,10 @@ export default function App() {
           ? previous
           : discoveryPane === "recent"
             ? [...previous, discoveryPane]
-            : [
-                ...previous.filter((panel) => panel === "recent"),
-                discoveryPane,
-              ],
+            : [...previous, discoveryPane],
       );
   }, [page, discoveryPane]);
   const [embeddedSourceDetail, setEmbeddedSourceDetail] = useState(false);
-  const embeddedScroll = useRef(0);
   const downloadLibrary = useDownloadInventory(
     downloadAdapter,
     persistence.native,
@@ -439,6 +482,7 @@ export default function App() {
   const [detailTab, setDetailTab] = useState("chapters");
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
+  const pageQueries = useRef<Partial<Record<Page, string>>>({});
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("accounts");
   const [source, setSource] = useState("all");
@@ -452,12 +496,67 @@ export default function App() {
     "active",
   );
   const [notice, setNotice] = useState("");
+  const special = useSpecialFollows(accounts, persistence.native, setNotice);
+  const viewingHistory = useViewingHistory(persistence.native);
+  const [downloadNotice, setDownloadNotice] = useState<{
+    message: string;
+    sequence: number;
+  } | null>(null);
+  const [downloadAttentionRequest, setDownloadAttentionRequest] = useState(0);
+  function showDownloadNotice(message: string) {
+    setDownloadNotice((previous) => ({
+      message,
+      sequence: (previous?.sequence ?? 0) + 1,
+    }));
+  }
   const [storageFailed, setStorageFailed] = useState(false);
   const [preferences, setPreferences] = useState(initialPreferences);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [preferencesFailed, setPreferencesFailed] = useState(false);
   const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [preferencesError, setPreferencesError] = useState("");
+  const [preferenceDiagnostic, setPreferenceDiagnostic] =
+    useState<DiagnosticProblem | null>(null);
+  const libraryDiagnostic = useMemo(
+    () =>
+      library.error
+        ? createDiagnosticProblem(
+            "library",
+            library.failure?.cause ?? library.error,
+            library.failure?.occurredAt,
+          )
+        : null,
+    [library.error, library.failure],
+  );
+  const downloadDiagnostic = useMemo(
+    () =>
+      downloads.error &&
+      !(
+        downloads.failure?.preparation &&
+        downloadMetadataCode(downloads.failure.cause)
+      )
+        ? createDiagnosticProblem(
+            "downloads",
+            downloads.failure?.cause ?? downloads.error,
+            downloads.failure?.occurredAt,
+          )
+        : null,
+    [downloads.error, downloads.failure],
+  );
+  const accountStateDiagnostics = useMemo(
+    () =>
+      accounts
+        .filter((account) => account.errorCode)
+        .map((account) =>
+          createDiagnosticProblem(
+            "accounts",
+            account.errorCode,
+            Date.now(),
+            account.source,
+          ),
+        ),
+    [accounts],
+  );
   const preferencesSnapshot =
     useRef<DocumentSnapshot<WorkbenchPreferences> | null>(null);
   const preferencesBusy = useRef(false);
@@ -520,7 +619,9 @@ export default function App() {
       "favorites",
       "discovery",
       "authors",
-      ...(embeddedSourceDetail ? ["completion", "author-search"] : []),
+      ...(embeddedSourceDetail
+        ? ["completion", "author-search", "special", "history"]
+        : []),
     ].includes(page) &&
     (page !== "discovery" ||
       discoveryPane === "search" ||
@@ -539,7 +640,7 @@ export default function App() {
     <div className="source-tabs" role="group" aria-label="发现分类">
       {(
         [
-          ["search", "来源搜索"],
+          ["search", "搜索"],
           ["JM", "JM 每周必看"],
           ["Pica", "哔咔排行榜"],
           ["recent", "最近更新"],
@@ -550,7 +651,11 @@ export default function App() {
           aria-pressed={discoveryPane === value}
           className={discoveryPane === value ? "active" : ""}
           data-testid={"discovery-" + value}
-          onClick={() => setDiscoveryPane(value)}
+          onClick={() =>
+            value === "search"
+              ? chooseSearchMode(unifiedSearchMode)
+              : setDiscoveryPane(value)
+          }
         >
           {label}
         </button>
@@ -562,7 +667,6 @@ export default function App() {
     creditContext?: AuthorCreditContext,
   ) {
     setRequestedAuthorContext(creditContext);
-    embeddedScroll.current = contentRef.current?.scrollTop ?? 0;
     setRequestedSource(ref.source);
     setRequestedWork(ref);
     setSourceRequestKey((value) => value + 1);
@@ -571,16 +675,13 @@ export default function App() {
   function returnFromEmbeddedDetail() {
     setEmbeddedSourceDetail(false);
     setRequestedAuthorContext(undefined);
-    requestAnimationFrame(() =>
-      contentRef.current?.scrollTo(0, embeddedScroll.current),
-    );
   }
   function openSourceWork(
     ref: WorkReference,
     creditContext?: AuthorCreditContext,
   ) {
     setRequestedAuthorContext(creditContext);
-    if (["completion", "author-search"].includes(page)) {
+    if (["completion", "author-search", "special", "history"].includes(page)) {
       openEmbeddedWork(ref, creditContext);
       return;
     }
@@ -595,7 +696,47 @@ export default function App() {
     setLibraryTab("all");
     setQuery("");
     setLibraryNavigationKey((value) => value + 1);
-    setNotice("选择电脑漫画目录后，返回下载队列继续准备这本作品。");
+    setDownloadNotice(null);
+    setNotice("选择电脑漫画目录后，返回原来的作品，再点击下载。");
+  }
+  function openHistory(identity: HistoryIdentity) {
+    if (identity.kind === "source") {
+      if (
+        !accounts.some(
+          (account) =>
+            account.source === identity.source && account.state === "connected",
+        )
+      ) {
+        setNotice("请先连接该来源账号，再打开这条历史记录。");
+        return;
+      }
+      openSourceWork(identity);
+      return;
+    }
+    if (
+      library.snapshot.rootId !== identity.rootId ||
+      !library.snapshot.items.some((item) => item.id === identity.entryId)
+    ) {
+      setNotice(
+        "这条历史对应的文件暂时未在当前漫画库找到，请核对目录；历史和阅读进度保留。",
+      );
+      return;
+    }
+    if (
+      library.snapshot.items.find((item) => item.id === identity.entryId)
+        ?.errorCode === "LIBRARY_RECYCLED"
+    ) {
+      setNotice(
+        "文件已移到回收站。恢复文件并重新读取漫画库后可以继续阅读；历史和阅读进度保留。",
+      );
+      return;
+    }
+    setRequestedLibraryEntryId(identity.entryId);
+    setRequestedLibraryWork(null);
+    navigate("library");
+    setLibraryTab("all");
+    setQuery("");
+    setLibraryRequestKey((value) => value + 1);
   }
   function showDownloadLibrary(
     work: SourceWork,
@@ -651,84 +792,56 @@ export default function App() {
     library.snapshot.items,
     downloads.snapshot.tasks,
   ]);
+  function currentDownloadContexts(): DownloadContexts {
+    const snapshot = library.controller.getState().snapshot;
+    const context = (source: DownloadSource): DownloadContext | null => {
+      const scope = getDownloadScope(accountsRef.current, source);
+      return scope && snapshot.rootId
+        ? { scope, rootId: snapshot.rootId, generation: snapshot.generation }
+        : null;
+    };
+    return { JM: context("JM"), Pica: context("Pica") };
+  }
+  async function submitDownloads(
+    inputs: { source: DownloadSource; input: string }[],
+  ): Promise<string[]> {
+    if (!library.controller.getState().snapshot.rootId) {
+      chooseDownloadLibrary();
+      return [];
+    }
+    const result = await downloads.controller.enqueueSelection(
+      currentDownloadContexts(),
+      inputs,
+      currentDownloadContexts,
+    );
+    if (result.failed.length)
+      showDownloadNotice(
+        result.failed.length === 1
+          ? result.failed[0].message
+          : `${result.failed.length} 个下载请求未能加入，未提交的选择已保留。请在下载队列查看。`,
+      );
+    return result.accepted.flatMap((item) =>
+      item.workId ? [item.source + ":" + item.workId] : [],
+    );
+  }
   async function beginDownload(
     input: string,
     work?: SourceWork,
     requestedSource: DownloadSource = work?.source ?? downloadSource,
-    preserveExistingPlan = false,
-  ) {
-    const downloadScope = getDownloadScope(
-      accountsRef.current,
-      requestedSource,
-    );
-    const startingLibrary = library.controller.getState().snapshot;
-    const downloadContext: DownloadContext | null =
-      downloadScope && startingLibrary.rootId
-        ? {
-            scope: downloadScope,
-            rootId: startingLibrary.rootId,
-            generation: startingLibrary.generation,
-          }
-        : null;
+  ): Promise<string[]> {
     setDownloadSource(requestedSource);
     setDownloadInput(input);
-    setDownloadFeedback(true);
-    if (!downloadScope) {
-      setNotice(`请先连接${sourceLabel(requestedSource)}账号。`);
-      openSettings("accounts");
-      return;
-    }
-    if (!downloadContext) {
-      chooseDownloadLibrary();
-      return;
-    }
-    if (downloads.controller.getState().busy) return;
-    let inputs: string[];
     try {
-      inputs = parseDownloadInputs(input);
-    } catch (cause) {
-      setNotice(downloadErrorMessage(cause));
-      return;
-    }
-    // An earlier queue check may have observed files before this click. Wait
-    // for it, then request one fresh check for this explicit preparation.
-    if (downloads.controller.getState().reading)
-      await downloads.controller.read(false);
-    await downloads.controller.read(true);
-    const currentDownloads = downloads.controller.getState();
-    if (
-      !currentDownloads.ready ||
-      currentDownloads.error ||
-      currentDownloads.busy
-    )
-      return;
-    const currentLibrary = library.controller.getState().snapshot;
-    const currentAccount = accountsRef.current.find(
-      (account) => account.source === requestedSource,
-    );
-    if (
-      currentAccount?.state !== "connected" ||
-      currentAccount.sessionId !== downloadScope.sessionId ||
-      currentLibrary.rootId !== downloadContext.rootId ||
-      currentLibrary.generation !== downloadContext.generation
-    ) {
-      setNotice("账号或电脑目录已改变，请核对后重新准备下载。");
-      return;
-    }
-    // The queue recheck above yields. A reader handoff must not replace a
-    // confirmation created by another entry point while it was waiting.
-    const prepared = downloads.controller.getState();
-    if (preserveExistingPlan && (prepared.plan || prepared.batchPlan))
-      throw new ReaderDownloadError(
-        "请先处理主界面中已有的下载确认，再准备其他作品。",
+      return await submitDownloads(
+        parseDownloadInputs(input).map((value) => ({
+          source: requestedSource,
+          input: value,
+        })),
       );
-    if (inputs.length > 1) {
-      await downloads.controller.prepareBatch(downloadContext, inputs);
-      return;
+    } catch (cause) {
+      showDownloadNotice(downloadErrorMessage(cause));
+      return [];
     }
-    const id =
-      work?.workId ?? parseLibraryReference(requestedSource, input)?.workId;
-    await downloads.controller.prepare(downloadContext, id ?? input);
   }
   function openSourceFavorites(source: Source) {
     setRequestedSource(source);
@@ -736,57 +849,8 @@ export default function App() {
     setSourceRequestKey((key) => key + 1);
     navigate("favorites");
   }
-  async function beginDownloadMany(works: SourceWork[]) {
-    if (!works.length) return;
-    if (works.every((work) => work.source === works[0].source)) {
-      return beginDownload(
-        works.map((work) => work.workId).join("\n"),
-        undefined,
-        works[0].source,
-      );
-    }
-    if (downloads.controller.getState().busy) return;
-    setDownloadFeedback(true);
-    const startingLibrary = library.controller.getState().snapshot;
-    if (!startingLibrary.rootId) {
-      chooseDownloadLibrary();
-      return;
-    }
-    const contexts: DownloadContexts = { JM: null, Pica: null };
-    for (const source of new Set(works.map((work) => work.source))) {
-      const scope = getDownloadScope(accountsRef.current, source);
-      if (!scope) {
-        setNotice(`请先连接${sourceLabel(source)}账号。`);
-        openSettings("accounts");
-        return;
-      }
-      contexts[source] = {
-        scope,
-        rootId: startingLibrary.rootId,
-        generation: startingLibrary.generation,
-      };
-    }
-    if (downloads.controller.getState().reading)
-      await downloads.controller.read(false);
-    await downloads.controller.read(true);
-    const current = downloads.controller.getState(),
-      currentLibrary = library.controller.getState().snapshot;
-    if (!current.ready || current.error || current.busy) return;
-    if (
-      currentLibrary.rootId !== startingLibrary.rootId ||
-      currentLibrary.generation !== startingLibrary.generation ||
-      Object.values(contexts).some(
-        (context) =>
-          context &&
-          getDownloadScope(accountsRef.current, context.scope.source)
-            ?.sessionId !== context.scope.sessionId,
-      )
-    ) {
-      setNotice("账号或电脑目录已改变，请核对后重新准备下载。");
-      return;
-    }
-    await downloads.controller.prepareSelection(
-      contexts,
+  async function beginDownloadMany(works: SourceWork[]): Promise<string[]> {
+    return submitDownloads(
       works.map((work) => ({ source: work.source, input: work.workId })),
     );
   }
@@ -919,6 +983,7 @@ export default function App() {
       preferencesSnapshot.current = null;
       setPreferencesFailed(true);
       setPreferencesError(persistenceErrorMessage(error));
+      setPreferenceDiagnostic(createDiagnosticProblem("preferences", error));
     } finally {
       if (request === preferencesRead.current) {
         preferencesBusy.current = false;
@@ -987,6 +1052,7 @@ export default function App() {
     } catch (error) {
       setPreferencesFailed(true);
       setPreferencesError(persistenceErrorMessage(error));
+      setPreferenceDiagnostic(createDiagnosticProblem("preferences", error));
       return false;
     } finally {
       preferencesBusy.current = false;
@@ -1052,6 +1118,11 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(""), 4500);
     return () => window.clearTimeout(timer);
   }, [notice]);
+  useEffect(() => {
+    if (!downloadNotice) return;
+    const timer = window.setTimeout(() => setDownloadNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [downloadNotice]);
 
   const taskFor = (workId: string) =>
     state.tasks.find((task) => task.workId === workId);
@@ -1096,6 +1167,8 @@ export default function App() {
     navigate("settings");
   }
   const navigate = (next: Page) => {
+    if (persistence.native && page !== "settings")
+      pageQueries.current[page] = query;
     setEmbeddedSourceDetail(false);
     if (next === page && !detail) return;
     if (next === "settings") {
@@ -1109,7 +1182,7 @@ export default function App() {
       const origin = settingsOrigin.current;
       setPage(next);
       setDetail(origin.detail);
-      restoreAnchor(origin.anchor);
+      if (!persistence.native) restoreAnchor(origin.anchor);
       settingsOrigin.current = null;
       return;
     }
@@ -1118,10 +1191,10 @@ export default function App() {
     setDetail(null);
     setSelection([]);
     setSelectionMode(false);
-    setQuery("");
+    setQuery(persistence.native ? (pageQueries.current[next] ?? "") : "");
     setSource(next === "favorites" ? "JM" : "all");
     setFilter(next === "discovery" ? "ready" : "all");
-    contentRef.current?.scrollTo(0, 0);
+    if (!persistence.native) contentRef.current?.scrollTo(0, 0);
   };
   const openWork = (id: string) => {
     savedListAnchor.current = captureAnchor(id);
@@ -2172,6 +2245,25 @@ export default function App() {
             <DiagnosticsPanel
               state={{
                 accounts,
+                problems: [
+                  ...downloads.metadataProblems.map((problem) =>
+                    createDiagnosticProblem(
+                      "downloadPreparation",
+                      problem.code,
+                      problem.occurredAt,
+                      problem.source,
+                    ),
+                  ),
+                  ...accountStateDiagnostics,
+                  ...(accountsError && accountDiagnostic
+                    ? [accountDiagnostic]
+                    : []),
+                  ...(preferencesError && preferenceDiagnostic
+                    ? [preferenceDiagnostic]
+                    : []),
+                  ...(libraryDiagnostic ? [libraryDiagnostic] : []),
+                  ...(downloadDiagnostic ? [downloadDiagnostic] : []),
+                ],
                 accountsLoading: loadingAccounts,
                 accountsFailed: Boolean(accountsError),
                 library: library.snapshot,
@@ -2194,6 +2286,9 @@ export default function App() {
                   mergeAccounts(await sourceAdapter.accounts(true));
                 } catch (cause) {
                   setAccountsError(sourceErrorMessage(cause));
+                  setAccountDiagnostic(
+                    createDiagnosticProblem("accounts", cause),
+                  );
                 } finally {
                   setLoadingAccounts(false);
                 }
@@ -2258,27 +2353,29 @@ export default function App() {
       ? discoveryPane === "recent"
         ? "recent"
         : "ranking"
-      : page;
+      : page === "author-search"
+        ? "discovery"
+        : page;
   const pageTitle =
     uiDestination === "recent"
       ? "最近更新"
       : uiDestination === "ranking"
         ? "周排行榜"
         : page === "discovery"
-          ? "来源搜索"
-          : pageNames[page];
+          ? "搜索"
+          : page === "author-search"
+            ? "搜索"
+            : pageNames[page];
   function navigateUi(destination: UiDestination) {
     if (destination === "settings") return openSettings();
-    if (destination === "discovery" && embeddedSourceDetail) {
-      setRequestedWork(undefined);
-      setRequestedAuthorContext(undefined);
-      setDismissSourceDetailKey((value) => value + 1);
-    }
     if (
-      destination === "recent" ||
-      destination === "ranking" ||
-      destination === "discovery"
+      persistence.native &&
+      (destination === "discovery" || destination === "author-search")
     ) {
+      chooseSearchMode(unifiedSearchMode);
+      return;
+    }
+    if (destination === "recent" || destination === "ranking") {
       setDiscoveryPane(
         destination === "recent"
           ? "recent"
@@ -2355,6 +2452,7 @@ export default function App() {
         native={persistence.native}
         collapsed={sidebar.collapsed}
         accounts={accounts}
+        specialUnread={special.unread}
         unfinished={
           persistence.native
             ? unfinishedDownloadCount(downloads.snapshot.tasks)
@@ -2402,6 +2500,34 @@ export default function App() {
           onScroll={updateToolbarSurface}
           tabIndex={-1}
         >
+          {persistence.native &&
+            !embeddedSourceDetail &&
+            (page === "author-search" ||
+              (page === "discovery" && discoveryPane === "search")) && (
+              <div
+                className="source-tabs unified-search-modes"
+                role="group"
+                aria-label="搜索方式"
+              >
+                {(
+                  [
+                    ["author", "作者"],
+                    ["search", "作品关键词"],
+                    ["detail", "编号或链接"],
+                    ["tag", "标签"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    aria-pressed={unifiedSearchMode === mode}
+                    className={unifiedSearchMode === mode ? "active" : ""}
+                    onClick={() => chooseSearchMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           {failedBackground &&
             appearance.backgroundImage === failedBackground && (
               <p role="status" className="storage-warning">
@@ -2460,17 +2586,21 @@ export default function App() {
               toolbarStuck={toolbarStuck}
               density={appearance.density}
               onDensityChange={changeDensity}
-              query={query}
+              query={
+                page === "library" ? query : (pageQueries.current.library ?? "")
+              }
               searchControl={page === "library" ? pageSearchControl : undefined}
               externalWork={requestedLibraryWork}
               externalEntryId={requestedLibraryEntryId}
               requestKey={libraryRequestKey}
+              onNotice={setNotice}
             />
           )}
           {persistence.native && (
             <NativeDownloads
               downloads={downloads}
               active={page === "queue"}
+              attentionRequestKey={downloadAttentionRequest}
               contexts={downloadContexts}
               accounts={accounts}
               selectedSource={downloadSource}
@@ -2484,55 +2614,79 @@ export default function App() {
               onPrepare={() => beginDownload(downloadInput)}
               onChooseLibrary={chooseDownloadLibrary}
               onOpenAccounts={() => openSettings("accounts")}
-              onConfirmed={() => {
-                if (!readerHost.isOpen) navigate("queue");
-              }}
               onOpenDownloaded={openDownloaded}
               onReprepare={(task) => {
-                if (
-                  task.phase === "downloaded" &&
-                  task.localFiles === "missing"
-                )
-                  void beginDownload(task.workId, undefined, task.source);
+                void beginDownload(task.workId, undefined, task.source);
               }}
-              showFeedback={downloadFeedback}
-              inventoryHint={(plan) =>
-                downloadInventory(plan).kind === "owned"
-                  ? "该来源作品已下载并保存在漫画库中。"
-                  : null
+            />
+          )}
+          {persistence.native && (
+            <SpecialFollowsPanel
+              active={page === "special" && !embeddedSourceDetail}
+              sourceAdapter={sourceAdapter}
+              library={library.snapshot}
+              inventorySnapshot={downloadLibrary.snapshot}
+              inventoryReady={
+                downloadLibrary.ready &&
+                !downloadLibrary.error &&
+                !library.error
               }
+              density={appearance.density}
+              onOpenWork={openSourceWork}
+              onDownload={(work) => void beginDownload(work.workId, work)}
+              onOpenAccounts={() => openSettings("accounts")}
+            />
+          )}
+          {persistence.native && (
+            <ViewingHistoryPanel
+              active={page === "history" && !embeddedSourceDetail}
+              history={viewingHistory}
+              sourceAdapter={sourceAdapter}
+              accounts={accounts}
+              libraryAdapter={libraryAdapter}
+              librarySnapshot={library.snapshot}
+              onOpen={openHistory}
             />
           )}
           {persistence.native &&
-            authorPages.map((authorPage) => (
-              <div
-                key={authorPage}
-                hidden={embeddedSourceDetail || page !== authorPage}
-              >
-                <CompletionPanel
-                  active={page === authorPage}
-                  mode={authorPage === "author-search" ? "search" : "updates"}
-                  accounts={accounts}
-                  sourceAdapter={sourceAdapter}
-                  library={library.snapshot}
-                  inventorySnapshot={downloadLibrary.snapshot}
-                  inventoryReady={
-                    downloadLibrary.ready &&
-                    !downloadLibrary.error &&
-                    !library.error
-                  }
-                  onRefreshInventory={downloadLibrary.refresh}
-                  inventoryError={downloadLibrary.error || library.error}
-                  density={appearance.density}
-                  onOpenWork={openSourceWork}
-                  onDownload={(work) => void beginDownload(work.workId, work)}
-                  onDownloadMany={(works) => void beginDownloadMany(works)}
-                  downloadBusy={downloads.busy}
-                  onOpenLibrary={() => openSettings("library")}
-                  onOpenAccounts={() => openSettings("accounts")}
-                />
-              </div>
-            ))}
+            authorPages.map((authorPage) => {
+              const AuthorPage =
+                authorPage === "author-search"
+                  ? AuthorWorkspace
+                  : CompletionPanel;
+              return (
+                <div
+                  key={authorPage}
+                  hidden={embeddedSourceDetail || page !== authorPage}
+                >
+                  <AuthorPage
+                    active={!embeddedSourceDetail && page === authorPage}
+                    mode={authorPage === "author-search" ? "search" : "updates"}
+                    authorRequest={
+                      authorPage === "author-search" ? authorRequest : null
+                    }
+                    accounts={accounts}
+                    sourceAdapter={sourceAdapter}
+                    library={library.snapshot}
+                    inventorySnapshot={downloadLibrary.snapshot}
+                    inventoryReady={
+                      downloadLibrary.ready &&
+                      !downloadLibrary.error &&
+                      !library.error
+                    }
+                    onRefreshInventory={downloadLibrary.refresh}
+                    inventoryError={downloadLibrary.error || library.error}
+                    density={appearance.density}
+                    onOpenWork={openSourceWork}
+                    onDownload={(work) => void beginDownload(work.workId, work)}
+                    onDownloadMany={beginDownloadMany}
+                    downloadBusy={false}
+                    onOpenLibrary={() => openSettings("library")}
+                    onOpenAccounts={() => openSettings("accounts")}
+                  />
+                </div>
+              );
+            })}
           {persistence.native &&
             discoveryPanels.map((panel) => (
               <div
@@ -2567,7 +2721,7 @@ export default function App() {
                     }
                     onOpen={openEmbeddedWork}
                     onDownload={(work) => void beginDownload(work.workId, work)}
-                    onDownloadMany={(works) => void beginDownloadMany(works)}
+                    onDownloadMany={beginDownloadMany}
                     onAccounts={() => openSettings("accounts")}
                   />
                 ) : (
@@ -2595,7 +2749,7 @@ export default function App() {
                     }
                     onOpen={openEmbeddedWork}
                     onDownload={(work) => void beginDownload(work.workId, work)}
-                    onDownloadMany={(works) => void beginDownloadMany(works)}
+                    onDownloadMany={beginDownloadMany}
                     onAccounts={() => openSettings("accounts")}
                   />
                 )}
@@ -2604,6 +2758,11 @@ export default function App() {
           {persistence.native && (
             <SourceWorkbench
               adapter={sourceAdapter}
+              searchMode={
+                unifiedSearchMode === "author" ? undefined : unifiedSearchMode
+              }
+              searchRequest={tagRequest}
+              onAuthorSearch={openAuthorSearch}
               discoveryNavigation={
                 sourceActive && page === "discovery"
                   ? discoveryNavigation
@@ -2612,12 +2771,12 @@ export default function App() {
               onDetailBack={
                 embeddedSourceDetail ? returnFromEmbeddedDetail : undefined
               }
-              onDownload={(work) => beginDownload(work.workId, work)}
-              onDownloadMany={(works) => void beginDownloadMany(works)}
+              onDownload={(work) => void beginDownload(work.workId, work)}
+              onDownloadMany={beginDownloadMany}
               downloadInventory={downloadLibrary.snapshot}
               inventoryReady={downloadLibrary.ready && !downloadLibrary.error}
               downloadReady={downloads.ready}
-              downloadBusy={downloads.busy}
+              downloadBusy={false}
               librarySnapshot={library.snapshot}
               libraryReady={!library.error}
               onOpenLibrary={(work, entryId) => {
@@ -2652,7 +2811,10 @@ export default function App() {
             page === "discovery" &&
             discoveryPane !== "search") ||
           libraryActive ||
-          (persistence.native && ["completion", "author-search"].includes(page))
+          (persistence.native &&
+            ["completion", "author-search", "special", "history"].includes(
+              page,
+            ))
             ? null
             : currentWork
               ? renderDetail(currentWork)
@@ -2776,7 +2938,27 @@ export default function App() {
           </div>
         </Dialog>
       )}
-      {notice && (
+      {downloadNotice && (
+        <div
+          role="alert"
+          className="toast download-attention-toast"
+          data-testid="download-attention-toast"
+        >
+          <Icon name="warning" size={17} />
+          <span>{downloadNotice.message}</span>
+          <button
+            className="text-button"
+            onClick={() => {
+              setDownloadAttentionRequest((value) => value + 1);
+              navigate("queue");
+              setDownloadNotice(null);
+            }}
+          >
+            查看
+          </button>
+        </div>
+      )}
+      {notice && !downloadNotice && (
         <div role="status" className="toast">
           <Icon name="check" size={17} />
           {notice}
@@ -2786,10 +2968,27 @@ export default function App() {
   );
   return (
     <SourceLanguageProvider cache={sourceCache}>
-      <ReaderAccessProvider value={readerHost.actions}>
-        {content}
-        {readerHost.layer}
-      </ReaderAccessProvider>
+      <TagSearchProvider value={openTagSearch}>
+        <AuthorSearchProvider value={openAuthorSearch}>
+          <DownloadFeedbackContext.Provider
+            value={(work) =>
+              downloadActionState(
+                downloads,
+                work.source,
+                work.workId,
+                library.snapshot.rootId ?? undefined,
+              )
+            }
+          >
+            <ReaderAccessProvider value={readerHost.actions}>
+              <SpecialFollowsContext.Provider value={special}>
+                {content}
+                {readerHost.layer}
+              </SpecialFollowsContext.Provider>
+            </ReaderAccessProvider>
+          </DownloadFeedbackContext.Provider>
+        </AuthorSearchProvider>
+      </TagSearchProvider>
     </SourceLanguageProvider>
   );
 }

@@ -1,3 +1,4 @@
+import { openUnifiedSearch } from "./browse-ui-helpers.ts";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { initialPreferences } from "../src/preferences.ts";
@@ -19,6 +20,8 @@ declare global {
 }
 test.use({ storageState: { cookies: [], origins: [] } });
 const errors = new WeakMap<Page, string[]>();
+const rankingPanel = (page: Page) =>
+  page.locator('[data-testid="ranking-panel"]:visible');
 test.beforeEach(async ({ page }) => {
   const captured: string[] = [];
   errors.set(page, captured);
@@ -218,7 +221,7 @@ async function install(page: Page, languageTags?: string[][]) {
     },
   );
   await page.goto("/");
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
 }
 
 test("both rankings show explicit languages while a manga category remains unknown and selection stays reachable", async ({
@@ -230,7 +233,7 @@ test("both rankings show explicit languages while a manga category remains unkno
   for (const source of ["JM", "Pica"] as const) {
     if (source === "Pica")
       await page
-        .getByTestId("ranking-panel")
+        .locator('[data-testid="ranking-panel"]:visible')
         .getByTestId("discovery-Pica")
         .click();
     for (const [index, label] of ["已汉化", "生肉", "未知", "未知"].entries()) {
@@ -244,12 +247,15 @@ test("both rankings show explicit languages while a manga category remains unkno
       await expect(badge).toHaveText(label);
       await expect(badge).toHaveAttribute("data-language-context", "source");
     }
+    await page.getByRole("button", { name: "多选", exact: true }).click();
     const selectedId = source === "JM" ? "2" : "2".padStart(24, "0");
     await page
       .getByTestId(`rank-work-${source}:${selectedId}`)
       .getByRole("checkbox")
       .check();
-    await expect(page.getByTestId("ranking-panel")).toContainText("已选 1 部");
+    await expect(
+      page.getByRole("toolbar", { name: "批量下载操作" }),
+    ).toContainText("已选 1 本");
     await page
       .getByTestId(`rank-work-${source}:${selectedId}`)
       .scrollIntoViewIfNeeded();
@@ -289,13 +295,13 @@ test("ranking retains good works and exposes isolated source positions as read-o
     window.rankingTest.isolated = true;
   });
   await page.getByTestId("discovery-JM").click();
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "已读取 2 条 / 来源报告 3 条",
   );
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "分页已读完，仍有来源记录待核对",
   );
-  const issues = page.getByTestId("ranking-issues");
+  const issues = rankingPanel(page).getByTestId("ranking-issues");
   await issues.locator("summary").click();
   await expect(issues).toContainText("JM · 第 1 页 · 第 3 条 · 编号 999");
   await expect(issues.getByRole("button")).toHaveCount(0);
@@ -311,23 +317,23 @@ test("weekly and Pica ranks share receipt filters while details preserve the sel
 }) => {
   await install(page);
   await page.getByTestId("discovery-JM").click();
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "已入库 1 条 · 未入库 1 条",
   );
-  await expect(page.getByLabel("排行类型")).toHaveValue("manga");
+  await expect(rankingPanel(page).getByLabel("排行类型")).toHaveValue("manga");
   await expect(page.getByLabel("每周必看期数")).toContainText(
     "2026第42期09.11 - 09.04",
   );
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({ path: "visual-evidence/jm-weekly.png" });
-  await page.getByLabel("排行类型").selectOption("hanman");
+  await rankingPanel(page).getByLabel("排行类型").selectOption("hanman");
   await expect(
     page.getByText("本期该类型暂无作品，可以切换期数或类型。"),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await page.getByLabel("排行类型").selectOption("manga");
+  await rankingPanel(page).getByLabel("排行类型").selectOption("manga");
   await page.getByLabel("每周必看期数").selectOption("41");
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "本次榜单已读完",
   );
   await page.getByRole("button", { name: "未入库 1", exact: true }).click();
@@ -335,10 +341,10 @@ test("weekly and Pica ranks share receipt filters while details preserve the sel
   await page
     .getByTestId("rank-work-JM:2")
     .getByRole("button", { name: /打开《/ })
-    .click();
+    .click({ button: "right" });
   await page
     .getByTestId("reader-cover-actions")
-    .getByRole("button", { name: "漫画详细", exact: true })
+    .getByRole("menuitem", { name: "作品详细", exact: true })
     .click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
@@ -346,12 +352,12 @@ test("weekly and Pica ranks share receipt filters while details preserve the sel
   await expect(
     page.getByRole("button", { name: "未入库 1", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  await page.getByTestId("ranking-panel").getByTestId("discovery-Pica").click();
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await rankingPanel(page).getByTestId("discovery-Pica").click();
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "已入库 0 条 · 未入库 2 条",
   );
-  await page.getByLabel("排行类型").selectOption("month");
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await rankingPanel(page).getByLabel("排行类型").selectOption("month");
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "本次榜单已读完",
   );
   expect(
@@ -383,10 +389,10 @@ test("options can be retried and short or failed lists never claim complete", as
     window.rankingTest.partial = true;
   });
   await page.getByRole("button", { name: "刷新榜单" }).click();
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "已读取 2 条 / 来源报告 20 条",
   );
-  await expect(page.getByTestId("ranking-counts")).toContainText(
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
     "尚未完整确认",
   );
   await page.evaluate(() => {
@@ -417,10 +423,12 @@ test("a late result cannot replace another source and downloading still requires
   await page.getByTestId("discovery-JM").click();
   await expect(page.getByText("正在读取来源榜单…")).toBeVisible();
   await page.waitForFunction(() => Boolean(window.rankingTest.release));
-  await page.getByTestId("ranking-panel").getByTestId("discovery-Pica").click();
-  await expect(page.getByTestId("ranking-counts")).toContainText("未入库 2 条");
+  await rankingPanel(page).getByTestId("discovery-Pica").click();
+  await expect(rankingPanel(page).getByTestId("ranking-counts")).toContainText(
+    "未入库 2 条",
+  );
   await page.evaluate(() => window.rankingTest.release?.());
-  await expect(page.getByTestId("rank-work-JM:2")).toHaveCount(0);
+  await expect(page.getByTestId("rank-work-JM:2")).toBeHidden();
   expect(
     await page.evaluate(() =>
       window.rankingTest.calls.filter((call) =>

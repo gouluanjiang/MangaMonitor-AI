@@ -39,7 +39,7 @@ impl WorkbenchSources {
                 false,
             )
             .await?;
-        let (result, covers) = protocol::page(session.source, &data, page, false)?;
+        let (result, covers) = protocol::recent_page(session.source, &data, page)?;
         session.remember_covers(covers)?;
         Ok(result)
     }

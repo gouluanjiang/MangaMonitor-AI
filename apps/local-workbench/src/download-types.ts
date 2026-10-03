@@ -34,11 +34,26 @@ export interface DownloadSelectionInput {
   source: DownloadSource;
   input: string;
 }
+export interface DownloadSubmissionItem extends DownloadSelectionInput {
+  workId: string | null;
+}
+export interface DownloadSubmissionFailure extends DownloadSubmissionItem {
+  errorCode: string;
+  message: string;
+}
+export interface DownloadSubmissionResult {
+  accepted: (DownloadSubmissionItem & {
+    taskId: string | null;
+    outcome: "queued" | "existing" | "retried" | "resumed" | "present";
+  })[];
+  failed: DownloadSubmissionFailure[];
+}
 export interface DownloadTaskRevision {
   taskId: string;
   expectedRevision: number;
 }
-export type DownloadAction = "pause" | "resume" | "retry";
+export type DownloadAction =
+  "pause" | "resume" | "retry" | "abandon" | "cleanup";
 export type DownloadLocalFiles =
   "present" | "missing" | "incomplete" | "unavailable";
 export type DownloadPhase =
@@ -48,13 +63,16 @@ export type DownloadPhase =
   | "saving"
   | "paused"
   | "error"
-  | "downloaded";
+  | "downloaded"
+  | "abandoned";
 export interface DownloadTask {
   id: string;
   revision: number;
   source: DownloadSource;
   workId: string;
   title: string;
+  tags?: string[];
+  rootId?: string;
   phase: DownloadPhase;
   filesDone: number;
   filesTotal: number | null;

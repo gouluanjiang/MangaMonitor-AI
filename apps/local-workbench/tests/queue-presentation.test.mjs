@@ -117,7 +117,7 @@ test("errors distinguish account, registration, validation and file state withou
     downloadAttentionReason(
       task(1, "error", { errorCode: "INDEX_WRITE_FAILED" }),
     ),
-    "保存成功，入库登记未完成",
+    "保存后的核验或入库登记未完成",
   );
   assert.equal(
     downloadAttentionReason(
@@ -242,4 +242,12 @@ test("invalid or cancelled confirmations do not invent a batch or count unrelate
   assert.equal(await controller.confirm(context), false);
   assert.equal(controller.getState().recentBatch, null);
   controller.dispose();
+});
+
+test("abandoned rows remain manageable in attention without returning to the active category", () => {
+  const abandoned = task(80, "abandoned", { allowedActions: ["cleanup"] });
+  assert.deepEqual(filterDownloadTasks([abandoned], "active"), []);
+  assert.deepEqual(filterDownloadTasks([abandoned], "error"), [abandoned]);
+  assert.deepEqual(filterDownloadTasks([abandoned], "downloaded"), []);
+  assert.equal(downloadQueueFilters.length, 3);
 });

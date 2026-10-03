@@ -47,11 +47,37 @@ pub trait SourceBackend: Send + Sync + 'static {
         query: &str,
         page: u64,
     ) -> impl Future<Output = Result<SourcePage>> + Send;
+    /// Synthetic backends may reuse search fixtures; the live backend below
+    /// explicitly selects each source's author-query semantics.
+    fn author(
+        &self,
+        session: &Self::Session,
+        query: &str,
+        page: u64,
+    ) -> impl Future<Output = Result<SourcePage>> + Send {
+        self.search(session, query, page)
+    }
     fn detail(
         &self,
         session: &Self::Session,
         input: &str,
     ) -> impl Future<Output = Result<SourceWork>> + Send;
+    fn tag(
+        &self,
+        _session: &Self::Session,
+        _query: &str,
+        _page: u64,
+    ) -> impl Future<Output = Result<SourcePage>> + Send {
+        std::future::ready(Err(AccountError::new("SOURCE_TAG_UNSUPPORTED")))
+    }
+    fn category(
+        &self,
+        _session: &Self::Session,
+        _query: &str,
+        _page: u64,
+    ) -> impl Future<Output = Result<SourcePage>> + Send {
+        std::future::ready(Err(AccountError::new("SOURCE_CATEGORY_UNSUPPORTED")))
+    }
     fn reader_detail(
         &self,
         session: &Self::Session,
@@ -178,8 +204,28 @@ impl SourceBackend for WorkbenchSources {
             .await
             .map_err(|error| AccountError::new(error.code))
     }
+    async fn author(&self, session: &Self::Session, query: &str, page: u64) -> Result<SourcePage> {
+        WorkbenchSources::author(self, session, query, page)
+            .await
+            .map_err(|error| AccountError::new(error.code))
+    }
     async fn detail(&self, session: &Self::Session, input: &str) -> Result<SourceWork> {
         WorkbenchSources::detail(self, session, input)
+            .await
+            .map_err(|error| AccountError::new(error.code))
+    }
+    async fn tag(&self, session: &Self::Session, query: &str, page: u64) -> Result<SourcePage> {
+        WorkbenchSources::tag(self, session, query, page)
+            .await
+            .map_err(|error| AccountError::new(error.code))
+    }
+    async fn category(
+        &self,
+        session: &Self::Session,
+        query: &str,
+        page: u64,
+    ) -> Result<SourcePage> {
+        WorkbenchSources::category(self, session, query, page)
             .await
             .map_err(|error| AccountError::new(error.code))
     }
@@ -196,6 +242,6 @@ impl SourceBackend for WorkbenchSources {
     async fn cover(&self, session: &Self::Session, work_id: &str) -> Result<Option<String>> {
         WorkbenchSources::thumbnail(self, session, work_id)
             .await
-            .map_err(|error| AccountError::new(error.code))
+            .map_err(|error| AccountError::new(error.code).with_retry_after(error.retry_after_ms))
     }
 }

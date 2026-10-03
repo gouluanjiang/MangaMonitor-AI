@@ -1,4 +1,5 @@
-//! Read-only, descriptor-anchored access. No user library write API exists here.
+//! Descriptor-anchored access. The separate recycle opener requests delete
+//! access only for an explicitly confirmed single-file operation.
 use crate::{error, hash, Result};
 #[cfg(windows)]
 use std::path::PathBuf;
@@ -110,6 +111,52 @@ impl Root {
         }
         let (parent, name) = relative.rsplit_once('/').unwrap_or(("", relative));
         self.directory(parent)?.child(name)
+    }
+
+    pub(crate) fn recycle_file(&self, relative: &str) -> Result<SafeFile> {
+        if !library_relative_path_is_valid(relative) {
+            return Err(error("LIBRARY_UNSAFE_PATH"));
+        }
+        let (parent, name) = relative.rsplit_once('/').unwrap_or(("", relative));
+        let parent = self.directory(parent)?;
+        #[cfg(unix)]
+        {
+            // Unix only exercises the isolated host callback in tests. The
+            // desktop host refuses native recycling on unsupported platforms.
+            match parent.child(name)? {
+                Node::File(file) => Ok(file),
+                _ => Err(error("LIBRARY_UNSAFE_PATH")),
+            }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::{
+                DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+                FILE_SHARE_READ,
+            };
+            let path = parent.path.join(name);
+            let file = fs::OpenOptions::new()
+                .access_mode(FILE_READ_ATTRIBUTES | DELETE)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&path)
+                .map_err(|problem| {
+                    error(match problem.raw_os_error() {
+                        Some(2 | 3) => "LIBRARY_ENTRY_MISSING",
+                        Some(32 | 33) => "LIBRARY_ITEM_BUSY",
+                        _ => "LIBRARY_RECYCLE_UNAVAILABLE",
+                    })
+                })?;
+            let metadata = file.metadata().map_err(|_| error("LIBRARY_READ_FAILED"))?;
+            if redirected(&metadata) || !metadata.is_file() {
+                return Err(error("LIBRARY_UNSAFE_PATH"));
+            }
+            Ok(SafeFile {
+                file,
+                _parent: parent,
+            })
+        }
     }
 }
 

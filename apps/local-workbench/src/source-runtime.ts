@@ -19,13 +19,21 @@ import { sources } from "./source-types.ts";
 import { sameSourceWork } from "./source-memory.ts";
 import { authorQueryMessage } from "./author-query.ts";
 import { normalizedWorkDate } from "./work-dates.ts";
+import { notifyAuthorCatalogChanged } from "./author-catalog-events.ts";
 
 export class SourceError extends Error {
   readonly code: string;
-  constructor(code: string) {
+  readonly retryAfterMs?: number;
+  constructor(code: string, retryAfterMs?: number) {
     super(code);
     this.name = "SourceError";
     this.code = code;
+    if (
+      typeof retryAfterMs === "number" &&
+      Number.isSafeInteger(retryAfterMs) &&
+      retryAfterMs >= 0
+    )
+      this.retryAfterMs = retryAfterMs;
   }
 }
 export function sourceErrorMessage(error: unknown): string {
@@ -85,6 +93,23 @@ const identity = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(value);
 function invalid(): never {
   throw new SourceError("INVALID_RESPONSE");
+}
+function contentVerifiedIds(value: unknown, items: SourceWork[]): string[] {
+  if (value === undefined) return [];
+  const ids = new Set(items.map((work) => work.workId));
+  if (
+    !Array.isArray(value) ||
+    value.length > items.length ||
+    value.some((id) => typeof id !== "string" || !ids.has(id)) ||
+    new Set(value).size !== value.length
+  )
+    invalid();
+  return [...value] as string[];
+}
+function contentVerifiedUntil(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (!integer(value) || (value as number) <= 0) invalid();
+  return value as number;
 }
 function validSource(value: unknown): value is Source {
   return value === "JM" || value === "Pica";
@@ -232,6 +257,12 @@ export function validateSourceWork(
     !nullableText(value.description) ||
     !Array.isArray(value.tags) ||
     !value.tags.every((item) => text(item, 2000)) ||
+    !(
+      value.categories === undefined ||
+      (Array.isArray(value.categories) &&
+        value.categories.length <= 64 &&
+        value.categories.every((item) => text(item, 2000) && item.trim()))
+    ) ||
     !(value.favorite === null || typeof value.favorite === "boolean") ||
     !nullableInteger(value.chapterCount) ||
     !nullableInteger(value.pageCount) ||
@@ -246,6 +277,9 @@ export function validateSourceWork(
     authors: [...value.authors] as string[],
     description: value.description as string | null,
     tags: [...value.tags] as string[],
+    ...(value.categories === undefined
+      ? {}
+      : { categories: [...value.categories] as string[] }),
     favorite: value.favorite as boolean | null,
     chapterCount: value.chapterCount as number | null,
     pageCount: value.pageCount as number | null,
@@ -645,7 +679,12 @@ export function createSourceAdapter(
         /^[A-Z0-9_]{1,80}$/.test(error.code)
           ? error.code
           : "SOURCE_UNAVAILABLE";
-      throw new SourceError(code); // Never retain or display raw native error text.
+      throw new SourceError(
+        code,
+        object(error) && typeof error.retryAfterMs === "number"
+          ? error.retryAfterMs
+          : undefined,
+      ); // Never retain or display raw native error text.
     }
   }
   function checkScope(scope: SourceScope) {
@@ -731,12 +770,118 @@ export function createSourceAdapter(
       if (!object(value) || !integer(value.revision)) invalid();
       return { ...policy, ...scope, revision: value.revision as number };
     },
+    async knownAuthorWorks(scope, author) {
+      checkScope(scope);
+      if (!policyName(author)) throw new SourceError("INVALID_INPUT");
+      const value = await call("source_author_known_works", {
+        ...scope,
+        author,
+      });
+      scoped(value, scope);
+      if (
+        !Array.isArray(value.items) ||
+        value.items.length > 500000 ||
+        !nullableInteger(value.checkedAt) ||
+        !integer(value.discoveryRevision) ||
+        (value.historyComplete !== undefined &&
+          typeof value.historyComplete !== "boolean") ||
+        (value.observationErrorCode != null &&
+          (typeof value.observationErrorCode !== "string" ||
+            !/^[A-Z0-9_]{1,100}$/.test(value.observationErrorCode)))
+      )
+        invalid();
+      const items = value.items.map((work) =>
+        validateSourceWork(work, scope.source),
+      );
+      if (new Set(items.map((work) => work.workId)).size !== items.length)
+        invalid();
+      return {
+        ...scope,
+        items,
+        checkedAt: value.checkedAt as number | null,
+        discoveryRevision: value.discoveryRevision as number,
+        ...(value.historyComplete === undefined
+          ? {}
+          : { historyComplete: value.historyComplete as boolean }),
+        ...(value.observationErrorCode === undefined
+          ? {}
+          : {
+              observationErrorCode: value.observationErrorCode as string | null,
+            }),
+      };
+    },
+    async recentHistory(scope) {
+      checkScope(scope);
+      const value = await call("source_recent_history", { ...scope });
+      scoped(value, scope);
+      const coverage = value.coverage;
+      if (
+        !Array.isArray(value.items) ||
+        value.items.length > 20000 ||
+        !integer(value.revision) ||
+        !object(coverage) ||
+        !Array.isArray(coverage.headIds) ||
+        coverage.headIds.length > 1000 ||
+        !coverage.headIds.every(identity) ||
+        !nullableInteger(coverage.checkedAt) ||
+        !integer(coverage.pagesRead) ||
+        typeof coverage.reachedEnd !== "boolean" ||
+        typeof coverage.joinedPrevious !== "boolean" ||
+        (coverage.initialWindow !== undefined &&
+          typeof coverage.initialWindow !== "boolean") ||
+        !(
+          coverage.errorCode === null ||
+          (typeof coverage.errorCode === "string" &&
+            /^[A-Z_0-9]{1,100}$/.test(coverage.errorCode))
+        )
+      )
+        invalid();
+      const items = value.items.map((work) =>
+        validateSourceWork(work, scope.source),
+      );
+      if (new Set(items.map((work) => work.workId)).size !== items.length)
+        invalid();
+      return {
+        ...scope,
+        items,
+        revision: value.revision as number,
+        ...(value.contentVerifiedIds === undefined
+          ? {}
+          : {
+              contentVerifiedIds: contentVerifiedIds(
+                value.contentVerifiedIds,
+                items,
+              ),
+              contentVerifiedUntil: contentVerifiedUntil(
+                value.contentVerifiedUntil,
+              ),
+            }),
+        coverage: {
+          headIds: [...coverage.headIds] as string[],
+          checkedAt: coverage.checkedAt as number | null,
+          pagesRead: coverage.pagesRead as number,
+          reachedEnd: coverage.reachedEnd,
+          joinedPrevious: coverage.joinedPrevious,
+          errorCode: coverage.errorCode as string | null,
+          ...(coverage.initialWindow === undefined
+            ? {}
+            : { initialWindow: coverage.initialWindow as boolean }),
+        },
+      };
+    },
     async query(scope, query) {
       checkScope(scope);
       if (
-        !["favorites", "search", "detail", "ranking", "recent"].includes(
-          query.kind,
-        ) ||
+        ![
+          "favorites",
+          "search",
+          "author",
+          "tag",
+          "category",
+          "detail",
+          "ranking",
+          "recent",
+        ].includes(query.kind) ||
         !text(query.query, 4096) ||
         !integer(query.page) ||
         query.page < 1 ||
@@ -744,6 +889,13 @@ export function createSourceAdapter(
         (scope.source === "Pica" && query.folderId !== null) ||
         (query.kind === "ranking" &&
           (query.page !== 1 || query.reverse === true)) ||
+        ((query.kind === "author" ||
+          query.kind === "tag" ||
+          query.kind === "category") &&
+          (!query.query.trim() ||
+            query.folderId !== null ||
+            query.reverse === true)) ||
+        (query.kind === "category" && scope.source !== "Pica") ||
         (query.kind === "recent" &&
           (query.query !== "" ||
             query.folderId !== null ||
@@ -752,18 +904,20 @@ export function createSourceAdapter(
         (query.reverse !== undefined && typeof query.reverse !== "boolean")
       )
         throw new SourceError("INVALID_INPUT");
+      const raw = await call("source_query", {
+        ...scope,
+        ...query,
+        ...(query.kind === "recent" ? {} : { reverse: query.reverse ?? false }),
+      });
       const result = validateSourcePage(
-        await call("source_query", {
-          ...scope,
-          ...query,
-          ...(query.kind === "recent"
-            ? {}
-            : { reverse: query.reverse ?? false }),
-        }),
+        raw,
         scope,
         query.kind === "favorites",
         false,
-        query.kind === "search",
+        query.kind === "search" ||
+          query.kind === "author" ||
+          query.kind === "tag" ||
+          query.kind === "recent",
       );
       if (
         result.page !== query.page ||
@@ -771,7 +925,53 @@ export function createSourceAdapter(
         (query.kind === "detail" && (result.issues?.length ?? 0) > 0)
       )
         invalid();
-      return result;
+      if (
+        !object(raw) ||
+        (raw.discoveryRevision != null && !integer(raw.discoveryRevision)) ||
+        (raw.observationErrorCode != null &&
+          (typeof raw.observationErrorCode !== "string" ||
+            !/^[A-Z0-9_]{1,100}$/.test(raw.observationErrorCode)))
+      )
+        invalid();
+      const discoveryRevision = raw.discoveryRevision as
+        number | null | undefined;
+      const observationErrorCode = raw.observationErrorCode as
+        string | null | undefined;
+      if (
+        raw.timing !== undefined &&
+        (!object(raw.timing) ||
+          !integer(raw.timing.queueMs) ||
+          !integer(raw.timing.sourceOperationMs) ||
+          !integer(raw.timing.localCommitMs))
+      )
+        invalid();
+      if (discoveryRevision != null && !observationErrorCode)
+        notifyAuthorCatalogChanged({ ...scope, revision: discoveryRevision });
+      return {
+        ...result,
+        ...(raw.timing === undefined
+          ? {}
+          : {
+              timing: raw.timing as {
+                queueMs: number;
+                sourceOperationMs: number;
+                localCommitMs: number;
+              },
+            }),
+        ...(raw.contentVerifiedIds === undefined
+          ? {}
+          : {
+              contentVerifiedIds: contentVerifiedIds(
+                raw.contentVerifiedIds,
+                result.items,
+              ),
+              contentVerifiedUntil: contentVerifiedUntil(
+                raw.contentVerifiedUntil,
+              ),
+            }),
+        ...(discoveryRevision === undefined ? {} : { discoveryRevision }),
+        ...(observationErrorCode === undefined ? {} : { observationErrorCode }),
+      };
     },
     async rankingOptions(scope) {
       checkScope(scope);
@@ -862,10 +1062,14 @@ export function createSourceAdapter(
         verified: true,
       } as FavoriteResult;
     },
-    async cover(scope, workId) {
+    async cover(scope, workId, refreshMetadata = false) {
       checkScope(scope);
       if (!identity(workId)) throw new SourceError("INVALID_INPUT");
-      const result = await call("source_cover", { ...scope, workId });
+      const result = await call("source_cover", {
+        ...scope,
+        workId,
+        refreshMetadata,
+      });
       scoped(result, scope);
       if (
         result.workId !== workId ||
@@ -898,10 +1102,16 @@ export function createSourceAdapter(
         !integer(mutation.expectedRevision)
       )
         throw new SourceError("INVALID_INPUT");
-      return validateFollowing(
+      const result = validateFollowing(
         await call("source_follow", { ...scope, ...mutation }),
         scope,
       );
+      if (mutation.kind === "author")
+        notifyAuthorCatalogChanged({
+          ...scope,
+          followingRevision: result.revision,
+        });
+      return result;
     },
   };
 }

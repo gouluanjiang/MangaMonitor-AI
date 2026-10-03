@@ -38,6 +38,28 @@ jobs:
         run: rustup toolchain install 1.98.1 --profile minimal --component clippy
       - name: Workspace tests
         run: cargo +1.98.1 test --workspace --locked
+      - name: Isolated synthetic short-write and ENOSPC recovery
+        run: |
+          cargo +1.98.1 test --locked -p workbench-downloads --lib --no-run --message-format=json > /tmp/synthetic-download-test-build.jsonl
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          artifacts = [json.loads(line) for line in Path('/tmp/synthetic-download-test-build.jsonl').read_text().splitlines()]
+          binaries = [item['executable'] for item in artifacts if item.get('reason') == 'compiler-artifact' and item.get('executable') and item['target']['name'] == 'workbench_downloads' and item['profile']['test']]
+          assert len(binaries) == 1, binaries
+          subprocess.run(['python3', 'scripts/run-synthetic-enospc.py', '--binary', binaries[0], '--output', '/tmp/mangamonitor-synthetic-enospc'], check=True)
+          PY
+      - name: Upload synthetic storage and download fault evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-enospc-evidence
+          path: |
+            /tmp/mangamonitor-synthetic-enospc/summary.json
+            /tmp/mangamonitor-synthetic-enospc/*.log
+            /tmp/mangamonitor-synthetic-enospc/fault-trace.txt
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Build assistant view CLI
         run: cargo +1.98.1 build --locked -p cloud-monitor --bin assistant-view
       - name: Clippy

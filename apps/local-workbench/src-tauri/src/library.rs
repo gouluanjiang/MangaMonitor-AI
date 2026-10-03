@@ -1,7 +1,7 @@
 use crate::{require_main, DesktopStore};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Runtime, State, WebviewWindow};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use workbench_library::{LibraryCover, LibraryService, LibrarySnapshot, ScanAction};
 use workbench_storage::{StoreError, WorkbenchStore};
 
@@ -220,11 +220,14 @@ pub(crate) async fn library_choose<R: Runtime>(
     store: State<'_, Arc<DesktopStore>>,
 ) -> Result<Option<LibrarySnapshot>, StoreError> {
     require_main(window.label())?;
+    let picker_app = app.clone();
+    let picker_window = window.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
+        picker_app
+            .dialog()
             .file()
             .set_title("选择漫画库目录")
-            .set_parent(&window)
+            .set_parent(&picker_window)
             .blocking_pick_folder()
             .map(|selected| {
                 selected.into_path().map_err(|_| StoreError {
@@ -243,7 +246,20 @@ pub(crate) async fn library_choose<R: Runtime>(
     with_library(
         Arc::clone(library.inner()),
         Arc::clone(store.inner()),
-        move |service, store| service.choose(store, &path).map(Some),
+        move |service, store| {
+            service.choose_confirmed(store, &path, |old, selected| {
+                app.dialog()
+                    .message(format!(
+                        "将漫画库从\n{}\n更换为\n{}\n\n原目录的入库时间、人工关联、核对记录和路径整理记录将被替换，重新选回不会恢复。漫画文件和下载历史不会删除。\n\n确定更换目录？",
+                        old.path, selected.path
+                    ))
+                    .title("更换漫画库目录")
+                    .parent(&window)
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::OkCancel)
+                    .blocking_show()
+            })
+        },
     )
     .await
 }

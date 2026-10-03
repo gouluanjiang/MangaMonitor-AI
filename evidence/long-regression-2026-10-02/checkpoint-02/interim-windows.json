@@ -1,0 +1,44 @@
+{
+  "complete": false,
+  "windows": [
+    {
+      "minutes": [
+        30,
+        60
+      ],
+      "samples": 30,
+      "heapMedianMiB": 30.751604080200195,
+      "rssSumMedianMiB": 2266.935546875,
+      "driverRssMedianMiB": 291.20703125,
+      "rendererMainCpuMedianPercentOneCore": 26.658294525031213,
+      "nodesMedian": 11791.5,
+      "fdsSumMedian": 493.0,
+      "activeIpcSampleMax": 1,
+      "requestDelta": 13033,
+      "ipcFailureDelta": 228,
+      "retryDelta": 229
+    },
+    {
+      "minutes": [
+        90,
+        120
+      ],
+      "samples": 29,
+      "heapMedianMiB": 36.92097854614258,
+      "rssSumMedianMiB": 2622.02734375,
+      "driverRssMedianMiB": 333.078125,
+      "rendererMainCpuMedianPercentOneCore": 27.40551691423144,
+      "nodesMedian": 13974,
+      "fdsSumMedian": 493,
+      "activeIpcSampleMax": 2,
+      "requestDelta": 12467,
+      "ipcFailureDelta": 248,
+      "retryDelta": 248
+    }
+  ],
+  "limits": [
+    "RSS sum double-counts some shared pages.",
+    "IPC errors include deliberately injected faults.",
+    "Growth is an observation, not a confirmed application leak."
+  ]
+}

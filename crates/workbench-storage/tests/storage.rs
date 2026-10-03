@@ -192,7 +192,12 @@ fn appearance_refinement_keeps_existing_fields_required_and_rejects_invalid_shap
         value["appearance"]["refinement"] = refinement;
         assert!(serde_json::from_value::<WorkbenchPreferences>(value).is_err());
     }
-    for field in ["backgroundMode", "density", "backgroundImage", "backgroundName"] {
+    for field in [
+        "backgroundMode",
+        "density",
+        "backgroundImage",
+        "backgroundName",
+    ] {
         let mut value = serde_json::to_value(WorkbenchPreferences::default()).unwrap();
         value["appearance"]["refinement"] = valid.clone();
         value["appearance"].as_object_mut().unwrap().remove(field);

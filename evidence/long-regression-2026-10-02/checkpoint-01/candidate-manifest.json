@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "productName": "MangaMonitor Dev",
+  "version": "1.0.2-rc.3",
+  "identifier": "com.mangamonitor.workbench.preview",
+  "sourceRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "checkoutRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "ciRunUrl": "https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/36963076140",
+  "signature": {
+    "installer": "NotSigned",
+    "executable": "NotSigned"
+  },
+  "validation": {
+    "version": "1.0.2-rc.3",
+    "sourceRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+    "checkoutRevision": "159f4f725200d639d080fd719d9d7fae2eb92936",
+    "workflowRun": "36963076140",
+    "scope": "fresh install, installed WebView startup/restart, same-version reinstall, uninstall preserving synthetic data, install again",
+    "historical034Upgrade": "not tested",
+    "interactiveInstallerPages": "not tested; silent current-user installation",
+    "binary": {
+      "builtSha256": "a5c69f1a56dbe1197c503d60daea3092829bb3547322248dd881a74a57d9dbca",
+      "installedSha256": "17e48ad0b8cdb1a3052a42fef646e45dd08601a8cfab5aae11b746976f8d9377",
+      "permittedPatch": "first __TAURI_BUNDLE_TYPE_VAR_UNK to __TAURI_BUNDLE_TYPE_VAR_NSS",
+      "patchOffset": 19882658
+    },
+    "steps": [
+      "fresh-install-registration-shortcuts-and-bundled-resource-hashes",
+      "installed-native-webview-startup-restart-and-reader-lifecycle",
+      "same-version-reinstall-preserved-synthetic-documents",
+      "uninstall-removed-executable-registration-shortcuts-and-retained-documents",
+      "install-after-uninstall-preserved-synthetic-documents"
+    ],
+    "passed": true
+  },
+  "artifacts": [
+    {
+      "file": "LICENSE.txt",
+      "sha256": "07f4ad5be02eadda12dc4d30181dc3ab06e7f9402e4bcf1c2925201038e8b85f",
+      "bytes": 1103
+    },
+    {
+      "file": "licenses/inventory.json",
+      "sha256": "abd99f549acc989dd77237e30a657745c62fc1172b2ae00212bf6e3fe99d93e8",
+      "bytes": 234656
+    },
+    {
+      "file": "licenses/THIRD_PARTY_LICENSES.txt",
+      "sha256": "da51d633edadd50f324de68666da52a2f29a51b80373606c69ae55e3efdeceac",
+      "bytes": 3214056
+    },
+    {
+      "file": "MangaMonitor Dev_1.0.2-rc.3_x64-setup.exe",
+      "sha256": "be714f8d50fcb0c5de24237a714f4a5734a164bcdf986fb5a70314748705a81b",
+      "bytes": 5620982
+    },
+    {
+      "file": "mangamonitor-workbench-preview.exe",
+      "sha256": "17e48ad0b8cdb1a3052a42fef646e45dd08601a8cfab5aae11b746976f8d9377",
+      "bytes": 25596416
+    },
+    {
+      "file": "RELEASE_NOTES.md",
+      "sha256": "1e560a59b097c630788dfcd4931f0eb97ff64ad80d0601ff823f5fe69fb40585",
+      "bytes": 898
+    },
+    {
+      "file": "THIRD_PARTY_NOTICES.md",
+      "sha256": "ae0dfda50c36ce35bb42df98986c1d01ef35876738baa7fb182cc9f205a3e78c",
+      "bytes": 6348
+    },
+    {
+      "file": "USER_GUIDE.md",
+      "sha256": "abca2a0a6d7f468e8e8266a5749bcefec2a370d8fc858e7abab42e26afbc3fd7",
+      "bytes": 8927
+    }
+  ]
+}

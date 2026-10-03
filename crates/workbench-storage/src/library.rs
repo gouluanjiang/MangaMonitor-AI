@@ -139,6 +139,40 @@ pub struct LibraryRecord {
     pub cover: Option<LibraryCoverFile>,
 }
 
+/// Metadata retained while a rescan builds a separate set of observed records.
+/// A seed is never a file-presence, reader, cover or ownership record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryScanSeed {
+    pub id: String,
+    pub identity: Option<LibraryFileIdentity>,
+    pub added_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_updated_at: Option<String>,
+    pub manual_override: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<LibraryReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LibrarySourceLink>,
+}
+
+impl From<&LibraryRecord> for LibraryScanSeed {
+    fn from(record: &LibraryRecord) -> Self {
+        Self {
+            id: record.item.id.clone(),
+            identity: record.identity.clone(),
+            added_at: record.item.added_at,
+            version_updated_at: record.item.version_updated_at.clone(),
+            manual_override: record.manual_override,
+            source_ref: record
+                .manual_override
+                .then(|| record.item.source_ref.clone())
+                .flatten(),
+            links: record.item.links.clone(),
+        }
+    }
+}
+
 /// User-imported, hash-verified container relocation. Kept separately from old
 /// task receipts: renaming a library file never rewrites download authority.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -190,6 +224,9 @@ pub struct LibraryDocument {
     pub generation: u64,
     pub phase: LibraryPhase,
     pub records: Vec<LibraryRecord>,
+    /// Unvisited old metadata, consumed as each fresh record is committed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scan_baseline: Vec<LibraryScanSeed>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relocations: Vec<LibraryRelocation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -203,11 +240,12 @@ pub struct LibraryDocument {
 impl Default for LibraryDocument {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             root: None,
             generation: 0,
             phase: LibraryPhase::Idle,
             records: Vec::new(),
+            scan_baseline: Vec::new(),
             relocations: Vec::new(),
             reviewed_works: Vec::new(),
             visited: 0,
@@ -265,13 +303,24 @@ fn error_code(value: &Option<String>) -> bool {
 }
 
 impl ValidatedDocument for LibraryDocument {
+    const VERSION: u32 = 2;
+
+    fn migrate(&mut self) -> Result<()> {
+        if self.version == 1 && self.scan_baseline.is_empty() {
+            self.version = 2;
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("VALIDATION_FAILED");
-        if self.version != 1
+        if self.version != Self::VERSION
             || self.generation > MAX_SAFE_INTEGER
             || self.visited > MAX_LIBRARY_VISITED
             || self.skipped > self.visited
             || self.records.len() > MAX_LIBRARY_ITEMS
+            || self.scan_baseline.len() + self.records.len() > MAX_LIBRARY_ITEMS * 2
+            || (self.phase == LibraryPhase::Complete && !self.scan_baseline.is_empty())
             || self.relocations.len() > MAX_LIBRARY_ITEMS
             || self.reviewed_works.len() > MAX_LIBRARY_ITEMS * 2
             || self.records.len() as u64 > self.visited
@@ -298,6 +347,7 @@ impl ValidatedDocument for LibraryDocument {
         } else if self.generation != 0
             || self.phase != LibraryPhase::Idle
             || !self.records.is_empty()
+            || !self.scan_baseline.is_empty()
             || !self.relocations.is_empty()
             || !self.reviewed_works.is_empty()
             || self.visited != 0
@@ -362,6 +412,52 @@ impl ValidatedDocument for LibraryDocument {
                     .all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
             {
                 return Err(invalid());
+            }
+        }
+        for seed in &self.scan_baseline {
+            let references = seed
+                .source_ref
+                .iter()
+                .chain(seed.links.iter().map(|link| &link.reference));
+            if !library_hash_is_valid(&seed.id)
+                || !ids.insert(&seed.id)
+                || seed.added_at.is_some_and(|value| value > MAX_SAFE_INTEGER)
+                || seed
+                    .version_updated_at
+                    .as_deref()
+                    .is_some_and(|value| !crate::work_date_is_valid(value))
+                || (seed.source_ref.is_some() && !seed.manual_override)
+                || (seed.manual_override && seed.identity.is_none())
+                || seed
+                    .source_ref
+                    .as_ref()
+                    .is_some_and(|reference| !reference.is_valid())
+                || seed.links.len() > 2
+                || seed
+                    .links
+                    .iter()
+                    .any(|link| !link.reference.is_valid() || link.linked_at > MAX_SAFE_INTEGER)
+                || references
+                    .clone()
+                    .map(|reference| reference.source)
+                    .collect::<HashSet<_>>()
+                    .len()
+                    != references.count()
+            {
+                return Err(invalid());
+            }
+            if let Some(identity) = &seed.identity {
+                if !library_hash_is_valid(&identity.file_key)
+                    || identity.bytes > MAX_SAFE_INTEGER
+                    || identity.modified.is_empty()
+                    || identity.modified.len() > 64
+                    || !identity
+                        .modified
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || b == b':' || b == b'-')
+                {
+                    return Err(invalid());
+                }
             }
         }
         for record in &self.records {

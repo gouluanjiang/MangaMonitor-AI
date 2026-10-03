@@ -9,6 +9,7 @@ import type {
 } from "../src/download-types.ts";
 import type { AccountSummary, SourceWork } from "../src/source-types.ts";
 import { initialPreferences } from "../src/preferences.ts";
+import { installBrowsingMarkerFixture } from "./browsing-marker-fixture.ts";
 
 declare global {
   interface Window {
@@ -36,9 +37,18 @@ export async function installWorkflow(
   page: Page,
   { enhanceBridge = false }: { enhanceBridge?: boolean } = {},
 ) {
+  await installBrowsingMarkerFixture(page);
   await page.addInitScript(
     ({ preferences, enhanceBridge }) => {
       const clone = <T>(value: T): T => structuredClone(value);
+      let history = JSON.parse(
+        localStorage.getItem("synthetic-viewing-history") ??
+          '{"version":1,"enabled":true,"entries":[]}',
+      ) as {
+        version: number;
+        enabled: boolean;
+        entries: { identity: unknown; title: string; visitedAt: number }[];
+      };
       const rootId = "a".repeat(64);
       const id = (n: number) => n.toString(16).padStart(64, "0");
       const picaId = (n: number) => n.toString().padStart(24, "0");
@@ -285,7 +295,90 @@ export async function installWorkflow(
             args: Record<string, unknown> = {},
           ) => {
             hooks.calls.push({ command, args: clone(args) });
+            const browsing = window.syntheticBrowsingMarkers.call(
+              command,
+              args,
+              hooks.accounts,
+            );
+            if (browsing !== undefined) return browsing;
+            if (command === "source_author_known_works")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                checkedAt: null,
+                discoveryRevision: 0,
+                historyComplete: true,
+              };
+            if (command === "source_recent_history")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                revision: 0,
+                coverage: {
+                  headIds: [],
+                  checkedAt: null,
+                  pagesRead: 0,
+                  reachedEnd: false,
+                  joinedPrevious: false,
+                  initialWindow: false,
+                  errorCode: null,
+                },
+              };
+            if (command === "recent_check_progress") return null;
+            if (
+              command === "recent_check_start" ||
+              command === "recent_check_cancel"
+            )
+              return {
+                id: "synthetic-recent",
+                phase:
+                  command === "recent_check_cancel" ? "cancelled" : "complete",
+                currentSource: null,
+                currentPage: 0,
+                pagesRead: 0,
+                recordsRead: 0,
+                errorCode: null,
+                results: [],
+              };
+
             switch (command) {
+              case "history_record":
+                if (history.enabled) {
+                  history.entries = history.entries.filter(
+                    (row) =>
+                      JSON.stringify(row.identity) !==
+                      JSON.stringify(args.identity),
+                  );
+                  history.entries.unshift({
+                    identity: clone(args.identity),
+                    title: String(args.title),
+                    visitedAt: Date.now(),
+                  });
+                  history.entries = history.entries.slice(0, 100);
+                }
+                localStorage.setItem(
+                  "synthetic-viewing-history",
+                  JSON.stringify(history),
+                );
+                return { revision: 1, value: clone(history) };
+              case "history_clear":
+                history.entries = [];
+                localStorage.setItem(
+                  "synthetic-viewing-history",
+                  JSON.stringify(history),
+                );
+                return { revision: 1, value: clone(history) };
+              case "history_set_enabled":
+                history.enabled = Boolean(args.enabled);
+                localStorage.setItem(
+                  "synthetic-viewing-history",
+                  JSON.stringify(history),
+                );
+                return { revision: 1, value: clone(history) };
+              case "history_read":
+                return { revision: 1, value: clone(history) };
               case "read_preferences":
                 return { revision: 0, value: preferences };
               case "source_accounts":
@@ -339,11 +432,12 @@ export async function installWorkflow(
                         (w) =>
                           w.source === args.source && w.workId === args.query,
                       )
-                    : (args.kind === "search" ? search : updates).filter(
-                        (w) => w.source === args.source,
-                      );
+                    : (["search", "author"].includes(args.kind as string)
+                        ? search
+                        : updates
+                      ).filter((w) => w.source === args.source);
                 const page = Number(args.page ?? 1);
-                if (args.kind === "search") {
+                if (["search", "author"].includes(args.kind as string)) {
                   if (
                     (hooks.searchFault === "hold-first" &&
                       args.source === "JM" &&
@@ -362,11 +456,12 @@ export async function installWorkflow(
                   )
                     throw { code: "SOURCE_UNAVAILABLE" };
                 }
-                const items =
-                  args.kind === "search"
-                    ? candidates.slice(page - 1, page)
-                    : candidates;
-                const pages = args.kind === "search" ? candidates.length : 1;
+                const items = ["search", "author"].includes(args.kind as string)
+                  ? candidates.slice(page - 1, page)
+                  : candidates;
+                const pages = ["search", "author"].includes(args.kind as string)
+                  ? candidates.length
+                  : 1;
                 return clone({
                   source: args.source,
                   sessionId: args.sessionId,
@@ -401,6 +496,20 @@ export async function installWorkflow(
                 return clone(hooks.queue);
               case "discovery_read":
                 return clone(hooks.discovery);
+              case "special_read":
+                return {
+                  scopes: args.scopes,
+                  authors: [],
+                  updates: [],
+                  run: {
+                    id: 0,
+                    phase: "idle",
+                    startedAt: null,
+                    finishedAt: null,
+                    newCount: 0,
+                    errorCode: null,
+                  },
+                };
               case "discovery_progress": {
                 const { records, ...progress } = hooks.discovery;
                 return clone({ ...progress, recordCount: records.length });

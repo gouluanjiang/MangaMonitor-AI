@@ -1,0 +1,14 @@
+{
+  "applicationBaseline": "9afbb4b0470b3939b9f8f8e0848dcc1c3a8b3827",
+  "diagnosticsOnlyInitialFailures": [
+    "Observation fixture first used schema_version instead of schemaVersion; strict store rejection was correct.",
+    "Initial offline build missed aes dependency; locked dependency fetch then succeeded."
+  ],
+  "observationWarmReadLabelCorrection": "The initial warm-read label means a retained handle whose file changed in the preceding round. It is not an unchanged-file warm cache hit. Final paired benchmark will separate these cases.",
+  "observationFilesByteIdenticalBeforeAfter": {
+    "32": true,
+    "20000": true
+  },
+  "beforeBinarySha256": "21ecb2cba4d5d47d7ff66f6bc26a0c40c1865f95f248e530e4a8811d451a2edd",
+  "scope": "Linux release generated metadata/ZIPs and synthetic ENOSPC; no real source, library, credentials or Windows validation implied."
+}

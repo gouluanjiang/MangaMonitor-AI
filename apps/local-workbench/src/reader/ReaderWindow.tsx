@@ -36,7 +36,8 @@ export function ReaderWindow({
       if (reader.current) await reader.current.close();
       else await closeWindow();
     } catch {
-      setNotice("暂时无法关闭窗口，请重试。");
+      // ComicReader keeps the failed save visible with retry/discard actions.
+      if (!reader.current) setNotice("暂时无法关闭窗口，请重试。");
     }
   };
   const actions = useRef({ requestClose });

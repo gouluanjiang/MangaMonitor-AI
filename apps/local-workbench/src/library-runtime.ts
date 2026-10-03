@@ -5,6 +5,7 @@ import type {
   LibraryCover,
   LibraryItem,
   LibraryReference,
+  LibraryRecycleResult,
   LibraryScanAction,
   LibrarySnapshot,
 } from "./library-types.ts";
@@ -183,6 +184,32 @@ export function createLibraryAdapter(
     }
   }
   return {
+    recycle: async (rootId, generation, entryId, expectedRevision) => {
+      const result = await call("library_recycle", {
+        rootId: id(rootId),
+        generation: integer(generation),
+        entryId: id(entryId),
+        expectedRevision: integer(expectedRevision),
+      });
+      if (result === null) return null;
+      const raw = record(result);
+      const snapshot = validateLibrarySnapshot(raw.snapshot);
+      if (
+        snapshot.rootId !== rootId ||
+        snapshot.generation !== generation ||
+        snapshot.revision < expectedRevision ||
+        typeof raw.recycled !== "boolean" ||
+        (raw.errorCode !== null &&
+          (typeof raw.errorCode !== "string" ||
+            !/^[A-Z_]{1,80}$/.test(raw.errorCode)))
+      )
+        return bad();
+      return {
+        snapshot,
+        recycled: raw.recycled,
+        errorCode: raw.errorCode as string | null,
+      };
+    },
     reveal: async (rootId, generation, entryId) => {
       await call("library_reveal", {
         rootId: id(rootId),
@@ -249,6 +276,24 @@ export function libraryErrorMessage(cause: unknown): string {
   const code =
     typeof cause === "string" ? cause : (cause as { code?: string })?.code;
   switch (code) {
+    case "LIBRARY_ITEM_BUSY":
+      return "这本漫画正在被读取或使用，或下载队列仍在工作；请稍后重试。";
+    case "LIBRARY_RECYCLE_FORMAT_UNSUPPORTED":
+    case "LIBRARY_RECYCLE_UNSUPPORTED":
+      return "当前只支持在 Windows 中将 ZIP 或 CBZ 移到回收站。";
+    case "LIBRARY_RECYCLE_NOT_COMPLETED":
+    case "LIBRARY_RECYCLE_FAILED":
+    case "LIBRARY_RECYCLE_UNAVAILABLE":
+      return "未能将漫画移到回收站，请检查文件占用或回收站状态后重试。";
+    case "LIBRARY_RECYCLE_SAVE_FAILED":
+      return "文件位置已改变，但漫画库登记未能保存；请重新读取漫画库核对。阅读进度和历史保留。";
+    case "LIBRARY_RECYCLE_REFRESH_REQUIRED":
+      return "文件位置已改变，请重新读取漫画库确认当前状态；阅读进度和历史保留。";
+    case "LIBRARY_RECYCLE_RESULT_UNCERTAIN":
+    case "LIBRARY_RECYCLE_UNCERTAIN":
+      return "回收结果尚未确认，请核对回收站和文件位置后重新读取漫画库。";
+    case "LIBRARY_RECYCLED":
+      return "此文件已移到回收站；恢复后重新读取漫画库即可再次识别。";
     case "LIBRARY_REVEAL_FAILED":
       return "暂时无法打开文件位置，请稍后重试。";
     case "LIBRARY_REVEAL_UNSUPPORTED":
@@ -265,6 +310,20 @@ export function libraryErrorMessage(cause: unknown): string {
       return "整理后的 ZIP 与映射记录不一致，原记录未改变。请核对文件。";
     case "LIBRARY_MIGRATION_CONFLICT":
       return "原作品与 ZIP 的来源资料冲突，请核对后再导入。";
+    case "BUSY":
+    case "LOCK_BUSY":
+      return "本机数据正在写入，请稍后重试。漫画库记录未被清空。";
+    case "DOCUMENT_CORRUPT":
+      return "漫画库索引数据损坏，原数据已保留。请在设置中查看诊断信息并联系维护者，重新扫描不能修复此文档。";
+    case "UNSUPPORTED_SCHEMA":
+    case "UNSUPPORTED_VERSION":
+      return "漫画库索引由较新版本保存，当前版本无法读取。请使用兼容版本，原数据已保留。";
+    case "DOCUMENT_TOO_LARGE":
+      return "漫画库索引超过安全读取或保存上限，原数据已保留。请在设置中查看诊断信息并联系维护者。";
+    case "STORE_WRITE_FAILED":
+      return "漫画库索引未能保存，请检查本机存储权限与可用空间后重新读取。原记录已保留。";
+    case "COMMIT_UNCERTAIN":
+      return "漫画库索引的保存结果尚未确认，请重新读取核对，勿依据当前进度判断已完成。";
     case "LIBRARY_BUSY":
       return "漫画库正在读取或处理任务，请完成后再试。";
     case "LIBRARY_FILE_CHANGED":
@@ -308,8 +367,22 @@ export function libraryErrorMessage(cause: unknown): string {
 export interface LibraryControllerState {
   snapshot: LibrarySnapshot;
   error: string;
+  failure?: { cause: unknown; occurredAt: number };
   busy: boolean;
   migrationNotice: string;
+}
+// These native rejections occur before a file operation is attempted. They
+// belong to the requesting action, not to the validity of the last inventory.
+// Unknown failures and uncertain recycle outcomes must still require a reread.
+function recycleWasNotAttempted(cause: unknown): boolean {
+  const code =
+    typeof cause === "string" ? cause : (cause as { code?: string })?.code;
+  return (
+    code === "LIBRARY_ITEM_BUSY" ||
+    code === "LIBRARY_BUSY" ||
+    code === "LIBRARY_RECYCLE_FORMAT_UNSUPPORTED" ||
+    code === "LIBRARY_RECYCLE_UNSUPPORTED"
+  );
 }
 /** One bounded native batch at a time. Only explicit actions start scanning. */
 export class LibraryController {
@@ -337,19 +410,36 @@ export class LibraryController {
     };
   }
   private publish(value: Partial<LibraryControllerState>) {
-    this.state = { ...this.state, ...value };
+    this.state = {
+      ...this.state,
+      ...value,
+      ...(value.error === "" ? { failure: undefined } : {}),
+    };
     for (const listener of this.listeners) listener(this.state);
+  }
+  private fail(cause: unknown) {
+    this.publish({
+      error: libraryErrorMessage(cause),
+      failure: { cause, occurredAt: Date.now() },
+    });
   }
   private async run(
     operation: () => Promise<LibrarySnapshot | null>,
     drive = false,
+    failureScope: "inventory" | "recycle" = "inventory",
   ) {
     if (this.state.busy) return;
+    const wasDriving = this.timer !== undefined;
     clearTimeout(this.timer);
+    this.timer = undefined;
     const token = this.epoch;
     const previousError = this.state.error;
+    const previousFailure = this.state.failure;
     let accepted = false;
-    this.publish({ busy: true, error: "" });
+    this.publish({
+      busy: true,
+      ...(failureScope === "inventory" ? { error: "" } : {}),
+    });
     try {
       const snapshot = await operation();
       if (token !== this.epoch) return;
@@ -360,11 +450,23 @@ export class LibraryController {
           error: snapshot.errorCode
             ? libraryErrorMessage(snapshot.errorCode)
             : "",
+          failure: snapshot.errorCode
+            ? { cause: snapshot.errorCode, occurredAt: Date.now() }
+            : undefined,
         });
-      } else this.publish({ error: previousError });
+      } else {
+        // Canceling a folder/replacement dialog must not strand an active scan.
+        // Restored cached state alone never authorizes starting a scan.
+        accepted =
+          drive && wasDriving && this.state.snapshot.freshness === "live";
+        this.publish({ error: previousError, failure: previousFailure });
+      }
     } catch (cause) {
-      if (token === this.epoch)
-        this.publish({ error: libraryErrorMessage(cause) });
+      if (token === this.epoch) {
+        if (failureScope === "recycle" && recycleWasNotAttempted(cause))
+          throw cause;
+        this.fail(cause);
+      }
     } finally {
       if (token === this.epoch) {
         this.publish({ busy: false });
@@ -383,13 +485,53 @@ export class LibraryController {
           !this.state.error &&
           this.state.snapshot.phase === "reading"
         )
-          this.timer = setTimeout(() => void this.scan("next"), 80);
+          this.timer = setTimeout(() => {
+            this.timer = undefined;
+            void this.scan("next");
+          }, 80);
       }
     }
   }
   read() {
     this.paused = false;
     return this.run(() => this.adapter.read());
+  }
+  async recycle(
+    entryId: string,
+    expected: Pick<LibrarySnapshot, "rootId" | "generation" | "revision">,
+  ) {
+    if (this.state.busy) throw new LibraryError("LIBRARY_BUSY");
+    const current = this.state.snapshot;
+    if (
+      !expected.rootId ||
+      expected.rootId !== current.rootId ||
+      expected.generation !== current.generation ||
+      expected.revision !== current.revision
+    )
+      throw new LibraryError("LIBRARY_STALE_SNAPSHOT");
+    const token = this.epoch;
+    let result: LibraryRecycleResult | null | undefined;
+    await this.run(
+      async () => {
+        result = await this.adapter.recycle(
+          expected.rootId!,
+          expected.generation,
+          entryId,
+          expected.revision,
+        );
+        return result?.snapshot ?? null;
+      },
+      false,
+      "recycle",
+    );
+    if (token !== this.epoch) return null;
+    if (result === undefined)
+      throw (
+        this.state.failure?.cause ?? new LibraryError("LIBRARY_UNAVAILABLE")
+      );
+    const outcome = result as LibraryRecycleResult | null;
+    if (outcome?.errorCode) this.fail(outcome.errorCode);
+    return outcome;
   }
   choose() {
     this.paused = false;
@@ -417,6 +559,7 @@ export class LibraryController {
     if (action === "pause") {
       this.paused = true;
       clearTimeout(this.timer);
+      this.timer = undefined;
       if (this.state.busy) return Promise.resolve();
     } else if (action !== "next") this.paused = false;
     if (action === "next" && (this.paused || this.state.error))
@@ -438,6 +581,7 @@ export class LibraryController {
   dispose() {
     this.epoch++;
     clearTimeout(this.timer);
+    this.timer = undefined;
     this.listeners.clear();
     this.state = { ...this.state, busy: false };
   }

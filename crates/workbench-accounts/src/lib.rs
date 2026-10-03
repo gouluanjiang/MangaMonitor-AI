@@ -2,7 +2,9 @@
 mod backend;
 mod cache;
 mod discovery;
+mod observations;
 mod service;
+mod special;
 
 pub use backend::{Authenticated, SourceBackend};
 pub use cache::{CatalogAction, CatalogResult, CatalogSnapshot};
@@ -13,7 +15,11 @@ pub use discovery::{
     discovery_work_from_source, DiscoveryMode, DiscoveryPhase, DiscoveryProgress, DiscoveryRun,
     DiscoveryScope, DiscoverySnapshot, DiscoveryStart,
 };
+pub use observations::{
+    KnownAuthorWorksResult, RecentCheckResult, RecentCheckRun, RecentHistoryResult,
+};
 pub use service::{AccountService, DownloadSession, SessionLease};
+pub use special::{SpecialRun, SpecialSnapshot};
 pub use workbench_credentials::Source;
 pub use workbench_sources::{
     JmSearchBoundary, JmSearchBoundaryItem, SourceAccount, SourceFolder, SourceItemIssue,
@@ -25,13 +31,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct AccountError {
     pub code: &'static str,
+    #[serde(rename = "retryAfterMs", skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
 }
 
 pub type Result<T> = std::result::Result<T, AccountError>;
 
 impl AccountError {
     pub fn new(code: &'static str) -> Self {
-        Self { code }
+        Self {
+            code,
+            retry_after_ms: None,
+        }
+    }
+    pub fn with_retry_after(mut self, delay: Option<u64>) -> Self {
+        self.retry_after_ms = delay;
+        self
     }
 }
 
@@ -63,6 +78,9 @@ pub struct AccountSummary {
 pub enum QueryKind {
     Favorites,
     Search,
+    Author,
+    Tag,
+    Category,
     Ranking,
     Recent,
     Detail,
@@ -71,10 +89,27 @@ pub enum QueryKind {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResult {
+    pub timing: SourceQueryTiming,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub content_verified_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_verified_until: Option<u64>,
     pub source: Source,
     pub session_id: String,
     #[serde(flatten)]
     pub page: SourcePage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovery_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_error_code: Option<String>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceQueryTiming {
+    pub queue_ms: u64,
+    pub source_operation_ms: u64,
+    pub local_commit_ms: u64,
 }
 
 #[derive(Serialize)]

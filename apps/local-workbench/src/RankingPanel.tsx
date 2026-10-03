@@ -1,3 +1,10 @@
+import { CoverInteraction } from "./reader-access.tsx";
+import { AuthorLinks } from "./AuthorLinks.tsx";
+import { FloatingSelection } from "./FloatingSelection.tsx";
+import { useBrowseSession } from "./useBrowseSession.ts";
+import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
+import { isContentHidden, rememberContentWork } from "./content-filter.ts";
+import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
 import type { ReactNode } from "react";
@@ -53,10 +60,12 @@ export function RankingPanel({
   navigation: ReactNode;
   onOpen(work: SourceWork): void;
   onDownload(work: SourceWork): void;
-  onDownloadMany(works: SourceWork[]): void;
+  onDownloadMany(works: SourceWork[]): Promise<string[]> | void;
   onAccounts(): void;
 }) {
-  const readerAccess = useReaderAccess();
+  const root = useRef<HTMLElement>(null);
+  const grid = useRef<SourceGridHandle>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
   const scope = accountScope(
     accounts.find((account) => account.source === source),
   );
@@ -169,13 +178,18 @@ export function RankingPanel({
     [library, inventorySnapshot, inventoryReady],
   );
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
-  const searched = (data?.page.items ?? []).filter((work) =>
-    [work.title, ...work.authors]
-      .join(" ")
-      .normalize("NFKC")
-      .toLocaleLowerCase()
-      .includes(terms),
-  );
+  const searched = (data?.page.items ?? [])
+    .filter((work) => !isContentHidden(work))
+    .filter((work) =>
+      [work.title, ...work.authors]
+        .join(" ")
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .includes(terms),
+    );
+  useEffect(() => {
+    data?.page.items.forEach(rememberContentWork);
+  }, [data?.page.items]);
   const visible = searched.filter((work) =>
     inventoryFilterMatches(inventory(work), filter),
   );
@@ -192,8 +206,19 @@ export function RankingPanel({
       inventory(work).kind !== "owned",
   );
   const complete = !error && !busy && data?.page.hasMore === false;
+  useBrowseSession({
+    scope: JSON.stringify(["ranking", key, query, filter]),
+    active,
+    root,
+    grid,
+    itemKeys: visible.map(sourceWorkKey),
+  });
   return (
-    <section className="source-workbench" data-testid="ranking-panel">
+    <section
+      ref={root}
+      className="source-workbench"
+      data-testid="ranking-panel"
+    >
       <div className="page-heading source-heading">
         <div>
           <h1>{source === "JM" ? "JM · 每周必看" : "哔咔 · 排行榜"}</h1>
@@ -320,49 +345,42 @@ export function RankingPanel({
               </p>
             </details>
           )}
-          {visible.length > 0 && (
-            <div className="source-toolbar">
-              <button
-                className="text-button"
-                disabled={!complete}
-                onClick={() =>
-                  setSelection(
-                    visible
-                      .filter((work) => inventory(work).kind !== "owned")
-                      .map(sourceWorkKey),
-                  )
-                }
-              >
-                全选当前筛选范围
-              </button>
-              {selection.length > 0 && (
-                <>
-                  <span>已选 {selected.length} 部</span>
-                  <button
-                    className="button primary"
-                    disabled={
-                      !library.rootId ||
-                      !selected.length ||
-                      selected.length > downloadSelectionLimit
-                    }
-                    onClick={() => onDownloadMany(selected)}
-                  >
-                    准备下载所选作品
-                  </button>
-                  {selected.length > downloadSelectionLimit && (
-                    <span>一次最多选择 500 本，请缩小筛选范围。</span>
-                  )}
-                  <button
-                    className="text-button"
-                    onClick={() => setSelection([])}
-                  >
-                    取消选择
-                  </button>
-                </>
-              )}
-            </div>
-          )}
+          <FloatingSelection
+            visible={active}
+            active={selectionMode}
+            selectedCount={selected.length}
+            onEnter={() => setSelectionMode(true)}
+            onCancel={() => {
+              setSelection([]);
+              setSelectionMode(false);
+            }}
+            disabled={
+              !library.rootId || selected.length > downloadSelectionLimit
+            }
+            onDownload={() => {
+              void Promise.resolve(onDownloadMany(selected)).then((keys) => {
+                if (keys)
+                  setSelection((previous) =>
+                    previous.filter((key) => !keys.includes(key)),
+                  );
+              });
+            }}
+          >
+            <button
+              disabled={!complete}
+              onClick={() =>
+                setSelection(
+                  visible
+                    .filter((work) => inventory(work).kind !== "owned")
+                    .map(sourceWorkKey),
+                )
+              }
+            >
+              全选当前范围
+            </button>
+          </FloatingSelection>
           <VirtualSourceGrid<SourceWork>
+            ref={grid}
             items={visible}
             density={density}
             itemKey={sourceWorkKey}
@@ -373,16 +391,21 @@ export function RankingPanel({
                 data-testid={"rank-work-" + sourceWorkKey(work)}
               >
                 <div className="source-card-cover">
-                  <button
+                  <CoverInteraction
                     className="source-cover-button source-language-cover"
-                    aria-label={"打开《" + work.title + "》"}
-                    onClick={() =>
-                      readerAccess.choose(
-                        sourceReaderRequest(scope, work),
-                        work.title,
-                        () => onOpen(work),
-                      )
-                    }
+                    title={work.title}
+                    request={sourceReaderRequest(scope, work)}
+                    onDetails={() => onOpen(work)}
+                    selectionMode={selectionMode}
+                    selected={selection.includes(sourceWorkKey(work))}
+                    onToggleSelection={() => {
+                      if (inventory(work).kind !== "owned")
+                        setSelection((old) =>
+                          old.includes(sourceWorkKey(work))
+                            ? old.filter((key) => key !== sourceWorkKey(work))
+                            : [...old, sourceWorkKey(work)],
+                        );
+                    }}
                   >
                     <SourceCover adapter={adapter} scope={scope} work={work} />
                     <SourceLanguageBadge
@@ -390,37 +413,38 @@ export function RankingPanel({
                       work={work}
                       scope={scope}
                     />
-                  </button>
-                  <input
-                    type="checkbox"
-                    aria-label={"选择 " + work.title}
-                    checked={selection.includes(sourceWorkKey(work))}
-                    disabled={inventory(work).kind === "owned"}
-                    onChange={(event) =>
-                      setSelection((previous) =>
-                        event.target.checked
-                          ? [...previous, sourceWorkKey(work)]
-                          : previous.filter(
-                              (key) => key !== sourceWorkKey(work),
-                            ),
-                      )
-                    }
-                  />
+                  </CoverInteraction>
+                  {selectionMode && (
+                    <input
+                      type="checkbox"
+                      aria-label={"选择 " + work.title}
+                      checked={selection.includes(sourceWorkKey(work))}
+                      disabled={inventory(work).kind === "owned"}
+                      onChange={(event) =>
+                        setSelection((previous) =>
+                          event.target.checked
+                            ? [...previous, sourceWorkKey(work)]
+                            : previous.filter(
+                                (key) => key !== sourceWorkKey(work),
+                              ),
+                        )
+                      }
+                    />
+                  )}
                 </div>
                 <h3>
                   <button onClick={() => onOpen(work)}>{work.title}</button>
                 </h3>
-                <p>{work.authors.join("、") || "作者资料未取得"}</p>
+                <AuthorLinks authors={work.authors} />
                 <p className="source-card-state">
                   {inventoryLabel(inventory(work))}
                 </p>
-                <button
-                  className="text-button"
-                  disabled={inventory(work).kind === "owned" || !library.rootId}
+                <DownloadWorkButton
+                  work={work}
+                  owned={inventory(work).kind === "owned"}
+                  ready={!!library.rootId}
                   onClick={() => onDownload(work)}
-                >
-                  下载到漫画库
-                </button>
+                />
               </article>
             )}
           />

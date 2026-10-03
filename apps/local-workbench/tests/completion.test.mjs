@@ -107,6 +107,34 @@ test("discovery summaries preserve legacy history and explicit first-discovery i
   );
 });
 
+test("only a successful receipt can define retained scan markers", () => {
+  const success = changeSummary();
+  const snapshot = validateDiscoverySnapshot(
+    { ...empty(), lastSuccessfulCheck: success },
+    scopes,
+  );
+  assert.deepEqual(snapshot.lastSuccessfulCheck, success);
+  assert.equal(
+    validateDiscoverySnapshot({ ...empty(), lastSuccessfulCheck: null }, scopes)
+      .lastSuccessfulCheck,
+    null,
+  );
+  for (const phase of [
+    "checking",
+    "partial",
+    "cancelled",
+    "error",
+    "interrupted",
+  ]) {
+    assert.throws(() =>
+      validateDiscoverySnapshot(
+        { ...empty(), lastSuccessfulCheck: { ...success, phase } },
+        scopes,
+      ),
+    );
+  }
+});
+
 test("summary progress stays catalog-free and accepts explicit partial or interrupted coverage", () => {
   for (const phase of [
     "checking",
@@ -1402,8 +1430,8 @@ test("author lookup cannot claim full coverage after a deletion moves a page bou
   assert.equal(snapshot.records.length, 20);
   assert.deepEqual(calls, [
     ["JM", 1],
-    ["JM", 2],
     ["Pica", 1],
+    ["JM", 2],
   ]);
 });
 
@@ -1454,10 +1482,10 @@ test("a bad later-page record is isolated while every valid author work is prese
   assert.equal(result.run.phase, "partial");
   assert.deepEqual(calls, [
     ["JM", 1],
-    ["JM", 2],
     ["Pica", 1],
+    ["JM", 2],
   ]);
-  assert.deepEqual(pageSizes, [80, 69, 0]);
+  assert.deepEqual(pageSizes, [80, 0, 69]);
   assert.equal(result.records.length, 149);
   assert.equal(
     result.authors.find((range) => range.source === "JM").observedCount,
@@ -1599,8 +1627,8 @@ test("ad-hoc author lookup needs no following and visits both sources even when 
   const result = await adapter.read(scopes);
   assert.deepEqual(calls, [
     ["JM", 1],
-    ["JM", 2],
     ["Pica", 1],
+    ["JM", 2],
     ["Pica", 2],
   ]);
   assert.equal(result.run.phase, "partial");
@@ -1612,14 +1640,14 @@ test("ad-hoc author lookup needs no following and visits both sources even when 
 });
 
 test("cancellation and account changes reject late search responses and stop further requests", async () => {
-  let release,
-    count = 0;
+  const releases = [];
+  let count = 0;
   const adapter = createAuthorSearchAdapter({
     authorPolicy: defaultAuthorPolicy,
     query: async (scope, query) => {
       count++;
       await new Promise((resolve) => {
-        release = resolve;
+        releases.push(resolve);
       });
       return {
         ...scope,
@@ -1635,16 +1663,16 @@ test("cancellation and account changes reject late search responses and stop fur
   const started = await adapter.start(scopes, ["Writer"]);
   await flush();
   await adapter.cancel(started.run.id);
-  release();
+  releases.splice(0).forEach((resolve) => resolve());
   await flush();
-  assert.equal(count, 1);
+  assert.equal(count, 2);
   assert.equal((await adapter.read(scopes)).records.length, 0);
   await adapter.start(scopes, ["Writer"]);
   await flush();
   const newScopes = [{ ...scopes[0], sessionId: "new-account" }, scopes[1]];
   await adapter.read(newScopes);
-  release();
+  releases.splice(0).forEach((resolve) => resolve());
   await flush();
   assert.equal((await adapter.read(newScopes)).records.length, 0);
-  assert.equal(count, 2);
+  assert.equal(count, 4);
 });

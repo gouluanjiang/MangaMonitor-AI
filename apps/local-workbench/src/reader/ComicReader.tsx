@@ -7,8 +7,17 @@ import type {
   ReaderSourceRef,
   ReaderWindowControls,
 } from "./types.ts";
-import { nativeReaderAdapter, readerErrorMessage } from "./runtime.ts";
-import { ReaderLifetime, ReaderProgressWriter } from "./model.ts";
+import {
+  nativeReaderAdapter,
+  readerErrorMessage,
+  readerPositionErrorMessage,
+} from "./runtime.ts";
+import {
+  ReaderCloseController,
+  ReaderLifetime,
+  ReaderPositionSaveError,
+  ReaderProgressWriter,
+} from "./model.ts";
 import { ReaderSession } from "./ReaderSession.tsx";
 import "./reader.css";
 export type ComicReaderProps = {
@@ -26,7 +35,7 @@ export type ComicReaderHandle = { close(): Promise<void> };
 export type ReaderSessionState = {
   book: ReaderBook;
   writer: ReaderProgressWriter;
-  close: () => Promise<void>;
+  close: (discardPosition?: boolean) => Promise<void>;
 };
 
 export function ComicReader({
@@ -46,6 +55,7 @@ export function ComicReader({
   const [attempt, setAttempt] = useState(0);
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState("");
+  const [saveFailed, setSaveFailed] = useState(false);
   const lifetimeRef = useRef<ReaderLifetime | null>(null);
   const closePromise = useRef<Promise<void> | null>(null);
   const callbacks = useRef({ onClose, onDownload });
@@ -60,6 +70,7 @@ export function ComicReader({
     setError(null);
     setClosing(false);
     setCloseError("");
+    setSaveFailed(false);
     const previousFocus = document.activeElement;
     void adapter
       .open(request, requestId)
@@ -67,18 +78,18 @@ export function ComicReader({
         const writer = new ReaderProgressWriter((position) =>
           adapter.savePosition(book.readerId, position),
         );
-        let closePromise: Promise<void> | null = null;
+        const controller = new ReaderCloseController(writer, () =>
+          adapter.close(book.readerId),
+        );
         const opened = {
           book,
           writer,
-          close: () =>
-            (closePromise ??= writer
-              .flush()
-              .catch(() => undefined)
-              .then(() => adapter.close(book.readerId))
-              .catch(() => undefined)),
+          close: (discardPosition = false) => controller.close(discardPosition),
         };
-        if (lifetime.attach(opened.close) && !cancelled)
+        if (
+          lifetime.attach(opened.close, () => controller.dispose()) &&
+          !cancelled
+        )
           setLoaded({ key, session: opened });
       })
       .catch((failure: unknown) => {
@@ -86,22 +97,31 @@ export function ComicReader({
       });
     return () => {
       cancelled = true;
-      void lifetime.close().catch(() => undefined);
+      void lifetime.dispose().catch(() => undefined);
       if (lifetimeRef.current === lifetime) lifetimeRef.current = null;
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected)
         previousFocus.focus({ preventScroll: true });
     };
   }, [adapter, key, attempt]);
   const session = loaded?.key === key ? loaded.session : null;
-  const close = (): Promise<void> => {
+  const close = (discardPosition = false): Promise<void> => {
     if (closePromise.current) return closePromise.current;
     setClosing(true);
+    setCloseError("");
+    setSaveFailed(false);
     const pending = (async () => {
       try {
-        await lifetimeRef.current?.close();
+        if (discardPosition && session) await session.close(true);
+        else await lifetimeRef.current?.close();
         await callbacks.current.onClose();
       } catch (failure) {
-        setCloseError("暂时无法关闭阅读器，请重试。");
+        const positionFailure = failure instanceof ReaderPositionSaveError;
+        setSaveFailed(positionFailure);
+        setCloseError(
+          positionFailure
+            ? readerPositionErrorMessage(failure.reason)
+            : "暂时无法关闭阅读器，请重试。",
+        );
         setClosing(false);
         throw failure;
       }
@@ -112,7 +132,7 @@ export function ComicReader({
     });
     return pending;
   };
-  useImperativeHandle(ref, () => ({ close }));
+  useImperativeHandle(ref, () => ({ close: () => close() }));
   const requestClose = () => {
     void close().catch(() => undefined);
   };
@@ -126,7 +146,18 @@ export function ComicReader({
     >
       {closeError && (
         <div className="reader-close-error" role="alert">
-          {closeError}
+          <p>{closeError}</p>
+          <button disabled={closing} onClick={requestClose}>
+            {saveFailed ? "重试保存并退出" : "重试关闭"}
+          </button>
+          {saveFailed && (
+            <button
+              disabled={closing}
+              onClick={() => void close(true).catch(() => undefined)}
+            >
+              放弃未保存位置并退出
+            </button>
+          )}
         </div>
       )}
       {session ? (

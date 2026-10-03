@@ -1,4 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CoverInteraction } from "./reader-access.tsx";
+import { AuthorLinks } from "./AuthorLinks.tsx";
+import { FloatingSelection } from "./FloatingSelection.tsx";
+import { useBrowseSession } from "./useBrowseSession.ts";
+import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
+import {
+  isContentHidden,
+  rememberContentWork,
+  getContentFilterRevision,
+  subscribeContentFilter,
+} from "./content-filter.ts";
+import { useSyncExternalStore } from "react";
+import { rememberAuthorCatalog } from "./author-catalog-membership.ts";
+import {
+  subscribeAuthorCatalogChanges,
+  notifyAuthorCatalogChanged,
+} from "./author-catalog-events.ts";
+import type { SourceGridHandle } from "./VirtualSourceGrid.tsx";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
 import type {
   AccountSummary,
@@ -17,6 +42,7 @@ import type {
   CompletionAdapter,
   DiscoveryMode,
   DiscoverySnapshot,
+  RecentCheckRun,
 } from "./completion-types.ts";
 import {
   completionError,
@@ -56,13 +82,21 @@ import {
 import type { UpdatedSort } from "./work-dates.ts";
 import "./completion.css";
 import { SourceIssues } from "./SourceIssues.tsx";
+import {
+  BrowsingMarkerNote,
+  BrowsingNewBadge,
+  useAuthorBrowsingMarkers,
+} from "./useBrowsingMarkers.tsx";
 
 const nativeAdapter = createCompletionAdapter();
 type ReadRequest = { kind: "full" | "progress"; includeOther: boolean };
 const emptyRecords: DiscoverySnapshot["records"] = [];
-interface Props {
+export interface CompletionPanelProps {
   active?: boolean;
   mode?: "updates" | "search";
+  searchTabId?: string;
+  searchInitialFilter?: InventoryFilter;
+  authorRequest?: { name: string; key: number } | null;
   accounts: AccountSummary[];
   sourceAdapter: SourceAdapter;
   adapter?: CompletionAdapter;
@@ -77,7 +111,7 @@ interface Props {
     creditContext?: AuthorCreditContext,
   ): void;
   onDownload(work: SourceWork): void;
-  onDownloadMany(works: SourceWork[]): void;
+  onDownloadMany(works: SourceWork[]): Promise<string[]> | void;
   downloadBusy?: boolean;
   onOpenLibrary(): void;
   onOpenAccounts(): void;
@@ -86,6 +120,9 @@ interface Props {
 export function CompletionPanel({
   active = true,
   mode = "updates",
+  searchTabId,
+  searchInitialFilter,
+  authorRequest = null,
   accounts,
   sourceAdapter,
   adapter: providedAdapter,
@@ -101,19 +138,36 @@ export function CompletionPanel({
   downloadBusy = false,
   onOpenLibrary,
   onOpenAccounts,
-}: Props) {
-  const readerAccess = useReaderAccess();
+}: CompletionPanelProps) {
+  const renderStartedAt = performance.now();
+  const [paintMetrics, setPaintMetrics] = useState<{
+    revision: number;
+    runId: string;
+    value: NonNullable<DiscoverySnapshot["searchMetrics"]>;
+  } | null>(null);
+  const root = useRef<HTMLElement>(null);
+  const grid = useRef<SourceGridHandle>(null);
+  const handledAuthorRequest = useRef<number | null>(null);
+  const contentRevision = useSyncExternalStore(
+    subscribeContentFilter,
+    getContentFilterRevision,
+  );
+
   const searchAdapter = useMemo(
     () => createAuthorSearchAdapter(sourceAdapter),
     [sourceAdapter],
   );
   const adapter =
     providedAdapter ?? (mode === "search" ? searchAdapter : nativeAdapter);
+  useEffect(() => {
+    if (mode === "search") searchAdapter.setActive(active);
+  }, [active, mode, searchAdapter]);
   const [searchAuthor, setSearchAuthor] = useState("");
   const scopes = accounts
     .map(accountScope)
     .filter((s): s is SourceScope => s !== null);
   const scopeKey = JSON.stringify(scopes);
+  const initializedScope = useRef(scopeKey);
   const current = useRef({ key: scopeKey, scopes, active, adapter, mode });
   current.current = { key: scopeKey, scopes, active, adapter, mode };
   const epoch = useRef(0),
@@ -135,11 +189,31 @@ export function CompletionPanel({
     catalogCheckId: string | null;
   } | null>(null);
   const view = result?.key === scopeKey ? result.value : null;
+  const searchMetrics =
+    paintMetrics !== null &&
+    paintMetrics.runId === view?.run?.id &&
+    paintMetrics?.revision === view?.revision
+      ? paintMetrics.value
+      : view?.searchMetrics;
   const [busy, setBusy] = useState(false),
     [actionError, setActionError] = useState("");
   const [reading, setReading] = useState(false);
+  const [recentCheck, setRecentCheck] = useState<{
+    key: string;
+    run: RecentCheckRun;
+  } | null>(null);
+  const [recentError, setRecentError] = useState("");
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentRun = recentCheck?.key === scopeKey ? recentCheck.run : null;
+  const recentRunning = recentRun?.phase === "checking";
   const [readFailure, setReadFailure] = useState<CompletionReadFailure | null>(
     null,
+  );
+  const browsing = useAuthorBrowsingMarkers(
+    accounts,
+    view,
+    active && mode === "updates",
+    !!readFailure,
   );
   const [author, setAuthor] = useState(""),
     [query, setQuery] = useState("");
@@ -173,9 +247,10 @@ export function CompletionPanel({
   ]);
   useEffect(() => {
     setNewOnly(false);
-  }, [scopeKey, mode, checkSummary?.id]);
+  }, [scopeKey, mode, view?.lastSuccessfulCheck?.id ?? checkSummary?.id]);
   const connected = scopes.length === 2;
-  const running = view?.run?.phase === "checking";
+  const authorRunning = view?.run?.phase === "checking";
+  const running = authorRunning || recentRunning;
   const inventory = useMemo(
     () => createInventoryMatcher(library, inventorySnapshot, inventoryReady),
     [library, inventorySnapshot, inventoryReady],
@@ -186,12 +261,23 @@ export function CompletionPanel({
       author,
       source,
       view?.authorPolicies,
+      view?.followedAuthors ??
+        (view?.authors.length
+          ? [...new Set(view.authors.map((range) => range.author))]
+          : undefined),
     );
     return {
       confirmed: uniqueDiscoveryRecords(partition.confirmed),
       other: uniqueDiscoveryRecords(partition.other),
     };
-  }, [view?.records, view?.authorPolicies, author, source]);
+  }, [
+    view?.records,
+    view?.authorPolicies,
+    view?.followedAuthors,
+    view?.authors,
+    author,
+    source,
+  ]);
   const load = useCallback(
     async (
       resetRetries = false,
@@ -282,10 +368,17 @@ export function CompletionPanel({
     readFailures.current = 0;
     setAuthor("");
     setQuery("");
-    setSearchAuthor("");
+    setSearchAuthor(searchTabId ? (authorRequest?.name ?? "") : "");
+    // StrictMode may replay the initial mount. A real account change instead
+    // invalidates data without silently starting the old query in a new account.
+    if (initializedScope.current === scopeKey)
+      handledAuthorRequest.current = null;
+    initializedScope.current = scopeKey;
     setSource("all");
     setFilter("missing");
     setShowOther(false);
+    setRecentCheck(null);
+    setRecentError("");
     // Invalidate the previous session's in-flight search, including logout.
     // Reading this in-memory adapter never starts a source request.
     if (mode === "search") void searchAdapter.read(current.current.scopes);
@@ -303,10 +396,45 @@ export function CompletionPanel({
     };
   }, [load, scopeKey, active, mode]);
   useEffect(() => {
+    if (!active || !adapter.subscribe) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = adapter.subscribe(() => {
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void load(false);
+      }, 60);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [adapter, active, scopeKey, load]);
+  useEffect(() => {
+    if (!active || mode !== "updates") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = subscribeAuthorCatalogChanges((change) => {
+      if (
+        !current.current.scopes.some(
+          (scope) =>
+            scope.source === change.source &&
+            scope.sessionId === change.sessionId,
+        )
+      )
+        return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void load(false), 250);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [active, mode, scopeKey, load]);
+  useEffect(() => {
     if (!active || !connected || busy || reading) return;
     const delay = readFailure
       ? readFailure.retryAfterMs
-      : running
+      : authorRunning && !adapter.subscribe
         ? 1500
         : null;
     if (delay === null) return;
@@ -315,7 +443,61 @@ export function CompletionPanel({
       : { kind: "progress", includeOther: false };
     const timer = setTimeout(() => void load(false, request), delay);
     return () => clearTimeout(timer);
-  }, [load, running, busy, reading, readFailure, view, active, connected]);
+  }, [
+    load,
+    authorRunning,
+    busy,
+    reading,
+    readFailure,
+    view,
+    active,
+    connected,
+  ]);
+  useEffect(() => {
+    if (
+      !active ||
+      !connected ||
+      mode !== "updates" ||
+      !adapter.recentCheckProgress
+    )
+      return;
+    let alive = true,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    const captured = current.current;
+    const poll = async () => {
+      try {
+        const next = await adapter.recentCheckProgress!();
+        if (!alive || current.current.key !== captured.key) return;
+        setRecentError("");
+        if (next) {
+          setRecentCheck({ key: captured.key, run: next });
+          if (next.phase === "checking")
+            timer = setTimeout(() => void poll(), 1500);
+          else if (recentRunning)
+            for (const scope of captured.scopes)
+              notifyAuthorCatalogChanged(scope);
+        }
+      } catch {
+        if (alive)
+          setRecentError(
+            "近期补漏进度暂未读取，请刷新显示后重试；不代表后台检查已经停止。",
+          );
+      }
+    };
+    void poll();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [
+    adapter,
+    active,
+    connected,
+    mode,
+    scopeKey,
+    recentRunning,
+    recentRefresh,
+  ]);
   async function perform(
     action: (current: () => boolean) => Promise<DiscoverySnapshot | void>,
   ) {
@@ -361,26 +543,73 @@ export function CompletionPanel({
   function startCheck(
     checkMode: DiscoveryMode = "incremental",
     unfinishedOnly = false,
+    requestedName?: string,
   ) {
     setShowOther(false);
     setNewOnly(false);
     if (mode === "updates") setFilter("missing");
     const captured = current.current;
     const selected =
-      mode === "search" ? [searchAuthor.trim()] : author ? [author] : [];
+      mode === "search"
+        ? [(requestedName ?? searchAuthor).trim()]
+        : author
+          ? [author]
+          : [];
     void perform(async (isCurrent) => {
-      await onRefreshInventory?.();
+      if (mode === "search") {
+        // Ownership refresh is independent of displaying saved/source results.
+        void onRefreshInventory?.().catch(() => {});
+      } else await onRefreshInventory?.();
       if (!isCurrent()) return;
       if (unfinishedOnly)
         return adapter.startUnfinished(captured.scopes, selected);
-      return adapter.start(
+      const next = await adapter.start(
         captured.scopes,
         selected,
         mode === "search" ? "full" : checkMode,
       );
+      if (mode === "updates" && adapter.startRecentCheck) {
+        try {
+          const recent = await adapter.startRecentCheck(captured.scopes);
+          if (isCurrent()) {
+            setRecentError("");
+            setRecentCheck({ key: captured.key, run: recent });
+          }
+        } catch {
+          if (isCurrent())
+            setRecentError(
+              "作者查询已开始，但近期交叉补漏未能启动；本次不包含近期连续范围，请重试检查。",
+            );
+        }
+      }
+      return next;
     });
   }
-  const authors = [
+  useEffect(() => {
+    if (
+      mode !== "search" ||
+      !active ||
+      !connected ||
+      busy ||
+      running ||
+      !authorRequest ||
+      handledAuthorRequest.current === authorRequest.key
+    )
+      return;
+    handledAuthorRequest.current = authorRequest.key;
+    setSearchAuthor(authorRequest.name);
+    setSource("all");
+    setAuthor("");
+    setQuery("");
+    setFilter(searchTabId ? (searchInitialFilter ?? "missing") : "all");
+    startCheck("full", false, authorRequest.name);
+  }, [authorRequest, mode, active, connected, busy, running]);
+  useEffect(() => {
+    if (!view) return;
+    view.records.forEach((record) => rememberContentWork(record.work));
+    if (mode === "updates") rememberAuthorCatalog(view);
+  }, [view?.records, view?.authorPolicies, scopeKey, mode]);
+  const authors = view?.followedAuthors ?? [
     ...new Set(view?.authors.map((range) => range.author) ?? []),
   ];
   const ranges = (view?.authors ?? []).filter(
@@ -397,6 +626,7 @@ export function CompletionPanel({
     !running &&
     !actionError &&
     !readFailure &&
+    !view?.observationErrorCode &&
     ranges.length > 0 &&
     ranges.every((range) => range.state === "complete");
   const includesIncremental =
@@ -416,14 +646,19 @@ export function CompletionPanel({
         range.pagesComplete ??
         (range.state === "complete" && range.lastCheckMode !== "incremental"),
     );
-  const fullRangeChecked = complete && !includesIncremental;
+  const fullRangeChecked =
+    complete && !includesIncremental && !view?.historicalReadError;
   const catalogScopes = ranges.filter(
     (range) => authorCatalogAt(range, view?.authorPolicies) !== null,
   ).length;
   const terms = query.normalize("NFKC").toLocaleLowerCase().trim();
-  const scopedRecords = showOther
-    ? authorResults.other
-    : authorResults.confirmed;
+  const scopedRecords = useMemo(
+    () =>
+      (showOther ? authorResults.other : authorResults.confirmed).filter(
+        (record) => !isContentHidden(record.work),
+      ),
+    [authorResults, showOther, contentRevision],
+  );
   const matchingRecords = useMemo(
     () =>
       scopedRecords.filter(
@@ -452,15 +687,45 @@ export function CompletionPanel({
         : null,
     [summaryReady, checkSummary?.id, matchingRecords, inventory],
   );
-  const onlyNewVisible = newOnly && summaryReady;
+  // Last successful manual check owns the persistent markers. The current
+  // partial batch is only a clearly labelled preview when no success exists.
+  const successfulSummary =
+    view?.lastSuccessfulCheck === undefined
+      ? summaryReady && checkSummary?.phase === "complete"
+        ? checkSummary
+        : null
+      : view.lastSuccessfulCheck;
+  const markerSummary =
+    mode === "updates" && !showOther
+      ? (successfulSummary ??
+        (summaryReady && checkSummary?.phase !== "complete"
+          ? checkSummary
+          : null))
+      : null;
+  const markerIncomplete =
+    !!markerSummary && markerSummary.phase !== "complete";
+  const previousMarkers =
+    !!markerSummary && markerSummary.id !== checkSummary?.id;
+  const markedCounts = useMemo(
+    () =>
+      markerSummary
+        ? summarizeDiscoveryChanges(
+            matchingRecords,
+            markerSummary.id,
+            inventory,
+          )
+        : null,
+    [markerSummary?.id, matchingRecords, inventory],
+  );
+  const onlyNewVisible = newOnly && !!markerSummary;
   const records = useMemo(
     () =>
       onlyNewVisible
         ? matchingRecords.filter(
-            (record) => record.firstDiscoveredRunId === checkSummary?.id,
+            (record) => record.firstDiscoveredRunId === markerSummary?.id,
           )
         : matchingRecords,
-    [matchingRecords, onlyNewVisible, checkSummary?.id],
+    [matchingRecords, onlyNewVisible, markerSummary?.id],
   );
   const { counts, visible, selectable } = useMemo(() => {
     const counts: Record<InventoryFilter, number> = {
@@ -524,10 +789,84 @@ export function CompletionPanel({
     0,
     ...ranges.map((range) => authorCatalogAt(range, view?.authorPolicies) ?? 0),
   );
+  useBrowseSession({
+    retainOnUnmount: !searchTabId,
+    scope: JSON.stringify([
+      mode,
+      searchTabId ?? null,
+      scopeKey,
+      author,
+      source,
+      filter,
+      query,
+      showOther,
+      sort,
+      onlyNewVisible,
+    ]),
+    active,
+    root,
+    grid,
+    itemKeys: sortedVisible.map((record) => sourceWorkKey(record.work)),
+  });
+  useLayoutEffect(() => {
+    if (!active || mode !== "search" || !view) return;
+    let observer: IntersectionObserver | undefined;
+    let mountedCards: MutationObserver | undefined;
+    const frame = requestAnimationFrame(() => {
+      if (!view.run) return;
+      const value = searchAdapter.rendered(
+        view.run.id,
+        view.revision,
+        performance.now() - renderStartedAt,
+        false,
+      );
+      if (value)
+        setPaintMetrics({ runId: view.run.id, revision: view.revision, value });
+      if (value?.firstVisibleMs === null && root.current) {
+        const runId = view.run.id;
+        observer = new IntersectionObserver(
+          (entries) => {
+            if (
+              !entries.some(
+                (entry) =>
+                  entry.isIntersecting && entry.intersectionRect.height > 0,
+              )
+            )
+              return;
+            const visible = searchAdapter.visible(runId, view.revision);
+            if (visible)
+              setPaintMetrics({
+                runId,
+                revision: view.revision,
+                value: visible,
+              });
+            observer?.disconnect();
+            mountedCards?.disconnect();
+          },
+          { root: root.current.closest("main") },
+        );
+        const observeCards = () =>
+          root.current
+            ?.querySelectorAll(".source-card")
+            .forEach((card) => observer!.observe(card));
+        observeCards();
+        // A scrollbar jump may replace every initially mounted virtual row.
+        // Track new cards until the first actual viewport intersection.
+        mountedCards = new MutationObserver(observeCards);
+        mountedCards.observe(root.current, { childList: true, subtree: true });
+      }
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      mountedCards?.disconnect();
+    };
+  }, [active, mode, view?.revision, searchAdapter, sortedVisible]);
   // Preserve state and memoized catalog while another page is visible.
   if (!active) return null;
   return (
     <section
+      ref={root}
       className={`completion-panel${selected.length ? " has-completion-selection" : ""}`}
       data-testid="completion-panel"
     >
@@ -539,6 +878,55 @@ export function CompletionPanel({
             : "检查关注作者的新作品，保留之前未下载的漫画，默认只显示未入库内容。"}
         </p>
       </header>
+      {mode === "search" && view && (
+        <>
+          <p role="status" data-testid="author-search-cache-status">
+            {running
+              ? "已保存结果可先浏览，正在分批更新；当前结果尚未读取完整。"
+              : "本标签保留上次结果；重新打开不会自动重查，可手动重新搜索。"}
+          </p>
+          {searchMetrics && (
+            <details
+              className="author-search-timings"
+              data-testid="author-search-timings"
+            >
+              <summary>搜索耗时</summary>
+              <p>
+                首次结果可用：
+                {searchMetrics.firstRecordsMs === null
+                  ? "尚无结果"
+                  : `${Math.round(searchMetrics.firstRecordsMs)} ms`}{" "}
+                · 首次可见：
+                {searchMetrics.firstVisibleMs === null
+                  ? "尚未记录"
+                  : `${Math.round(searchMetrics.firstVisibleMs)} ms`}{" "}
+                · 全部结束：
+                {searchMetrics.completedMs === null
+                  ? "尚未结束"
+                  : `${Math.round(searchMetrics.completedMs)} ms`}
+              </p>
+              <p>
+                本地目录读取 {Math.round(searchMetrics.localCatalogMs)} ms ·
+                查询规则 {Math.round(searchMetrics.policyMs)} ms · 请求排队{" "}
+                {Math.round(
+                  searchMetrics.queueMs + searchMetrics.nativeQueueMs,
+                )}{" "}
+                ms · 来源请求 {Math.round(searchMetrics.sourceOperationMs)} ms ·
+                本地登记 {Math.round(searchMetrics.localCommitMs)} ms · 界面更新{" "}
+                {Math.round(searchMetrics.renderMs)} ms
+              </p>
+              <p className="source-muted">
+                分项可能并行，不能相加当作总耗时。来源请求包含网络、协议解析及来源重试；传递等其余耗时{" "}
+                {Math.round(searchMetrics.transportOtherMs)} ms。
+                缺少原生分段计时的请求{" "}
+                {searchMetrics.requestsWithoutNativeTiming} 次；失败请求{" "}
+                {searchMetrics.failedRequests}{" "}
+                次。结束耗时不代表结果完整，以范围状态为准。
+              </p>
+            </details>
+          )}
+        </>
+      )}
       {!connected ? (
         <div className="source-empty">
           <p>请连接 JM 和哔咔账号后检查。</p>
@@ -548,15 +936,19 @@ export function CompletionPanel({
         <>
           <div className="completion-controls source-page-tools">
             {mode === "search" ? (
-              <label>
-                作者名{" "}
-                <input
-                  aria-label="搜索作者名"
-                  value={searchAuthor}
-                  onChange={(event) => setSearchAuthor(event.target.value)}
-                  disabled={busy || running}
-                />
-              </label>
+              searchTabId ? (
+                <strong>{authorRequest?.name}</strong>
+              ) : (
+                <label>
+                  作者名{" "}
+                  <input
+                    aria-label="搜索作者名"
+                    value={searchAuthor}
+                    onChange={(event) => setSearchAuthor(event.target.value)}
+                    disabled={busy || running}
+                  />
+                </label>
+              )
             ) : (
               <label>
                 检查作者{" "}
@@ -580,11 +972,15 @@ export function CompletionPanel({
                 running ||
                 (mode === "search" ? !searchAuthor.trim() : !authors.length)
               }
-              data-testid="completion-start"
+              data-testid={
+                searchTabId ? "author-tab-refresh" : "completion-start"
+              }
               onClick={() => startCheck()}
             >
               {mode === "search"
-                ? "搜索两站作品"
+                ? searchTabId
+                  ? "重新搜索当前作者"
+                  : "搜索两站作品"
                 : author
                   ? "检查该作者新增作品"
                   : "一键检查全部关注作者"}
@@ -611,8 +1007,28 @@ export function CompletionPanel({
               <button
                 disabled={busy}
                 onClick={() =>
-                  void perform(async () => {
-                    if (view?.run) await adapter.cancel(view.run.id);
+                  void perform(async (isCurrent) => {
+                    const cancels: Promise<unknown>[] = [];
+                    if (authorRunning && view?.run)
+                      cancels.push(adapter.cancel(view.run.id));
+                    if (recentRunning && recentRun && adapter.cancelRecentCheck)
+                      cancels.push(adapter.cancelRecentCheck(recentRun.id));
+                    const outcomes = await Promise.allSettled(cancels);
+                    const failure = outcomes.find(
+                      (result) => result.status === "rejected",
+                    );
+                    if (adapter.recentCheckProgress) {
+                      try {
+                        const recent = await adapter.recentCheckProgress();
+                        if (isCurrent() && recent)
+                          setRecentCheck({ key: scopeKey, run: recent });
+                      } catch (cause) {
+                        if (!failure) throw cause;
+                      }
+                    }
+                    // Progress success must not erase a failed stop action or
+                    // imply either backend run has already stopped.
+                    if (failure?.status === "rejected") throw failure.reason;
                   })
                 }
               >
@@ -623,11 +1039,12 @@ export function CompletionPanel({
               disabled={busy}
               onClick={() =>
                 void perform(async () => {
+                  setRecentRefresh((value) => value + 1);
                   await onRefreshInventory?.();
                 })
               }
             >
-              刷新结果与入库状态
+              刷新显示与入库状态
             </button>
           </div>
           {mode === "updates" && view && !authors.length && (
@@ -641,7 +1058,7 @@ export function CompletionPanel({
               <button onClick={onOpenLibrary}>设置漫画库</button>
             </p>
           )}
-          {running && (
+          {authorRunning && (
             <p
               className="page-summary"
               role="status"
@@ -672,14 +1089,72 @@ export function CompletionPanel({
               className="source-muted"
               data-testid="completion-saved-results-note"
             >
-              检查进行中，列表为最近读取结果；结束后自动刷新，也可点击“刷新结果与入库状态”。
+              检查进行中，列表为最近读取结果；结束后自动刷新。“刷新显示与入库状态”仅读取本机目录，不重新检查网站。
             </p>
+          )}
+          {mode === "updates" && (recentRun || recentError) && (
+            <div className="source-muted" data-testid="completion-recent-check">
+              {recentRun && (
+                <p>
+                  近期交叉补漏：
+                  {recentRun.phase === "checking"
+                    ? "正在读取"
+                    : recentRun.phase === "complete"
+                      ? "本次范围已保存"
+                      : recentRun.phase === "cancelled"
+                        ? "已停止，范围未完成"
+                        : "范围未完成"}
+                  {recentRun.currentSource
+                    ? ` · ${sourceLabel(recentRun.currentSource)} 第 ${recentRun.currentPage} 页`
+                    : ""}
+                  {` · 已读取 ${recentRun.pagesRead} 页 / ${recentRun.recordsRead} 条`}
+                </p>
+              )}
+              {recentRun?.results.map((result) => (
+                <p key={result.source}>
+                  {sourceLabel(result.source)}：{result.pagesRead} 页，
+                  {result.errorCode
+                    ? "读取未完成"
+                    : result.reachedEnd
+                      ? "来源入口分页已读完"
+                      : result.joinedPrevious
+                        ? "已衔接上次范围"
+                        : result.initialWindow
+                          ? "初始窗口已保存，更早历史未覆盖"
+                          : "已保存部分范围"}
+                  。
+                </p>
+              ))}
+              {recentError && <p role="alert">{recentError}</p>}
+            </div>
           )}
           {actionError && (
             <p role="alert" className="source-notice">
               {actionError}
             </p>
           )}
+          {view?.observationErrorCode && (
+            <p className="source-notice" role="alert">
+              跨入口补录未完成，已保存结果保留；新读取作品尚未全部纳入作者目录，请刷新显示后核对。
+            </p>
+          )}
+          {mode === "search" &&
+            ((view?.historicalSupplementCount ?? 0) > 0 ||
+              view?.historicalReadError) && (
+              <p
+                className="source-muted"
+                data-testid="completion-search-history"
+              >
+                已知作者目录补充 {view?.historicalSupplementCount ?? 0}{" "}
+                条；不计入本次来源分页和读取进度。
+                {view?.historicalSupplementAt
+                  ? ` 目录最近核验：${new Date(view.historicalSupplementAt).toLocaleString()}。`
+                  : ""}
+                {view?.historicalReadError
+                  ? " 已保存目录暂未读取成功，当前统计未覆盖这部分，请重试搜索。"
+                  : ""}
+              </p>
+            )}
           {view?.run?.storageWarningCode && (
             <p
               className="source-notice"
@@ -698,7 +1173,7 @@ export function CompletionPanel({
               错误代码：{readFailure.code}。
               {readFailure.retryAfterMs !== null
                 ? ` ${readFailure.retryAfterMs / 1000} 秒后重试读取（${readFailure.failures} / 3）。`
-                : " 进度刷新已暂停，请点击“刷新结果与入库状态”重试。"}
+                : " 进度刷新已暂停，请点击“刷新显示与入库状态”重试。"}
             </p>
           )}
           {inventoryError && (
@@ -707,7 +1182,7 @@ export function CompletionPanel({
               className="source-notice"
               data-testid="completion-inventory-error"
             >
-              入库状态暂未核对完成，当前不能判断已入库或未入库。请点击“刷新结果与入库状态”重试。
+              入库状态暂未核对完成，当前不能判断已入库或未入库。请点击“刷新显示与入库状态”重试。
             </p>
           )}
           <div className="completion-controls source-page-tools">
@@ -761,15 +1236,28 @@ export function CompletionPanel({
                 <button
                   data-testid="completion-new-only"
                   aria-pressed={onlyNewVisible}
-                  disabled={!summaryReady}
+                  disabled={!markerSummary}
                   onClick={() => {
                     setNewOnly(!onlyNewVisible);
                     setSelection([]);
                   }}
                 >
-                  仅看本次新发现
+                  仅看本次扫描新增
                 </button>
               </div>
+              {previousMarkers && (
+                <p data-testid="completion-retained-markers">
+                  新增标记保留上次成功检查（
+                  {new Date(markerSummary!.finishedAt!).toLocaleString()}），
+                  当前范围 {markedCounts?.newTotal ?? 0}{" "}
+                  部；本轮尚未完整成功，不替换标记。
+                </p>
+              )}
+              {markerIncomplete && (
+                <p data-testid="completion-incomplete-markers">
+                  本轮新增预览不完整，未完成来源仍需补查。
+                </p>
+              )}
               {!checkSummary ? (
                 <p className="source-muted">
                   下一次检查后生成变化摘要，已有目录按历史记录保留。
@@ -823,6 +1311,7 @@ export function CompletionPanel({
                       <p className="source-muted">
                         统计按当前作者、来源和关键词范围；JM
                         与哔咔分别计数。历史未入库作品继续保留。
+                        同一来源作品归属多位作者时，总数只计一次；按作者筛选时可在各自范围看到它。
                         {checkSummary.firstCatalog
                           ? " 本批包含首次建立的目录，首次收录不代表网站新发布。"
                           : " 首次发现不代表网站新发布。"}
@@ -883,6 +1372,13 @@ export function CompletionPanel({
               ),
             )}
           </div>
+          {mode === "updates" && (
+            <BrowsingMarkerNote
+              notes={browsing.notes}
+              surface="authors"
+              onRetry={browsing.retry}
+            />
+          )}
           <p className="page-summary" data-testid="completion-counts">
             {onlyNewVisible ? "仅看本次新发现 · " : ""}
             {showOther ? "其他关键词结果（未确认作者归属） · " : ""}
@@ -944,7 +1440,7 @@ export function CompletionPanel({
               ? `完整目录 ${catalogScopes} / ${ranges.length} 个来源范围 · `
               : "本次 JM 与哔咔分别计数 · "}
             {lastCheck > 0
-              ? `最近检查 ${new Date(lastCheck).toLocaleString()}`
+              ? `所示范围中最近一次检查 ${new Date(lastCheck).toLocaleString()}（不代表全部范围均在此时检查）`
               : "尚未完成检查"}
           </p>
           <details
@@ -960,6 +1456,8 @@ export function CompletionPanel({
                 首次检查会读取完整目录；之后优先检查新增作品并复用历史目录。
                 “完整复核”会重新读取所选作者在两站的所有分页，用于核对旧作补录等变化。
                 “仅补查未完成”只读取未完成的作者与来源，已完成来源保持原样。
+                主按钮始终检查当前选择的全部作者，不沿用“仅补查未完成”的范围。
+                “刷新显示与入库状态”只读取本机记录，不发送作者查询。
               </p>
             )}
             {mode === "updates" && undatedCount > 0 && (
@@ -967,7 +1465,7 @@ export function CompletionPanel({
                 className="source-muted"
                 data-testid="completion-date-refresh-help"
               >
-                旧目录可能未保存日期。可在上方选择一位作者，再点击“完整复核”重新读取该作者在两站的所有分页；来源未提供的日期仍显示未知。“刷新结果与入库状态”仅读取本机记录，不会补查网站日期。
+                旧目录可能未保存日期。可在上方选择一位作者，再点击“完整复核”重新读取该作者在两站的所有分页；来源未提供的日期仍显示未知。“刷新显示与入库状态”仅读取本机记录，不会补查网站日期。
               </p>
             )}
             <p className="source-muted">
@@ -993,10 +1491,29 @@ export function CompletionPanel({
             )}
             <p className="source-muted" data-testid="completion-query-scope">
               {mode === "search"
-                ? "读完来源的作者关键词查询，再按作者字段区分结果。"
-                : "来源的作者关键词查询结果按作者字段区分，历史记录会保留。"}
+                ? "读取来源作者查询，并合并已知的署名明确作品；分页进度只统计本次查询。"
+                : "已取得作品按明确署名归属，发现入口不限制作者归属；历史记录会保留。"}
               作者作品包含明确列出的合著者和“社团（作者）”；名称不同或信息缺失的记录保留在其他关键词结果中。
+              查询分页读完不代表网站未返回的历史作品不存在。
             </p>
+            {(author || mode === "search") &&
+              ranges.map((range) => (
+                <p
+                  className="source-muted"
+                  key={range.source + range.author}
+                  data-testid="completion-author-check-time"
+                >
+                  {range.author} · {sourceLabel(range.source)} · 最后实际检查：
+                  {range.lastCheckedAt
+                    ? new Date(range.lastCheckedAt).toLocaleString()
+                    : "尚无成功检查"}
+                  {range.lastCheckMode === "incremental"
+                    ? "（增量，未重读全部历史页）"
+                    : range.lastCheckMode === "full"
+                      ? "（完整查询）"
+                      : ""}
+                </p>
+              ))}
             {source !== "Pica" && (
               <p className="source-muted">{jmSearchScopeNote}</p>
             )}
@@ -1037,7 +1554,7 @@ export function CompletionPanel({
               {readFailure && !view
                 ? "尚未读取到检查结果，请刷新重试。"
                 : onlyNewVisible
-                  ? "本批已读取范围内，没有符合当前筛选的首次发现作品。历史未入库作品仍保留，可关闭“仅看本次新发现”查看。"
+                  ? "标记范围内，没有符合当前筛选的首次发现作品。历史未入库作品仍保留，可关闭“仅看本次扫描新增”查看。"
                   : scopedRecords.length > 0
                     ? "当前筛选没有结果。"
                     : showOther
@@ -1053,40 +1570,8 @@ export function CompletionPanel({
                               : "点击“一键检查全部关注作者”读取关注作者的作品。"}
             </p>
           )}
-          {visible.length > 0 && !showOther && (
-            <div className="completion-controls" aria-label="作者作品多选">
-              <button
-                aria-pressed={selectionMode}
-                onClick={() => {
-                  setSelectionMode(!selectionMode);
-                  setSelection([]);
-                }}
-              >
-                {selectionMode ? "退出多选" : "多选"}
-              </button>
-              {selectionMode && (
-                <>
-                  <button
-                    data-testid="completion-select-all"
-                    disabled={!complete || !selectable.length}
-                    onClick={() =>
-                      setSelection(
-                        selectable.map((record) => sourceWorkKey(record.work)),
-                      )
-                    }
-                  >
-                    全选当前筛选范围 · {selectable.length} 本
-                  </button>
-                  <span className="source-muted">
-                    {complete
-                      ? "包含未滚动到的作品，已入库作品不选入。"
-                      : "当前检查范围未读完；可逐本勾选已读结果，读完后再全选。"}
-                  </span>
-                </>
-              )}
-            </div>
-          )}
           <VirtualSourceGrid
+            ref={grid}
             items={sortedVisible}
             density={density}
             itemKey={(record) => sourceWorkKey(record.work)}
@@ -1131,25 +1616,31 @@ export function CompletionPanel({
                       选择
                     </label>
                   )}
-                  <button
+                  <CoverInteraction
                     className="source-card-open"
-                    aria-label={"打开《" + work.title + "》"}
-                    onClick={() =>
-                      readerAccess.choose(
-                        sourceReaderRequest(scope, work),
-                        work.title,
-                        () =>
-                          onOpenWork(
-                            { source: work.source, workId: work.workId },
-                            {
-                              scope,
-                              policies: (view?.authorPolicies ?? []).filter(
-                                (policy) => policy.source === work.source,
-                              ),
-                            },
+                    title={work.title}
+                    request={sourceReaderRequest(scope, work)}
+                    onDetails={() =>
+                      onOpenWork(
+                        { source: work.source, workId: work.workId },
+                        {
+                          scope,
+                          policies: (view?.authorPolicies ?? []).filter(
+                            (policy) => policy.source === work.source,
                           ),
+                        },
                       )
                     }
+                    selectionMode={selectionMode && !showOther}
+                    selected={selectionKeys.has(sourceWorkKey(work))}
+                    onToggleSelection={() => {
+                      if (stock.kind !== "owned")
+                        setSelection((old) =>
+                          old.includes(sourceWorkKey(work))
+                            ? old.filter((key) => key !== sourceWorkKey(work))
+                            : [...old, sourceWorkKey(work)],
+                        );
+                    }}
                   >
                     <div className="source-language-cover">
                       <SourceCover
@@ -1157,16 +1648,50 @@ export function CompletionPanel({
                         scope={scope}
                         work={work}
                       />
+                      {mode === "updates" && !showOther && (
+                        <BrowsingNewBadge work={work} marked={browsing.keys} />
+                      )}
                       <SourceLanguageBadge
                         tags={work.tags}
                         work={work}
                         scope={scope}
                       />
                     </div>
-                    <strong>{work.title}</strong>
-                    <span>{work.authors.join("、") || "作者信息未提供"}</span>
-                    <AuthorCreditNote work={work} />
-                  </button>
+                  </CoverInteraction>
+                  {markerSummary &&
+                    record.firstDiscoveredRunId === markerSummary.id && (
+                      <span
+                        className="source-status"
+                        data-testid="scan-addition-badge"
+                      >
+                        {markerIncomplete
+                          ? "本轮新增（不完整）"
+                          : "本次扫描新增"}
+                      </span>
+                    )}
+                  <h3>
+                    <button
+                      className="text-button"
+                      onClick={() =>
+                        onOpenWork(
+                          { source: work.source, workId: work.workId },
+                          {
+                            scope,
+                            policies: (view?.authorPolicies ?? []).filter(
+                              (policy) => policy.source === work.source,
+                            ),
+                          },
+                        )
+                      }
+                    >
+                      {work.title}
+                    </button>
+                  </h3>
+                  <AuthorLinks
+                    authors={work.authors}
+                    fallback="作者信息未提供"
+                  />
+                  <AuthorCreditNote work={work} />
                   <p>
                     {sourceLabel(work.source)} · {inventoryLabel(stock)}
                   </p>
@@ -1187,51 +1712,51 @@ export function CompletionPanel({
                         : "作者归属未确认，可打开详情核对。"}
                     </p>
                   ) : (
-                    <button
-                      className="text-button"
-                      disabled={
-                        stock.kind === "owned" ||
-                        !library.rootId ||
-                        downloadBusy
-                      }
+                    <DownloadWorkButton
+                      work={work}
+                      owned={stock.kind === "owned"}
+                      ready={!!library.rootId}
                       onClick={() => onDownload(work)}
-                    >
-                      {stock.kind === "owned" ? "已入库" : "下载到漫画库"}
-                    </button>
+                    />
                   )}
                 </article>
               );
             }}
           />
-          {selected.length > 0 && (
-            <div
-              className="source-selection-bar"
-              data-testid="completion-selection-bar"
+          {!showOther && (
+            <FloatingSelection
+              visible={active}
+              active={selectionMode}
+              selectedCount={selected.length}
+              onEnter={() => setSelectionMode(true)}
+              onCancel={() => {
+                setSelection([]);
+                setSelectionMode(false);
+              }}
+              disabled={
+                !library.rootId || selected.length > downloadSelectionLimit
+              }
+              onDownload={() => {
+                void Promise.resolve(onDownloadMany(selected)).then((keys) => {
+                  if (keys)
+                    setSelection((old) =>
+                      old.filter((key) => !keys.includes(key)),
+                    );
+                });
+              }}
             >
-              <strong>已选 {selected.length} 本</strong>
-              <span>
-                {complete
-                  ? "当前筛选范围，包含未滚动到的作品"
-                  : "仅来自已读取结果，检查范围尚未完成"}
-              </span>
-              <button onClick={() => setSelection([])}>取消选择</button>
               <button
-                className="primary-button"
-                disabled={
-                  downloadBusy ||
-                  !library.rootId ||
-                  selected.length > downloadSelectionLimit
+                data-testid="completion-select-all"
+                disabled={!complete || !selectable.length}
+                onClick={() =>
+                  setSelection(
+                    selectable.map((record) => sourceWorkKey(record.work)),
+                  )
                 }
-                onClick={() => onDownloadMany(selected)}
               >
-                查看下载计划
+                全选当前筛选范围 · {selectable.length} 本
               </button>
-              {selected.length > downloadSelectionLimit && (
-                <span>
-                  一次最多选择 500 本，请缩小筛选范围；没有截取或忽略后续作品。
-                </span>
-              )}
-            </div>
+            </FloatingSelection>
           )}
         </>
       )}

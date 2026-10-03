@@ -1,5 +1,15 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { ComicReader, type ComicReaderHandle } from "./reader/ComicReader.tsx";
 import {
   nativeReaderAdapter,
@@ -15,19 +25,180 @@ import type { ReaderRequest } from "./reader/types.ts";
 import type { WorkReference } from "./booklists.ts";
 import type { SourceScope, SourceWork } from "./source-types.ts";
 import "./reader-access.css";
+import { CoverRetryContext, type CoverRetryAction } from "./cover-retry.tsx";
 
+export interface LibraryCoverActions {
+  reveal(): void | Promise<void>;
+  recycle(): void | Promise<void>;
+  recycleDisabled?: boolean;
+}
 interface ReaderAccess {
-  choose(request: ReaderRequest, title: string, details: () => void): void;
+  choose(
+    request: ReaderRequest,
+    title: string,
+    details: () => void,
+    point?: { x: number; y: number; keyboard?: boolean },
+    localActions?: LibraryCoverActions,
+  ): void;
   read(request: ReaderRequest): void;
+  readWindow(request: ReaderRequest): void;
   available: boolean;
 }
 const ReaderContext = createContext<ReaderAccess>({
   choose: (_request, _title, details) => details(),
   read: () => {},
+  readWindow: () => {},
   available: false,
 });
 export const ReaderAccessProvider = ReaderContext.Provider;
 export const useReaderAccess = () => useContext(ReaderContext);
+
+/** A single click focuses or retries a failed cover; no click races into details. */
+export function CoverInteraction({
+  request,
+  title,
+  onDetails,
+  localActions,
+  selectionMode = false,
+  selected = false,
+  onToggleSelection,
+  children,
+  className = "source-cover-button",
+  testId,
+}: {
+  request: ReaderRequest | null;
+  title: string;
+  onDetails(): void;
+  localActions?: LibraryCoverActions;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelection?(): void;
+  children: ReactNode;
+  className?: string;
+  testId?: string;
+}) {
+  const access = useReaderAccess();
+  const retry = useRef<CoverRetryAction>(null);
+  const retriedClick = useRef(false);
+  const [canRetry, setCanRetry] = useState(false);
+  const register = useCallback((action: CoverRetryAction) => {
+    retry.current = action;
+    setCanRetry(action !== null);
+    return () => {
+      if (retry.current !== action) return;
+      retry.current = null;
+      setCanRetry(false);
+    };
+  }, []);
+  const retryContext = useMemo(
+    () => ({ register, selectionMode }),
+    [register, selectionMode],
+  );
+  const menu = (
+    element: HTMLElement,
+    x: number,
+    y: number,
+    keyboard = false,
+  ) => {
+    element.focus({ preventScroll: true });
+    if (request && access.available)
+      access.choose(
+        request,
+        title,
+        onDetails,
+        { x, y, keyboard },
+        localActions,
+      );
+    else onDetails();
+  };
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`${className} cover-interaction`}
+      data-testid={testId}
+      aria-label={`打开《${title}》`}
+      aria-description={
+        selectionMode
+          ? "单击选择作品"
+          : canRetry
+            ? "单击重试封面；右键打开漫画菜单"
+            : "双击小窗阅读；右键打开漫画菜单"
+      }
+      data-cover-retry={canRetry && !selectionMode ? true : undefined}
+      aria-haspopup={selectionMode ? undefined : "menu"}
+      aria-pressed={selectionMode ? selected : undefined}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("button, input, a")) return;
+        event.currentTarget.focus({ preventScroll: true });
+        if (event.detail >= 2) return;
+        retriedClick.current = false;
+        if (selectionMode) onToggleSelection?.();
+        else if (retry.current) {
+          retriedClick.current = true;
+          retry.current();
+        }
+      }}
+      onDoubleClick={(event) => {
+        if (
+          selectionMode ||
+          retriedClick.current ||
+          (event.target as HTMLElement).closest("button, input, a")
+        )
+          return;
+        event.preventDefault();
+        if (request && access.available) access.readWindow(request);
+      }}
+      onContextMenu={(event) => {
+        if (
+          selectionMode ||
+          (event.target as HTMLElement).closest("button, input, a")
+        )
+          return;
+        event.preventDefault();
+        menu(event.currentTarget, event.clientX, event.clientY);
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.repeat && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          return;
+        }
+        if (
+          !selectionMode &&
+          retry.current &&
+          (event.key === "Enter" || event.key === " ")
+        ) {
+          event.preventDefault();
+          retry.current();
+          return;
+        }
+        if (selectionMode && (event.key === " " || event.key === "Enter")) {
+          event.preventDefault();
+          onToggleSelection?.();
+          return;
+        }
+        if (
+          !selectionMode &&
+          (event.key === "ContextMenu" ||
+            (event.key === "F10" && event.shiftKey) ||
+            event.key === " ")
+        ) {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          menu(event.currentTarget, rect.left + 12, rect.top + 12, true);
+        } else if (!selectionMode && event.key === "Enter") {
+          event.preventDefault();
+          if (request && access.available) access.readWindow(request);
+        }
+      }}
+    >
+      <CoverRetryContext.Provider value={retryContext}>
+        {children}
+      </CoverRetryContext.Provider>
+    </div>
+  );
+}
 
 export function sourceReaderRequest(
   scope: SourceScope,
@@ -46,63 +217,142 @@ function CoverActions({
   onRead,
   onDetails,
   onReadWindow,
+  localActions,
   onClose,
   busy,
   error,
+  point,
 }: {
   title: string;
   onRead(): void;
   onDetails(): void;
   onReadWindow(): void;
+  localActions?: LibraryCoverActions;
   onClose(): void;
   busy: boolean;
   error: string;
+  point: { x: number; y: number; keyboard?: boolean };
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useLayoutEffect(() => {
+    const element = menu.current;
+    if (!element) return;
+    element.style.left =
+      Math.max(
+        8,
+        Math.min(point.x, window.innerWidth - element.offsetWidth - 8),
+      ) + "px";
+    element.style.top =
+      Math.max(
+        8,
+        Math.min(point.y, window.innerHeight - element.offsetHeight - 8),
+      ) + "px";
+  }, [point, busy, error]);
+  useLayoutEffect(() => {
+    if (point.keyboard)
+      menu.current
+        ?.querySelector<HTMLButtonElement>("[role=menuitem]")
+        ?.focus({ preventScroll: true });
+  }, [point]);
   useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => element?.close();
+    const outside = (event: PointerEvent) => {
+      if (!menu.current?.contains(event.target as Node)) close.current();
+    };
+    const dismiss = () => close.current();
+    const main = document.querySelector("main");
+    const openedAtScroll = main?.scrollTop;
+    const scrolled = () => {
+      // A scroll event queued before the menu opened is not a new movement.
+      if (main && main.scrollTop !== openedAtScroll) close.current();
+    };
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape" || event.key === "Tab") {
+        if (event.key === "Escape") event.preventDefault();
+        close.current();
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = Array.from(
+        menu.current?.querySelectorAll<HTMLButtonElement>(
+          "[role=menuitem]:not(:disabled)",
+        ) ?? [],
+      );
+      if (!items.length) return;
+      event.preventDefault();
+      const index = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : event.key === "ArrowDown"
+              ? (index + 1) % items.length
+              : (index - 1 + items.length) % items.length;
+      items[next].focus({ preventScroll: true });
+    };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", keyboard, true);
+    window.addEventListener("resize", dismiss);
+    main?.addEventListener("scroll", scrolled, { passive: true });
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("keydown", keyboard, true);
+      window.removeEventListener("resize", dismiss);
+      main?.removeEventListener("scroll", scrolled);
+    };
   }, []);
-  return (
-    <dialog
-      ref={dialog}
+  return createPortal(
+    <div
+      ref={menu}
       className="reader-cover-actions"
+      role="menu"
       aria-label="打开漫画"
       data-testid="reader-cover-actions"
-      onCancel={(event) => {
-        event.preventDefault();
-        if (!busy) onClose();
-      }}
-      onClick={(event) => {
-        if (!busy && event.target === event.currentTarget) onClose();
-      }}
+      data-keyboard={point.keyboard || undefined}
+      style={{ left: point.x, top: point.y }}
+      onContextMenu={(event) => event.preventDefault()}
     >
       <div className="reader-cover-actions-content">
         <p title={title}>{title}</p>
-        <button
-          className="button secondary"
-          onClick={onDetails}
-          disabled={busy}
-        >
-          漫画详细
+        <button role="menuitem" onClick={onDetails} disabled={busy}>
+          作品详细
         </button>
-        <button className="button primary" onClick={onRead} disabled={busy}>
+        <button role="menuitem" onClick={onRead} disabled={busy}>
           程序内阅读
         </button>
-        <button
-          className="button secondary"
-          onClick={onReadWindow}
-          disabled={busy}
-        >
-          {busy ? "正在打开小窗…" : "手机小框阅读"}
+        <button role="menuitem" onClick={onReadWindow} disabled={busy}>
+          {busy ? "正在打开小窗…" : "小窗阅读"}
         </button>
+        {localActions && (
+          <>
+            <button
+              role="menuitem"
+              onClick={() => void localActions.reveal()}
+              disabled={busy}
+            >
+              打开文件位置
+            </button>
+            <button
+              role="menuitem"
+              className="reader-menu-delete"
+              onClick={() => void localActions.recycle()}
+              disabled={busy || localActions.recycleDisabled}
+              title={
+                localActions.recycleDisabled
+                  ? "仅在目录空闲时回收 ZIP 或 CBZ"
+                  : "确认后移到 Windows 回收站，可恢复"
+              }
+            >
+              删除漫画
+            </button>
+          </>
+        )}
         {error && <p role="alert">{error}</p>}
-        <button className="text-button" onClick={onClose} disabled={busy}>
-          取消
-        </button>
       </div>
-    </dialog>
+    </div>,
+    document.body,
   );
 }
 
@@ -117,9 +367,14 @@ export function useReaderHost(
     request: ReaderRequest;
     title: string;
     details(): void;
+    localActions?: LibraryCoverActions;
+    point: { x: number; y: number; keyboard?: boolean };
   } | null>(null);
   const [openingWindow, setOpeningWindow] = useState(false);
   const [choiceError, setChoiceError] = useState("");
+  const currentChoice = useRef(choice);
+  currentChoice.current = choice;
+  const pendingWindows = useRef(new Set<string>());
   const reader = useRef<ComicReaderHandle>(null);
   const returnTo = useRef<{
     element: HTMLElement | null;
@@ -209,20 +464,70 @@ export function useReaderHost(
         previous.element.focus({ preventScroll: true });
     });
   };
+  const openWindow = (next: ReaderRequest, fromMenu = false) => {
+    const key = JSON.stringify(next);
+    if (!enabled || pendingWindows.current.has(key)) return;
+    pendingWindows.current.add(key);
+    const isCurrent = () =>
+      currentChoice.current &&
+      JSON.stringify(currentChoice.current.request) === key;
+    if (fromMenu) {
+      setOpeningWindow(true);
+      setChoiceError("");
+    }
+    void invokeDesktop("reader_window_open", { request: next })
+      .then(() => {
+        if (fromMenu && isCurrent()) {
+          setChoice(null);
+          returnTo.current = null;
+        }
+      })
+      .catch((error: unknown) => {
+        if (fromMenu && isCurrent()) setChoiceError(readerErrorMessage(error));
+        else report.current(readerErrorMessage(error));
+      })
+      .finally(() => {
+        pendingWindows.current.delete(key);
+        if (!currentChoice.current || isCurrent()) setOpeningWindow(false);
+      });
+  };
   const actions: ReaderAccess = {
     available: enabled,
-    choose: (next, title, details) => {
+    choose: (next, title, details, point, localActions) => {
       if (!enabled) return details();
       remember();
       setChoiceError("");
-      setChoice({ request: next, title, details });
+      setOpeningWindow(pendingWindows.current.has(JSON.stringify(next)));
+      const rect = document.activeElement?.getBoundingClientRect();
+      setChoice({
+        request: next,
+        title,
+        details,
+        localActions: next.kind === "library" ? localActions : undefined,
+        point: point ?? {
+          x: rect?.left ?? 24,
+          y: rect?.top ?? 24,
+          keyboard: true,
+        },
+      });
     },
+    readWindow: (next) => openWindow(next),
     read: (next) => {
       if (!enabled) return;
       remember();
       setChoice(null);
       setRequest(next);
     },
+  };
+  const performLocalAction = (action: () => void | Promise<void>) => {
+    setChoice(null);
+    const previous = returnTo.current;
+    returnTo.current = null;
+    if (previous?.element?.isConnected)
+      previous.element.focus({ preventScroll: true });
+    void Promise.resolve()
+      .then(action)
+      .catch(() => report.current("本地文件操作未完成，请核对漫画库提示。"));
   };
   const layer = (
     <>
@@ -231,23 +536,19 @@ export function useReaderHost(
           title={choice.title}
           busy={openingWindow}
           error={choiceError}
+          point={choice.point}
+          localActions={
+            choice.localActions
+              ? {
+                  reveal: () => performLocalAction(choice.localActions!.reveal),
+                  recycle: () =>
+                    performLocalAction(choice.localActions!.recycle),
+                  recycleDisabled: choice.localActions.recycleDisabled,
+                }
+              : undefined
+          }
           onRead={() => actions.read(choice.request)}
-          onReadWindow={() => {
-            if (openingWindow) return;
-            setOpeningWindow(true);
-            setChoiceError("");
-            void invokeDesktop("reader_window_open", {
-              request: choice.request,
-            })
-              .then(() => {
-                setChoice(null);
-                restore(false);
-              })
-              .catch((error: unknown) =>
-                setChoiceError(readerErrorMessage(error)),
-              )
-              .finally(() => setOpeningWindow(false));
-          }}
+          onReadWindow={() => openWindow(choice.request, true)}
           onDetails={() => {
             setChoice(null);
             returnTo.current = null;
@@ -255,7 +556,10 @@ export function useReaderHost(
           }}
           onClose={() => {
             setChoice(null);
-            restore();
+            const previous = returnTo.current;
+            returnTo.current = null;
+            if (previous?.element?.isConnected)
+              previous.element.focus({ preventScroll: true });
           }}
         />
       )}

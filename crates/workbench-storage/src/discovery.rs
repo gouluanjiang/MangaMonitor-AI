@@ -42,6 +42,10 @@ pub struct DiscoveryRecord {
     pub matched_authors: Vec<String>,
     pub author_verified: bool,
     pub observed_at: u64,
+    /// Only a successful native detail read sets this evidence timestamp. A
+    /// subsequent abbreviated listing cannot replace its author attribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_detail_at: Option<u64>,
     pub scan_id: String,
     /// Absent legacy records are the historical baseline, never dated retroactively.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,7 +216,7 @@ pub struct DiscoveryDocument {
 impl Default for DiscoveryDocument {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             accounts: vec![],
         }
     }
@@ -246,8 +250,8 @@ impl DiscoveryWork {
                 .description
                 .as_ref()
                 .is_none_or(|text| bounded(text, 10_000))
-            // Up to 64 original source tags plus two explicit language kinds.
-            && self.tags.len() <= 66
+            // Up to 64 original tags plus 64 bounded Pica category labels.
+            && self.tags.len() <= 128
             && self
                 .tags
                 .iter()
@@ -284,9 +288,21 @@ fn baseline_valid(baseline: &DiscoveryBaseline, source: Source) -> bool {
 }
 
 impl ValidatedDocument for DiscoveryDocument {
+    const VERSION: u32 = 2;
+
+    fn migrate(&mut self) -> Result<()> {
+        match self.version {
+            1 => self.version = Self::VERSION,
+            2 => (),
+            0 => return Err(StoreError::new("DOCUMENT_CORRUPT")),
+            _ => return Err(StoreError::new("UNSUPPORTED_SCHEMA")),
+        }
+        Ok(())
+    }
+
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("VALIDATION_FAILED");
-        if self.version != 1 || self.accounts.len() > MAX_DISCOVERY_ACCOUNTS {
+        if self.version != Self::VERSION || self.accounts.len() > MAX_DISCOVERY_ACCOUNTS {
             return Err(invalid());
         }
         let mut account_keys = HashSet::new();
@@ -414,12 +430,14 @@ impl ValidatedDocument for DiscoveryDocument {
                 if !record.work.is_valid()
                     || !keys.insert((record.work.source, &record.work.work_id))
                     || record.observed_at > MAX_SAFE_INTEGER
+                    || record
+                        .metadata_detail_at
+                        .is_some_and(|time| time > record.observed_at)
                     || !library_hash_is_valid(&record.scan_id)
                     || record
                         .first_discovered_run_id
                         .as_ref()
                         .is_some_and(|id| !library_hash_is_valid(id))
-                    || record.matched_authors.is_empty()
                     || record.matched_authors.len() > MAX_DISCOVERY_AUTHORS
                     || record.matched_authors.iter().any(|author| {
                         !discovery_author_is_valid(author)

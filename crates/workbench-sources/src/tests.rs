@@ -66,6 +66,98 @@ async fn large_current_session_catalog_reuses_early_addresses_without_detail_req
 const PICA_ID: &str = "0123456789abcdef01234567";
 
 #[tokio::test]
+async fn native_tag_routes_are_single_page_encoded_and_not_keyword_searches() {
+    let sources = scripted(vec![
+        Ok(json!({"total":1,"content":[{"id":"123","name":"Fixture","tags":["Tag & Name"]}]})),
+        Ok(
+            json!({"comics":{"page":2,"pages":3,"limit":20,"total":41,"docs":[{"_id":PICA_ID,"title":"Fixture","categories":["耽美"]}]}}),
+        ),
+    ]);
+    let jm = session(Source::Jm);
+    let pica = session(Source::Pica);
+    let jm_page = sources.tag(&jm, "Tag & Name", 1).await.unwrap();
+    let pica_page = sources.tag(&pica, "Tag & Name", 2).await.unwrap();
+    assert_eq!(jm_page.items.len(), 1);
+    assert!(jm_page.jm_search_boundary.is_some());
+    assert_eq!(pica_page.page, 2);
+    assert!(pica_page.items[0].tags.iter().any(|tag| is_bl_tag(tag)));
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        &[
+            (
+                Source::Jm,
+                Method::GET,
+                "/search?main_tag=3&search_query=Tag+%26+Name&page=1&o=mr".into()
+            ),
+            (
+                Source::Pica,
+                Method::GET,
+                "comics?t=Tag+%26+Name&s=dd&page=2".into()
+            ),
+        ]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+    for invalid in ["", "   ", "bad\nlabel"] {
+        assert_eq!(
+            sources.tag(&jm, invalid, 1).await.unwrap_err().code,
+            "SOURCE_QUERY_INVALID"
+        );
+    }
+    assert_eq!(sources.recorded.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn tag_redirect_never_falls_back_to_number_or_detail_search() {
+    let sources = scripted(vec![Ok(
+        json!({"redirect_aid":"123","total":1,"content":[]}),
+    )]);
+    assert_eq!(
+        sources
+            .tag(&session(Source::Jm), "123", 1)
+            .await
+            .unwrap_err()
+            .code,
+        "SOURCE_RESPONSE_INVALID"
+    );
+    assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn pica_category_keeps_its_origin_and_uses_c_instead_of_t() {
+    let sources = scripted(vec![Ok(
+        json!({"comics":{"page":1,"pages":1,"limit":20,"total":1,"docs":[{
+            "_id":PICA_ID,"title":"Fixture","tags":["Raw tag"],"categories":["Category & Name", "耽美"]
+        }]}}),
+    )]);
+    let result = sources
+        .category(&session(Source::Pica), "Category & Name", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.items[0].categories.as_ref().unwrap(),
+        &["Category & Name", "耽美"]
+    );
+    assert_eq!(result.items[0].tags, ["Raw tag", "Category & Name", "耽美"]);
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        &[(
+            Source::Pica,
+            Method::GET,
+            "comics?c=Category+%26+Name&s=dd&page=1".into()
+        ),]
+    );
+    assert_eq!(
+        sources
+            .category(&session(Source::Jm), "Category", 1)
+            .await
+            .unwrap_err()
+            .code,
+        "SOURCE_CATEGORY_UNSUPPORTED"
+    );
+    assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn recent_lists_fetch_one_requested_page_and_preserve_source_order_metadata_and_issues() {
     let sources = scripted(vec![
         Ok(json!({"total":1_000_000,"content":[
@@ -82,7 +174,11 @@ async fn recent_lists_fetch_one_requested_page_and_preserve_source_order_metadat
     ]);
     let jm = session(Source::Jm);
     let page = sources.recent(&jm, 1).await.unwrap();
-    assert!(page.jm_search_boundary.is_none());
+    let boundary = page.jm_search_boundary.as_ref().unwrap();
+    assert_eq!(boundary.first.as_ref().unwrap().work_id, "456");
+    assert_eq!(boundary.last.as_ref().unwrap().work_id, "123");
+    assert_eq!(boundary.first.as_ref().unwrap().fingerprint.len(), 64);
+    assert!(boundary.recent_rows.is_none());
     assert_eq!(page.page, 1);
     // The site total may exceed the UI's browsing budget. It is not a request
     // to fetch those pages, and must not make a small current page unreadable.
@@ -106,6 +202,7 @@ async fn recent_lists_fetch_one_requested_page_and_preserve_source_order_metadat
     assert!(!jm.has_cover_metadata("789"));
     let pica = session(Source::Pica);
     let page = sources.recent(&pica, 2).await.unwrap();
+    assert!(page.jm_search_boundary.is_none());
     assert_eq!(
         (page.page, page.pages, page.has_more),
         (2, Some(2), Some(false))
@@ -152,6 +249,10 @@ async fn recent_lists_keep_empty_unknown_dates_and_failures_distinct() {
     let empty = sources.recent(&jm, 1).await.unwrap();
     assert_eq!((empty.total, empty.has_more), (Some(0), Some(false)));
     assert!(empty.items.is_empty());
+    assert_eq!(
+        empty.jm_search_boundary.as_ref().unwrap().recent_rows,
+        Some(vec![])
+    );
     let unknown_date = sources.recent(&pica, 1).await.unwrap();
     assert_eq!(unknown_date.items[0].source_updated_at, None);
     assert_eq!(
@@ -398,7 +499,7 @@ fn detail_value(source: Source, favorite: Option<bool>) -> Value {
 }
 
 #[test]
-fn pica_categories_add_only_explicit_language_kinds_without_discarding_raw_tags() {
+fn pica_categories_preserve_meaningful_labels_without_discarding_raw_tags() {
     let raw_tags = (0..64).map(|i| format!("Tag {i}")).collect::<Vec<_>>();
     let mut data = json!({
         "_id": PICA_ID, "title": "日本語 title [中文]", "author": "漢化組",
@@ -406,12 +507,12 @@ fn pica_categories_add_only_explicit_language_kinds_without_discarding_raw_tags(
     });
     let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
     assert_eq!(&work.tags[..64], raw_tags);
-    assert_eq!(&work.tags[64..], ["中文", "生肉"]);
-    assert_eq!(work.tags.len(), 66);
+    assert_eq!(&work.tags[64..], ["日漫", "中文", "生肉"]);
+    assert_eq!(work.tags.len(), 67);
 
     data["tags"] = json!([" 日文 ", "Other"]);
     let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
-    assert_eq!(work.tags, [" 日文 ", "Other", "中文"]);
+    assert_eq!(work.tags, [" 日文 ", "Other", "日漫", "中文"]);
     data["tags"] = json!(vec!["Tag"; 65]);
     assert_eq!(
         protocol::work(Source::Pica, &data, false).unwrap_err().code,
@@ -433,21 +534,26 @@ fn optional_categories_never_guess_from_unrelated_fields_or_hide_malformed_parts
         json!(["中文", ""]),
         json!(["中文", "x".repeat(2001)]),
         json!(vec!["中文"; 65]),
-        json!(["日漫", "漢化組", "中文标题", "英語 ENG"]),
     ] {
         data["categories"] = categories;
         let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
         assert_eq!(work.tags, ["Other"]);
     }
+    data["categories"] = json!(["日漫", "漢化組", "中文标题", "英語 ENG", "耽美"]);
+    let (work, _) = protocol::work(Source::Pica, &data, false).unwrap();
+    assert_eq!(
+        work.tags,
+        ["Other", "日漫", "漢化組", "中文标题", "英語 ENG", "耽美"]
+    );
+    assert!(retained_language_tags(&work.tags).is_empty());
     let jm = json!({
         "id":"123", "name":"日本語 [中文]", "author":"中文", "tags":["Other"],
         "category":{"title":"日漫"}, "category_sub":{"title":"中文"},
         "categories":["中文", "生肉"]
     });
-    assert_eq!(
-        protocol::work(Source::Jm, &jm, false).unwrap().0.tags,
-        ["Other"]
-    );
+    let work = protocol::work(Source::Jm, &jm, false).unwrap().0;
+    assert_eq!(work.tags, ["Other", "日漫", "中文"]);
+    assert_eq!(work.categories.as_ref().unwrap(), &["日漫", "中文"]);
 }
 
 #[test]
@@ -480,11 +586,22 @@ fn optional_language_categories_do_not_hide_a_work_at_the_ipc_byte_boundary() {
     assert_eq!(preserved.title, conflict.title);
     assert_eq!(preserved.authors, conflict.authors);
     assert!(serde_json::to_vec(&preserved).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+    data["categories"] = json!(["生肉", "耽美花園", "AI作画"]);
+    let bl = protocol::work(Source::Pica, &data, false).unwrap().0;
+    assert!(bl.tags.iter().any(|tag| is_bl_tag(tag)));
+    assert!(bl.tags.iter().any(|tag| is_ai_tag(tag)));
+    assert!(bl.categories.as_ref().unwrap().contains(&"耽美花園".into()));
+    assert!(bl.categories.as_ref().unwrap().contains(&"AI作画".into()));
+    assert!(serde_json::to_vec(&bl).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+    data["categories"] = json!(["AI"]);
+    let ai = protocol::work(Source::Pica, &data, false).unwrap().0;
+    assert!(ai.tags.iter().any(|tag| is_ai_tag(tag)));
+    assert!(serde_json::to_vec(&ai).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
 }
 
 #[tokio::test]
-async fn language_evidence_flows_through_existing_pica_routes_without_more_requests() {
-    let record = json!({"_id":PICA_ID,"title":"Fixture","categories":["同人","中文","生肉"]});
+async fn content_evidence_flows_through_existing_pica_routes_without_more_requests() {
+    let record = json!({"_id":PICA_ID,"title":"Fixture","categories":["同人","中文","生肉","耽美花園","AI漫畫"]});
     let paged = json!({"comics":{"page":1,"pages":1,"limit":20,"total":1,"docs":[record.clone()]}});
     let sources = scripted(vec![
         Ok(paged.clone()),
@@ -508,9 +625,12 @@ async fn language_evidence_flows_through_existing_pica_routes_without_more_reque
     let ranking = sources.ranking(&pica, None, "week").await.unwrap();
     let detail = sources.detail(&pica, PICA_ID).await.unwrap();
     for page in [search, favorites, ranking] {
-        assert_eq!(page.items[0].tags, ["中文", "生肉"]);
+        assert_eq!(
+            page.items[0].tags,
+            ["同人", "中文", "生肉", "耽美花園", "AI漫畫"]
+        );
     }
-    assert_eq!(detail.tags, ["中文", "生肉"]);
+    assert_eq!(detail.tags, ["同人", "中文", "生肉", "耽美花園", "AI漫畫"]);
     assert_eq!(sources.recorded.lock().unwrap().len(), 4);
     assert!(sources.cover_recorded.lock().unwrap().is_empty());
 }
@@ -772,6 +892,185 @@ fn jm_search_boundary_fingerprints_cover_canonical_raw_rows() {
     }
 }
 
+#[tokio::test]
+async fn jm_recent_attaches_every_ordered_raw_row_without_extra_requests() {
+    let sources = scripted(vec![Ok(json!({"total":3,"content":[
+        {"id":"125","name":"First fixture"},
+        {"id":"123","name":"Middle fixture","extra":{"rawOnly":true}},
+        {"id":"124","name":"Last fixture"}
+    ]}))]);
+    let jm = session(Source::Jm);
+    let page = sources.recent(&jm, 7).await.unwrap();
+    let boundary = page.jm_search_boundary.as_ref().unwrap();
+    let rows = boundary.recent_rows.as_ref().unwrap();
+    assert_eq!(rows.len(), page.items.len());
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.work_id.as_str())
+            .collect::<Vec<_>>(),
+        ["125", "123", "124"]
+    );
+    assert_eq!(rows.first(), boundary.first.as_ref());
+    assert_eq!(rows.last(), boundary.last.as_ref());
+    assert!(rows.iter().all(|row| row.fingerprint.len() == 64
+        && row
+            .fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))));
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        [(
+            Source::Jm,
+            Method::GET,
+            "/categories/filter?page=7&order=&c=0&o=mr".into()
+        )]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[test]
+fn jm_recent_middle_row_proof_keeps_all_raw_fields_and_array_order() {
+    use sha2::{Digest, Sha256};
+
+    let raw: Value = serde_json::from_str(
+        r#"{"name":"Middle fixture","id":"124","extra":{"z":0,"a":{"y":2,"x":1}},"sequence":[{"b":2,"a":1},2]}"#,
+    )
+    .unwrap();
+    let reordered: Value = serde_json::from_str(
+        r#"{"sequence":[{"a":1,"b":2},2],"extra":{"a":{"x":1,"y":2},"z":0},"id":"124","name":"Middle fixture"}"#,
+    )
+    .unwrap();
+    let parse = |middle| {
+        protocol::recent_page(
+            Source::Jm,
+            &json!({"total":3,"content":[
+                {"id":"123","name":"First fixture"}, middle,
+                {"id":"125","name":"Last fixture"}
+            ]}),
+            1,
+        )
+        .unwrap()
+        .0
+    };
+    let first = parse(raw.clone());
+    let boundary = first.jm_search_boundary.as_ref().unwrap();
+    assert_eq!(
+        first.jm_search_boundary,
+        parse(reordered).jm_search_boundary
+    );
+    let canonical = br#"{"extra":{"a":{"x":1,"y":2},"z":0},"id":"124","name":"Middle fixture","sequence":[{"a":1,"b":2},2]}"#;
+    assert_eq!(
+        boundary.recent_rows.as_ref().unwrap()[1].fingerprint,
+        format!("{:x}", Sha256::digest(canonical))
+    );
+    let mut changed_raw = raw.clone();
+    changed_raw["extra"]["a"]["x"] = json!(3);
+    let mut changed_order = raw;
+    changed_order["sequence"] = json!([2,{"a":1,"b":2}]);
+    for changed in [changed_raw, changed_order] {
+        let changed = parse(changed);
+        assert_eq!(first.items, changed.items);
+        let changed = changed.jm_search_boundary.as_ref().unwrap();
+        assert_eq!(boundary.first, changed.first);
+        assert_eq!(boundary.last, changed.last);
+        assert_ne!(
+            boundary.recent_rows.as_ref().unwrap()[1],
+            changed.recent_rows.as_ref().unwrap()[1]
+        );
+    }
+}
+
+#[test]
+fn recent_full_row_proof_requires_known_clean_jm_rows() {
+    for invalid in [
+        json!({"id":"124","name":""}),
+        json!({"id":"124","name":"Invalid fixture","author":{}}),
+        Value::Null,
+    ] {
+        let (page, _) = protocol::recent_page(
+            Source::Jm,
+            &json!({"total":3,"content":[
+                {"id":"123","name":"First fixture"}, invalid,
+                {"id":"125","name":"Last fixture"}
+            ]}),
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            (page.record_count(), page.items.len(), page.issues.len()),
+            (3, 2, 1)
+        );
+        assert!(page
+            .jm_search_boundary
+            .as_ref()
+            .unwrap()
+            .recent_rows
+            .is_none());
+    }
+    let row = json!({"id":"123","name":"Fixture"});
+    let (unknown, _) =
+        protocol::recent_page(Source::Jm, &json!({"content":[row.clone()]}), 1).unwrap();
+    assert!(unknown.jm_search_boundary.is_none());
+    let (search, _) =
+        protocol::search_page(Source::Jm, &json!({"total":1,"content":[row.clone()]}), 1).unwrap();
+    assert!(search
+        .jm_search_boundary
+        .as_ref()
+        .unwrap()
+        .recent_rows
+        .is_none());
+    let (pica, _) = protocol::recent_page(
+        Source::Pica,
+        &json!({"comics":{
+            "total":1,"page":1,"pages":1,"limit":20,"docs":[{"_id":PICA_ID,"title":"Fixture"}]
+        }}),
+        1,
+    )
+    .unwrap();
+    assert!(pica.jm_search_boundary.is_none());
+    assert_eq!(
+        protocol::recent_page(
+            Source::Jm,
+            &json!({"total":2,"content":[row.clone(),row]}),
+            1
+        )
+        .unwrap_err()
+        .code,
+        "SOURCE_PAGINATION_INVALID"
+    );
+}
+
+#[test]
+fn jm_recent_full_row_proof_never_crosses_the_serialized_page_boundary() {
+    let data = json!({"total":2,"content":[
+        {"id":"123","name":"First fixture"}, {"id":"124","name":"Last fixture"}
+    ]});
+    let (recent, _) = protocol::recent_page(Source::Jm, &data, 1).unwrap();
+    let (search, _) = protocol::search_page(Source::Jm, &data, 1).unwrap();
+    assert!(recent
+        .jm_search_boundary
+        .as_ref()
+        .unwrap()
+        .recent_rows
+        .is_some());
+    let encoded = serde_json::to_value(&recent).unwrap();
+    assert_eq!(encoded, serde_json::to_value(&search).unwrap());
+    assert!(encoded["jmSearchBoundary"].get("recentRows").is_none());
+    let restored: SourcePage = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(restored, search);
+    assert!(restored
+        .jm_search_boundary
+        .as_ref()
+        .unwrap()
+        .recent_rows
+        .is_none());
+    let mut injected = encoded;
+    injected["jmSearchBoundary"]["recentRows"] = json!([
+        {"workId":"123","fingerprint":"a".repeat(64)}
+    ]);
+    assert!(serde_json::from_value::<SourcePage>(injected).is_err());
+}
+
 #[test]
 fn jm_search_boundary_issues_do_not_shift_raw_edge_positions() {
     let good = json!({"id":"123","name":"Valid fixture"});
@@ -783,17 +1082,20 @@ fn jm_search_boundary_issues_do_not_shift_raw_edge_positions() {
         (json!([missing, good, invalid]), None, None),
     ] {
         let total = records.as_array().unwrap().len();
-        let (page, _) = protocol::search_page(
-            Source::Jm,
-            &json!({"total":total,"content":records}),
-            1,
-        )
-        .unwrap();
+        let (page, _) =
+            protocol::search_page(Source::Jm, &json!({"total":total,"content":records}), 1)
+                .unwrap();
         assert_eq!(page.record_count(), total);
         assert_eq!(page.items.len(), 1);
         let boundary = page.jm_search_boundary.unwrap();
-        assert_eq!(boundary.first.as_ref().map(|item| item.work_id.as_str()), first);
-        assert_eq!(boundary.last.as_ref().map(|item| item.work_id.as_str()), last);
+        assert_eq!(
+            boundary.first.as_ref().map(|item| item.work_id.as_str()),
+            first
+        );
+        assert_eq!(
+            boundary.last.as_ref().map(|item| item.work_id.as_str()),
+            last
+        );
     }
 }
 
@@ -808,7 +1110,9 @@ fn jm_search_boundaries_require_search_and_known_total_without_weakening_page_gu
     assert!(generic.jm_search_boundary.is_none());
     let duplicate = json!({"total":2,"content":[record.clone(),record]});
     assert_eq!(
-        protocol::search_page(Source::Jm, &duplicate, 1).unwrap_err().code,
+        protocol::search_page(Source::Jm, &duplicate, 1)
+            .unwrap_err()
+            .code,
         "SOURCE_PAGINATION_INVALID"
     );
     let (empty, _) =
@@ -2607,4 +2911,181 @@ async fn pica_favorites_register_negative_count_and_identical_duplicates_without
         session.covers.lock().unwrap().lookup(PICA_ID),
         CoverLookup::Ready(_)
     ));
+}
+
+#[tokio::test]
+async fn author_query_uses_the_source_specific_route_without_changing_keyword_search() {
+    let jm_response = json!({"total":1,"content":[
+        {"id":"123","name":"Fixture","author":"Writer & Name"}
+    ]});
+    let sources = scripted(vec![
+        Ok(jm_response.clone()),
+        Ok(jm_response),
+        Ok(
+            json!({"comics":{"page":2,"pages":3,"limit":1,"total":3,"docs":[
+                {"_id":PICA_ID,"title":"Pica fixture","author":"Different writer"}
+            ]}}),
+        ),
+    ]);
+    let jm = session(Source::Jm);
+    let keyword = sources.search(&jm, "Writer & Name", 1).await.unwrap();
+    let author = sources.author(&jm, "Writer & Name", 1).await.unwrap();
+    assert_eq!(keyword.items, author.items);
+    assert_eq!(keyword.jm_search_boundary, author.jm_search_boundary);
+    let pica = sources
+        .author(&session(Source::Pica), "Writer & Name", 2)
+        .await
+        .unwrap();
+    assert_eq!((pica.page, pica.pages, pica.total), (2, Some(3), Some(3)));
+    assert_eq!(pica.has_more, Some(true));
+    // The source adapter must not treat keyword membership as author credit,
+    // nor erase unrelated records needed by raw pagination accounting.
+    assert_eq!(pica.items[0].authors, ["Different writer"]);
+    assert!(pica.jm_search_boundary.is_none());
+    assert_eq!(
+        sources.recorded.lock().unwrap().as_slice(),
+        &[
+            (
+                Source::Jm,
+                Method::GET,
+                "/search?main_tag=0&search_query=Writer+%26+Name&page=1&o=mr".into()
+            ),
+            (
+                Source::Jm,
+                Method::GET,
+                "/search?main_tag=2&search_query=Writer+%26+Name&page=1&o=mr".into()
+            ),
+            (
+                Source::Pica,
+                Method::POST,
+                "comics/advanced-search?page=2".into()
+            ),
+        ]
+    );
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn author_pages_preserve_english_rows_issues_and_raw_boundary_evidence() {
+    let english = json!({"id":"124","name":"English fixture","author":"Writer",
+        "category":{"title":"Single"},"category_sub":{"title":"English Manga"}});
+    let sources = scripted(vec![
+        Ok(json!({"total":4,"content":[
+            {"id":"123","name":"First","author":"Writer"},
+            {"id":"125","name":""},
+            english.clone()
+        ]})),
+        Ok(json!({"total":4,"content":[
+            english,
+            {"id":"126","name":"Last","author":"Writer"}
+        ]})),
+    ]);
+    let jm = session(Source::Jm);
+    let first = sources.author(&jm, "Writer", 1).await.unwrap();
+    let second = sources.author(&jm, "Writer", 2).await.unwrap();
+    assert_eq!((first.total, second.total), (Some(4), Some(4)));
+    assert_eq!((first.record_count(), second.record_count()), (3, 2));
+    assert_eq!((first.items.len(), first.issues.len()), (2, 1));
+    assert_eq!(first.issues[0].index, 2);
+    assert_eq!(
+        first.items[1].categories.as_ref().unwrap(),
+        &["Single", "English Manga"]
+    );
+    assert!(first.items[1]
+        .tags
+        .iter()
+        .any(|tag| is_jm_english_category(tag)));
+    assert_eq!(
+        first.jm_search_boundary.as_ref().unwrap().last,
+        second.jm_search_boundary.as_ref().unwrap().first,
+    );
+    assert_eq!(sources.recorded.lock().unwrap().len(), 2);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn author_query_does_not_follow_numeric_redirect_or_retry_invalid_input() {
+    let sources = scripted(vec![Ok(json!({"redirect_aid":"123"}))]);
+    let jm = session(Source::Jm);
+    assert_eq!(
+        sources.author(&jm, "123", 1).await.unwrap_err().code,
+        "SOURCE_RESPONSE_INVALID"
+    );
+    for input in ["", " ", "writer\nname"] {
+        assert_eq!(
+            sources.author(&jm, input, 1).await.unwrap_err().code,
+            "SOURCE_QUERY_INVALID"
+        );
+    }
+    assert_eq!(
+        sources.author(&jm, "Writer", 0).await.unwrap_err().code,
+        "SOURCE_PAGE_INVALID"
+    );
+    assert_eq!(sources.recorded.lock().unwrap().len(), 1);
+    assert!(sources.cover_recorded.lock().unwrap().is_empty());
+}
+
+#[test]
+fn jm_category_titles_are_optional_bounded_evidence_not_title_or_language_guesses() {
+    let mut data = json!({"id":"123","name":"English Manga","author":"English Manga",
+        "tags":[],"categories":["English Manga"],"category":{"title":"Single"}});
+    let work = protocol::work(Source::Jm, &data, false).unwrap().0;
+    assert_eq!(work.tags, ["Single"]);
+    for category in [
+        Value::Null,
+        json!("English Manga"),
+        json!({"title":false}),
+        json!({"title":" "}),
+        json!({"title":"x".repeat(2001)}),
+    ] {
+        data["category_sub"] = category;
+        let work = protocol::work(Source::Jm, &data, false).unwrap().0;
+        assert_eq!(work.tags, ["Single"]);
+    }
+    data["category_sub"] = json!({"title":" English Manga "});
+    let work = protocol::work(Source::Jm, &data, false).unwrap().0;
+    assert_eq!(work.tags, ["Single", "English Manga"]);
+    assert_eq!(
+        work.categories.as_ref().unwrap(),
+        &["Single", "English Manga"]
+    );
+}
+
+#[test]
+fn jm_explicit_english_scope_survives_optional_metadata_byte_compaction() {
+    let mut tags = vec!["t".repeat(2000); 32];
+    tags.push("x".into());
+    let mut data = json!({"id":"123","name":"Boundary","tags":tags});
+    let initial = protocol::work(Source::Jm, &data, false).unwrap().0;
+    let gap = protocol::MAX_WORK_JSON_BYTES - serde_json::to_vec(&initial).unwrap().len();
+    assert!(gap < 2000);
+    data["tags"][32] = json!("x".repeat(gap + 1));
+    let original = protocol::work(Source::Jm, &data, false).unwrap().0;
+    assert_eq!(
+        serde_json::to_vec(&original).unwrap().len(),
+        protocol::MAX_WORK_JSON_BYTES
+    );
+    data["category_sub"] = json!({"title":"English Manga"});
+    let parsed = protocol::work(Source::Jm, &data, false).unwrap().0;
+    assert!(parsed.tags.iter().any(|tag| is_jm_english_category(tag)));
+    assert_eq!(parsed.categories.as_ref().unwrap(), &["English Manga"]);
+    assert!(serde_json::to_vec(&parsed).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+    assert_eq!(parsed.title, original.title);
+    assert_eq!(parsed.authors, original.authors);
+}
+
+#[test]
+fn jm_blocked_category_evidence_survives_exact_metadata_byte_boundary() {
+    for label in ["女性向", "AI作畫", "耽美"] {
+        let mut tags = vec!["t".repeat(2000); 32];
+        tags.push("x".into());
+        let mut data = json!({"id":"123","name":"Boundary","tags":tags});
+        let initial = protocol::work(Source::Jm, &data, false).unwrap().0;
+        let gap = protocol::MAX_WORK_JSON_BYTES - serde_json::to_vec(&initial).unwrap().len();
+        data["tags"][32] = json!("x".repeat(gap + 1));
+        data["category_sub"] = json!({"title":label});
+        let parsed = protocol::work(Source::Jm, &data, false).unwrap().0;
+        assert!(parsed.tags.iter().any(|tag| tag == label));
+        assert!(serde_json::to_vec(&parsed).unwrap().len() <= protocol::MAX_WORK_JSON_BYTES);
+    }
 }

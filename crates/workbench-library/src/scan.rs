@@ -4,14 +4,14 @@ use crate::{
     Result,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     io::Read,
     time::{Duration, Instant},
 };
 use workbench_storage::{
     library_relative_path_is_valid, LibraryCoverFile, LibraryDocument, LibraryEvidence,
-    LibraryFormat, LibraryItem, LibraryItemState, LibraryPhase, LibraryRecord, Source,
-    MAX_LIBRARY_ITEMS, MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
+    LibraryFormat, LibraryItem, LibraryItemState, LibraryPhase, LibraryRecord, LibraryScanSeed,
+    Source, MAX_LIBRARY_ITEMS, MAX_LIBRARY_VISITED, MAX_SAFE_INTEGER,
 };
 
 const BATCH_NODES: usize = 128;
@@ -84,7 +84,8 @@ pub(crate) struct ScanJob {
     pub revision: u64,
     entries: Entries,
     active: Option<WorkScan>,
-    previous: HashMap<String, LibraryRecord>,
+    previous: BTreeMap<String, LibraryScanSeed>,
+    retained: BTreeMap<String, usize>,
     incomplete: bool,
 }
 
@@ -199,9 +200,17 @@ pub(crate) fn mark_error(record: &mut LibraryRecord, code: &'static str) {
 }
 
 impl ScanJob {
-    pub fn new(root: Root, generation: u64, revision: u64, old: &[LibraryRecord]) -> Result<Self> {
+    pub fn new(
+        root: Root,
+        generation: u64,
+        revision: u64,
+        old: &[LibraryScanSeed],
+    ) -> Result<Self> {
         let entries = root.directory("")?.entries()?;
-        let previous = old.iter().map(|r| (r.item.id.clone(), r.clone())).collect();
+        let previous = old
+            .iter()
+            .map(|seed| (seed.id.clone(), seed.clone()))
+            .collect();
         Ok(Self {
             root,
             generation,
@@ -209,8 +218,17 @@ impl ScanJob {
             entries,
             active: None,
             previous,
+            retained: BTreeMap::new(),
             incomplete: false,
         })
+    }
+
+    pub(crate) fn retain_recycled(&mut self, records: &[LibraryRecord]) {
+        self.retained = records
+            .iter()
+            .enumerate()
+            .map(|(index, record)| (record.item.id.clone(), index))
+            .collect();
     }
 
     pub fn batch(&mut self, document: &mut LibraryDocument) -> Result<()> {
@@ -336,38 +354,60 @@ impl ScanJob {
         Ok(())
     }
 
-    fn finish_work(&self, document: &mut LibraryDocument, mut record: LibraryRecord) {
-        record.item.added_at = self.previous.get(&record.item.id).map_or_else(
+    pub fn checkpoint_baseline(&self, document: &mut LibraryDocument) {
+        document.scan_baseline = if document.phase == LibraryPhase::Complete {
+            Vec::new()
+        } else {
+            self.previous
+                .values()
+                .filter(|seed| !self.retained.contains_key(&seed.id))
+                .cloned()
+                .collect()
+        };
+    }
+
+    fn finish_work(&mut self, document: &mut LibraryDocument, mut record: LibraryRecord) {
+        let retained = self.retained.remove(&record.item.id);
+        let old = self.previous.remove(&record.item.id).filter(|old| {
+            // A newly created file at the same recycled pathname does not gain
+            // the removed file's admission date or manual source ownership.
+            retained.is_none() || (old.identity.is_some() && old.identity == record.identity)
+        });
+        record.item.added_at = old.as_ref().map_or_else(
             || {
                 (record.item.state == LibraryItemState::Indexed && record.item.error_code.is_none())
                     .then(crate::service::now)
             },
-            |old| old.item.added_at,
+            |old| old.added_at,
         );
-        if let Some(old) = self
-            .previous
-            .get(&record.item.id)
-            .filter(|old| old.identity.is_some() && old.identity == record.identity)
+        if let Some(old) =
+            old.filter(|old| old.identity.is_some() && old.identity == record.identity)
         {
-            // The same unchanged file retains its recorded version. A newly
-            // available local metadata date may fill an old unknown value.
-            if old.item.version_updated_at.is_some() {
-                record
-                    .item
-                    .version_updated_at
-                    .clone_from(&old.item.version_updated_at);
+            // Historical metadata is restored only onto the same verified file.
+            if old.version_updated_at.is_some() {
+                record.item.version_updated_at = old.version_updated_at;
             }
-            record.item.links = old.item.links.clone();
+            record.item.links = old.links;
             if old.manual_override {
                 record.manual_override = true;
-                record.item.source_ref = old.item.source_ref.clone();
-                record.item.identity_evidence = old.item.identity_evidence;
+                record.item.source_ref = old.source_ref;
+                record.item.identity_evidence = record
+                    .item
+                    .source_ref
+                    .as_ref()
+                    .map(|_| LibraryEvidence::Manual);
                 if record.item.error_code.as_deref() == Some("LIBRARY_IDENTITY_CONFLICT") {
                     record.item.error_code = None;
                 }
             }
         }
-        document.records.push(record);
+        // A restored archive replaces its tombstone by exact indexed identity;
+        // retaining a second row would violate the unique entry-id contract.
+        if let Some(index) = retained {
+            document.records[index] = record;
+        } else {
+            document.records.push(record);
+        }
     }
 }
 

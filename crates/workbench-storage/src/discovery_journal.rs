@@ -17,7 +17,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, collections::HashSet, time::SystemTime};
+use std::{collections::HashMap, collections::HashSet, sync::Arc, time::SystemTime};
 
 const MANIFEST: &str = "discovery-journal.json";
 const JOURNAL_REQUIRED: &str = "discovery-journal-required.json";
@@ -30,6 +30,8 @@ const MAX_PATCH_RECORDS: usize = 1000;
 const MAX_JOURNAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_JOURNAL_PATCHES: u64 = 100_000;
 const CATALOG_ENVELOPE_ALLOWANCE: usize = 64 * 1024;
+const OBSERVATION_CHECKPOINT_PATCHES: u64 = 256;
+const OBSERVATION_CHECKPOINT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// A native page transaction, never a renderer-supplied whole-document replacement.
 /// Records are complete upserts already merged by the caller. No operation deletes
@@ -68,7 +70,7 @@ impl DiscoveryPagePatch {
         }
         // This validation is bounded by the incoming page, not the saved history.
         DiscoveryDocument {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             accounts: vec![DiscoveryAccount {
                 account_key: self.account_key.clone(),
                 authors: self.authors.clone(),
@@ -103,10 +105,10 @@ struct Checkpoint {
 
 impl Manifest {
     fn validate(&self) -> Result<()> {
-        if self.version > 1 {
+        if self.version > DiscoveryDocument::VERSION {
             return Err(StoreError::new("UNSUPPORTED_SCHEMA"));
         }
-        if self.version != 1
+        if self.version == 0
             || self.base_revision > MAX_SAFE_INTEGER
             || self.revision > MAX_SAFE_INTEGER
             || self.patch_count > MAX_JOURNAL_PATCHES
@@ -171,18 +173,28 @@ struct BaseStamp {
     modified: SystemTime,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct AccountIndex {
     records: HashMap<(Source, String), usize>,
     ranges: HashMap<(Source, String), usize>,
     summary_bytes: usize,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct RawIndex {
     accounts: HashMap<String, AccountIndex>,
     record_count: usize,
     encoded_bytes: usize,
+}
+
+/// One validated immutable checkpoint per open root. Every reuse still reads
+/// and SHA-256 checks the legacy base, checkpoint and all referenced patches.
+/// This skips repeated parsing/validation/index encoding, never disk integrity
+/// or revision checks. No persistent format changes or second mutable catalog.
+#[derive(Default)]
+pub(crate) struct DiscoveryReadCache {
+    legacy: Option<(String, u64)>,
+    checkpoint: Option<(String, Arc<Document<DiscoveryDocument>>, RawIndex)>,
 }
 
 pub(crate) struct DiscoveryIndexCache {
@@ -202,6 +214,11 @@ struct PreparedPatch {
 }
 
 type RecordPositions = HashMap<String, HashMap<(Source, String), usize>>;
+type LoadedDiscovery = (
+    Document<DiscoveryDocument>,
+    DiscoveryIndexCache,
+    Vec<String>,
+);
 
 fn corrupt() -> StoreError {
     StoreError::new("DOCUMENT_CORRUPT")
@@ -374,7 +391,8 @@ impl WorkbenchStore {
             crate::author_query::AUTHOR_QUERY_FILE,
             crate::author_query::MAX_AUTHOR_QUERY_BYTES,
         )?;
-        let (discovery, _) = self.load_discovery_unlocked(self.discovery_manifest_unlocked()?)?;
+        let (discovery, _, _) =
+            self.load_discovery_unlocked(self.discovery_manifest_unlocked()?)?;
         if following.revision != expected_following_revision
             || discovery.revision != expected_discovery_revision
             || policies.revision != expected_policy_revision
@@ -465,7 +483,10 @@ impl WorkbenchStore {
                 return Err(corrupt());
             }
             let header: PatchHeader = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
-            if header.version != 1
+            if header.version > DiscoveryDocument::VERSION {
+                return Err(StoreError::new("UNSUPPORTED_SCHEMA"));
+            }
+            if header.version == 0
                 || header.revision != revision
                 || header.previous_revision.checked_add(1) != Some(revision)
                 || header.previous_revision < manifest.chain_base_revision()
@@ -486,12 +507,7 @@ impl WorkbenchStore {
         Ok(chain)
     }
 
-    fn load_discovery_unlocked(
-        &self,
-        manifest: Option<Manifest>,
-    ) -> Result<(Document<DiscoveryDocument>, DiscoveryIndexCache)> {
-        let mut document: Document<DiscoveryDocument> =
-            self.read_unlocked(DISCOVERY_FILE, MAX_DISCOVERY_BYTES)?;
+    fn load_discovery_unlocked(&self, manifest: Option<Manifest>) -> Result<LoadedDiscovery> {
         let base_stamp = self.discovery_base_stamp_unlocked()?;
         let base_sha256 = if base_stamp.is_some() {
             Some(hash(&read_regular_bounded(
@@ -501,16 +517,34 @@ impl WorkbenchStore {
         } else {
             None
         };
+        let checkpoint = manifest
+            .as_ref()
+            .and_then(|value| value.checkpoint.as_ref());
+        let mut read_cache = self.discovery_read.lock().map_err(|_| corrupt())?;
+        let cached_base_revision = checkpoint.and_then(|_| {
+            read_cache.legacy.as_ref().and_then(|(hash, revision)| {
+                (base_sha256.as_ref() == Some(hash)).then_some(*revision)
+            })
+        });
+        let mut document: Document<DiscoveryDocument> = if let Some(revision) = cached_base_revision
+        {
+            // The base was validated before this exact-byte digest was retained.
+            // Its records will immediately be replaced by the verified checkpoint.
+            Document {
+                revision,
+                value: DiscoveryDocument::default(),
+            }
+        } else {
+            self.read_unlocked(DISCOVERY_FILE, MAX_DISCOVERY_BYTES)?
+        };
         let base_revision = document.revision;
         if manifest.as_ref().is_some_and(|manifest| {
             manifest.base_revision != base_revision || manifest.base_sha256 != base_sha256
         }) {
             return Err(corrupt());
         }
-        if let Some(checkpoint) = manifest
-            .as_ref()
-            .and_then(|manifest| manifest.checkpoint.as_ref())
-        {
+        read_cache.legacy = base_sha256.clone().map(|hash| (hash, base_revision));
+        let mut index = if let Some(checkpoint) = checkpoint {
             let bytes = read_regular_bounded(
                 &self.root.join(checkpoint_name(&checkpoint.sha256)),
                 MAX_DISCOVERY_RAW_BYTES,
@@ -518,13 +552,33 @@ impl WorkbenchStore {
             if bytes.len() as u64 != checkpoint.bytes || hash(&bytes) != checkpoint.sha256 {
                 return Err(corrupt());
             }
-            document = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
+            let cached = read_cache
+                .checkpoint
+                .as_ref()
+                .filter(|(hash, _, _)| hash == &checkpoint.sha256);
+            let index = if let Some((_, saved, index)) = cached {
+                document = saved.as_ref().clone();
+                index.clone()
+            } else {
+                document = serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
+                document.value.migrate()?;
+                document.value.validate().map_err(|_| corrupt())?;
+                let index = RawIndex::from_document(&document.value)?;
+                read_cache.checkpoint = Some((
+                    checkpoint.sha256.clone(),
+                    Arc::new(document.clone()),
+                    index.clone(),
+                ));
+                index
+            };
             if document.revision != checkpoint.revision {
                 return Err(corrupt());
             }
-            document.value.validate().map_err(|_| corrupt())?;
-        }
-        let mut index = RawIndex::from_document(&document.value)?;
+            index
+        } else {
+            RawIndex::from_document(&document.value)?
+        };
+        drop(read_cache);
         let mut positions: RecordPositions = document
             .value
             .accounts
@@ -543,9 +597,14 @@ impl WorkbenchStore {
                 )
             })
             .collect();
+        let chain = manifest
+            .as_ref()
+            .map(|manifest| self.discovery_chain_unlocked(manifest))
+            .transpose()?
+            .unwrap_or_default();
         if let Some(manifest) = &manifest {
-            for reference in self.discovery_chain_unlocked(manifest)? {
-                let bytes = self.read_discovery_patch_unlocked(&reference)?;
+            for reference in &chain {
+                let bytes = self.read_discovery_patch_unlocked(reference)?;
                 let envelope: PatchEnvelope =
                     serde_json::from_slice(&bytes).map_err(|_| corrupt())?;
                 envelope.patch.validate().map_err(|_| corrupt())?;
@@ -567,6 +626,7 @@ impl WorkbenchStore {
                 base_stamp,
                 index,
             },
+            chain,
         ))
     }
 
@@ -582,7 +642,7 @@ impl WorkbenchStore {
             .lock()
             .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
         match loaded {
-            Ok((document, index)) => {
+            Ok((document, index, _)) => {
                 *cache = Some(index);
                 Ok(document)
             }
@@ -591,6 +651,47 @@ impl WorkbenchStore {
                 Err(error)
             }
         }
+    }
+
+    /// An observation write already needs the complete raw catalog. Reuse that
+    /// validated read to bound an old journal before supplementing it, including
+    /// when an interrupted scan saved its terminal summary but not its checkpoint.
+    /// Ordinary discovery reads remain read-only. Compaction preserves the logical
+    /// revision and every record/range; an error leaves the observation replayable.
+    pub fn read_discovery_for_observation(
+        &self,
+        following_revision: u64,
+        policy_revision: u64,
+    ) -> Result<Document<DiscoveryDocument>> {
+        let _local = self
+            .local_lock
+            .lock()
+            .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+        let _file = self.acquire_lock()?;
+        let following: Document<AccountFollowing> =
+            self.read_unlocked("following.json", MAX_FOLLOWING_BYTES)?;
+        if following.revision != following_revision {
+            return Err(StoreError::new("DISCOVERY_FOLLOWING_CHANGED"));
+        }
+        self.require_author_query_revision_unlocked(Some(policy_revision))?;
+        *self
+            .discovery_index
+            .lock()
+            .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))? = None;
+        let manifest = self.discovery_manifest_unlocked()?;
+        let (document, cache, retired) = self.load_discovery_unlocked(manifest.clone())?;
+        if let Some(previous) = manifest.filter(|manifest| {
+            manifest.patch_count >= OBSERVATION_CHECKPOINT_PATCHES
+                || manifest.journal_bytes >= OBSERVATION_CHECKPOINT_BYTES
+        }) {
+            self.checkpoint_loaded_discovery_unlocked(previous, &document, cache, retired)?;
+        } else {
+            *self
+                .discovery_index
+                .lock()
+                .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))? = Some(cache);
+        }
+        Ok(document)
     }
 
     /// Commits one page while sharing the following document's cross-process lock.
@@ -637,7 +738,7 @@ impl WorkbenchStore {
             .as_ref()
             .is_none_or(|cache| cache.manifest != manifest || cache.base_stamp != stamp)
         {
-            let (_, cache) = self.load_discovery_unlocked(manifest)?;
+            let (_, cache, _) = self.load_discovery_unlocked(manifest)?;
             *guard = Some(cache);
         }
         let cache = guard.as_mut().expect("discovery index was loaded");
@@ -666,7 +767,7 @@ impl WorkbenchStore {
         }
         let next_revision = revision + 1;
         let envelope = PatchEnvelope {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             previous_revision: revision,
             previous_sha256: cache
                 .manifest
@@ -681,7 +782,7 @@ impl WorkbenchStore {
             return Err(StoreError::new("DOCUMENT_TOO_LARGE"));
         }
         let next = Manifest {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             base_revision: cache.base_revision,
             base_sha256: cache.base_sha256.clone(),
             revision: next_revision,
@@ -783,10 +884,21 @@ impl WorkbenchStore {
         if previous.patch_count == 0 {
             return Ok(());
         }
-        let (document, mut cache) = self.load_discovery_unlocked(Some(previous.clone()))?;
-        let retired = self.discovery_chain_unlocked(&previous)?;
+        let (document, cache, retired) = self.load_discovery_unlocked(Some(previous.clone()))?;
+        self.checkpoint_loaded_discovery_unlocked(previous, &document, cache, retired)
+    }
+
+    /// Caller holds the local and cross-process locks and supplies only the
+    /// document and chain just validated by load_discovery_unlocked.
+    fn checkpoint_loaded_discovery_unlocked(
+        &self,
+        previous: Manifest,
+        document: &Document<DiscoveryDocument>,
+        mut cache: DiscoveryIndexCache,
+        retired: Vec<String>,
+    ) -> Result<()> {
         let bytes =
-            serde_json::to_vec(&document).map_err(|_| StoreError::new("VALIDATION_FAILED"))?;
+            serde_json::to_vec(document).map_err(|_| StoreError::new("VALIDATION_FAILED"))?;
         if bytes.len() > MAX_DISCOVERY_RAW_BYTES {
             return Err(StoreError::new("DOCUMENT_TOO_LARGE"));
         }
@@ -796,6 +908,7 @@ impl WorkbenchStore {
             bytes: bytes.len() as u64,
         };
         let next = Manifest {
+            version: DiscoveryDocument::VERSION,
             checkpoint: Some(checkpoint.clone()),
             head_sha256: None,
             patch_count: 0,
@@ -921,7 +1034,7 @@ mod summary_size_tests {
             complete_scopes: 0,
         };
         let value = DiscoveryDocument {
-            version: 1,
+            version: DiscoveryDocument::VERSION,
             accounts: vec![DiscoveryAccount {
                 account_key: "b".repeat(64),
                 authors: vec![],

@@ -6,12 +6,13 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
+    collections::HashMap,
     fs::{self, File, Metadata, OpenOptions, TryLockError},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard, OnceLock, TryLockError as MutexTryLockError, Weak,
     },
     time::{Duration, Instant},
 };
@@ -28,10 +29,32 @@ const MAX_BOOKLISTS_BYTES: usize = 5 * 1024 * 1024;
 // Covers all permitted scopes and maximum-length UTF-8 names without truncation.
 pub(crate) const MAX_FOLLOWING_BYTES: usize = 32 * 1024 * 1024;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-// Independent account/catalog/document handles share the same OS lock, but not
-// local_lock. A short overlap must not fail an otherwise idle page's first read.
+// The bounded OS wait is for other processes. In-process handles queue on one
+// root gate first, so a large catalog read cannot make our own history read BUSY.
 const STORE_LOCK_WAIT: Duration = Duration::from_secs(2);
 const STORE_LOCK_POLL: Duration = Duration::from_millis(20);
+static ROOT_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<RootState>>>> = OnceLock::new();
+
+#[derive(Default)]
+struct RootState {
+    gate: Arc<Mutex<()>>,
+    discovery_read: Arc<Mutex<crate::discovery_journal::DiscoveryReadCache>>,
+}
+
+fn root_gate(root: &Path) -> Result<Arc<RootState>> {
+    let key = fs::canonicalize(root).map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+    let mut gates = ROOT_GATES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
+    if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
+        return Ok(gate);
+    }
+    gates.retain(|_, gate| gate.strong_count() != 0);
+    let gate = Arc::new(RootState::default());
+    gates.insert(key, Arc::downgrade(&gate));
+    Ok(gate)
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +74,7 @@ struct CachedDocument {
 struct DocumentCache {
     library: Option<CachedDocument>,
     downloads: Option<CachedDocument>,
+    observations: Option<CachedDocument>,
 }
 
 impl DocumentCache {
@@ -58,6 +82,7 @@ impl DocumentCache {
         match name {
             LIBRARY => Some(&mut self.library),
             DOWNLOADS => Some(&mut self.downloads),
+            crate::observations::FILE => Some(&mut self.observations),
             _ => None,
         }
     }
@@ -99,10 +124,13 @@ impl Drop for StoreFileLock {
 /// The root is selected by the application, never by a renderer command argument.
 pub struct WorkbenchStore {
     pub(crate) root: PathBuf,
-    pub(crate) local_lock: Mutex<()>,
+    pub(crate) local_lock: Arc<Mutex<()>>,
     // Acquired only while local_lock is held. No filesystem handles are cached.
     document_cache: Mutex<DocumentCache>,
     pub(crate) discovery_index: Mutex<Option<crate::discovery_journal::DiscoveryIndexCache>>,
+    pub(crate) discovery_read: Arc<Mutex<crate::discovery_journal::DiscoveryReadCache>>,
+    // Keep the per-root cache alive across short-lived account-service handles.
+    _root_state: Arc<RootState>,
     // Windows handles keep ancestors from being renamed/replaced while the store is open.
     _directory_handles: Vec<File>,
 }
@@ -111,11 +139,14 @@ impl WorkbenchStore {
     pub fn open(app_data_root: impl AsRef<Path>) -> Result<Self> {
         let root = app_data_root.as_ref().join(PRIVATE_DIRECTORY);
         let directory_handles = ensure_directory_tree(&root)?;
+        let shared = root_gate(&root)?;
         Ok(Self {
             root,
-            local_lock: Mutex::new(()),
+            local_lock: Arc::clone(&shared.gate),
             document_cache: Mutex::new(DocumentCache::default()),
             discovery_index: Mutex::new(None),
+            discovery_read: Arc::clone(&shared.discovery_read),
+            _root_state: shared,
             _directory_handles: directory_handles,
         })
     }
@@ -297,13 +328,40 @@ impl WorkbenchStore {
             revision,
             value: envelope.value,
         };
-        if matches!(name, LIBRARY | DOWNLOADS) {
+        if matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             self.remember_document(name, bytes, Arc::new(document.clone()));
         }
         Ok(document)
     }
 
     pub(crate) fn acquire_lock(&self) -> Result<StoreFileLock> {
+        self.acquire_lock_since(Instant::now())
+    }
+
+    /// Cache callbacks/cleanup retain their bounded, non-reentrant contract.
+    /// Local and cross-process contention consume the same two-second budget.
+    pub(crate) fn bounded_cache_locks(&self) -> Result<(MutexGuard<'_, ()>, StoreFileLock)> {
+        let started = Instant::now();
+        let local = loop {
+            match self.local_lock.try_lock() {
+                Ok(guard) => break guard,
+                Err(MutexTryLockError::Poisoned(_)) => {
+                    return Err(StoreError::new("CACHE_UNAVAILABLE"));
+                }
+                Err(MutexTryLockError::WouldBlock) => {
+                    let remaining = STORE_LOCK_WAIT.saturating_sub(started.elapsed());
+                    if remaining.is_zero() {
+                        return Err(StoreError::new("BUSY"));
+                    }
+                    std::thread::sleep(STORE_LOCK_POLL.min(remaining));
+                }
+            }
+        };
+        let file = self.acquire_lock_since(started)?;
+        Ok((local, file))
+    }
+
+    fn acquire_lock_since(&self, started: Instant) -> Result<StoreFileLock> {
         check_directory_tree(&self.root)?;
         let path = self.root.join(".workbench.lock");
         check_optional_regular(&path)?;
@@ -313,7 +371,6 @@ impl WorkbenchStore {
             .open(&path)
             .map_err(|_| StoreError::new("STORE_UNAVAILABLE"))?;
         check_open_regular(&file)?;
-        let started = Instant::now();
         loop {
             match file.try_lock() {
                 Ok(()) => break,
@@ -381,11 +438,12 @@ impl WorkbenchStore {
         }
         let probe: SchemaProbe =
             serde_json::from_slice(&bytes).map_err(|_| StoreError::new("DOCUMENT_CORRUPT"))?;
-        if probe.schema_version > 1 || probe.value.version > 1 {
+        if probe.schema_version > 1 || probe.value.version > u64::from(T::VERSION) {
             return Err(StoreError::new("UNSUPPORTED_SCHEMA"));
         }
-        let envelope: Envelope<T> =
+        let mut envelope: Envelope<T> =
             serde_json::from_slice(&bytes).map_err(|_| StoreError::new("DOCUMENT_CORRUPT"))?;
+        envelope.value.migrate()?;
         if envelope.schema_version != 1
             || envelope.revision == 0
             || envelope.revision > MAX_SAFE_INTEGER
@@ -406,7 +464,7 @@ impl WorkbenchStore {
         name: &str,
         bytes: &[u8],
     ) -> Option<Arc<Document<T>>> {
-        if !matches!(name, LIBRARY | DOWNLOADS) {
+        if !matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             return None;
         }
         // A poisoned optional cache is a miss, never permission to reuse data.
@@ -424,7 +482,7 @@ impl WorkbenchStore {
         bytes: Vec<u8>,
         document: Arc<Document<T>>,
     ) {
-        if !matches!(name, LIBRARY | DOWNLOADS) {
+        if !matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             return;
         }
         let Ok(mut cache) = self.document_cache.lock() else {
@@ -440,7 +498,7 @@ impl WorkbenchStore {
     }
 
     fn forget_document(&self, name: &str) {
-        if !matches!(name, LIBRARY | DOWNLOADS) {
+        if !matches!(name, LIBRARY | DOWNLOADS | crate::observations::FILE) {
             return;
         }
         let Ok(mut cache) = self.document_cache.lock() else {
@@ -456,6 +514,8 @@ impl WorkbenchStore {
         let destination = self.root.join(name);
         check_optional_regular(&destination)?;
         let (temporary_path, mut temporary) = self.create_temporary(name)?;
+        #[cfg(all(test, windows))]
+        crate::windows_local_validation::checkpoint(&self.root, "before-write")?;
         let preparation = (|| {
             temporary
                 .write_all(bytes)
@@ -469,8 +529,12 @@ impl WorkbenchStore {
         // Closing before rename also works on Windows. No old destination is removed first.
         drop(temporary);
         preparation?;
+        #[cfg(all(test, windows))]
+        crate::windows_local_validation::checkpoint(&self.root, "before-rename")?;
         fs::rename(&temporary_path, &destination)
             .map_err(|_| StoreError::new("STORE_WRITE_FAILED"))?;
+        #[cfg(all(test, windows))]
+        crate::windows_local_validation::checkpoint(&self.root, "after-rename")?;
         #[cfg(unix)]
         File::open(&self.root)
             .and_then(|directory| directory.sync_all())
@@ -711,42 +775,164 @@ mod shared_cache_tests {
 
     #[test]
     fn writes_publish_validated_snapshots_and_cas_hits_do_not_revalidate_old_bytes() {
-        let directory = TempDir::new().unwrap();
-        let store = WorkbenchStore::open(directory.path()).unwrap();
-        let before = VALIDATIONS.load(Ordering::SeqCst);
-        store
-            .write(
-                LIBRARY,
-                1024,
-                0,
-                CountedDocument {
-                    version: 1,
-                    count: 1,
-                },
-            )
-            .unwrap();
-        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
-        let first = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
-        let same = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
-        assert!(Arc::ptr_eq(&first, &same));
-        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
+        for name in [LIBRARY, DOWNLOADS, "observed-works.json"] {
+            let directory = TempDir::new().unwrap();
+            let store = WorkbenchStore::open(directory.path()).unwrap();
+            let before = VALIDATIONS.load(Ordering::SeqCst);
+            store
+                .write(
+                    name,
+                    1024,
+                    0,
+                    CountedDocument {
+                        version: 1,
+                        count: 1,
+                    },
+                )
+                .unwrap();
+            assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
+            let first = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            let same = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            assert!(
+                Arc::ptr_eq(&first, &same),
+                "unchanged {name} was parsed again"
+            );
+            assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 1);
 
-        store
-            .write(
-                LIBRARY,
-                1024,
-                1,
-                CountedDocument {
-                    version: 1,
-                    count: 2,
-                },
+            store
+                .write(
+                    name,
+                    1024,
+                    1,
+                    CountedDocument {
+                        version: 1,
+                        count: 2,
+                    },
+                )
+                .unwrap();
+            let next = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 2);
+            assert_eq!(next.value.count, 2);
+            assert_eq!(first.value.count, 1);
+            assert!(!Arc::ptr_eq(&first, &next));
+            // A same-revision replacement must defeat the cache; neither corruption
+            // nor a future schema may be hidden behind a previously valid snapshot.
+            let path = directory.path().join(PRIVATE_DIRECTORY).join(name);
+            let valid = fs::read(&path).unwrap();
+            let replaced = String::from_utf8(valid.clone())
+                .unwrap()
+                .replace("\"count\":2", "\"count\":3");
+            assert_ne!(replaced.as_bytes(), valid);
+            fs::write(&path, replaced).unwrap();
+            let changed = store.read_shared::<CountedDocument>(name, 1024).unwrap();
+            assert_eq!(changed.revision, next.revision);
+            assert_eq!(changed.value.count, 3);
+            assert_eq!(next.value.count, 2);
+            fs::write(&path, b"{broken").unwrap();
+            assert_eq!(
+                store
+                    .read_shared::<CountedDocument>(name, 1024)
+                    .err()
+                    .unwrap()
+                    .code,
+                "DOCUMENT_CORRUPT"
+            );
+            assert_eq!(
+                store
+                    .write(
+                        name,
+                        1024,
+                        2,
+                        CountedDocument {
+                            version: 1,
+                            count: 4
+                        }
+                    )
+                    .err()
+                    .unwrap()
+                    .code,
+                "DOCUMENT_CORRUPT"
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"{broken");
+            fs::write(
+                &path,
+                String::from_utf8(valid.clone())
+                    .unwrap()
+                    .replace("\"version\":1", "\"version\":2"),
             )
             .unwrap();
-        let next = store.read_shared::<CountedDocument>(LIBRARY, 1024).unwrap();
-        assert_eq!(VALIDATIONS.load(Ordering::SeqCst), before + 2);
-        assert_eq!(next.value.count, 2);
-        assert_eq!(first.value.count, 1);
-        assert!(!Arc::ptr_eq(&first, &next));
+            assert_eq!(
+                store
+                    .read_shared::<CountedDocument>(name, 1024)
+                    .err()
+                    .unwrap()
+                    .code,
+                "UNSUPPORTED_SCHEMA"
+            );
+            fs::write(&path, valid).unwrap();
+            assert_eq!(
+                store
+                    .read_shared::<CountedDocument>(name, 1024)
+                    .unwrap()
+                    .value
+                    .count,
+                2
+            );
+            assert_eq!(
+                store
+                    .write(
+                        name,
+                        1024,
+                        1,
+                        CountedDocument {
+                            version: 1,
+                            count: 4
+                        }
+                    )
+                    .err()
+                    .unwrap()
+                    .code,
+                "REVISION_CONFLICT"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod queued_transaction_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn independent_handles_wait_for_a_long_local_commit_and_read_its_revision() {
+        let directory = TempDir::new().unwrap();
+        let owner = WorkbenchStore::open(directory.path()).unwrap();
+        let observer = WorkbenchStore::open(directory.path()).unwrap();
+        let independent = TempDir::new().unwrap();
+        let other = WorkbenchStore::open(independent.path()).unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let _local = owner.local_lock.lock().unwrap();
+            let _file = owner.acquire_lock().unwrap();
+            started.send(()).unwrap();
+            std::thread::sleep(STORE_LOCK_WAIT + Duration::from_millis(250));
+            owner
+                .write_unlocked(BOOKLISTS, MAX_BOOKLISTS_BYTES, 0, Booklists::default())
+                .unwrap();
+        });
+        ready.recv().unwrap();
+        // Another profile is not serialized behind this catalog transaction.
+        assert_eq!(other.read_booklists().unwrap().revision, 0);
+        assert_eq!(observer.read_booklists().unwrap().revision, 1);
+        writer.join().unwrap();
+        // Queuing did not relax compare-and-swap or repeat the transaction.
+        assert_eq!(
+            observer
+                .write_booklists(0, Booklists::default())
+                .unwrap_err()
+                .code,
+            "REVISION_CONFLICT"
+        );
     }
 }
 

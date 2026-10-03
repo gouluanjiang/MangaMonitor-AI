@@ -10,6 +10,8 @@ export type UiDestination =
   | "ranking"
   | "discovery"
   | "completion"
+  | "special"
+  | "history"
   | "author-search"
   | "authors"
   | "settings";
@@ -25,6 +27,7 @@ const groups: { label: string; entries: Entry[] }[] = [
     entries: [
       { id: "library", label: "漫画库", icon: "library" },
       { id: "queue", label: "下载队列", icon: "download" },
+      { id: "history", label: "浏览历史", icon: "clock", native: true },
     ],
   },
   {
@@ -33,7 +36,7 @@ const groups: { label: string; entries: Entry[] }[] = [
       { id: "favorites", label: "在线收藏", icon: "heart" },
       { id: "recent", label: "最近更新", icon: "clock", native: true },
       { id: "ranking", label: "周排行榜", icon: "discover", native: true },
-      { id: "discovery", label: "来源搜索", icon: "search" },
+      { id: "discovery", label: "搜索", icon: "search" },
     ],
   },
   {
@@ -45,8 +48,8 @@ const groups: { label: string; entries: Entry[] }[] = [
         icon: "completeness",
         native: true,
       },
-      { id: "author-search", label: "作者搜索", icon: "search", native: true },
       { id: "authors", label: "关注作者", icon: "people" },
+      { id: "special", label: "特别关注", icon: "heart", native: true },
     ],
   },
 ];
@@ -58,6 +61,7 @@ export function UiSidebar({
   collapsed,
   accounts,
   unfinished,
+  specialUnread = 0,
   onNavigate,
   onToggle,
   onOpenAccounts,
@@ -68,6 +72,7 @@ export function UiSidebar({
   collapsed: boolean;
   accounts: AccountSummary[];
   unfinished: number;
+  specialUnread?: number;
   onNavigate(destination: UiDestination): void;
   onToggle(): void;
   onOpenAccounts(): void;
@@ -95,6 +100,14 @@ export function UiSidebar({
       <span className="ui-nav-label">{label}</span>
       {id === "queue" && unfinished > 0 && (
         <span className="nav-count ui-nav-count">{unfinished}</span>
+      )}
+      {id === "special" && specialUnread > 0 && (
+        <span
+          className="nav-count ui-nav-count"
+          aria-label={`${specialUnread} 部未读作品`}
+        >
+          {specialUnread}
+        </span>
       )}
     </button>
   );

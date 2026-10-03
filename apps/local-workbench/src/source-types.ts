@@ -1,5 +1,5 @@
 import type { WorkReference } from "./booklists.ts";
-import { inheritLanguageTags } from "./source-language.ts";
+import { inheritContentTags } from "./content-filter.ts";
 
 export type Source = "JM" | "Pica";
 export interface SourceScope {
@@ -38,6 +38,8 @@ export interface SourceWork {
   authorCreditReview?: { originalAuthors: string[] };
   description: string | null;
   tags: string[];
+  /** Pica category provenance; category browsing uses c=, tags use t=. */
+  categories?: string[];
   favorite: boolean | null;
   chapterCount: number | null;
   pageCount: number | null;
@@ -96,7 +98,40 @@ export interface CatalogRequest {
   action: "read" | "write";
   snapshot?: CatalogSnapshot;
 }
-export interface SourceQueryResult extends SourceScope, SourcePage {}
+export interface SourceQueryResult extends SourceScope, SourcePage {
+  timing?: {
+    queueMs: number;
+    sourceOperationMs: number;
+    localCommitMs: number;
+  };
+  contentVerifiedIds?: string[];
+  contentVerifiedUntil?: number | null;
+  /** Present only after the observed records were committed to the author catalog. */
+  discoveryRevision?: number | null;
+  observationErrorCode?: string | null;
+}
+export interface KnownAuthorWorks extends SourceScope {
+  items: SourceWork[];
+  checkedAt: number | null;
+  discoveryRevision: number;
+  historyComplete?: boolean;
+  observationErrorCode?: string | null;
+}
+export interface RecentHistoryResult extends SourceScope {
+  contentVerifiedIds?: string[];
+  contentVerifiedUntil?: number | null;
+  items: SourceWork[];
+  revision: number;
+  coverage: {
+    headIds: string[];
+    checkedAt: number | null;
+    pagesRead: number;
+    reachedEnd: boolean;
+    joinedPrevious: boolean;
+    initialWindow?: boolean;
+    errorCode: string | null;
+  };
+}
 export interface AccountSummary {
   source: Source;
   sessionId: string | null;
@@ -108,7 +143,15 @@ export interface AccountSummary {
   errorCode: string | null;
 }
 export interface SourceQuery {
-  kind: "favorites" | "search" | "detail" | "ranking" | "recent";
+  kind:
+    | "favorites"
+    | "search"
+    | "author"
+    | "tag"
+    | "category"
+    | "detail"
+    | "ranking"
+    | "recent";
   query: string;
   folderId: string | null;
   page: number;
@@ -147,6 +190,11 @@ export interface SourceAdapter {
     sessionId: string | null;
   }): Promise<AccountSummary>;
   query(scope: SourceScope, query: SourceQuery): Promise<SourceQueryResult>;
+  knownAuthorWorks?(
+    scope: SourceScope,
+    author: string,
+  ): Promise<KnownAuthorWorks>;
+  recentHistory?(scope: SourceScope): Promise<RecentHistoryResult>;
   authorPolicy(
     scope: SourceScope,
     author: string,
@@ -158,7 +206,11 @@ export interface SourceAdapter {
     workId: string,
     desired: boolean,
   ): Promise<FavoriteResult>;
-  cover(scope: SourceScope, workId: string): Promise<string | null>;
+  cover(
+    scope: SourceScope,
+    workId: string,
+    refreshMetadata?: boolean,
+  ): Promise<string | null>;
   following(scope: SourceScope): Promise<FollowingSnapshot>;
   follow(
     scope: SourceScope,
@@ -184,7 +236,12 @@ export function mergeSourceWorks(
     const key = sourceWorkKey(work),
       previous = merged.get(key);
     const tags = previous
-      ? inheritLanguageTags(work.tags, previous.tags)
+      ? inheritContentTags(
+          work.tags,
+          previous.categories?.length
+            ? [...previous.tags, ...previous.categories]
+            : previous.tags,
+        )
       : work.tags;
     const sourceUpdatedAt =
       work.sourceUpdatedAt == null && previous?.sourceUpdatedAt

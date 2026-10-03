@@ -1,9 +1,18 @@
+import { openUnifiedSearch } from "./browse-ui-helpers.ts";
+import { installBrowsingMarkerFixture } from "./browsing-marker-fixture.ts";
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { initialPreferences } from "../src/preferences.ts";
 import { emptyLibrary } from "../src/library-types.ts";
-import type { DiscoverySnapshot } from "../src/completion-types.ts";
-import type { DownloadInventorySnapshot } from "../src/download-types.ts";
+import type {
+  DiscoverySnapshot,
+  RecentCheckRun,
+} from "../src/completion-types.ts";
+import type {
+  DownloadInventorySnapshot,
+  DownloadSnapshot,
+  DownloadPlan,
+} from "../src/download-types.ts";
 import type {
   AccountSummary,
   SourceWork,
@@ -26,15 +35,19 @@ declare global {
       release?: () => void;
       readFailure: string | null;
       cancelFailure: string | null;
+      recentRun: RecentCheckRun | null;
+      recentCancelFailure: string | null;
       inventoryFailure: boolean;
     };
   }
 }
 test.use({ storageState: { cookies: [], origins: [] } });
 const errors = new WeakMap<Page, string[]>();
+const authorizedDownloads = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
   const captured: string[] = [];
   errors.set(page, captured);
+  authorizedDownloads.set(page, []);
   page.on("pageerror", (error) => captured.push(error.message));
   await page.setViewportSize({ width: 1672, height: 1020 });
 });
@@ -42,8 +55,23 @@ test.afterEach(async ({ page }) => {
   expect(errors.get(page) ?? []).toEqual([]);
   expect(
     await page.evaluate(() =>
+      window.authorTest.calls
+        .filter((call) => call.command === "jm_download_prepare")
+        .map((call) => call.args.input),
+    ),
+  ).toEqual(authorizedDownloads.get(page) ?? []);
+  expect(
+    await page.evaluate(
+      () =>
+        window.authorTest.calls.filter(
+          (call) => call.command === "jm_download_confirm",
+        ).length,
+    ),
+  ).toBe((authorizedDownloads.get(page) ?? []).length);
+  expect(
+    await page.evaluate(() =>
       window.authorTest.calls.filter((call) =>
-        /download_(prepare|confirm|control)|completeness_|source_matches_|phone_library_|source_follow$|source_favorite$/.test(
+        /download_control|completeness_|source_matches_|phone_library_|source_follow$|source_favorite$/.test(
           call.command,
         ),
       ),
@@ -51,6 +79,7 @@ test.afterEach(async ({ page }) => {
   ).toEqual([]);
 });
 async function install(page: Page) {
+  await installBrowsingMarkerFixture(page);
   const accounts: AccountSummary[] = (["JM", "Pica"] as const).map(
     (source) => ({
       source,
@@ -155,6 +184,8 @@ async function install(page: Page) {
         hold: false,
         readFailure: null,
         cancelFailure: null,
+        recentRun: null,
+        recentCancelFailure: null,
         inventoryFailure: false,
       } as Window["authorTest"]);
       // Opt-in saved IPC state for reload coverage, never a real account store.
@@ -164,6 +195,9 @@ async function install(page: Page) {
         hooks.view = saved.view;
         hooks.inventory = saved.inventory;
       }
+      let queue: DownloadSnapshot = { revision: 0, tasks: [] };
+      const batches = new Map<string, DownloadPlan[]>();
+      const plansById = new Map<string, DownloadPlan>();
       const clone = (value: unknown) => structuredClone(value);
       Object.defineProperty(window, "__TAURI_INTERNALS__", {
         configurable: true,
@@ -176,6 +210,12 @@ async function install(page: Page) {
               command,
               args: clone(args) as Record<string, unknown>,
             });
+            const browsing = window.syntheticBrowsingMarkers.call(
+              command,
+              args,
+              hooks.accounts,
+            );
+            if (browsing !== undefined) return browsing;
             if (command === "read_preferences")
               return { revision: 0, value: preferences };
             if (command === "library_read") return clone(library);
@@ -184,6 +224,57 @@ async function install(page: Page) {
               return clone(hooks.inventory);
             }
             if (command === "source_accounts") return clone(hooks.accounts);
+            if (command === "source_author_known_works")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                checkedAt: null,
+                discoveryRevision: 0,
+                historyComplete: true,
+              };
+            if (command === "source_recent_history")
+              return {
+                source: args.source,
+                sessionId: args.sessionId,
+                items: [],
+                revision: 0,
+                coverage: {
+                  headIds: [],
+                  checkedAt: null,
+                  pagesRead: 0,
+                  reachedEnd: false,
+                  joinedPrevious: false,
+                  initialWindow: false,
+                  errorCode: null,
+                },
+              };
+            if (command === "recent_check_progress")
+              return clone(hooks.recentRun);
+            if (command === "recent_check_cancel" && hooks.recentCancelFailure)
+              throw { code: hooks.recentCancelFailure };
+            if (command === "recent_check_cancel" && hooks.recentRun) {
+              hooks.recentRun.phase = "cancelled";
+              return clone(hooks.recentRun);
+            }
+            if (command === "recent_check_start" && hooks.recentRun)
+              return clone(hooks.recentRun);
+            if (
+              command === "recent_check_start" ||
+              command === "recent_check_cancel"
+            )
+              return {
+                id: "synthetic-recent",
+                phase:
+                  command === "recent_check_cancel" ? "cancelled" : "complete",
+                currentSource: null,
+                currentPage: 0,
+                pagesRead: 0,
+                recordsRead: 0,
+                errorCode: null,
+                results: [],
+              };
+
             if (command === "source_author_policy") {
               const policy = hooks.authorPolicies.find(
                 (item) =>
@@ -201,11 +292,60 @@ async function install(page: Page) {
                 ...(policy ? structuredClone(policy) : {}),
               };
             }
-            if (command === "jm_download_read")
-              return { revision: 0, tasks: [] };
+            if (command === "jm_download_read") return clone(queue);
+            if (command === "jm_download_prepare") {
+              const source = (args.scope as { source: DownloadPlan["source"] })
+                .source;
+              const work = works.find(
+                (item) => item.source === source && item.workId === args.input,
+              )!;
+              const plan: DownloadPlan = {
+                planId: (source === "JM" ? "c" : "d").repeat(64),
+                revision: queue.revision,
+                source,
+                workId: work.workId,
+                title: work.title,
+                authors: work.authors,
+                rootId: library.rootId!,
+                generation: library.generation,
+                destinationDisplay: "C:\\Synthetic\\" + work.title + ".zip",
+              };
+              plansById.set(plan.planId, plan);
+              return clone(plan);
+            }
+            if (command === "jm_download_confirm") {
+              const plan = plansById.get(String(args.planId));
+              if (!plan || plan.revision !== queue.revision)
+                throw { code: "DOWNLOAD_PLAN_STALE" };
+              queue = {
+                revision: queue.revision + 1,
+                tasks: [
+                  ...queue.tasks,
+                  {
+                    id: plan.planId,
+                    revision: 1,
+                    source: plan.source,
+                    workId: plan.workId,
+                    title: plan.title,
+                    destinationDisplay: plan.destinationDisplay,
+                    phase: "queued",
+                    filesDone: 0,
+                    filesTotal: null,
+                    bytesDone: 0,
+                    errorCode: null,
+                    allowedActions: ["pause"],
+                    libraryEntryId: null,
+                    localFiles: null,
+                    updatedAt: 1800000000000,
+                  },
+                ],
+              };
+              return clone(queue);
+            }
             if (command === "jm_download_batch_cancel") return null;
             if (command === "jm_download_batch_prepare") {
-              const source = (args.scope as { source: string }).source;
+              const source = (args.scope as { source: DownloadPlan["source"] })
+                .source;
               const plans = (args.inputs as string[]).map((id) => {
                 const work = works.find(
                   (work) => work.source === source && work.workId === id,
@@ -222,7 +362,34 @@ async function install(page: Page) {
                   generation: library.generation,
                 };
               });
+              batches.set(plans[0].planId, plans);
               return { batchId: plans[0].planId, plans, issues: [] };
+            }
+            if (command === "jm_download_selection_confirm") {
+              const plans = (args.batchIds as string[]).flatMap(
+                (id) => batches.get(id) ?? [],
+              );
+              queue = {
+                revision: queue.revision + 1,
+                tasks: plans.map((plan, index) => ({
+                  id: (index + 1).toString(16).padStart(64, "0"),
+                  revision: 1,
+                  source: plan.source,
+                  workId: plan.workId,
+                  title: plan.title,
+                  destinationDisplay: plan.destinationDisplay,
+                  phase: "queued",
+                  filesDone: 0,
+                  filesTotal: null,
+                  bytesDone: 0,
+                  errorCode: null,
+                  allowedActions: ["pause"],
+                  libraryEntryId: null,
+                  localFiles: null,
+                  updatedAt: 1800000000000,
+                })),
+              };
+              return clone(queue);
             }
             if (command === "source_following")
               return {
@@ -349,6 +516,167 @@ const open = async (page: Page) => {
   );
 };
 
+test("author browse badges retain the opening baseline independently of manual scan additions", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.seed(
+      "JM",
+      "synthetic-account-JM",
+      "authors",
+      { knownIds: ["123"], headIds: [], reachedEnd: false },
+    );
+    window.syntheticBrowsingMarkers.seed(
+      "Pica",
+      "synthetic-account-Pica",
+      "authors",
+      {
+        knownIds: ["0123456789abcdef01234567"],
+        headIds: [],
+        reachedEnd: false,
+      },
+    );
+  });
+  await open(page);
+  const card = page.getByTestId("author-update-JM:456");
+  await expect(card.getByTestId("browsing-new-badge")).toHaveText("新增");
+  await expect(card.getByTestId("scan-addition-badge")).toHaveCount(0);
+  await page.getByLabel("更新来源").selectOption("Pica");
+  await page.getByLabel("更新来源").selectOption("JM");
+  await page.getByTestId("completion-sort").selectOption("updated-asc");
+  await page.getByTestId("nav-settings").click();
+  await page.getByTestId("nav-completion").click();
+  await expect(card.getByTestId("browsing-new-badge")).toHaveText("新增");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.authorTest.calls.filter(
+            (call) => call.command === "browsing_markers_write",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /^(source_query|discovery_start|special_mark_read|special_start)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+  await page.reload();
+  await open(page);
+  await expect(page.getByTestId("authors-browsing-note")).not.toContainText(
+    "正在读取浏览基线",
+  );
+  await expect(card.getByTestId("browsing-new-badge")).toHaveCount(0);
+});
+
+test("first author browsing seeds the existing catalog without changing manual scan markers", async ({
+  page,
+}) => {
+  await install(page);
+  await seedChangeSummary(page);
+  await page.getByTestId("nav-completion").click();
+  await expect(page.getByTestId("authors-browsing-note")).toContainText(
+    "首次浏览已建立基线",
+  );
+  await expect(
+    page.getByTestId("completion-panel").getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("author-update-JM:789").getByTestId("scan-addition-badge"),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter((call) =>
+        /^(source_query|discovery_start|special_mark_read|special_start)$/.test(
+          call.command,
+        ),
+      ),
+    ),
+  ).toEqual([]);
+});
+
+test("failed baseline reads never seed over stored data and failed writes keep this launch's badges", async ({
+  page,
+}) => {
+  await install(page);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.seed(
+      "JM",
+      "synthetic-account-JM",
+      "authors",
+      { knownIds: ["123"], headIds: [], reachedEnd: false },
+    );
+    window.syntheticBrowsingMarkers.failure = "BUSY";
+  });
+  await open(page);
+  await expect(page.getByTestId("authors-browsing-note")).toContainText(
+    "浏览基线暂不可用",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.authorTest.calls.filter(
+        (call) => call.command === "browsing_markers_write",
+      ),
+    ),
+  ).toEqual([]);
+  await expect(
+    page.getByTestId("completion-panel").getByTestId("browsing-new-badge"),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.failure = null;
+  });
+  await page.getByRole("button", { name: "重试浏览基线", exact: true }).click();
+  await expect(
+    page.getByTestId("author-update-JM:456").getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.authorTest.calls.filter(
+            (call) => call.command === "browsing_markers_write",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.evaluate(() => {
+    window.syntheticBrowsingMarkers.failure = "STORE_UNAVAILABLE";
+    const record = structuredClone(window.authorTest.view.records[1]);
+    record.work.workId = "789";
+    record.work.title = "合成作者 · 后续目录记录";
+    window.authorTest.view.records.push(record);
+    window.authorTest.view.revision++;
+  });
+  await page
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
+    .click();
+  await expect(page.getByTestId("authors-browsing-note")).toContainText(
+    "浏览基线暂不可用",
+  );
+  await expect(
+    page.getByTestId("author-update-JM:789").getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("author-update-JM:456").getByTestId("browsing-new-badge"),
+  ).toBeVisible();
+  const saved = await page.evaluate(
+    () =>
+      JSON.parse(
+        localStorage.getItem(
+          "synthetic-browsing-markers:" +
+            JSON.stringify(["JM", "synthetic-account-JM", "authors"]),
+        )!,
+      ).value.baseline,
+  );
+  expect(saved.knownIds).not.toContain("789");
+});
+
 const discoveryCalls = (page: Page, command = "reads") =>
   page.evaluate(
     (command) =>
@@ -457,6 +785,84 @@ const seedChangeSummary = (page: Page) =>
     h.view.revision++;
   });
 
+test("scan markers retain the prior success through a pending, partial or cancelled check and replace only on success", async ({
+  page,
+}) => {
+  await install(page);
+  await seedChangeSummary(page);
+  await page.evaluate(() => {
+    const view = window.authorTest.view;
+    view.lastSuccessfulCheck = structuredClone(view.lastCheck);
+  });
+  await page.getByTestId("nav-completion").click();
+  const first = page.getByTestId("author-update-JM:789");
+  await expect(first.getByTestId("scan-addition-badge")).toHaveText(
+    "本次扫描新增",
+  );
+  await page.getByTestId("completion-new-only").click();
+  for (const phase of ["checking", "partial", "cancelled", "error"] as const) {
+    await page.evaluate((phase) => {
+      const view = window.authorTest.view;
+      view.lastCheck = {
+        ...view.lastCheck!,
+        id: "b".repeat(64),
+        phase,
+        startedAt: 1800000004000,
+        finishedAt: phase === "checking" ? null : 1800000005000,
+        completeScopes: 1,
+        attemptedScopes: 2,
+      };
+      if (!view.records.some((record) => record.work.workId === "999")) {
+        const added = structuredClone(
+          view.records.find((record) => record.work.workId === "789")!,
+        );
+        added.work.workId = "999";
+        added.work.title = "合成作者 · 尚未完整成功的本轮新增";
+        added.firstDiscoveredRunId = view.lastCheck.id;
+        view.records.push(added);
+      }
+      // Metadata replacement never changes the original first-discovery ID.
+      view.records.find((record) => record.work.workId === "789")!.work.title =
+        "合成作者 · 已更新元数据";
+      view.revision++;
+    }, phase);
+    await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
+    await expect(page.getByTestId("completion-retained-markers")).toContainText(
+      "新增标记保留上次成功检查",
+    );
+    await expect(first.getByTestId("scan-addition-badge")).toHaveText(
+      "本次扫描新增",
+    );
+    await expect(page.getByTestId("completion-new-only")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("author-update-JM:999")).toHaveCount(0);
+  }
+  await page.evaluate(() => {
+    const view = window.authorTest.view;
+    view.lastCheck!.phase = "complete";
+    view.lastCheck!.completeScopes = view.lastCheck!.totalScopes;
+    view.lastCheck!.attemptedScopes = view.lastCheck!.totalScopes;
+    view.lastSuccessfulCheck = structuredClone(view.lastCheck);
+    view.revision++;
+    sessionStorage.setItem(
+      "synthetic-author-summary",
+      JSON.stringify({ view, inventory: window.authorTest.inventory }),
+    );
+  });
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
+  await expect(first.getByTestId("scan-addition-badge")).toHaveCount(0);
+  await expect(
+    page.getByTestId("author-update-JM:999").getByTestId("scan-addition-badge"),
+  ).toHaveText("本次扫描新增");
+  await page.reload();
+  await page.getByTestId("nav-completion").click();
+  await expect(
+    page.getByTestId("author-update-JM:999").getByTestId("scan-addition-badge"),
+  ).toHaveText("本次扫描新增");
+});
+
 test("change summary uses first discovery identities, keeps historical omissions and follows current file registration", async ({
   page,
 }) => {
@@ -496,7 +902,7 @@ test("change summary uses first discovery identities, keeps historical omissions
     });
     h.inventory.revision++;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(counts).toContainText("本次首次发现 4 条");
   await expect(counts).toContainText(
     "未入库 1 条 · 已入库 2 条 · 状态待核实 1 条",
@@ -516,17 +922,21 @@ test("change summary filters compose with author and source scopes, clear select
   await page.getByTestId("nav-completion").click();
   await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("completion-select-all").click();
-  await expect(page.getByTestId("completion-selection-bar")).toContainText(
-    "已选 4 本",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 4 本");
   await page.getByTestId("completion-new-only").click();
-  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 0 本");
   await page.getByTestId("completion-select-all").click();
-  await expect(page.getByTestId("completion-selection-bar")).toContainText(
-    "已选 2 本",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 2 本");
   await page.getByLabel("检查作者", { exact: true }).selectOption("合成作者");
-  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 0 本");
   await expect(page.getByTestId("completion-change-counts")).toContainText(
     "本次首次发现 3 条",
   );
@@ -545,7 +955,7 @@ test("change summary filters compose with author and source scopes, clear select
   await expect(page.getByTestId("author-update-JM:901")).toBeVisible();
   await expect(page.getByTestId("completion-select-all")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "查看下载计划", exact: true }),
+    page.getByRole("button", { name: "下载", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "返回作者作品" }).click();
   await expect(page.getByTestId("completion-new-only")).toHaveAttribute(
@@ -620,7 +1030,7 @@ test("running summaries withhold final counts and partial or interrupted checks 
     window.authorTest.view.run = null;
     window.authorTest.view.lastCheck!.phase = "interrupted";
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(summary).toContainText(
     "仅统计本批已读取范围，未完成范围仍需补查",
   );
@@ -647,7 +1057,7 @@ test("legacy catalogs get no invented summary, first collection is explicit and 
     for (const record of view.records)
       record.firstDiscoveredRunId = view.lastCheck!.id;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-change-summary")).toContainText(
     "首次收录不代表网站新发布",
   );
@@ -673,7 +1083,7 @@ test("legacy catalogs get no invented summary, first collection is explicit and 
     "本次首次发现 7 条",
   );
   expect(await discoveryCalls(page, "discovery_start")).toBe(0);
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByTestId("completion-change-summary")).toHaveCount(0);
   await expect(page.getByTestId("completion-new-only")).toHaveCount(0);
 });
@@ -974,7 +1384,7 @@ test("repeated busy reads stop at a bounded retry budget and manual refresh resu
     window.authorTest.readFailure = null;
     window.authorTest.view.run!.currentPage = 42;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-read-error")).toHaveCount(0);
   await expect(page.getByTestId("completion-progress")).toContainText(
     "第 42 页",
@@ -1057,7 +1467,7 @@ test("failed cancellation keeps its action error while independent progress read
     window.authorTest.view.revision++;
   });
   const refreshButton = page.getByRole("button", {
-    name: "刷新结果与入库状态",
+    name: "刷新显示与入库状态",
   });
   await refreshButton.click();
   // Clearing the action error exposes the previous terminal snapshot before
@@ -1075,6 +1485,64 @@ test("failed cancellation keeps its action error while independent progress read
   expect(await discoveryCalls(page, "discovery_cancel")).toBe(1);
   expect(await discoveryCalls(page, "discovery_start")).toBe(1);
 });
+
+for (const failedRun of ["author", "recent"] as const) {
+  test(`one ${failedRun} cancellation failure preserves its run and still cancels the independent run`, async ({
+    page,
+  }) => {
+    await installWithPausedClock(page);
+    await open(page);
+    await page.evaluate((failedRun) => {
+      window.authorTest.recentRun = {
+        id: "synthetic-active-recent",
+        phase: "checking",
+        currentSource: "JM",
+        currentPage: 3,
+        pagesRead: 2,
+        recordsRead: 40,
+        errorCode: null,
+        results: [],
+      };
+      if (failedRun === "author") window.authorTest.cancelFailure = "BUSY";
+      else window.authorTest.recentCancelFailure = "BUSY";
+    }, failedRun);
+    await page.getByTestId("completion-start").click();
+    await expect(page.getByTestId("completion-recent-check")).toContainText(
+      "正在读取",
+    );
+    const stop = page.getByRole("button", { name: "停止本次检查" });
+    await stop.click();
+    await expect(
+      page.getByText(
+        "本次检查未完成，已读取的结果会保留。请查看检查范围后重试。",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(stop).toBeEnabled();
+    await expect(page.getByTestId("completion-start")).toBeDisabled();
+    await expect(page.getByTestId("completion-progress")).toHaveCount(
+      failedRun === "author" ? 1 : 0,
+    );
+    await expect(page.getByTestId("completion-recent-check")).toContainText(
+      failedRun === "recent" ? "正在读取" : "已停止，范围未完成",
+    );
+    expect(await discoveryCalls(page, "discovery_cancel")).toBe(1);
+    expect(await discoveryCalls(page, "recent_check_cancel")).toBe(1);
+    await page.evaluate(() => {
+      window.authorTest.cancelFailure = null;
+      window.authorTest.recentCancelFailure = null;
+    });
+    await stop.click();
+    await expect(stop).toHaveCount(0);
+    await expect(page.getByTestId("completion-start")).toBeEnabled();
+    expect(await discoveryCalls(page, "discovery_cancel")).toBe(
+      failedRun === "author" ? 2 : 1,
+    );
+    expect(await discoveryCalls(page, "recent_check_cancel")).toBe(
+      failedRun === "recent" ? 2 : 1,
+    );
+  });
+}
 
 for (const code of [
   "DISCOVERY_INVALID",
@@ -1251,7 +1719,7 @@ test("inventory contention displays an actionable unknown state and refresh rest
     window.authorTest.inventoryFailure = true;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-inventory-error")).toContainText(
     "当前不能判断已入库或未入库",
@@ -1263,7 +1731,7 @@ test("inventory contention displays an actionable unknown state and refresh rest
     window.authorTest.inventoryFailure = false;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-inventory-error")).toHaveCount(0);
   await expect(page.getByTestId("completion-counts")).toContainText(
@@ -1275,7 +1743,7 @@ test("author search blocks an initial before source requests and preserves the n
   page,
 }) => {
   await install(page);
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("P");
   await page.getByTestId("completion-start").click();
   await expect(page.getByRole("alert")).toContainText("未发送查询");
@@ -1353,7 +1821,7 @@ test("date coverage follows visible filters and saved date arrivals immediately 
     window.authorTest.view.revision++;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-date-coverage")).toHaveText(
     "当前显示作品：有更新时间 1 条 · 更新时间未知 1 条。",
@@ -1375,7 +1843,7 @@ test("date coverage follows visible filters and saved date arrivals immediately 
     window.authorTest.view.revision++;
   });
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-sort")).toHaveValue("updated-asc");
   await expect(page.getByTestId("completion-date-coverage")).toHaveText(
@@ -1441,10 +1909,10 @@ test("author update dates sort only loaded records, compose with ownership and p
   await page.screenshot({
     path: "visual-evidence/author-update-work-dates-wide.png",
   });
-  await page.getByTestId("nav-author-search").click();
-  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-desc");
+  await openUnifiedSearch(page);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成作者");
   await page.getByRole("button", { name: "搜索两站作品" }).click();
+  await expect(page.getByTestId("completion-sort")).toHaveValue("updated-desc");
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完",
   );
@@ -1492,7 +1960,7 @@ for (const entry of ["saved updates", "author search"] as const) {
         ),
       ).toEqual([]);
     } else {
-      await page.getByTestId("nav-author-search").click();
+      await openUnifiedSearch(page);
       await page.getByRole("textbox", { name: "搜索作者名" }).fill("合成作者");
       await page.getByRole("button", { name: "搜索两站作品" }).click();
       await expect(page.getByTestId("completion-counts")).toContainText(
@@ -1522,9 +1990,9 @@ for (const entry of ["saved updates", "author search"] as const) {
     await page.getByRole("button", { name: "多选", exact: true }).click();
     const japanese = page.getByTestId("author-update-JM:456");
     await japanese.getByRole("checkbox").check();
-    await expect(page.getByTestId("completion-selection-bar")).toContainText(
-      "已选 1 本",
-    );
+    await expect(
+      page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+    ).toContainText("已选 1 本");
     await japanese.scrollIntoViewIfNeeded();
     for (const key of ["JM:123", "JM:456", "Pica:0123456789abcdef01234567"]) {
       await expect(
@@ -1538,14 +2006,17 @@ for (const entry of ["saved updates", "author search"] as const) {
     await page.screenshot({
       path: `visual-evidence/language-${entry === "saved updates" ? "author-updates" : "author-search"}.png`,
     });
-    await page.getByRole("button", { name: "退出多选", exact: true }).click();
+    await page
+      .getByRole("toolbar", { name: "批量下载操作" })
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
     const unknown = page.getByTestId(
       "author-update-Pica:0123456789abcdef01234567",
     );
-    await unknown.locator(".source-card-open").click();
+    await unknown.locator(".source-card-open").click({ button: "right" });
     await page
       .getByTestId("reader-cover-actions")
-      .getByRole("button", { name: "漫画详细", exact: true })
+      .getByRole("menuitem", { name: "作品详细", exact: true })
       .click();
     await expect(
       page.getByTestId("source-detail").getByTestId("source-language-badge"),
@@ -1681,9 +2152,9 @@ test("incremental completion retains old omissions and never claims a new full c
   ).toEqual([]);
   await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("completion-select-all").click();
-  await expect(page.getByTestId("completion-selection-bar")).toContainText(
-    "已选 2 本",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 2 本");
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({
     path: "visual-evidence/incremental-author-updates.png",
@@ -1698,11 +2169,13 @@ test("incremental completion retains old omissions and never claims a new full c
     }));
     h.inventory.revision++;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-counts")).toContainText(
     "已入库 3 条 · 未入库 0 条 · 当前显示 0 条",
   );
-  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 0 本");
   await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
   await page.evaluate(() => {
     for (const range of window.authorTest.view.authors) {
@@ -1711,7 +2184,7 @@ test("incremental completion retains old omissions and never claims a new full c
       range.lastCheckedAt = 1800000002000;
     }
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-all-owned")).toBeVisible();
 });
 
@@ -1727,7 +2200,10 @@ test("explicit circle membership remains selectable without literal equality and
   await open(page);
   await expect(page.getByTestId("author-update-JM:456")).toBeVisible();
   await expect(page.getByTestId("completion-query-scope")).toContainText(
-    "作者关键词",
+    "已取得作品按明确署名归属，发现入口不限制作者归属",
+  );
+  await expect(page.getByTestId("completion-query-scope")).toContainText(
+    "作者作品包含明确列出的合著者和“社团（作者）”",
   );
   await expect(page.getByTestId("completion-counts")).toContainText(
     "未入库 2 条",
@@ -1820,16 +2296,28 @@ test("full author selection includes circle members but never other keyword hits
   await open(page);
   await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("completion-select-all").click();
-  await expect(page.getByTestId("completion-selection-bar")).toContainText(
-    "已选 2 本",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 2 本");
   await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
-  await page.getByRole("button", { name: "查看下载计划", exact: true }).click();
-  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  authorizedDownloads.set(page, ["456", "0123456789abcdef01234567"]);
+  await page.getByRole("button", { name: "下载", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.authorTest.calls.filter(
+            (call) => call.command === "jm_download_confirm",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("completion-panel")).toBeVisible();
   const inputs = await page.evaluate(() =>
     window.authorTest.calls
-      .filter((call) => call.command === "jm_download_batch_prepare")
-      .flatMap((call) => call.args.inputs as string[]),
+      .filter((call) => call.command === "jm_download_prepare")
+      .map((call) => call.args.input as string),
   );
   expect(inputs.sort()).toEqual(["456", "0123456789abcdef01234567"].sort());
 });
@@ -1871,16 +2359,28 @@ test("a metadata placeholder stays inspectable outside complete author counts an
   await expect(page.getByTestId("author-update-JM:789")).toHaveCount(0);
   await page.getByRole("button", { name: "多选", exact: true }).click();
   await page.getByTestId("completion-select-all").click();
-  await expect(page.getByTestId("completion-selection-bar")).toContainText(
-    "已选 2 本",
-  );
-  await page.getByRole("button", { name: "查看下载计划", exact: true }).click();
-  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 2 本");
+  authorizedDownloads.set(page, ["456", "0123456789abcdef01234567"]);
+  await page.getByRole("button", { name: "下载", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.authorTest.calls.filter(
+            (call) => call.command === "jm_download_confirm",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("completion-panel")).toBeVisible();
   expect(
     await page.evaluate(() =>
       window.authorTest.calls
-        .filter((call) => call.command === "jm_download_batch_prepare")
-        .flatMap((call) => call.args.inputs as string[])
+        .filter((call) => call.command === "jm_download_prepare")
+        .map((call) => call.args.input as string)
         .sort(),
     ),
   ).toEqual(["456", "0123456789abcdef01234567"].sort());
@@ -1914,7 +2414,7 @@ test("a placeholder prevents an all-owned author claim and has no download contr
   });
   await page.getByTestId("nav-completion").click();
   await page
-    .getByRole("button", { name: "刷新结果与入库状态", exact: true })
+    .getByRole("button", { name: "刷新显示与入库状态", exact: true })
     .click();
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完 · 已记录 2 条 · 已入库 2 条 · 未入库 0 条",
@@ -2035,7 +2535,7 @@ for (const mode of ["updates", "search"] as const) {
     }));
     if (mode === "updates") await page.getByTestId("nav-completion").click();
     else {
-      await page.getByTestId("nav-author-search").click();
+      await openUnifiedSearch(page);
       await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
       await page.getByRole("button", { name: "搜索两站作品" }).click();
     }
@@ -2048,20 +2548,17 @@ for (const mode of ["updates", "search"] as const) {
     await expect(page.getByTestId("author-update-JM:456")).toHaveCount(0);
     await page.getByRole("button", { name: "多选", exact: true }).click();
     await page.getByTestId("completion-select-all").click();
-    await expect(page.getByTestId("completion-selection-bar")).toContainText(
-      "已选 1 本",
-    );
+    await expect(
+      page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+    ).toContainText("已选 1 本");
     await page.getByRole("button", { name: "全部 2", exact: true }).click();
     const correct = page.getByTestId("author-update-JM:123");
     await expect(correct.getByTestId("author-credit-reviewed")).toHaveAttribute(
       "title",
       "已按本作品核对署名。来源原署名：Wrong Credit",
     );
-    await correct.locator(".source-card-open").click();
-    await page
-      .getByTestId("reader-cover-actions")
-      .getByRole("button", { name: "漫画详细", exact: true })
-      .click();
+    // Multiselect cover gestures only change selection; the title remains the detail link.
+    await correct.locator("h3 button").click();
     const detail = page.getByTestId("source-detail");
     await expect(detail.getByTestId("author-credit-reviewed")).toHaveAttribute(
       "title",
@@ -2091,7 +2588,7 @@ for (const mode of ["updates", "search"] as const) {
     const searchCalls = await page.evaluate(() =>
       window.authorTest.calls.filter(
         (call) =>
-          call.command === "source_query" && call.args.kind === "search",
+          call.command === "source_query" && call.args.kind === "author",
       ),
     );
     expect(searchCalls.length).toBe(mode === "updates" ? 0 : 3);
@@ -2182,7 +2679,7 @@ test("ad-hoc author search applies source-specific policies across every term an
       },
     ];
   });
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
   await page.getByRole("button", { name: "搜索两站作品" }).click();
   await expect(page.getByTestId("completion-counts")).toContainText(
@@ -2194,17 +2691,18 @@ test("ad-hoc author search applies source-specific policies across every term an
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
     "新作者",
   );
-  expect(
-    await page.evaluate(() =>
-      window.authorTest.calls
-        .filter((call) => call.command === "source_query")
-        .map((call) => [call.args.source, call.args.query, call.args.page]),
-    ),
-  ).toEqual([
+  const queries = await page.evaluate(() =>
+    window.authorTest.calls
+      .filter((call) => call.command === "source_query")
+      .map((call) => [call.args.source, call.args.query, call.args.page]),
+  );
+  expect(queries.filter(([source]) => source === "JM")).toEqual([
     ["JM", "Reviewed～Alias", 1],
     ["JM", "Reviewed～Alias", 2],
     ["JM", "ReviewedAlias", 1],
     ["JM", "ReviewedAlias", 2],
+  ]);
+  expect(queries.filter(([source]) => source === "Pica")).toEqual([
     ["Pica", "Reviewed Pica Alias", 1],
   ]);
   await page.getByRole("button", { name: "全部 2", exact: true }).click();
@@ -2225,7 +2723,7 @@ test("ad-hoc author search classifies every source page, retaining unrelated res
     works[1].authors = ["新作者二号"];
     works[2].authors = [];
   });
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByTestId("completion-full-check")).toHaveCount(0);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
   await page.getByRole("button", { name: "搜索两站作品" }).click();
@@ -2236,17 +2734,16 @@ test("ad-hoc author search classifies every source page, retaining unrelated res
     "其他关键词结果 2 条",
   );
   await expect(page.getByTestId("completion-all-owned")).toHaveCount(0);
-  expect(
-    await page.evaluate(() =>
-      window.authorTest.calls
-        .filter((call) => call.command === "source_query")
-        .map((call) => [call.args.source, call.args.page]),
-    ),
-  ).toEqual([
+  const pages = await page.evaluate(() =>
+    window.authorTest.calls
+      .filter((call) => call.command === "source_query")
+      .map((call) => [call.args.source, call.args.page]),
+  );
+  expect(pages.filter(([source]) => source === "JM")).toEqual([
     ["JM", 1],
     ["JM", 2],
-    ["Pica", 1],
   ]);
+  expect(pages.filter(([source]) => source === "Pica")).toEqual([["Pica", 1]]);
   await page.getByRole("button", { name: "全部 1", exact: true }).click();
   await expect(page.getByTestId("author-update-JM:123")).toContainText(
     "新社团（新作者）",
@@ -2339,7 +2836,7 @@ test("valid new receipts refresh counts, but all-owned is withheld until both so
     }));
     h.inventory.revision++;
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-counts")).toContainText(
     "已入库 3 条 · 未入库 0 条",
   );
@@ -2351,7 +2848,7 @@ test("valid new receipts refresh counts, but all-owned is withheld until both so
       range.lastCompleteAt = 1800000001000;
     }
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await expect(page.getByTestId("completion-all-owned")).toContainText(
     "JM 与哔咔",
   );
@@ -2373,23 +2870,22 @@ test("a new author is searched across every page of both sources without requiri
     for (const work of window.authorTest.searchRecords)
       work.authors = ["新作者"];
   });
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await page.getByRole("textbox", { name: "搜索作者名" }).fill("新作者");
   await page.getByRole("button", { name: "搜索两站作品" }).click();
   await expect(page.getByTestId("completion-counts")).toContainText(
     "当前检查范围已读完 · 已记录 3 条",
   );
-  expect(
-    await page.evaluate(() =>
-      window.authorTest.calls
-        .filter((c) => c.command === "source_query")
-        .map((c) => [c.args.source, c.args.page]),
-    ),
-  ).toEqual([
+  const pages = await page.evaluate(() =>
+    window.authorTest.calls
+      .filter((c) => c.command === "source_query")
+      .map((c) => [c.args.source, c.args.page]),
+  );
+  expect(pages.filter(([source]) => source === "JM")).toEqual([
     ["JM", 1],
     ["JM", 2],
-    ["Pica", 1],
   ]);
+  expect(pages.filter(([source]) => source === "Pica")).toEqual([["Pica", 1]]);
   await expect(page.getByTestId("completion-counts")).toContainText(
     "已入库 1 条 · 未入库 2 条 · 当前显示 2 条",
   );
@@ -2397,12 +2893,7 @@ test("a new author is searched across every page of both sources without requiri
   await page.screenshot({
     path: "visual-evidence/dual-source-author-search.png",
   });
-  await page
-    .getByTestId("author-update-JM:456")
-    .getByRole("button")
-    .first()
-    .click();
-  await page.getByRole("button", { name: "漫画详细", exact: true }).click();
+  await page.getByTestId("author-update-JM:456").locator("h3 button").click();
   await expect(page.getByTestId("source-detail-back")).toBeVisible();
   await page.getByTestId("source-detail-back").click();
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toHaveValue(
@@ -2416,7 +2907,7 @@ test("a new author is searched across every page of both sources without requiri
       () =>
         window.authorTest.calls.filter(
           (call) =>
-            call.command === "source_query" && call.args.kind === "search",
+            call.command === "source_query" && call.args.kind === "author",
         ).length,
     ),
   ).toBe(3);
@@ -2439,25 +2930,37 @@ test("full-range author selection waits for completion, excludes owned works and
       }),
     );
   });
-  await page.getByRole("button", { name: "刷新结果与入库状态" }).click();
+  await page.getByRole("button", { name: "刷新显示与入库状态" }).click();
   await page.getByTestId("completion-select-all").click();
-  await expect(page.getByTestId("completion-selection-bar")).toContainText(
-    "已选 2 本",
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 2 本");
   await mkdir("visual-evidence", { recursive: true });
   await page.screenshot({ path: "visual-evidence/author-full-selection.png" });
+  authorizedDownloads.set(page, ["456", "0123456789abcdef01234567"]);
   await page
-    .getByTestId("completion-selection-bar")
-    .getByRole("button", { name: "查看下载计划" })
+    .getByRole("toolbar", { name: "批量下载操作", exact: true })
+    .getByRole("button", { name: "下载", exact: true })
     .click();
-  await expect(page.getByTestId("download-batch-plan")).toHaveCount(2);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.authorTest.calls.filter(
+            (call) => call.command === "jm_download_confirm",
+          ).length,
+      ),
+    )
+    .toBe(2);
+  await expect(page.getByTestId("download-batch-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("completion-panel")).toBeVisible();
   expect(
     await page.evaluate(() =>
       window.authorTest.calls
-        .filter((call) => call.command === "jm_download_batch_prepare")
+        .filter((call) => call.command === "jm_download_prepare")
         .map((call) => [
           (call.args.scope as { source: string }).source,
-          call.args.inputs,
+          [call.args.input],
         ]),
     ),
   ).toEqual([
@@ -2468,16 +2971,8 @@ test("full-range author selection waits for completion, excludes owned works and
     path: "visual-evidence/mixed-source-download-selection.png",
     animations: "disabled",
   });
-  await page.getByTestId("download-batch-cancel").click();
-  expect(
-    await page.evaluate(() =>
-      window.authorTest.calls.filter((call) =>
-        /download_(selection_confirm|batch_confirm|confirm)$/.test(
-          call.command,
-        ),
-      ),
-    ),
-  ).toEqual([]);
   await page.getByRole("button", { name: "全部 3", exact: true }).click();
-  await expect(page.getByTestId("completion-selection-bar")).toHaveCount(0);
+  await expect(
+    page.getByRole("toolbar", { name: "批量下载操作", exact: true }),
+  ).toContainText("已选 0 本");
 });

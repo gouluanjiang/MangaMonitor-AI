@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   filterLibraryItems,
+  searchLibraryItems,
+  sortLibraryItems,
   normalizeLibraryText,
   parseLibraryReference,
 } from "../src/library-model.ts";
@@ -9,6 +11,7 @@ import {
   createLibraryAdapter,
   LibraryController,
   LibraryError,
+  libraryErrorMessage,
   validateLibrarySnapshot,
 } from "../src/library-runtime.ts";
 import { LibraryCoverCache } from "../src/library-cover-cache.ts";
@@ -420,4 +423,104 @@ test("successful compressed covers are reused in the same run and cannot leak in
   assert.equal(cache.peek(otherRoot, 3, entryId(1)), undefined);
   late.release();
   cache.clear();
+});
+
+test("query counts keep input order while one chosen filter is sorted, including Unicode and unknown dates", () => {
+  const entries = [
+    item(3, { title: "Cafe\u0301 Z", authors: ["合成作者"], addedAt: null }),
+    item(1, { title: "Café A", authors: ["合成作者"], addedAt: 100 }),
+    item(2, {
+      title: "Café B",
+      authors: ["合成作者"],
+      addedAt: 200,
+      state: "unreadable",
+      errorCode: "LIBRARY_FILE_CHANGED",
+    }),
+    item(4, { title: "Unrelated", authors: ["Other"] }),
+  ];
+  const before = structuredClone(entries);
+  const found = searchLibraryItems(entries, "CAFÉ 合成作者");
+  assert.deepEqual(
+    found.items.map((value) => value.id),
+    [entryId(3), entryId(1), entryId(2)],
+  );
+  assert.deepEqual(found.counts, { all: 3, owned: 2, review: 1 });
+  assert.deepEqual(
+    sortLibraryItems(found.items, "added-desc").map((value) => value.id),
+    [entryId(2), entryId(1), entryId(3)],
+  );
+  assert.deepEqual(
+    filterLibraryItems(entries, "CAFÉ 合成作者", "title", "owned").map(
+      (value) => value.id,
+    ),
+    [entryId(1), entryId(3)],
+  );
+  assert.deepEqual(entries, before);
+  assert.deepEqual(searchLibraryItems(entries, "missing").counts, {
+    all: 0,
+    owned: 0,
+    review: 0,
+  });
+});
+
+test("empty-query counting does not read search-only fields or sort titles", () => {
+  const entry = item(1);
+  for (const key of ["title", "authors", "tags", "fileName", "links"])
+    Object.defineProperty(entry, key, {
+      get() {
+        throw Error("unnecessary search or sort");
+      },
+    });
+  const result = searchLibraryItems([entry], "  ");
+  assert.equal(result.items[0], entry);
+  assert.deepEqual(result.counts, { all: 1, owned: 1, review: 0 });
+});
+
+test("library storage failures give distinct bounded guidance without revealing native exception text", () => {
+  for (const [code, expected] of [
+    ["BUSY", /稍后重试/],
+    ["DOCUMENT_CORRUPT", /索引数据损坏.*原数据已保留/],
+    ["UNSUPPORTED_SCHEMA", /较新版本.*兼容版本/],
+    ["DOCUMENT_TOO_LARGE", /安全读取或保存上限/],
+    ["COMMIT_UNCERTAIN", /尚未确认/],
+  ]) {
+    const message = libraryErrorMessage({
+      code,
+      message: "secret private path",
+    });
+    assert.match(message, expected);
+    assert.doesNotMatch(message, /secret|检查目录/);
+  }
+});
+
+test("canceling a folder change resumes only a scan that was already being driven", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let choices = 0;
+  const calls = [];
+  const controller = new LibraryController({
+    read: async () =>
+      snapshot([item(1)], { phase: "paused", freshness: "cached" }),
+    choose: async () =>
+      ++choices === 1 ? snapshot([item(1)], { phase: "reading" }) : null,
+    scan: async (_root, _generation, action) => {
+      calls.push(action);
+      return snapshot([item(1), item(2)], { phase: "complete" });
+    },
+  });
+  try {
+    await controller.choose();
+    await controller.choose();
+    context.mock.timers.tick(80);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ["next"]);
+    assert.equal(controller.getState().snapshot.phase, "complete");
+    await controller.read();
+    await controller.choose();
+    context.mock.timers.tick(1000);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ["next"]);
+    assert.equal(controller.getState().snapshot.phase, "paused");
+  } finally {
+    controller.dispose();
+  }
 });

@@ -15,6 +15,8 @@ use std::{
 };
 
 pub const MAX_DOWNLOAD_TASKS: usize = 500;
+/// Abandoned tasks retain their staging proofs until explicit cleanup succeeds.
+pub const MAX_ABANDONED_DOWNLOAD_TASKS: usize = 500;
 pub const MAX_DOWNLOAD_BATCH: usize = 50;
 /// One reviewed selection may fill the existing queue; transport chunks stay small.
 pub const MAX_DOWNLOAD_SELECTION: usize = MAX_DOWNLOAD_TASKS;
@@ -41,28 +43,126 @@ impl JmDownloadMetadata {
     /// The legacy name/API remains usable by JM callers. Pica uses the same
     /// sanitized display fields with its own canonical source identity.
     pub fn is_valid_for(&self, source: Source) -> bool {
-        crate::LibraryReference {
+        self.validate_for(source).is_ok()
+    }
+    /// Adapt freshly fetched tags before creating a plan. Saved records keep
+    /// strict validation and their original binding bytes; never normalize reads.
+    pub fn for_new_download(mut self, source: Source) -> Result<Self> {
+        match self.validate_for(source) {
+            Ok(()) => return Ok(self),
+            Err(error) if error.code != "DOWNLOAD_METADATA_TAG_CONTROL" => return Err(error),
+            Err(_) => {}
+        }
+        let mut changed = Vec::new();
+        for (index, tag) in self.tags.iter_mut().enumerate() {
+            if tag.chars().any(|c| c.is_control() && c.is_whitespace()) {
+                // Preserve character counts until all existing bounds are checked.
+                // Non-whitespace controls stay present and are still rejected.
+                *tag = tag
+                    .chars()
+                    .map(|c| {
+                        if c.is_control() && c.is_whitespace() {
+                            ' '
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                changed.push(index);
+            }
+        }
+        self.validate_for(source)?;
+        for index in changed {
+            self.tags[index] = self.tags[index]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+        Ok(self)
+    }
+
+    /// Explain the existing admission rules without rewriting source metadata.
+    /// Only stable codes cross IPC; rejected field values never enter errors.
+    pub fn validate_for(&self, source: Source) -> Result<()> {
+        let reference = crate::LibraryReference {
             source,
             work_id: self.work_id.clone(),
+        };
+        if !reference.is_valid()
+            || (source == Source::Jm && !self.work_id.parse::<i64>().is_ok_and(|id| id > 0))
+        {
+            return Err(StoreError::new("DOWNLOAD_METADATA_ID_INVALID"));
         }
-        .is_valid()
-            && (source != Source::Jm || self.work_id.parse::<i64>().is_ok_and(|id| id > 0))
-            && text(&self.title, 500)
-            && self.authors.len() <= 100
-            && self.authors.iter().all(|v| text(v, 200))
-            && self.tags.len() <= 200
-            && self.tags.iter().all(|v| text(v, 200))
-            && self
-                .version_updated_at
-                .as_deref()
-                .is_none_or(crate::work_date_is_valid)
-            && self.description.as_ref().is_none_or(|v| {
-                v.len() <= 32768
-                    && !v
-                        .chars()
-                        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-            })
+        metadata_text(
+            &self.title,
+            500,
+            [
+                "DOWNLOAD_METADATA_TITLE_EMPTY",
+                "DOWNLOAD_METADATA_TITLE_TOO_LONG",
+                "DOWNLOAD_METADATA_TITLE_CONTROL",
+            ],
+        )?;
+        if self.authors.len() > 100 {
+            return Err(StoreError::new("DOWNLOAD_METADATA_AUTHORS_TOO_MANY"));
+        }
+        for author in &self.authors {
+            metadata_text(
+                author,
+                200,
+                [
+                    "DOWNLOAD_METADATA_AUTHOR_EMPTY",
+                    "DOWNLOAD_METADATA_AUTHOR_TOO_LONG",
+                    "DOWNLOAD_METADATA_AUTHOR_CONTROL",
+                ],
+            )?;
+        }
+        if self.tags.len() > 200 {
+            return Err(StoreError::new("DOWNLOAD_METADATA_TAGS_TOO_MANY"));
+        }
+        for tag in &self.tags {
+            metadata_text(
+                tag,
+                200,
+                [
+                    "DOWNLOAD_METADATA_TAG_EMPTY",
+                    "DOWNLOAD_METADATA_TAG_TOO_LONG",
+                    "DOWNLOAD_METADATA_TAG_CONTROL",
+                ],
+            )?;
+        }
+        if self
+            .version_updated_at
+            .as_deref()
+            .is_some_and(|date| !crate::work_date_is_valid(date))
+        {
+            return Err(StoreError::new("DOWNLOAD_METADATA_DATE_INVALID"));
+        }
+        if let Some(description) = &self.description {
+            if description.len() > 32768 {
+                return Err(StoreError::new("DOWNLOAD_METADATA_DESCRIPTION_TOO_LONG"));
+            }
+            if description
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+            {
+                return Err(StoreError::new("DOWNLOAD_METADATA_DESCRIPTION_CONTROL"));
+            }
+        }
+        Ok(())
     }
+}
+
+fn metadata_text(value: &str, maximum: usize, codes: [&'static str; 3]) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(StoreError::new(codes[0]));
+    }
+    if value.chars().count() > maximum {
+        return Err(StoreError::new(codes[1]));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(StoreError::new(codes[2]));
+    }
+    Ok(())
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -74,6 +174,7 @@ pub enum DownloadPhase {
     Paused,
     Error,
     Downloaded,
+    Abandoned,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -155,14 +256,11 @@ pub struct DownloadsDocument {
 impl Default for DownloadsDocument {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             tasks: Vec::new(),
             history_evidence: Vec::new(),
         }
     }
-}
-fn text(v: &str, limit: usize) -> bool {
-    !v.trim().is_empty() && v.chars().count() <= limit && !v.chars().any(char::is_control)
 }
 fn hash(v: &str) -> bool {
     crate::library_hash_is_valid(v)
@@ -172,10 +270,37 @@ fn json(v: &Option<String>, limit: usize) -> bool {
         .is_none_or(|v| v.len() <= limit && serde_json::from_str::<serde_json::Value>(v).is_ok())
 }
 impl ValidatedDocument for DownloadsDocument {
+    const VERSION: u32 = 2;
+    fn migrate(&mut self) -> Result<()> {
+        if self.version == 1 {
+            // Version one never admitted this new state or more than 500 rows.
+            if self.tasks.len() > MAX_DOWNLOAD_TASKS
+                || self
+                    .tasks
+                    .iter()
+                    .any(|task| task.phase == DownloadPhase::Abandoned)
+            {
+                return Err(StoreError::new("DOWNLOAD_DOCUMENT_INVALID"));
+            }
+            self.version = 2;
+        }
+        Ok(())
+    }
     fn validate(&self) -> Result<()> {
         let invalid = || StoreError::new("DOWNLOAD_DOCUMENT_INVALID");
-        if self.version != 1
-            || self.tasks.len() > MAX_DOWNLOAD_TASKS
+        if self.version != 2
+            || self
+                .tasks
+                .iter()
+                .filter(|task| task.phase != DownloadPhase::Abandoned)
+                .count()
+                > MAX_DOWNLOAD_TASKS
+            || self
+                .tasks
+                .iter()
+                .filter(|task| task.phase == DownloadPhase::Abandoned)
+                .count()
+                > MAX_ABANDONED_DOWNLOAD_TASKS
             || self.history_evidence.len() > MAX_DOWNLOAD_HISTORY_EVIDENCE
         {
             return Err(invalid());
@@ -273,6 +398,9 @@ impl ValidatedDocument for DownloadsDocument {
                 {
                     return Err(invalid());
                 }
+            }
+            if t.phase == DownloadPhase::Abandoned && t.library_entry_id.is_some() {
+                return Err(invalid());
             }
             if t.phase == DownloadPhase::Downloaded
                 && (t.library_entry_id.is_none()

@@ -19,6 +19,10 @@ use std::{
 };
 use workbench_storage::{DownloadFile, DownloadRecord, Source, MAX_DOWNLOAD_FILES};
 mod archive_output;
+#[cfg(test)]
+pub(crate) use archive_output::{forget_verified_layout, reset_verify_metrics, verify_metrics};
+mod abandoned;
+pub(crate) use abandoned::cleanup_abandoned;
 
 pub(crate) fn require_root(record: &DownloadRecord) -> Result<Directory> {
     let directory = Directory::open(Path::new(&record.root.path))?;
@@ -394,6 +398,10 @@ fn complete_file(target: &mut std::fs::File, source: &mut impl Read, size: u64) 
         if consumed > size {
             return Err(error("DOWNLOAD_STAGING_CHANGED"));
         }
+        #[cfg(all(test, windows))]
+        crate::windows_validation_io::write_all(target, &buffer[existing..n])
+            .map_err(|_| error("DOWNLOAD_WRITE_FAILED"))?;
+        #[cfg(not(all(test, windows)))]
         target
             .write_all(&buffer[existing..n])
             .map_err(|_| error("DOWNLOAD_WRITE_FAILED"))?;

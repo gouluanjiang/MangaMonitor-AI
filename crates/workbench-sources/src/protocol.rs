@@ -139,32 +139,47 @@ fn strings(source: Source, value: &Value) -> SourceResult<Vec<String>> {
         .collect()
 }
 
-fn work_tags(source: Source, data: &Value, raw_tags: &[String]) -> Vec<String> {
-    // The original website tag contract remains at 64 raw entries. Only two
-    // distinct language kinds can be added from optional Pica categories.
-    let mut tags = raw_tags.to_vec();
-    if source != Source::Pica {
-        return tags;
+fn work_categories(source: Source, data: &Value) -> Option<Vec<String>> {
+    if source == Source::Jm {
+        // Dedicated author queries can include an explicit English Manga
+        // subcategory. Keep this evidence without deleting raw paging slots.
+        // JM does not use Pica's similarly named categories array.
+        let categories: Vec<String> = ["category", "category_sub"]
+            .iter()
+            .filter_map(|field| data[*field]["title"].as_str())
+            .filter(|text| !text.trim().is_empty() && within_text_limit(text, 2000))
+            .map(|text| text.trim().to_owned())
+            .collect();
+        return (!categories.is_empty()).then_some(categories);
     }
-    let Some(categories) = data["categories"].as_array().filter(|values| {
+    let categories = data["categories"].as_array().filter(|values| {
         values.len() <= 64
             && values.iter().all(|value| {
                 value
                     .as_str()
                     .is_some_and(|text| !text.trim().is_empty() && within_text_limit(text, 2000))
             })
-    }) else {
-        // Malformed optional categories do not invalidate an otherwise readable
-        // work, and partial parsing must not hide one side of a conflict.
-        return tags;
-    };
-    for category in categories {
-        let text = category.as_str().unwrap();
-        if crate::language_tag_kind(text).is_some_and(|kind| {
-            !tags
-                .iter()
+    })?;
+    Some(
+        categories
+            .iter()
+            .map(|value| value.as_str().unwrap().trim().to_owned())
+            .collect(),
+    )
+}
+
+fn work_tags(raw_tags: &[String], categories: Option<&[String]>) -> Vec<String> {
+    // Both website arrays are bounded to 64 entries. Categories are genuine
+    // source labels (including BL/AI), not guesses from titles or authors.
+    let mut tags = raw_tags.to_vec();
+    for text in categories.unwrap_or_default() {
+        let exists = if let Some(kind) = crate::language_tag_kind(text) {
+            tags.iter()
                 .any(|tag| crate::language_tag_kind(tag) == Some(kind))
-        }) {
+        } else {
+            tags.iter().any(|tag| tag.trim() == text.trim())
+        };
+        if !exists {
             tags.push(text.trim().to_owned());
         }
     }
@@ -369,6 +384,7 @@ pub(crate) fn work(
         ),
     };
     let raw_tags = strings(source, &data["tags"])?;
+    let categories = work_categories(source, data);
     let mut work = SourceWork {
         source,
         work_id,
@@ -385,7 +401,8 @@ pub(crate) fn work(
             }
             Some(text.to_owned())
         },
-        tags: work_tags(source, data, &raw_tags),
+        tags: work_tags(&raw_tags, categories.as_deref()),
+        categories,
         favorite,
         chapter_count,
         page_count,
@@ -394,43 +411,88 @@ pub(crate) fn work(
     };
     // Bound the actual IPC representation, including JSON string escaping.
     let mut serialized = serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
-    if serialized.len() > MAX_WORK_JSON_BYTES && work.tags != raw_tags {
-        // Prefer complete language evidence over optional description bytes.
+    if serialized.len() > MAX_WORK_JSON_BYTES && work.categories.is_some() {
+        // Prefer language/content evidence over optional description bytes.
         let description = work.description.take();
         serialized = serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
         if serialized.len() > MAX_WORK_JSON_BYTES {
             let category_conflict = crate::retained_language_tags(&raw_tags).len() == 1
                 && crate::retained_language_tags(&work.tags).len() == 2;
-            if category_conflict {
+            let added_bl = work.tags.iter().any(|tag| crate::is_bl_tag(tag))
+                && !raw_tags.iter().any(|tag| crate::is_bl_tag(tag));
+            let added_ai = work.tags.iter().any(|tag| crate::is_ai_tag(tag))
+                && !raw_tags.iter().any(|tag| crate::is_ai_tag(tag));
+            let added_female = source == Source::Jm
+                && work.tags.iter().any(|tag| crate::is_jm_female_tag(tag))
+                && !raw_tags.iter().any(|tag| crate::is_jm_female_tag(tag));
+            let added_english_scope = source == Source::Jm
+                && work
+                    .tags
+                    .iter()
+                    .any(|tag| crate::is_jm_english_category(tag))
+                && !raw_tags
+                    .iter()
+                    .any(|tag| crate::is_jm_english_category(tag));
+            if category_conflict || added_bl || added_ai || added_female || added_english_scope {
                 // An extreme byte-boundary record must not turn a known
                 // conflict into a single language by dropping its categories.
                 while serialized.len() > MAX_WORK_JSON_BYTES {
-                    let Some(index) = work
-                        .tags
-                        .iter()
-                        .rposition(|tag| crate::language_tag_kind(tag).is_none())
-                    else {
+                    let Some(index) = work.tags.iter().rposition(|tag| {
+                        crate::language_tag_kind(tag).is_none()
+                            && !crate::is_blocked_tag(tag)
+                            && !crate::is_jm_female_tag(tag)
+                            && !crate::is_jm_english_category(tag)
+                    }) else {
                         break;
                     };
                     work.tags.remove(index);
+                    if let Some(categories) = &mut work.categories {
+                        categories
+                            .retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
+                    }
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
                 }
                 if serialized.len() > MAX_WORK_JSON_BYTES {
-                    work.tags = crate::retained_language_tags(&work.tags);
+                    work.tags = crate::retained_content_tags(&work.tags);
+                    if let Some(categories) = &mut work.categories {
+                        categories
+                            .retain(|category| work.tags.iter().any(|tag| tag.trim() == category));
+                    }
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
+                }
+                if serialized.len() > MAX_WORK_JSON_BYTES
+                    && work.tags.iter().any(|tag| {
+                        crate::is_blocked_tag(tag)
+                            || (source == Source::Jm
+                                && (crate::is_jm_female_tag(tag)
+                                    || crate::is_jm_english_category(tag)))
+                    })
+                {
+                    // The scope marker already lives in tags. Remove the
+                    // duplicate category representation before giving up.
+                    work.categories = None;
+                    serialized =
+                        serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
+                    if serialized.len() > MAX_WORK_JSON_BYTES {
+                        // Keep a visible item issue rather than silently make
+                        // a known excluded source category appear eligible.
+                        return Err(error("SOURCE_RESPONSE_INVALID"));
+                    }
                 }
                 // If required identity/author fields leave insufficient room
                 // even for both compact labels, keep the work unknown, never
                 // falsely choose only one side. Required metadata is untouched.
                 if serialized.len() > MAX_WORK_JSON_BYTES {
                     work.tags.clear();
+                    work.categories = None;
                     serialized =
                         serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
                 }
             } else {
                 work.tags = raw_tags;
+                work.categories = None;
                 work.description = description;
                 serialized =
                     serde_json::to_vec(&work).map_err(|_| error("SOURCE_RESPONSE_INVALID"))?;
@@ -593,7 +655,7 @@ pub(crate) fn page(
     ))
 }
 
-/// Search-only evidence does not relax parsing or remove any source rows.
+/// Ordered JM search/recent evidence never relaxes parsing or removes source rows.
 pub(crate) fn search_page(
     source: Source,
     data: &Value,
@@ -617,7 +679,39 @@ pub(crate) fn search_page(
         result.jm_search_boundary = Some(JmSearchBoundary {
             first: jm_search_boundary_item(records.first(), first)?,
             last: jm_search_boundary_item(records.last(), last)?,
+            recent_rows: None,
         });
+    }
+    Ok((result, covers))
+}
+
+/// Recent-page replay requires complete raw-row evidence, never reconstructed
+/// work metadata. Search/author callers continue to receive edge evidence only.
+pub(crate) fn recent_page(
+    source: Source,
+    data: &Value,
+    requested: u64,
+) -> SourceResult<(SourcePage, CoverDescriptors)> {
+    let (mut result, covers) = search_page(source, data, requested)?;
+    if source == Source::Jm && result.total.is_some() && result.issues.is_empty() {
+        let records = data["content"]
+            .as_array()
+            .ok_or(error("SOURCE_RESPONSE_INVALID"))?;
+        if records.len() == result.items.len() {
+            let rows = records
+                .iter()
+                .zip(&result.items)
+                .map(|(record, item)| {
+                    jm_search_boundary_item(Some(record), Some(item))?
+                        .ok_or(error("SOURCE_RESPONSE_INVALID"))
+                })
+                .collect::<SourceResult<Vec<_>>>()?;
+            let boundary = result
+                .jm_search_boundary
+                .as_mut()
+                .ok_or(error("SOURCE_RESPONSE_INVALID"))?;
+            boundary.recent_rows = Some(rows);
+        }
     }
     Ok((result, covers))
 }

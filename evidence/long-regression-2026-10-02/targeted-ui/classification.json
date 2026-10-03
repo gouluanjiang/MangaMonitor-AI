@@ -1,0 +1,10 @@
+{
+  "source-render-before": "unchanged baseline production assets; deterministic 760673 comparisons over 20 selection-toggle pairs",
+  "source-render-after": "minimal UI memoization; zero comparisons and unchanged visible titles; app build includes the closed-tab fix",
+  "tab-lifetime-after-short": "40 closed tabs; all 40 positions released",
+  "limits": [
+    "Short confirmation only; sustained lifetime retest still pending.",
+    "Initial timing pair overlapped other diagnostics/native preparation; use final paired runs for the primary latency comparison.",
+    "Source-render counter wraps only generated titles; CPU profiles are actual Chromium samples."
+  ]
+}

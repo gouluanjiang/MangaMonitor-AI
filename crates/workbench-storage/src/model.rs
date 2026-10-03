@@ -7,6 +7,14 @@ pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 pub(crate) trait ValidatedDocument:
     Clone + Default + Send + Sync + Serialize + for<'de> Deserialize<'de> + 'static
 {
+    /// Highest on-disk value version this application understands. Older
+    /// applications probe this before strict deserialization.
+    const VERSION: u32 = 1;
+    /// Upgrade known older layouts in memory without rewriting on a read.
+    /// A subsequent checked write publishes the current format atomically.
+    fn migrate(&mut self) -> Result<()> {
+        Ok(())
+    }
     fn validate(&self) -> Result<()>;
 }
 

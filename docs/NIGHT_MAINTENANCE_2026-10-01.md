@@ -1,0 +1,59 @@
+# Overnight maintenance follow-up
+
+## Confirmed problems
+
+- A desktop shortcut launched a pre-v2 candidate against an author catalog already saved using the authorized v2 protocol. The old application returned `UNSUPPORTED_SCHEMA`. A compatible candidate loaded the existing catalog and ownership counters; this was not evidence of lost authors.
+- Proactive recent-feed tag checks issued detail queries before showing unknown works. The user rejected the waiting and failures and selected passive filtering using already available metadata.
+- `query_ordered_unobserved` held the account-state mutex during source network I/O. Cover access and account changes needed the same mutex, creating unnecessary head-of-line waiting.
+- The recent-feed reader waited for retained history before requesting the live first page.
+- Native JM recent pages included valid raw boundary metadata, but the frontend allowed that field only for search/author/tag queries. The successful backend response was rejected as `INVALID_RESPONSE`. Synthetic recent IPC fixtures had omitted this field and therefore missed the contract mismatch.
+
+## Changes
+
+1. Remove the proactive tag-check pool, gated card, waiting UI and verified-only selection. Keep explicit tag/category filtering and normal cover retry. Unknown works load normally; naturally acquired metadata updates lists without closing open readers.
+2. Clone the authenticated source session before the query, release account state during network I/O, then recheck the generation before applying errors or results. A separate per-source operation mutex keeps queries and favorite writes ordered. This does not fan out source requests or bypass source rate limits.
+3. Request live recent results and local retained history concurrently. A failed/slow supplementary history does not hide successful live results; either can be shown first.
+4. Queue independent in-process document handles on one canonical-root mutex before acquiring the cross-process file lock. Large local catalog transactions previously competed with the application's own history/observation reads against a two-second OS wait. Keep the bounded wait for other processes, atomic commits, CAS revisions and all identity/path checks. Account-cache callbacks and explicit cache cleanup retain one combined two-second budget across both local and OS contention, including nested callback rejection; their existing regressions are preserved.
+5. Release both account-state guards before discovery-context local I/O and revalidate the captured leases afterward. A queued metadata read must not hold up covers or account replacement. Retain sanitized history/observation error codes so a future failure can be diagnosed without private error text.
+6. Deliver a distinct rc.3 candidate and repoint the development shortcut only after verifying that payload. Confirm the actual launched path and a complete exit/restart.
+7. Accept the existing JM boundary contract for recent queries, retaining its source, exact shape, identity and failed-slot checks. Include the native boundary fields in every synthetic JM recent UI response, and exercise live-page merging and malformed-next-page retention through the real frontend adapter.
+
+## Validation requirements
+
+- Synthetic races: a blocked detail does not block a known cover or account replacement; late success and session-expiry errors cannot affect the new session.
+- Browser: unknown cards immediately allow covers and actions with zero filtering detail queries; explicit blocked tags remain hidden; a deliberately opened detail updates filtering naturally; background metadata refresh does not interrupt an open reader.
+- Recent history: either result may finish first, failure preserves live data, stale-session/disposed readers still reject late results.
+- JM recent IPC: valid native boundaries allow first and subsequent pages, overlapping works merge without hiding earlier works, and malformed boundaries still fail while retaining the loaded list. Favorites/details/rankings and Pica cannot use the JM-only exception.
+- Local transaction contention: a read through an independently opened handle waits for a longer local commit and sees its final revision; stale CAS is still rejected and external lock timeout remains bounded. A blocked local context read does not block known covers or use a replaced account.
+- Existing scrolling anchors, loading-next-page behavior, selection, downloaded identity, file authority and session separation remain covered by existing CI.
+- Native: preserved catalog/library/download records, compatible startup, both sources, covers/detail/reader responsiveness and shortcut cold start. No extra manga download, deletion or all-author rescan is needed.
+
+Formal builds and suites run in CI only. Engineering results, native observations and user acceptance are reported separately. Performance observations must distinguish site variability and coarse UI sampling from measured application waits; no fabricated speed percentage.
+
+## Status
+
+The rc.2 source `2158e1a` passed UI/baseline/native CI (the Windows lifecycle job required one retry after a window-inspector process timeout). Native checks restored the existing author catalog, both sessions and passive-filter browsing. Follow-up native history/observation warnings prompted the root-queue/context changes above. Source `8e81cb7` passed UI CI (307 logic and 242 browser tests), baseline CI and desktop CI; the desktop job required one unchanged retry for a five-second synthetic cancellation-gate timeout. Its native checks restored the catalog and Pica live/history/detail browsing without verification placeholders or supplementary-history warnings, but exposed the JM boundary mismatch described above. The additional frontend correction and final shortcut checks require fresh validation.
+
+An isolated release-mode diagnostic over roughly 104,000 saved metadata records measured a 2,126 ms initial read, 15–17 ms small patch commits and a 2,590 ms checkpoint; round-trip content and the original legacy file were unchanged. This is one local metadata measurement, not an end-to-end website timing or a speedup percentage. Debug-helper timings are not release-app performance evidence. No corrupt author catalog or invalid saved recent-work DTOs were found in the isolated checks.
+
+Final overnight source `d12056c` passed UI (308 logic / 242 browser), baseline and desktop CI. All eight candidate manifest files were verified. Both source sessions, live recent pages, details, saved author catalog and an actual desktop-shortcut cold launch passed native checks; the unchanged backend also passed local and independent-window reader checks. Both Dev shortcuts were backed up and corrected. Protected library/download/following/query-policy fields remained unchanged; only normal reader progress changed during acceptance. PR #23 remains a draft and no public release occurred.
+
+## Subsequent recent-feed flicker
+
+The user reported visible oscillation while browsing saved recent history. Native observation on the final overnight candidate confirmed two alternating card positions without scroll input. `VirtualSourceGrid` used the first mounted row's measured height as the stride for every row. Different content heights could move the virtual window onto another first row; measuring that row then moved the window back, repeatedly.
+
+The correction keeps a uniform stride stable for the current width, observing the maximum of all mounted rows instead of following one changing row. Larger measurements preserve the current work anchor; actual width/column changes can shrink and recompute the stride. Row observation is synchronized after virtual-window commits as well as item changes. It remains bounded to the virtual window and adds no source queries, detail verification, persistent cover cache or inventory writes.
+
+New synthetic regressions use 1,000 retained works and alternating metadata heights, stop at several affected deep-scroll boundaries, sample consecutive frames for position/height stability and check bounded DOM size and overlap. A separate case checks a newly taller row, resizing and page return. Existing continuation, wheel/scrollbar, density and library-anchor coverage must also pass. Final native acceptance should revisit the originally oscillating location and both sources; user acceptance remains separate.
+
+The flicker source `b3262f1` passed baseline, desktop and UI CI (308 logic / 244 browser). Manifest verification, native browsing on both sources, protected-record comparison and desktop-shortcut cold start passed. This is agent verification, not user acceptance or a release.
+
+## Stable live/history merge
+
+A later three-page read-only diagnostic reproduced saved works moving forward when encountered in live pagination. The renderer rebuilt `live pages + retained non-live identities` on every response. A work already visible in retained history was therefore promoted as soon as a later live page returned it. This does not require a tag filter, and is separate from the row-height feedback loop. The user's original disappearing-card event was not recorded, so the reproduced relocation must not be presented as conclusive attribution of that past event.
+
+The user authorized a merge correction while keeping AI filtering unchanged. The recent reader now maintains display order independently from live pagination counters and retained-history coverage. A data response enriches existing identities in place, deduplicates them and appends newly encountered identities. Phase-only notifications reuse the display array. Source/session readers retain separate orders for this application run. Live pages and history still arrive independently without either blocking covers or requiring any detail requests.
+
+The initial first-page response establishes the current website head once, so new works cannot be buried behind a faster saved-history response; the existing browse anchor preserves a position already being read. After initial loading, only a successful explicit refresh adopts the new first-page order followed by the previously read source order for saved works. A failed refresh preserves the current display, retry retains refresh intent, and a late history response cannot reorder it a second time. The existing browse anchor also covers changes involving retained works. Content tags, language, dates, author-catalog membership and ownership continue to update; no content preference, stored schema, download behavior or persisted catalog order changes.
+
+Required verification: a synthetic 400-work history with an overlapping third live page; both initial completion orders; refresh failure/retry/late-history races; coalesced refresh during pagination; and JM/Pica browser checks of the same visible work and viewport before/after overlap, navigation return and explicit refresh. Existing passive-filter, pagination, session-isolation and grid-stability regressions must pass in CI. Replay already captured private page metadata locally as a distinct diagnostic; do not upload that data or rerun the websites' full histories.

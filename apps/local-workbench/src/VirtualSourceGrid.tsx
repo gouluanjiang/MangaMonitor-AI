@@ -27,7 +27,6 @@ function Grid<T>(
   forwarded: ForwardedRef<SourceGridHandle>,
 ) {
   const element = useRef<HTMLDivElement>(null);
-  const firstRow = useRef<HTMLDivElement>(null);
   const metrics = useRef({
     columns: density as number,
     rowHeight: 330,
@@ -52,11 +51,24 @@ function Grid<T>(
     const preferredIndex = preferred
       ? data.items.findIndex((item) => data.itemKey(item) === preferred)
       : -1;
+    const firstRow = Math.max(
+      0,
+      Math.floor(Math.max(0, relative) / value.rowHeight),
+    );
+    // If only the tail of a row is visible and the next row fits, anchor the
+    // complete row the user can see. Pinning the clipped row instead shifts
+    // every following card by the stride increase when metadata makes rows taller.
+    const completeRow =
+      relative - firstRow * value.rowHeight > 0.5 &&
+      (firstRow + 2) * value.rowHeight - value.gap - relative <=
+        main.clientHeight
+        ? firstRow + 1
+        : firstRow;
     const row = Math.min(
       Math.floor((data.items.length - 1) / value.columns),
       preferredIndex >= 0
         ? Math.floor(preferredIndex / value.columns)
-        : Math.max(0, Math.floor(Math.max(0, relative) / value.rowHeight)),
+        : completeRow,
     );
     const index = Math.min(data.items.length - 1, row * value.columns);
     return {
@@ -108,7 +120,7 @@ function Grid<T>(
     const main = root?.closest("main");
     if (!root || !main) return;
     let frame = 0;
-    let observedRow: HTMLDivElement | null = null;
+    const observedRows = new Set<HTMLElement>();
     const update = () => {
       frame = 0;
       if (root.clientWidth === 0 || main.clientHeight === 0) return;
@@ -120,30 +132,47 @@ function Grid<T>(
       const gap = parseFloat(css.rowGap) || 26;
       const columnGap = parseFloat(css.columnGap) || 16;
       const width = (root.clientWidth - columnGap * (columns - 1)) / columns;
-      const row = firstRow.current;
-      if (observedRow !== row) {
-        if (observedRow) observer.unobserve(observedRow);
-        if (row) observer.observe(row);
-        observedRow = row;
+      const rows = new Set(
+        root.querySelectorAll<HTMLElement>(".source-virtual-row"),
+      );
+      for (const row of observedRows) {
+        if (rows.has(row)) continue;
+        observer.unobserve(row);
+        observedRows.delete(row);
+      }
+      for (const row of rows) {
+        if (observedRows.has(row)) continue;
+        observer.observe(row);
+        observedRows.add(row);
       }
       // A resize can commit the outer CSS columns before React commits each row.
-      const measured =
-        row?.dataset.columns === String(columns)
-          ? row.getBoundingClientRect().height
-          : undefined;
+      const measured = Math.max(
+        0,
+        ...Array.from(rows, (row) =>
+          row.dataset.columns === String(columns)
+            ? row.getBoundingClientRect().height
+            : 0,
+        ),
+      );
       const geometryChanged =
         columns !== metrics.current.columns ||
         Math.abs(width - metrics.current.width) > 0.5;
+      const candidateHeight =
+        measured > 50 ? measured + gap : (width * 7) / 5 + 90 + gap;
+      // This grid uses a uniform stride. Sampling only the first virtual row
+      // lets small content-height differences change which row is sampled,
+      // producing a resize/render loop even when the user is not scrolling.
+      // Keep the largest observed stride for this width; a real resize can
+      // shrink it again. Observe all mounted rows so no taller card overlaps.
+      const rowHeight = geometryChanged
+        ? candidateHeight
+        : Math.max(metrics.current.rowHeight, candidateHeight);
       const resizeAnchor =
-        geometryChanged && metrics.current.width > 0 && !pending.current
+        (geometryChanged || rowHeight > metrics.current.rowHeight + 0.5) &&
+        metrics.current.width > 0 &&
+        !pending.current
           ? capture()
           : null;
-      const rowHeight =
-        measured && measured > 50
-          ? measured + gap
-          : geometryChanged
-            ? (width * 7) / 5 + 90 + gap
-            : metrics.current.rowHeight;
       const offset =
         main.scrollTop +
         root.getBoundingClientRect().top -
@@ -157,6 +186,18 @@ function Grid<T>(
         viewport: main.clientHeight,
         width,
       };
+      if (resizeAnchor) {
+        const index = current.current.items.findIndex(
+          (item) => current.current.itemKey(item) === resizeAnchor.key,
+        );
+        if (index >= 0)
+          next.scroll = Math.max(
+            0,
+            offset +
+              Math.floor(index / columns) * rowHeight -
+              resizeAnchor.offset,
+          );
+      }
       metrics.current = next;
       setLayout((old) =>
         Object.keys(next).some(
@@ -234,9 +275,11 @@ function Grid<T>(
     };
   }, [density]);
   useLayoutEffect(() => {
+    // Window-only commits mount different rows without changing items. Update
+    // their observers too; measurements remain coalesced into the next frame.
     measure.current();
     if (pending.current) applyAnchor(pending.current);
-  }, [items, density]);
+  });
   const range = gridWindow(
     items.length,
     layout.columns,
@@ -255,10 +298,9 @@ function Grid<T>(
       data-total-items={items.length}
       style={{ height: range.height, position: "relative" }}
     >
-      {rows.map((row, index) => (
+      {rows.map((row) => (
         <div
           key={row}
-          ref={index === 0 ? firstRow : undefined}
           className="source-virtual-row"
           data-columns={layout.columns}
           style={{

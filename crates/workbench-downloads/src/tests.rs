@@ -26,6 +26,8 @@ use tempfile::TempDir;
 
 #[path = "inventory_tests.rs"]
 mod inventory_tests;
+#[path = "maintenance_tests.rs"]
+mod maintenance_tests;
 #[path = "pica_tests.rs"]
 mod pica_tests;
 #[path = "queue_tests.rs"]
@@ -34,6 +36,9 @@ mod queue_tests;
 mod rescan_tests;
 #[path = "review_regression_tests.rs"]
 mod review_regression_tests;
+#[cfg(windows)]
+#[path = "windows_local_validation.rs"]
+mod windows_local_validation;
 #[path = "zip_tests.rs"]
 mod zip_tests;
 
@@ -226,6 +231,20 @@ fn file_status_is_advisory_read_only_and_polling_reuses_only_the_same_revision()
     assert!(view.tasks[0].allowed_actions.is_empty());
     assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
     assert_eq!(f.store.read_library().unwrap(), index_before);
+}
+
+#[test]
+fn task_snapshot_exposes_metadata_tags_and_exact_download_root_without_side_effects() {
+    let f = fixture();
+    let before = f.store.read_downloads().unwrap();
+    let snapshot = f.service.read(&f.store).unwrap();
+    let task = &snapshot.tasks[0];
+    assert_eq!(task.tags, ["test"]);
+    assert_eq!(task.root_id, record(&f).root.id);
+    let dto = serde_json::to_value(task).unwrap();
+    assert_eq!(dto["tags"], serde_json::json!(["test"]));
+    assert_eq!(dto["rootId"], task.root_id);
+    assert_eq!(f.store.read_downloads().unwrap().revision, before.revision);
 }
 
 #[tokio::test]
@@ -1530,3 +1549,6 @@ fn approval_for_another_output_profile_cannot_reuse_an_old_staging_receipt() {
         .join("chapters/000001-123456/000001.jpg")
         .is_file());
 }
+#[cfg(target_os = "linux")]
+#[path = "fault_regression_tests.rs"]
+mod fault_regression_tests;

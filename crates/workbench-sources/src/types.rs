@@ -4,11 +4,20 @@ pub use workbench_credentials::Source;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct SourceError {
     pub code: &'static str,
+    #[serde(rename = "retryAfterMs", skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
 }
 
 impl SourceError {
     pub(crate) const fn new(code: &'static str) -> Self {
-        Self { code }
+        Self {
+            code,
+            retry_after_ms: None,
+        }
+    }
+    pub(crate) const fn with_retry_after(mut self, delay: Option<u64>) -> Self {
+        self.retry_after_ms = delay;
+        self
     }
 }
 
@@ -39,6 +48,10 @@ pub struct SourceWork {
     pub authors: Vec<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    /// Explicit source category provenance: JM category/subcategory titles or
+    /// Pica categories. Only Pica supports category browsing (c= rather than t=).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Vec<String>>,
     pub favorite: Option<bool>,
     pub chapter_count: Option<u64>,
     pub page_count: Option<u64>,
@@ -105,6 +118,10 @@ pub struct JmSearchBoundary {
     pub first: Option<JmSearchBoundaryItem>,
     /// The raw last slot, never the last valid work before an isolated issue.
     pub last: Option<JmSearchBoundaryItem>,
+    /// Complete ordered raw rows for a validated JM recent page only. This
+    /// in-process proof cannot be restored from an IPC or persisted snapshot.
+    #[serde(skip)]
+    pub recent_rows: Option<Vec<JmSearchBoundaryItem>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -118,7 +135,7 @@ pub struct SourcePage {
     pub items: Vec<SourceWork>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issues: Vec<SourceItemIssue>,
-    /// Bounded evidence only for ordinary JM search pages with a known total.
+    /// Raw boundary evidence for JM keyword/author/tag/recent lists with a known total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jm_search_boundary: Option<JmSearchBoundary>,
 }

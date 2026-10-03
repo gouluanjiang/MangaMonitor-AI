@@ -10,6 +10,10 @@ declare global {
       saved: ReaderPosition | null;
       fail: number | null;
       failChapter: string | null;
+      failSave: boolean;
+      holdChapter: string | null;
+      releaseChapter?: () => void;
+      knownChapters: string[];
       firstChapterPages: number;
       imageHeight: number;
       finalImageHeight: number | null;
@@ -21,9 +25,11 @@ declare global {
   }
 }
 const faults = new WeakMap<Page, string[]>();
+const authorizedDownloads = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
   faults.set(page, errors);
+  authorizedDownloads.set(page, []);
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/*", (route) =>
     new URL(route.request().url()).hostname === "127.0.0.1"
@@ -49,6 +55,9 @@ test.beforeEach(async ({ page }) => {
       saved: null,
       fail: null,
       failChapter: null,
+      failSave: false,
+      holdChapter: null,
+      knownChapters: [],
       firstChapterPages: 10000,
       imageHeight: 1000,
       finalImageHeight: null,
@@ -61,6 +70,7 @@ test.beforeEach(async ({ page }) => {
       state.calls.push({ command, args: structuredClone(args) });
       switch (command) {
         case "reader_open": {
+          state.knownChapters = [];
           if (state.holdOpen)
             await new Promise<void>((resolve) => {
               state.releaseOpen = resolve;
@@ -88,6 +98,11 @@ test.beforeEach(async ({ page }) => {
         case "reader_chapter":
           if (state.failChapter === args.chapterId)
             throw { code: "SOURCE_UNAVAILABLE" };
+          if (state.holdChapter === args.chapterId)
+            await new Promise<void>((resolve) => {
+              state.releaseChapter = resolve;
+            });
+          state.knownChapters.push(String(args.chapterId));
           return {
             readerId: args.readerId,
             chapterId: args.chapterId,
@@ -128,6 +143,13 @@ test.beforeEach(async ({ page }) => {
           };
         }
         case "reader_save_position":
+          if (state.failSave) throw { code: "REVISION_CONFLICT" };
+          if (
+            !state.knownChapters.includes(
+              (args.position as ReaderPosition).chapterId,
+            )
+          )
+            throw { code: "READER_POSITION_INVALID" };
           state.saved = structuredClone(args.position as ReaderPosition);
           return null;
         case "reader_close":
@@ -142,13 +164,27 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }) => {
   expect(faults.get(page)).toEqual([]);
+  const authorized = authorizedDownloads.get(page) ?? [];
+  expect(
+    await page.evaluate(() =>
+      window.workflowTest.queue.tasks.map((task) => task.workId),
+    ),
+  ).toEqual(authorized);
+  expect(
+    await page.evaluate(
+      () =>
+        window.workflowTest.calls.filter(
+          ({ command }) => command === "jm_download_confirm",
+        ).length,
+    ),
+  ).toBe(authorized.length);
   expect(
     await page.evaluate(() => window.workflowTest.unexpectedCommands),
   ).toEqual([]);
   expect(
     await page.evaluate(() =>
       window.workflowTest.calls.filter(({ command }) =>
-        /confirm|favorite|follow$|delete|promote|replace/.test(command),
+        /favorite|follow$|delete|promote|replace/.test(command),
       ),
     ),
   ).toEqual([]);
@@ -165,23 +201,146 @@ async function openLibrary(page: Page, pageCount = 10000) {
   await page.getByTestId("nav-library").click();
   await page
     .getByRole("button", { name: "打开《已保存作品》", exact: true })
-    .click();
-  await page.getByRole("button", { name: "程序内阅读", exact: true }).click();
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
   await expect(page.getByLabel("当前页码")).toContainText(String(pageCount));
 }
-async function openOnline(page: Page) {
+async function openOnline(page: Page, recheckInBackground = false) {
   await page.getByTestId("nav-completion").click();
   await page.getByTestId("completion-start").click();
   await expect(page.getByTestId("completion-progress")).toBeVisible();
   await page.evaluate(() => window.workflowTest.finishCheck());
+  await expect(page.getByTestId("author-update-JM:102")).toBeVisible();
+  if (recheckInBackground) await page.getByTestId("completion-start").click();
   await page
     .getByTestId("author-update-JM:102")
     .getByRole("button", { name: /打开/ })
-    .click();
-  await page.getByRole("button", { name: "程序内阅读", exact: true }).click();
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect(page.getByTestId("comic-reader")).toBeVisible();
 }
+test("newly learned blocked tags never interrupt an already open online reader", async ({
+  page,
+}) => {
+  await openOnline(page, true);
+  await page.evaluate(() => {
+    window.workflowTest.finishCheck();
+    const record = window.workflowTest.discovery.records.find(
+      (record) => record.work.source === "JM" && record.work.workId === "102",
+    )!;
+    record.work.tags = ["AI作畫"];
+    window.workflowTest.discovery.revision++;
+  });
+  await expect(page.getByTestId("author-update-JM:102")).toHaveCount(0);
+  await expect(page.getByTestId("comic-reader")).toBeVisible();
+  await expect(page.locator('[data-reader-page="1"] img')).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.readerTest.calls.filter((call) => call.command === "reader_close"),
+    ),
+  ).toEqual([]);
+  await page.getByTestId("reader-viewport").focus();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  await expect(page.getByTestId("author-update-JM:102")).toHaveCount(0);
+});
+
+test("reader close exposes an unsaved position and retries before releasing its native session", async ({
+  page,
+}) => {
+  await openLibrary(page);
+  await page.evaluate(() => {
+    window.readerTest.failSave = true;
+  });
+  await jump(page, 4);
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "重试保存并退出", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.readerTest.calls.filter((call) => call.command === "reader_close"),
+    ),
+  ).toEqual([]);
+  await page.evaluate(() => {
+    window.readerTest.failSave = false;
+  });
+  await page
+    .getByRole("button", { name: "重试保存并退出", exact: true })
+    .click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  expect(await page.evaluate(() => window.readerTest.saved?.pageIndex)).toBe(3);
+  expect(
+    await page.evaluate(
+      () =>
+        window.readerTest.calls.filter(
+          (call) => call.command === "reader_close",
+        ).length,
+    ),
+  ).toBe(1);
+});
+
+test("discarding a failed position closes without claiming or retrying a successful save", async ({
+  page,
+}) => {
+  await openLibrary(page);
+  await page.evaluate(() => {
+    window.readerTest.failSave = true;
+  });
+  await jump(page, 5);
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "放弃未保存位置并退出", exact: true }),
+  ).toBeVisible();
+  const attempts = await page.evaluate(
+    () =>
+      window.readerTest.calls.filter(
+        (call) => call.command === "reader_save_position",
+      ).length,
+  );
+  await page
+    .getByRole("button", { name: "放弃未保存位置并退出", exact: true })
+    .click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        window.readerTest.calls.filter(
+          (call) => call.command === "reader_save_position",
+        ).length,
+    ),
+  ).toBe(attempts);
+  expect(
+    await page.evaluate(() => window.readerTest.saved?.pageIndex),
+  ).not.toBe(4);
+});
+
+test("switching away from an unloaded chapter never submits its unknown position", async ({
+  page,
+}) => {
+  await openLibrary(page);
+  await page.evaluate(() => {
+    window.readerTest.holdChapter = "two";
+  });
+  await showToolbar(page);
+  await page.getByLabel("选择章节").selectOption("two");
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.readerTest.releaseChapter)))
+    .toBe(true);
+  await page.getByLabel("选择章节").selectOption("one");
+  await expect(page.getByLabel("当前页码")).toContainText("10000");
+  await page.getByRole("button", { name: "返回", exact: true }).click();
+  await expect(page.getByTestId("comic-reader")).toHaveCount(0);
+  const positions = await page.evaluate(() =>
+    window.readerTest.calls
+      .filter((call) => call.command === "reader_save_position")
+      .map((call) => (call.args.position as ReaderPosition).chapterId),
+  );
+  expect(positions.length).toBeGreaterThan(0);
+  expect(positions.every((chapterId) => chapterId === "one")).toBe(true);
+  await page.evaluate(() => window.readerTest.releaseChapter?.());
+});
 async function jump(page: Page, number: number, count = 10000) {
   await showToolbar(page);
   await page
@@ -200,8 +359,10 @@ test("local cover offers reading and details; large chapters stay virtual and re
   page,
 }) => {
   await page.getByTestId("nav-library").click();
-  await page.getByRole("button", { name: "打开《已保存作品》" }).click();
-  await page.getByRole("button", { name: "漫画详细", exact: true }).click();
+  await page
+    .getByRole("button", { name: "打开《已保存作品》" })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "作品详细", exact: true }).click();
   await expect(page.getByTestId("library-detail")).toBeVisible();
   await page.getByTestId("library-detail-back").click();
   await openLibrary(page);
@@ -749,8 +910,8 @@ test("closing during open cancels its token and closes a late obsolete book with
   await page.getByTestId("nav-library").click();
   await page
     .getByRole("button", { name: "打开《已保存作品》", exact: true })
-    .click();
-  await page.getByRole("button", { name: "程序内阅读", exact: true }).click();
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "程序内阅读", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => typeof window.readerTest.releaseOpen))
     .toBe("function");
@@ -842,7 +1003,7 @@ test("a temporarily unavailable saved online chapter keeps the directory usable 
   ).toBe(true);
 });
 
-test("online read does not download; download button uses the existing confirmation and reader keys leave that dialog alone", async ({
+test("online reading only downloads after an explicit click and preserves the reader while repeated requests stay idempotent", async ({
   page,
 }) => {
   await openOnline(page);
@@ -857,25 +1018,41 @@ test("online read does not download; download button uses the existing confirmat
       ),
     ),
   ).toEqual([]);
+  authorizedDownloads.set(page, ["102"]);
   await showToolbar(page);
   await page.getByRole("button", { name: "下载这本", exact: true }).click();
-  await expect(page.getByTestId("download-confirmation")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.workflowTest.queue.tasks.map((task) => task.workId),
+      ),
+    )
+    .toEqual(["102"]);
+  await expect(page.getByTestId("download-confirmation")).toHaveCount(0);
+  await expect(page.getByTestId("comic-reader")).toBeVisible();
+  await expect(page.getByTestId("native-downloads")).toBeHidden();
+  await page.getByLabel("阅读模式").selectOption("single");
+  await page.getByTestId("reader-viewport").focus();
   await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("F11");
+  await expect(page.getByLabel("当前页码")).toHaveText("2 / 10000");
+  await showToolbar(page);
+  await page.getByRole("button", { name: "下载这本", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workflowTest.calls.filter(
+            ({ command }) => command === "jm_download_read",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(1);
   expect(
     await page.evaluate(() =>
-      window.readerTest.calls.filter(
-        ({ command }) => command === "reader_fullscreen",
-      ),
+      window.workflowTest.calls
+        .filter(({ command }) => command === "jm_download_prepare")
+        .map(({ args }) => args.input),
     ),
-  ).toEqual([]);
-  await expect(page.getByLabel("当前页码")).toHaveText("1 / 10000");
-  await page
-    .getByTestId("download-confirmation")
-    .getByRole("button", { name: "关闭下载确认", exact: true })
-    .click();
-  await expect(page.getByTestId("comic-reader")).toBeVisible();
-  expect(await page.evaluate(() => window.workflowTest.queue.tasks)).toEqual(
-    [],
-  );
+  ).toEqual(["102"]);
+  await expect(page.getByLabel("当前页码")).toHaveText("2 / 10000");
 });

@@ -3,6 +3,7 @@ import { invokeDesktop } from "./runtime.ts";
 import {
   accountStateLabels,
   diagnosticSummary,
+  diagnosticProblemLines,
   libraryPhaseLabels,
   validateWorkbenchInfo,
 } from "./diagnostics.ts";
@@ -23,7 +24,14 @@ export function DiagnosticsPanel({
   const [info, setInfo] = useState<WorkbenchInfo | null>(null);
   const [infoFailed, setInfoFailed] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [copyNotice, setCopyNotice] = useState("");
+  const [copyReceipt, setCopyReceipt] = useState<{
+    text: string;
+    success: boolean;
+    sequence: number;
+  } | null>(null);
+  const [copying, setCopying] = useState(false);
+  const copySequence = useRef(0);
+  const mounted = useRef(true);
   const reportField = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     let active = true;
@@ -41,14 +49,37 @@ export function DiagnosticsPanel({
     };
   }, [retry]);
   const report = diagnosticSummary({ ...state, info });
-  useEffect(() => setCopyNotice(""), [report]);
-  async function copyReport() {
-    try {
-      await navigator.clipboard.writeText(report);
-      setCopyNotice("诊断摘要已复制。");
-    } catch {
+  const problemLines = diagnosticProblemLines(state.problems);
+  const displayedReport =
+    copyReceipt && !copyReceipt.success ? copyReceipt.text : report;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!copyReceipt) return;
+    if (!copyReceipt.success) {
+      reportField.current?.focus();
       reportField.current?.select();
-      setCopyNotice("无法自动复制，请复制下方已选中的文字。");
+      return;
+    }
+    const timer = setTimeout(() => setCopyReceipt(null), 6000);
+    return () => clearTimeout(timer);
+  }, [copyReceipt]);
+  async function copyReport() {
+    if (copying) return;
+    setCopying(true);
+    const text = report;
+    const sequence = ++copySequence.current;
+    try {
+      await navigator.clipboard.writeText(text);
+      if (mounted.current) setCopyReceipt({ text, success: true, sequence });
+    } catch {
+      if (mounted.current) setCopyReceipt({ text, success: false, sequence });
+    } finally {
+      if (mounted.current) setCopying(false);
     }
   }
   return (
@@ -59,7 +90,8 @@ export function DiagnosticsPanel({
     >
       <h2 id="diagnostics-title">网络与诊断</h2>
       <p className="settings-copy">
-        查看本次运行的状态，前往对应页面处理问题。
+        查看本次运行的状态，前往对应页面处理问题。作品信息校验失败会保留最近 20
+        条诊断；退出程序后清空。
       </p>
       <p className="settings-help" data-testid="diagnostics-version">
         {info
@@ -161,9 +193,19 @@ export function DiagnosticsPanel({
           查看下载队列
         </button>
       </div>
+      {problemLines.length > 0 && (
+        <div className="settings-help" data-testid="diagnostics-problems">
+          <h3>最近的操作问题</h3>
+          <ul>
+            {problemLines.map((line, index) => (
+              <li key={index}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <h3>反馈问题</h3>
       <p className="settings-help">
-        可复制下方仅含版本、状态和数量的摘要，便于反馈。
+        可复制下方包含版本、状态、数量及受控错误原因和时间的摘要，不含账号、路径或作品信息。
       </p>
       <textarea
         ref={reportField}
@@ -171,13 +213,38 @@ export function DiagnosticsPanel({
         data-testid="diagnostic-summary"
         aria-label="诊断摘要"
         readOnly
-        value={report}
+        value={displayedReport}
         rows={10}
       />
-      <button className="button secondary" onClick={() => void copyReport()}>
+      <button
+        className="button secondary"
+        disabled={copying}
+        onClick={() => void copyReport()}
+      >
         复制诊断摘要
       </button>
-      {copyNotice && <p role="status">{copyNotice}</p>}
+      {copyReceipt && (
+        <p role="status">
+          {copyReceipt.success
+            ? "诊断摘要已复制。"
+            : "无法自动复制，请复制下方已选中的文字。"}
+        </p>
+      )}
+      {copyReceipt && copyReceipt.text !== report && (
+        <p className="settings-help">
+          {copyReceipt.success
+            ? "状态已有变化，刚才复制的是点击时的摘要。"
+            : "下方保留本次复制的摘要，当前状态已有变化。"}
+          {!copyReceipt.success && (
+            <button
+              className="text-button"
+              onClick={() => setCopyReceipt(null)}
+            >
+              显示最新摘要
+            </button>
+          )}
+        </p>
+      )}
     </section>
   );
 }

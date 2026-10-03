@@ -1,3 +1,4 @@
+import { openUnifiedSearch, continueSearch } from "./browse-ui-helpers.ts";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import type { WorkbenchPreferences } from "../src/preferences.ts";
@@ -79,7 +80,7 @@ test("dedicated source navigation keeps the active section and existing discover
     "aria-current",
     "page",
   );
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await expect(page.getByTestId("source-search-control")).toBeVisible();
   await expect(page.getByTestId("discovery-search")).toHaveAttribute(
     "aria-pressed",
@@ -89,7 +90,7 @@ test("dedicated source navigation keeps the active section and existing discover
     "aria-current",
     "page",
   );
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await expect(page.getByRole("textbox", { name: "搜索作者名" })).toBeVisible();
   await page.getByTestId("nav-completion").click();
   await expect(page.getByTestId("completion-start")).toBeVisible();
@@ -99,9 +100,10 @@ test("dedicated source navigation keeps the active section and existing discover
 test("source-search navigation dismisses embedded recent and ranking details without discarding its query or loaded results", async ({
   page,
 }) => {
-  await page.getByTestId("nav-discovery").click();
+  await openUnifiedSearch(page, "作品关键词");
   await page.getByTestId("source-search-input").fill("合成新作者");
   await page.getByTestId("source-search-submit").click();
+  await continueSearch(page);
   await expect(page.getByTestId("source-filter-count")).toContainText(
     "已读完当前来源的搜索范围",
   );
@@ -129,9 +131,13 @@ test("source-search navigation dismisses embedded recent and ranking details wit
     await expect(page.getByTestId("source-detail")).toContainText(
       "本次选择的 JM 作品",
     );
-    await page.getByTestId("nav-discovery").click();
+    await openUnifiedSearch(page, "作品关键词");
     await expect(page.getByTestId("source-detail")).toHaveCount(0);
-    await expect(page.getByTestId("source-query-mode")).toBeVisible();
+    await expect(
+      page
+        .getByRole("group", { name: "搜索方式" })
+        .getByRole("button", { name: "作品关键词", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("source-search-input")).toHaveValue(
       "合成新作者",
     );
@@ -158,7 +164,7 @@ test("sidebar collapse is reversible by pointer and keyboard without losing acti
   const sidebar = page.locator(".sidebar");
   const expanded = (await sidebar.boundingBox())!.width;
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await page.getByTestId("nav-author-search").click();
+  await openUnifiedSearch(page);
   await page
     .getByRole("textbox", { name: "搜索作者名" })
     .fill("尚未提交的作者");
@@ -167,7 +173,7 @@ test("sidebar collapse is reversible by pointer and keyboard without losing acti
   await expect
     .poll(async () => (await sidebar.boundingBox())!.width)
     .toBeLessThan(expanded - 50);
-  await expect(page.getByTestId("nav-author-search")).toHaveAttribute(
+  await expect(page.getByTestId("nav-discovery")).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -239,17 +245,21 @@ test("the refined cover menu preserves all three reader choices and a reversible
     name: "打开《已保存作品》",
     exact: true,
   });
-  await cover.click();
+  await cover.click({ button: "right" });
   const menu = page.getByTestId("reader-cover-actions");
-  for (const name of ["漫画详细", "程序内阅读", "手机小框阅读"]) {
-    await expect(menu.getByRole("button", { name, exact: true })).toBeVisible();
-    await expect(menu.getByRole("button", { name, exact: true })).toBeEnabled();
+  for (const name of ["作品详细", "程序内阅读", "小窗阅读"]) {
+    await expect(
+      menu.getByRole("menuitem", { name, exact: true }),
+    ).toBeVisible();
+    await expect(
+      menu.getByRole("menuitem", { name, exact: true }),
+    ).toBeEnabled();
   }
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(cover).toBeFocused();
-  await cover.click();
-  await menu.getByRole("button", { name: "漫画详细", exact: true }).click();
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "作品详细", exact: true }).click();
   await expect(page.getByTestId("library-detail")).toContainText("已保存作品");
   await page.getByTestId("library-detail-back").click();
   await expect(cover).toBeVisible();

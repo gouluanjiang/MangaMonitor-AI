@@ -1,6 +1,12 @@
 import type { SourceAdapter, SourceScope } from "./source-types.ts";
 import { queueCover } from "./source-cover-queue.ts";
 import type { CoverPriority } from "./cover-scheduler.ts";
+import {
+  automaticCoverRetry,
+  coverBackoff,
+  coverRetryAfter,
+  waitForCover,
+} from "./cover-backoff.ts";
 
 const messages = {
   SOURCE_TIMEOUT: "封面请求超时，可重试。",
@@ -48,12 +54,16 @@ type ReadyEntry = {
 };
 type ErrorEntry = {
   scope: string;
-  result: Extract<CoverResult, { status: "error" }>;
-  expiresAt: number;
+  result?: Extract<CoverResult, { status: "error" }>;
+  failures: number;
+  nextAt: number;
+  serverUntil: number;
+  terminal: boolean;
 };
 type Pending = {
   scope: string;
-  job: ReturnType<typeof queueCover>;
+  job?: ReturnType<typeof queueCover>;
+  wait: AbortController;
   promise: Promise<CoverResult>;
   users: number;
   discarded: boolean;
@@ -97,25 +107,32 @@ export class CoverSessionCache {
   private maximumBytes: number;
   private maximumEntries: number;
   private encode: (dataUrl: string) => CoverAsset;
+  private now: () => number;
+  private random: () => number;
+  private wait: typeof waitForCover;
   constructor(
     options: {
       maximumBytes?: number;
       maximumEntries?: number;
       encode?: (dataUrl: string) => CoverAsset;
+      now?: () => number;
+      random?: () => number;
+      wait?: typeof waitForCover;
     } = {},
   ) {
     this.maximumBytes = options.maximumBytes ?? 256 * 1024 * 1024;
     this.maximumEntries = options.maximumEntries ?? 4096;
     this.encode = options.encode ?? encodeCover;
+    this.now = options.now ?? Date.now;
+    this.random = options.random ?? Math.random;
+    this.wait = options.wait ?? waitForCover;
   }
   peek(scope: SourceScope, workId: string): CoverResult | undefined {
     const key = keyOf(scope, workId);
     const success = this.ready.get(key);
     if (success) return success.result;
     const failure = this.errors.get(key);
-    return failure && failure.expiresAt > Date.now()
-      ? failure.result
-      : undefined;
+    return failure?.terminal ? failure.result : undefined;
   }
   private forgetReady(key: string) {
     const entry = this.ready.get(key);
@@ -160,18 +177,87 @@ export class CoverSessionCache {
     this.bytes += bytes;
     return result;
   }
-  private storeError(key: string, scope: string, code: CoverErrorCode) {
-    this.errors.delete(key);
-    while (this.errors.size >= 256) {
-      const oldest = this.errors.keys().next().value;
-      if (oldest === undefined) break;
-      this.errors.delete(oldest);
-    }
-    this.errors.set(key, {
+  private storeError(
+    key: string,
+    scope: string,
+    code: CoverErrorCode,
+    cause?: unknown,
+  ) {
+    const previous = this.errors.get(key);
+    const failures = (previous?.failures ?? 0) + 1;
+    const serverUntil = Math.max(
+      previous?.serverUntil ?? 0,
+      this.now() + coverRetryAfter(cause),
+    );
+    const entry: ErrorEntry = {
       scope,
       result: { status: "error", code },
-      expiresAt: Date.now() + 30000,
-    });
+      failures,
+      serverUntil,
+      nextAt: Math.max(
+        serverUntil,
+        this.now() + coverBackoff(failures, this.random),
+      ),
+      terminal: failures >= 4 || !automaticCoverRetry(code),
+    };
+    // Negative evidence lasts for this authenticated session, not one card mount.
+    this.errors.set(key, entry);
+    return entry;
+  }
+  private async run(
+    key: string,
+    request: Pending,
+    load: () => Promise<string | null>,
+  ): Promise<CoverResult> {
+    while (!request.discarded) {
+      const failure = this.errors.get(key);
+      if (failure?.terminal && failure.result) return failure.result;
+      const delay = (failure?.nextAt ?? 0) - this.now();
+      if (delay > 0) {
+        await this.wait(delay, request.wait.signal);
+        if (request.discarded) break;
+        // A long Retry-After can require more than one safe browser timer.
+        if ((this.errors.get(key)?.nextAt ?? 0) > this.now()) continue;
+      }
+      request.job = queueCover(
+        load,
+        [...request.priorities.values()].includes("visible")
+          ? "visible"
+          : "nearby",
+      );
+      try {
+        const dataUrl = await request.job.promise;
+        request.job = undefined;
+        if (request.discarded) break;
+        if (dataUrl !== null)
+          return this.storeReady(
+            key,
+            request.scope,
+            dataUrl,
+            request.token,
+            request.users,
+          );
+        return this.storeError(key, request.scope, "COVER_NOT_AVAILABLE")
+          .result!;
+      } catch (cause) {
+        request.job = undefined;
+        if (request.discarded) break;
+        if (cause instanceof Error && cause.message === "COVER_QUEUE_FULL")
+          return { status: "deferred", reason: "busy" };
+        const candidate =
+          typeof cause === "object" && cause !== null && "code" in cause
+            ? cause.code
+            : undefined;
+        const code =
+          typeof candidate === "string" && Object.hasOwn(messages, candidate)
+            ? (candidate as CoverErrorCode)
+            : "SOURCE_UNAVAILABLE";
+        const error = this.storeError(key, request.scope, code, cause);
+        if (error.terminal) return error.result!;
+        if (!request.users) break;
+      }
+    }
+    return { status: "deferred", reason: "cancelled" };
   }
   acquire(
     scope: SourceScope,
@@ -206,51 +292,18 @@ export class CoverSessionCache {
           release() {},
           setPriority() {},
         };
-      const job = queueCover(load, priority);
       const created: Pending = {
         scope: scopeOf(scope),
-        job,
+        wait: new AbortController(),
         promise: Promise.resolve({ status: "deferred", reason: "cancelled" }),
         users: 0,
         discarded: false,
         token: Symbol(),
         priorities: new Map(),
       };
-      created.promise = job.promise
-        .then((dataUrl): CoverResult => {
-          if (created.discarded)
-            return { status: "deferred", reason: "cancelled" };
-          if (dataUrl !== null) {
-            return this.storeReady(
-              key,
-              created.scope,
-              dataUrl,
-              created.token,
-              created.users,
-            );
-          }
-          this.storeError(key, created.scope, "COVER_NOT_AVAILABLE");
-          return { status: "error", code: "COVER_NOT_AVAILABLE" };
-        })
-        .catch((cause: unknown): CoverResult => {
-          if (created.discarded)
-            return { status: "deferred", reason: "cancelled" };
-          if (cause instanceof Error && cause.message === "COVER_QUEUE_FULL")
-            return { status: "deferred", reason: "busy" };
-          const candidate =
-            typeof cause === "object" && cause !== null && "code" in cause
-              ? cause.code
-              : undefined;
-          const code: CoverErrorCode =
-            typeof candidate === "string" && Object.hasOwn(messages, candidate)
-              ? (candidate as CoverErrorCode)
-              : "SOURCE_UNAVAILABLE";
-          this.storeError(key, created.scope, code);
-          return { status: "error", code };
-        })
-        .finally(() => {
-          if (this.pending.get(key) === created) this.pending.delete(key);
-        });
+      created.promise = this.run(key, created, load).finally(() => {
+        if (this.pending.get(key) === created) this.pending.delete(key);
+      });
       this.pending.set(key, created);
       request = created;
     }
@@ -258,7 +311,7 @@ export class CoverSessionCache {
     const consumer = Symbol();
     shared.priorities.set(consumer, priority);
     const reprioritize = () =>
-      shared.job.setPriority(
+      shared.job?.setPriority(
         [...shared.priorities.values()].includes("visible")
           ? "visible"
           : "nearby",
@@ -281,8 +334,9 @@ export class CoverSessionCache {
         reprioritize();
         const ready = this.ready.get(key);
         if (ready?.token === shared.token) ready.users--;
-        if (shared.users === 0 && shared.job.cancel()) {
+        if (shared.users === 0 && (!shared.job || shared.job.cancel())) {
           shared.discarded = true;
+          shared.wait.abort();
           if (this.pending.get(key) === shared) this.pending.delete(key);
         }
       },
@@ -291,7 +345,22 @@ export class CoverSessionCache {
   retryFailures(scope: SourceScope) {
     const wanted = scopeOf(scope);
     for (const [key, entry] of this.errors)
-      if (entry.scope === wanted) this.errors.delete(key);
+      if (entry.scope === wanted) this.resetError(key);
+  }
+  private resetError(key: string) {
+    const previous = this.errors.get(key);
+    if (previous && previous.serverUntil > this.now()) {
+      this.errors.set(key, {
+        ...previous,
+        result: undefined,
+        failures: 0,
+        terminal: false,
+        nextAt: previous.serverUntil,
+      });
+    } else this.errors.delete(key);
+  }
+  retryFailure(scope: SourceScope, workId: string) {
+    this.resetError(keyOf(scope, workId));
   }
   decodeFailed(scope: SourceScope, workId: string, url: string) {
     const key = keyOf(scope, workId);
@@ -310,7 +379,8 @@ export class CoverSessionCache {
     for (const [key, request] of this.pending)
       if (!keep.has(request.scope)) {
         request.discarded = true;
-        request.job.cancel();
+        request.job?.cancel();
+        request.wait.abort();
         this.pending.delete(key);
       }
   }

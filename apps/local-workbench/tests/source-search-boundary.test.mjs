@@ -10,6 +10,7 @@ import {
   SourceError,
   validateSourcePage,
 } from "../src/source-runtime.ts";
+import { RecentUpdatesReader } from "../src/recent-updates.ts";
 
 const scope = { source: "JM", sessionId: "synthetic-jm-boundary" };
 const work = (id, source = "JM") => ({
@@ -69,6 +70,104 @@ function adapterFor(pages, calls = []) {
     },
   });
 }
+
+test("keyword and tag browsing fetch one requested page and can resume with pagination evidence", async () => {
+  for (const requestKind of ["search", "tag"]) {
+    const calls = [],
+      seen = [];
+    const adapter = createSourceAdapter({
+      native: true,
+      invoke: async (command, args) => {
+        assert.equal(command, "source_query");
+        assert.equal(args.kind, requestKind);
+        calls.push(args.page);
+        return page(args.page, args.page === 1 ? [1, 2] : [3, 4], {
+          total: 4,
+          pages: 2,
+        });
+      },
+    });
+    await readCompleteSearch(adapter, scope, "Fixture tag", {
+      current: () => true,
+      onPage: (value) => seen.push(value),
+      requestKind,
+      pageLimit: 1,
+    });
+    assert.deepEqual(calls, [1]);
+    assert.equal(seen[0].complete, false);
+    const previous = seen[0];
+    await readCompleteSearch(adapter, scope, "Fixture tag", {
+      current: () => true,
+      onPage: (value) => seen.push(value),
+      requestKind,
+      pageLimit: 1,
+      fromPage: 2,
+      items: previous.items,
+      recordsRead: previous.recordsRead,
+      issues: previous.issues,
+      pagination: previous.pagination,
+    });
+    assert.deepEqual(calls, [1, 2]);
+    assert.equal(seen[1].complete, true);
+    assert.equal(seen[1].items.length, 4);
+  }
+});
+
+test("one-page browsing still rejects contradictory pagination rather than calling it a pause", async () => {
+  const adapter = adapterFor([
+    page(1, [1, 2], { total: 9, pages: 2, hasMore: false }),
+  ]);
+  await assert.rejects(
+    readCompleteSearch(adapter, scope, "Fixture", {
+      current: () => true,
+      onPage() {},
+      pageLimit: 1,
+    }),
+    /SEARCH_INCOMPLETE/,
+  );
+});
+
+test("Pica category browsing is forwarded distinctly from tags and JM cannot submit a category", async () => {
+  const pica = { source: "Pica", sessionId: "pica-category-fixture" };
+  const calls = [];
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      calls.push(args);
+      return {
+        ...pica,
+        page: 1,
+        pages: 1,
+        total: 1,
+        hasMore: false,
+        folders: [],
+        items: [
+          { ...work(1, "Pica"), tags: ["Category"], categories: ["Category"] },
+        ],
+      };
+    },
+  });
+  const seen = [];
+  await readCompleteSearch(adapter, pica, "Category", {
+    current: () => true,
+    onPage: (value) => seen.push(value),
+    requestKind: "category",
+    pageLimit: 1,
+  });
+  assert.equal(calls[0].kind, "category");
+  assert.equal(seen[0].complete, true);
+  assert.deepEqual(seen[0].items[0].categories, ["Category"]);
+  await assert.rejects(
+    adapter.query(scope, {
+      kind: "category",
+      query: "Category",
+      folderId: null,
+      page: 1,
+    }),
+    { code: "INVALID_INPUT" },
+  );
+  assert.equal(calls.length, 1);
+});
 const readOptions = (seen) => ({
   current: () => true,
   onPage: (value) => seen.push(value),
@@ -381,7 +480,7 @@ test("an accepted boundary retains isolated issue evidence without borrowing an 
   assert.equal(seen.at(-1).pagination.previousPage.boundary.last, null);
 });
 
-test("JM raw boundary DTOs are search-only, exact-shaped and tied to the original issue slots", async () => {
+test("JM raw boundary DTOs are restricted to ordered lists, exact-shaped and tied to the original issue slots", async () => {
   const value = page(1, [1, 2], { total: 2, pages: 1 });
   const parsed = validateSourcePage(value, scope, false, false, true);
   assert.deepEqual(parsed.jmSearchBoundary, value.jmSearchBoundary);
@@ -456,7 +555,7 @@ test("JM raw boundary DTOs are search-only, exact-shaped and tied to the origina
   assert.throws(() => validateSourcePage(single, scope, false, false, true), {
     code: "INVALID_RESPONSE",
   });
-  for (const kind of ["favorites", "detail", "ranking", "recent"]) {
+  for (const kind of ["favorites", "detail", "ranking"]) {
     const adapter = createSourceAdapter({
       native: true,
       invoke: async () => value,
@@ -464,7 +563,7 @@ test("JM raw boundary DTOs are search-only, exact-shaped and tied to the origina
     await assert.rejects(
       adapter.query(scope, {
         kind,
-        query: kind === "recent" ? "" : "Synthetic",
+        query: "Synthetic",
         folderId: null,
         page: 1,
       }),
@@ -481,6 +580,50 @@ test("JM raw boundary DTOs are search-only, exact-shaped and tied to the origina
     () => validateSourcePage(picaPage, picaScope, false, false, true),
     { code: "INVALID_RESPONSE" },
   );
+});
+
+test("native JM recent pages accept raw boundaries, merge overlap and retain loaded works on a malformed next boundary", async () => {
+  const pages = [
+    page(1, [1, 2], { total: 4, pages: null }),
+    page(2, [2, 3], { total: 4, pages: null }),
+    page(3, [3, 4], { total: 4, pages: null }),
+  ];
+  pages[2].jmSearchBoundary.first.workId = "99";
+  const calls = [];
+  const adapter = createSourceAdapter({
+    native: true,
+    invoke: async (command, args) => {
+      assert.equal(command, "source_query");
+      assert.equal(args.kind, "recent");
+      assert.equal(args.query, "");
+      assert.equal(args.folderId, null);
+      assert.equal(args.reverse, undefined);
+      calls.push(args.page);
+      return structuredClone(pages[args.page - 1]);
+    },
+  });
+  // Exercise the native query adapter and the browsing reader together; local
+  // supplementary history has separate concurrency and failure regressions.
+  const reader = new RecentUpdatesReader({ query: adapter.query }, scope);
+  await reader.start();
+  assert.equal(reader.state.phase, "ready");
+  assert.deepEqual(
+    reader.state.snapshot.items.map((item) => item.workId),
+    ["1", "2"],
+  );
+  await reader.loadNext();
+  assert.equal(reader.state.phase, "ready");
+  assert.deepEqual(
+    reader.state.snapshot.items.map((item) => item.workId),
+    ["1", "2", "3"],
+  );
+  assert.equal(reader.state.snapshot.duplicates, 1);
+  const retained = reader.state.snapshot;
+  await reader.loadNext();
+  assert.equal(reader.state.phase, "error");
+  assert.equal(reader.state.error.code, "INVALID_RESPONSE");
+  assert.equal(reader.state.snapshot, retained);
+  assert.deepEqual(calls, [1, 2, 3]);
 });
 
 test("Pica search duplicates remain incomplete without the JM-only boundary exception", async () => {

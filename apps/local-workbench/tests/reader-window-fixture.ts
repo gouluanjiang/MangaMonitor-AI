@@ -59,6 +59,7 @@ export async function installReaderWindows(
   const closed = new Set<string>();
   const cancelled = new Set<string>();
   const failPin = new Set<string>();
+  const failSave = new Set<string>();
   const holdSave = new Set<string>();
   const pendingSave = new Map<string, () => void>();
   let nextWindow = 0;
@@ -311,6 +312,7 @@ export async function installReaderWindows(
         }
         case "reader_save_position": {
           const session = sessionFor(label, args.readerId);
+          if (failSave.has(label)) throw new Error("REVISION_CONFLICT");
           if (holdSave.has(label))
             await new Promise<void>((resolve) => {
               pendingSave.set(label, resolve);
@@ -405,6 +407,7 @@ export async function installReaderWindows(
     pinned,
     closed,
     failPin,
+    failSave,
     holdSave,
     pendingSave,
     emit,

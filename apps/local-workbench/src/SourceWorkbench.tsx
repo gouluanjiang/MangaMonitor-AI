@@ -1,3 +1,23 @@
+import { CoverInteraction } from "./reader-access.tsx";
+import { SpecialFollowButton } from "./useSpecialFollows.tsx";
+import { recordSourceVisit } from "./work-visits.ts";
+import { notifySourceDetail } from "./source-detail-events.ts";
+import { useCoverRetry } from "./cover-retry.tsx";
+import { AuthorLinks } from "./AuthorLinks.tsx";
+import { FloatingSelection } from "./FloatingSelection.tsx";
+import { useBrowseSession } from "./useBrowseSession.ts";
+import { useTagSearch } from "./TagSearch.tsx";
+import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
+import { bindRecentUpdatesScroll } from "./recent-scroll.ts";
+import {
+  isContentHidden,
+  isOutsideJmAuthorScope,
+  rememberContentWork,
+  retainedContentTags,
+  inheritContentTags,
+  getContentFilterRevision,
+  subscribeContentFilter,
+} from "./content-filter.ts";
 import type { ReactNode } from "react";
 import { useReaderAccess, sourceReaderRequest } from "./reader-access.tsx";
 import { SourceIssues } from "./SourceIssues.tsx";
@@ -13,7 +33,15 @@ import { partitionAuthorWorks, projectAuthorWork } from "./author-evidence.ts";
 import { AuthorCreditNote } from "./AuthorCreditNote.tsx";
 import { downloadSelectionLimit } from "./download-types.ts";
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { LibrarySnapshot } from "./library-types.ts";
 import type { DownloadInventorySnapshot } from "./download-types.ts";
 import { createInventoryMatcher, inventoryLabel } from "./inventory-model.ts";
@@ -69,9 +97,17 @@ import "./source-workbench.css";
 export interface SourceWorkbenchProps {
   adapter: SourceAdapter;
   discoveryNavigation?: ReactNode;
+  searchMode?: "search" | "detail" | "tag";
+  searchRequest?: {
+    source: Source;
+    tag: string;
+    key: number;
+    category?: boolean;
+  } | null;
+  onAuthorSearch?(name: string): void;
   onDetailBack?(): void;
   onDownload?(work: SourceWork): void;
-  onDownloadMany?(works: SourceWork[]): void;
+  onDownloadMany?(works: SourceWork[]): Promise<string[]> | void;
   downloadInventory?: DownloadInventorySnapshot;
   inventoryReady?: boolean;
   downloadReady?: boolean;
@@ -112,6 +148,11 @@ export function SourceCover({
   const container = useRef<HTMLDivElement>(null);
   const cache = getCoverCache(adapter);
   const identity = JSON.stringify([scope.source, scope.sessionId, work.workId]);
+  const [retryState, setRetryState] = useState({ identity, version: 0 });
+  const localRetry = retryState.identity === identity ? retryState.version : 0;
+  const pendingMetadataRefresh = useRef<string | null>(null);
+  if (pendingMetadataRefresh.current !== identity)
+    pendingMetadataRefresh.current = null;
   const [state, setState] = useState<{
     identity: string;
     result: CoverResult | undefined;
@@ -132,6 +173,19 @@ export function SourceCover({
           shown: true,
           loading: false,
         };
+  const retryCover = useCallback(() => {
+    pendingMetadataRefresh.current = identity;
+    cache.retryFailure(scope, work.workId);
+    setState({ identity, result: undefined, shown: true, loading: true });
+    setRetryState((previous) => ({
+      identity,
+      version: previous.identity === identity ? previous.version + 1 : 1,
+    }));
+  }, [cache, identity, scope.source, scope.sessionId, work.workId]);
+  const canRetry =
+    current.result?.status === "error" ||
+    (!work.coverAvailable && !current.result && !current.loading);
+  const retryGesture = useCoverRetry(canRetry ? retryCover : null);
   useEffect(() => {
     let disposed = false;
     let visible: boolean | null = null;
@@ -152,7 +206,8 @@ export function SourceCover({
         !cached &&
         !work.coverAvailable &&
         !resolveMissing &&
-        retryVersion === 0
+        retryVersion === 0 &&
+        localRetry === 0
       ) {
         setState({ identity, result: undefined, shown: true, loading: false });
         return;
@@ -161,7 +216,13 @@ export function SourceCover({
       const job = cache.acquire(
         scope,
         work.workId,
-        () => adapter.cover(scope, work.workId),
+        () => {
+          // Consume only when queued work actually starts. Later scroll/cache
+          // reloads must not inherit the user's one explicit metadata refresh.
+          const refresh = pendingMetadataRefresh.current === identity;
+          if (refresh) pendingMetadataRefresh.current = null;
+          return adapter.cover(scope, work.workId, refresh);
+        },
         priority,
       );
       request = job;
@@ -228,6 +289,7 @@ export function SourceCover({
     work.workId,
     work.coverAvailable,
     retryVersion,
+    localRetry,
     resolveMissing,
   ]);
   return (
@@ -274,6 +336,19 @@ export function SourceCover({
                 : "封面未读取"}
         </span>
       )}
+      {canRetry &&
+        !retryGesture.selectionMode &&
+        (retryGesture.managed ? (
+          <span className="cover-retry-hint">点击封面重试</span>
+        ) : (
+          <button
+            type="button"
+            className="library-cover-retry"
+            onClick={retryCover}
+          >
+            重试读取
+          </button>
+        ))}
     </div>
   );
 }
@@ -283,6 +358,9 @@ const scopeKey = (scope: SourceScope | null) =>
 export function SourceWorkbench({
   adapter,
   discoveryNavigation,
+  searchMode,
+  searchRequest,
+  onAuthorSearch,
   onDetailBack,
   onDownload,
   onDownloadMany,
@@ -310,6 +388,13 @@ export function SourceWorkbench({
   searchHost,
 }: SourceWorkbenchProps) {
   const readerAccess = useReaderAccess();
+  const tagSearch = useTagSearch();
+  const contentRevision = useSyncExternalStore(
+    subscribeContentFilter,
+    getContentFilterRevision,
+  );
+  const handledSearch = useRef<number | null>(null);
+  const tagCategory = useRef(false);
   const inventory = useMemo(
     () =>
       createInventoryMatcher(
@@ -330,9 +415,9 @@ export function SourceWorkbench({
   }, [adapter, accounts]);
   const [source, setSource] = useState<Source>(requestedSource ?? "JM");
   const [query, setQuery] = useState("");
-  const [queryMode, setQueryMode] = useState<"author" | "search" | "detail">(
-    "author",
-  );
+  const [queryMode, setQueryMode] = useState<
+    "author" | "search" | "detail" | "tag"
+  >("author");
   const [showOtherAuthorResults, setShowOtherAuthorResults] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   const searchSorts = [
@@ -348,9 +433,7 @@ export function SourceWorkbench({
   const [sort, setSort] = useState<string>(() =>
     view === "search" ? searchSort() : "source",
   );
-  useEffect(() => {
-    setSort(view === "search" ? searchSort() : "source");
-  }, [view]);
+
   const [inventoryFilter, setInventoryFilter] =
     useState<InventoryFilter>("all");
   const currentSort = useRef(sort);
@@ -359,6 +442,7 @@ export function SourceWorkbench({
   const [autoPaused, setAutoPaused] = useState(false);
   const gridRef = useRef<SourceGridHandle>(null);
   const sentinel = useRef<HTMLDivElement>(null);
+  const searchSentinel = useRef<HTMLDivElement>(null);
   const collector = useRef<CollectionReader | null>(null);
   const collectionReadAll = useRef(false);
   const collectionNeedsVerification = useRef(false);
@@ -373,6 +457,9 @@ export function SourceWorkbench({
     cacheWarning: "",
   });
   const [items, setItems] = useState<SourceWork[]>([]);
+  useEffect(() => {
+    items.forEach(rememberContentWork);
+  }, [items]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const [searchComplete, setSearchComplete] = useState(false);
@@ -383,6 +470,11 @@ export function SourceWorkbench({
     page: number;
   }>();
   const [searchReadAt, setSearchReadAt] = useState<number | null>(null);
+  const [searchSupplement, setSearchSupplement] = useState({
+    count: 0,
+    checkedAt: null as number | null,
+    failed: false,
+  });
   const searchRecords = useRef(0);
   const searchIssues = useRef<SourceItemIssue[]>([]);
   const searchPagination = useRef<SearchPagination | undefined>(undefined);
@@ -478,12 +570,7 @@ export function SourceWorkbench({
     listRequest.current += 1;
     detailRequest.current += 1;
     followingRequest.current += 1;
-    setSort(view === "search" ? searchSort() : "source");
     setSource(next);
-    setQuery("");
-    setFolder(null);
-    setAuthorSearch(false);
-    setShowOtherAuthorResults(false);
     setSelection([]);
     setSelectionMode(false);
     setNotice(selection.length ? "来源已改变，临时选择已清空。" : "");
@@ -501,6 +588,82 @@ export function SourceWorkbench({
     const target = requestedWork?.source ?? requestedSource;
     if (target) changeSource(target);
   }, [requestedSource, requestedWork?.source, requestKey]);
+  const savedViews = useRef(
+    new Map<
+      string,
+      {
+        items: SourceWork[];
+        pageInfo: SourcePage | null;
+        query: string;
+        queryMode: typeof queryMode;
+        tagCategory: boolean;
+        folder: string | null;
+        sort: string;
+        inventoryFilter: InventoryFilter;
+        searchComplete: boolean;
+        searchPolicy: AuthorQueryPolicy | undefined;
+        following: FollowingSnapshot | null;
+        readAt: number | null;
+        supplement: typeof searchSupplement;
+        records: number;
+        issues: SourceItemIssue[];
+        pagination: SearchPagination | undefined;
+        lastRead: typeof lastRead.current;
+        lastQuery: typeof lastListQuery.current;
+      }
+    >(),
+  );
+  const savingView = useRef({
+    items,
+    pageInfo,
+    query,
+    queryMode,
+    tagCategory: tagCategory.current,
+    folder,
+    sort,
+    inventoryFilter,
+    searchComplete,
+    searchPolicy,
+    following,
+    readAt: searchReadAt,
+    supplement: searchSupplement,
+    records: searchRecords.current,
+    issues: searchIssues.current,
+    pagination: searchPagination.current,
+    lastRead: lastRead.current,
+    lastQuery: lastListQuery.current,
+  });
+  savingView.current = {
+    items,
+    pageInfo,
+    query,
+    queryMode,
+    tagCategory: tagCategory.current,
+    folder,
+    sort,
+    inventoryFilter,
+    searchComplete,
+    searchPolicy,
+    following,
+    readAt: searchReadAt,
+    supplement: searchSupplement,
+    records: searchRecords.current,
+    issues: searchIssues.current,
+    pagination: searchPagination.current,
+    lastRead: lastRead.current,
+    lastQuery: lastListQuery.current,
+  };
+  const savedViewKey = JSON.stringify([
+    scopeId,
+    view,
+    view === "search" ? searchMode : null,
+  ]);
+  useEffect(() => {
+    const key = savedViewKey;
+    return () => {
+      savedViews.current.set(key, savingView.current);
+    };
+  }, [savedViewKey]);
   useEffect(() => {
     listRequest.current += 1;
     detailRequest.current += 1;
@@ -512,6 +675,7 @@ export function SourceWorkbench({
     setItems([]);
     setSearchComplete(false);
     setSearchPolicy(undefined);
+    setSearchSupplement({ count: 0, checkedAt: null, failed: false });
     setShowOtherAuthorResults(false);
     setPageInfo(null);
     setDetailRef(null);
@@ -528,10 +692,37 @@ export function SourceWorkbench({
     setError("");
     setDetailError("");
     setAuthorSearch(false);
-    setQuery("");
-    setFolder(null);
+    const remembered = savedViews.current.get(savedViewKey);
+    if (remembered) {
+      setItems(remembered.items);
+      itemsRef.current = remembered.items;
+      setPageInfo(remembered.pageInfo);
+      setQuery(remembered.query);
+      setQueryMode(remembered.queryMode);
+      tagCategory.current = remembered.tagCategory;
+      setFolder(remembered.folder);
+      setSort(remembered.sort);
+      setInventoryFilter(remembered.inventoryFilter);
+      setSearchComplete(remembered.searchComplete);
+      setSearchPolicy(remembered.searchPolicy);
+      setFollowing(remembered.following);
+      setSearchReadAt(remembered.readAt);
+      setSearchSupplement(remembered.supplement);
+      searchRecords.current = remembered.records;
+      searchIssues.current = remembered.issues;
+      setSearchIssueView(remembered.issues);
+      searchPagination.current = remembered.pagination;
+      lastRead.current = remembered.lastRead;
+      lastListQuery.current = remembered.lastQuery;
+    } else {
+      tagCategory.current = false;
+      setQuery("");
+      setFolder(null);
+      setSort(view === "search" ? searchSort() : "source");
+      setInventoryFilter("all");
+    }
     autoContext.current = "";
-  }, [scopeId, view]);
+  }, [savedViewKey]);
   useEffect(() => {
     if (!active || !scope || loadingAccounts) return;
     const context = scopeId + "|" + view + "|" + (folder ?? "");
@@ -794,8 +985,18 @@ export function SourceWorkbench({
         searchIssues.current = progress.issues;
         searchPagination.current = progress.pagination;
         setSearchIssueView(progress.issues);
-        itemsRef.current = progress.items;
-        setItems(progress.items);
+        const displayItems = [
+          ...progress.items,
+          ...(progress.historicalItems ?? []),
+        ];
+        displayItems.forEach(rememberContentWork);
+        itemsRef.current = displayItems;
+        setItems(displayItems);
+        setSearchSupplement({
+          count: progress.historicalItems?.length ?? 0,
+          checkedAt: progress.historicalReadAt ?? null,
+          failed: !!progress.historicalReadError,
+        });
         setPageInfo(progress.page);
         setSearchComplete(progress.complete);
         setSearchReadAt(Date.now());
@@ -815,17 +1016,45 @@ export function SourceWorkbench({
           page: asAuthor ? 1 : progress.page.page + 1,
           append: !asAuthor,
         };
-        notifyWorks.current(captured, progress.items.slice(-1000));
+        notifyWorks.current(captured, displayItems.slice(-1000));
+        if (
+          progress.page.observationErrorCode ||
+          progress.historicalObservationErrorCode
+        )
+          setError(
+            "来源作品已读取，但补入作者目录尚未保存；当前结果保留，请重试读取。",
+          );
       };
       if (asAuthor)
         await readCompleteAuthorSearch(adapter, captured, value, {
           current,
           onPolicy: setSearchPolicy,
+          onHistory(history) {
+            history.items.forEach(rememberContentWork);
+            itemsRef.current = history.items;
+            setItems(history.items);
+            setSearchSupplement({
+              count: history.items.length,
+              checkedAt: history.checkedAt,
+              failed: !history.complete,
+            });
+            if (history.observationErrorCode)
+              setError(
+                "历史目录补录尚未完成，可靠的已保存作品继续显示；请重试读取核对。",
+              );
+          },
           onPage,
         });
       else
         await readCompleteSearch(adapter, captured, value, {
           current,
+          requestKind:
+            queryMode === "tag"
+              ? tagCategory.current
+                ? "category"
+                : "tag"
+              : "search",
+          pageLimit: 1,
           fromPage: page,
           items: append ? itemsRef.current : [],
           recordsRead: searchRecords.current,
@@ -885,6 +1114,7 @@ export function SourceWorkbench({
     }
   }
   function changeQuery(value: string) {
+    tagCategory.current = false;
     setQuery(value);
     setShowOtherAuthorResults(false);
     clearSelection();
@@ -897,6 +1127,32 @@ export function SourceWorkbench({
       setError("");
     }
   }
+  useEffect(() => {
+    if (searchMode) setQueryMode(searchMode);
+  }, [searchMode]);
+  useEffect(() => {
+    if (
+      !active ||
+      view !== "search" ||
+      !scope ||
+      !searchRequest ||
+      handledSearch.current === searchRequest.key
+    )
+      return;
+    if (source !== searchRequest.source) {
+      changeSource(searchRequest.source);
+      return;
+    }
+    if (queryMode !== "tag") {
+      setQueryMode("tag");
+      return;
+    }
+    handledSearch.current = searchRequest.key;
+    tagCategory.current = searchRequest.category === true;
+    setDetailRef(null);
+    setQuery(searchRequest.tag);
+    void readList("search", searchRequest.tag, null, 1, false, false);
+  }, [active, view, scopeId, searchRequest, source, queryMode]);
   function submitSearch() {
     if (!scope || !query.trim() || loading) return;
     clearSelection();
@@ -924,6 +1180,7 @@ export function SourceWorkbench({
       });
       if (!stillCurrent(captured) || request !== detailRequest.current) return;
       let found = result.items[0];
+      if (found) rememberContentWork(found);
       if (!found) {
         setDetailError("没有取得这部作品的详情，请检查来源编号或链接。");
         return;
@@ -932,17 +1189,17 @@ export function SourceWorkbench({
         (item) => sourceWorkKey(item) === sourceWorkKey(found!),
       );
       if (previous) {
-        const tags = inheritLanguageTags(found.tags, previous.tags);
+        const tags = inheritContentTags(found.tags, previous.tags);
         if (tags !== found.tags) found = { ...found, tags };
       }
       if (found.sourceUpdatedAt == null && previous?.sourceUpdatedAt)
         found = { ...found, sourceUpdatedAt: previous.sourceUpdatedAt };
-      const languageTags = retainedLanguageTags(found.tags);
+      const languageTags = retainedContentTags(found.tags);
       if (
         (found.sourceUpdatedAt &&
           previous?.sourceUpdatedAt !== found.sourceUpdatedAt) ||
         (previous &&
-          JSON.stringify(retainedLanguageTags(previous.tags)) !==
+          JSON.stringify(retainedContentTags(previous.tags)) !==
             JSON.stringify(languageTags))
       ) {
         const dated = found;
@@ -959,7 +1216,13 @@ export function SourceWorkbench({
       }
       setDetail(found);
       setDetailRef(toWorkReference(found));
+      recordSourceVisit({
+        scope: captured,
+        reference: toWorkReference(found),
+        work: found,
+      });
       notifyWorks.current(captured, [found]);
+      notifySourceDetail(captured, found);
     } catch (cause) {
       if (stillCurrent(captured) && request === detailRequest.current) {
         setDetailError(sourceErrorMessage(cause));
@@ -1034,7 +1297,7 @@ export function SourceWorkbench({
     mutation: Omit<FollowMutation, "expectedRevision">,
   ) {
     const captured = currentScope.current;
-    if (!captured || !following || followingLock.current) return;
+    if (!captured || !following || followingLock.current) return false;
     const request = ++followingRequest.current;
     followingLock.current = true;
     setFollowingBusy(true);
@@ -1046,15 +1309,17 @@ export function SourceWorkbench({
         expectedRevision: following.revision,
       });
       if (!stillCurrent(captured) || request !== followingRequest.current)
-        return;
+        return false;
       setFollowing(result);
       setPendingFollow(null);
       setNotice(mutation.desired ? "已加入本机关注。" : "已取消本机关注。");
+      return true;
     } catch (cause) {
       if (stillCurrent(captured) && request === followingRequest.current) {
         setFollowingError(sourceErrorMessage(cause));
         void reconcileSessionFailure(cause, captured);
       }
+      return false;
     } finally {
       if (stillCurrent(captured) && request === followingRequest.current) {
         followingLock.current = false;
@@ -1062,18 +1327,22 @@ export function SourceWorkbench({
       }
     }
   }
-  const followedWorks: SourceWork[] = (following?.works ?? []).map((work) => ({
-    source,
-    workId: work.workId,
-    title: work.title,
-    authors: [],
-    description: null,
-    tags: [],
-    favorite: null,
-    chapterCount: null,
-    pageCount: null,
-    coverAvailable: false,
-  }));
+  const followedWorks: SourceWork[] = useMemo(
+    () =>
+      (following?.works ?? []).map((work) => ({
+        source,
+        workId: work.workId,
+        title: work.title,
+        authors: [],
+        description: null,
+        tags: [],
+        favorite: null,
+        chapterCount: null,
+        pageCount: null,
+        coverAvailable: false,
+      })),
+    [following?.works, source],
+  );
   const authorResults = useMemo(
     () =>
       authorQuery
@@ -1114,25 +1383,39 @@ export function SourceWorkbench({
           ? authorResults.other
           : authorResults.confirmed
         : items;
-  const searchedWorks = browsingWorks.filter(
-    (work) =>
-      searching ||
-      (work.title + " " + work.authors.join(" "))
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase()),
-  );
+  const searchedWorks = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return browsingWorks
+      .filter(
+        (work) =>
+          !isContentHidden(work) &&
+          !(searching && isOutsideJmAuthorScope(work)),
+      )
+      .filter(
+        (work) =>
+          searching ||
+          (work.title + " " + work.authors.join(" "))
+            .toLocaleLowerCase()
+            .includes(normalizedQuery),
+      );
+  }, [browsingWorks, searching, query, contentRevision]);
   const inventoryByKey = useMemo(
     () => new Map(items.map((work) => [sourceWorkKey(work), inventory(work)])),
     [items, inventory],
   );
-  const inventoryFor = (work: SourceWork) =>
-    inventoryByKey.get(sourceWorkKey(work)) ?? inventory(work);
-  const filtered = searchedWorks.filter((work) =>
-    inventoryFilterMatches(inventoryFor(work), inventoryFilter),
+  const inventoryFor = useCallback(
+    (work: SourceWork) =>
+      inventoryByKey.get(sourceWorkKey(work)) ?? inventory(work),
+    [inventoryByKey, inventory],
   );
-  useEffect(() => {
-    setInventoryFilter("all");
-  }, [scopeId, folder, view]);
+  const filtered = useMemo(
+    () =>
+      searchedWorks.filter((work) =>
+        inventoryFilterMatches(inventoryFor(work), inventoryFilter),
+      ),
+    [searchedWorks, inventoryFor, inventoryFilter],
+  );
+
   const completeIndex = collectionState.snapshot?.complete ?? false;
   const collectionNormalRecords = collectionState.snapshot?.items.length ?? 0;
   const collectionRecords =
@@ -1143,19 +1426,22 @@ export function SourceWorkbench({
   const collectionDuplicates = collectionNormalRecords - collectionWorks;
   const reversePreparing =
     view === "favorites" && sort === "source-reverse" && !completeIndex;
-  const visible =
-    sort === "updated-desc" || sort === "updated-asc"
-      ? sortByWorkDate(filtered, (work) => work.sourceUpdatedAt, sort)
-      : sort === "title" || sort === "title-desc"
-        ? [...filtered].sort(
-            (a, b) =>
-              (a.title.localeCompare(b.title, "zh-CN") ||
-                sourceWorkKey(a).localeCompare(sourceWorkKey(b))) *
-              (sort === "title-desc" ? -1 : 1),
-          )
-        : sort === "source-reverse" && !reversePreparing
-          ? [...filtered].reverse()
-          : filtered;
+  const visible = useMemo(
+    () =>
+      sort === "updated-desc" || sort === "updated-asc"
+        ? sortByWorkDate(filtered, (work) => work.sourceUpdatedAt, sort)
+        : sort === "title" || sort === "title-desc"
+          ? [...filtered].sort(
+              (a, b) =>
+                (a.title.localeCompare(b.title, "zh-CN") ||
+                  sourceWorkKey(a).localeCompare(sourceWorkKey(b))) *
+                (sort === "title-desc" ? -1 : 1),
+            )
+          : sort === "source-reverse" && !reversePreparing
+            ? [...filtered].reverse()
+            : filtered,
+    [filtered, sort, reversePreparing],
+  );
   const selectionKeys = new Set(selection);
   useEffect(() => {
     if (inventoryFilter === "all" || !selection.length) return;
@@ -1350,6 +1636,83 @@ export function SourceWorkbench({
       </div>
     ) : null;
   }
+  useBrowseSession({
+    scope: JSON.stringify([
+      view,
+      scopeId,
+      folder,
+      query,
+      queryMode,
+      sort,
+      view === "favorites" && sort === "source-reverse"
+        ? collectionState.displaySnapshot?.complete === true
+        : null,
+      inventoryFilter,
+      followingTab,
+    ]),
+    active,
+    enabled: !detailRef,
+    root: host,
+    grid: gridRef,
+    itemKeys: visible.map(sourceWorkKey),
+  });
+  useEffect(() => {
+    const element = searchSentinel.current,
+      container = main();
+    if (
+      !active ||
+      detailRef ||
+      !searching ||
+      authorQuery ||
+      !element ||
+      !container ||
+      searchComplete ||
+      loading ||
+      error ||
+      !pageInfo
+    )
+      return;
+    let queued = false;
+    return bindRecentUpdatesScroll(container, element, {
+      get state() {
+        return {
+          phase: queued ? "reading" : "ready",
+          snapshot: { hasMore: true },
+        };
+      },
+      loadNext() {
+        queued = true;
+        return readList(
+          "search",
+          lastListQuery.current.query,
+          null,
+          lastRead.current.page,
+          true,
+          false,
+        );
+      },
+    });
+  }, [
+    active,
+    detailRef,
+    searching,
+    authorQuery,
+    searchComplete,
+    loading,
+    error,
+    pageInfo,
+  ]);
+  useBrowseSession({
+    scope: JSON.stringify([
+      "source-detail",
+      scopeId,
+      detailRef ? sourceWorkKey(detailRef) : null,
+    ]),
+    active,
+    enabled: !!detailRef,
+    root: host,
+    itemKeys: [],
+  });
   function grid(works: SourceWork[]) {
     return (
       <VirtualSourceGrid<SourceWork>
@@ -1369,20 +1732,22 @@ export function SourceWorkbench({
               data-testid={"source-card-" + key}
             >
               <div className="source-card-cover">
-                <button
-                  type="button"
+                <CoverInteraction
                   className="source-cover-button source-language-cover"
-                  data-testid={"source-open-" + key}
-                  onClick={() =>
-                    scope
-                      ? readerAccess.choose(
-                          sourceReaderRequest(scope, work),
-                          work.title,
-                          () => void openDetail(toWorkReference(work)),
-                        )
-                      : void openDetail(toWorkReference(work))
-                  }
-                  aria-label={"打开《" + work.title + "》"}
+                  testId={"source-open-" + key}
+                  title={work.title}
+                  request={scope ? sourceReaderRequest(scope, work) : null}
+                  onDetails={() => void openDetail(toWorkReference(work))}
+                  selectionMode={selectionMode && !showingOtherAuthors}
+                  selected={selectionKeys.has(key)}
+                  onToggleSelection={() => {
+                    if (inventory(work).kind !== "owned")
+                      setSelection((old) =>
+                        old.includes(key)
+                          ? old.filter((item) => item !== key)
+                          : [...old, key],
+                      );
+                  }}
                 >
                   {scope && (
                     <SourceCover
@@ -1398,7 +1763,7 @@ export function SourceWorkbench({
                     work={work}
                     scope={scope}
                   />
-                </button>
+                </CoverInteraction>
                 {selectionMode && !showingOtherAuthors && (
                   <input
                     type="checkbox"
@@ -1423,11 +1788,7 @@ export function SourceWorkbench({
                   {work.title}
                 </button>
               </h3>
-              <p>
-                {work.authors.length
-                  ? work.authors.join("、")
-                  : "作者资料未取得"}
-              </p>
+              <AuthorLinks authors={work.authors} />
               <AuthorCreditNote work={work} />
               <p className="source-card-state">
                 {sourceLabel(work.source)} · {inventoryLabel(inventory(work))}
@@ -1446,733 +1807,775 @@ export function SourceWorkbench({
       />
     );
   }
-  const body = detailRef ? (
-    <div className="source-detail" data-testid="source-detail">
-      {!searchHost && <div className="source-page-tools">{searchControl}</div>}
-      <button
-        type="button"
-        className="text-button"
-        data-testid="source-detail-back"
-        onClick={back}
-      >
-        ← 返回列表
-      </button>
-      {detailLoading && <p role="status">正在读取作品详情…</p>}
-      {detailError && (
-        <div className="source-notice">
-          <p role="alert">{detailError}</p>
-          <button
-            type="button"
-            className="text-button"
-            disabled={detailLoading}
-            data-testid="source-detail-reload"
-            onClick={() => void openDetail(detailRef)}
-          >
-            重新读取当前作品
-          </button>
-        </div>
-      )}
-      {detail && scope && (
-        <>
-          <div className="source-detail-main">
-            <SourceCover
-              adapter={adapter}
-              scope={scope}
-              work={detail}
-              retryVersion={coverEpoch}
-            />
-            <div className="source-detail-info">
-              <p className="source-muted">
-                {sourceLabel(source)} · 来源作品详情
-              </p>
-              <h1>{detail.title}</h1>
-              <div className="source-detail-authors">
-                {displayDetail?.authors.length ? (
-                  displayDetail.authors.map((author) => (
-                    <div key={author}>
-                      <span>{author}</span>
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={!following || followingBusy}
-                        data-testid={"source-follow-author-" + author}
-                        onClick={() =>
-                          void changeFollow({
-                            kind: "author",
-                            value: author,
-                            desired: !following?.authors.includes(author),
-                          })
-                        }
-                      >
-                        {following?.authors.includes(author)
-                          ? "取消作者关注"
-                          : "关注作者"}
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <p>作者资料未取得</p>
-                )}
-              </div>
-              {displayDetail && <AuthorCreditNote work={displayDetail} />}
-              <div className="source-tags">
-                <SourceLanguageBadge
-                  tags={detail.tags}
-                  work={detail}
-                  scope={scope}
-                  inline
-                />
-                {detail.tags.map((tag) => (
-                  <span key={tag}>{tag}</span>
-                ))}
-              </div>
-              <dl className="source-facts">
-                <div>
-                  <dt>网站更新</dt>
-                  <dd data-testid="source-updated-at">
-                    {formatWorkDate(detail.sourceUpdatedAt, true) ??
-                      "更新时间未知"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>章节</dt>
-                  <dd>
-                    {detail.chapterCount === null
-                      ? "未知"
-                      : detail.chapterCount}
-                  </dd>
-                </div>
-                <div>
-                  <dt>页数</dt>
-                  <dd>
-                    {detail.pageCount === null ? "未知" : detail.pageCount}
-                  </dd>
-                </div>
-                <div>
-                  <dt>本地库存</dt>
-                  <dd data-testid="source-detail-stock">
-                    {inventoryLabel(inventory(detail))}
-                  </dd>
-                </div>
-              </dl>
-              <div className="source-actions">
-                {readerAccess.available && scope && (
-                  <button
-                    type="button"
-                    className="button secondary"
-                    data-testid="source-read"
-                    onClick={() =>
-                      readerAccess.read(sourceReaderRequest(scope, detail))
-                    }
-                  >
-                    阅读
-                  </button>
-                )}
-                {onOpenLibrary &&
-                  inventory(detail).kind === "owned" &&
-                  inventory(detail).items.length > 0 && (
-                    <button
-                      type="button"
-                      className="button secondary"
-                      data-testid="source-open-library"
-                      onClick={() =>
-                        onOpenLibrary(detail, inventory(detail).items[0]?.id)
-                      }
-                    >
-                      查看电脑文件
-                    </button>
-                  )}
-                <button
-                  type="button"
-                  className="button primary"
-                  disabled={
-                    !onDownload ||
-                    !downloadReady ||
-                    downloadBusy ||
-                    inventory(detail).kind === "owned"
-                  }
-                  data-testid="source-download"
-                  onClick={() => onDownload?.(detail)}
-                >
-                  {inventory(detail).kind === "owned"
-                    ? "已入库"
-                    : downloadBusy
-                      ? "正在准备下载…"
-                      : "下载到电脑"}
-                </button>
-
-                <button
-                  type="button"
-                  className="text-button"
-                  data-testid="source-favorite"
-                  disabled={favoriteBusy || detail.favorite === null}
-                  aria-pressed={
-                    detail.favorite === null ? undefined : detail.favorite
-                  }
-                  onClick={() => void changeFavorite()}
-                >
-                  {favoriteBusy
-                    ? "正在确认网站状态…"
-                    : detail.favorite === null
-                      ? "收藏状态待核对"
-                      : detail.favorite
-                        ? "取消网站收藏"
-                        : "收藏到网站"}
-                </button>
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={!following || followingBusy}
-                  data-testid="source-follow-work"
-                  onClick={() =>
-                    void changeFollow({
-                      kind: "work",
-                      value: detail.workId,
-                      desired: !following?.works.some(
-                        (work) => work.workId === detail.workId,
-                      ),
-                    })
-                  }
-                >
-                  {following?.works.some(
-                    (work) => work.workId === detail.workId,
-                  )
-                    ? "取消作品关注"
-                    : "关注作品"}
-                </button>
-              </div>
-              <p className="source-muted">
-                网站收藏与本机关注分别保存。作品下载经确认后加入电脑队列。
-                <button
-                  type="button"
-                  className="text-button"
-                  data-testid="source-detail-cover-retry"
-                  onClick={retryCovers}
-                >
-                  重试封面
-                </button>
-              </p>
-              {followingFeedback()}
-              <section className="source-description">
-                <h2>简介</h2>
-                <p className={expanded ? "" : "is-collapsed"}>
-                  {detail.description ?? "来源未提供简介。"}
-                </p>
-                {detail.description && detail.description.length > 180 && (
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setExpanded(!expanded)}
-                  >
-                    {expanded ? "收起简介" : "展开简介"}
-                  </button>
-                )}
-              </section>
-              <section>
-                <h2>来源信息</h2>
-                <p>
-                  {sourceLabel(source)} · {detail.workId}
-                </p>
-                <p className="source-muted">
-                  可在上方确认下载到电脑，下载进度与结果在队列中查看。
-                </p>
-              </section>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  ) : (
-    <>
-      <div className="page-heading source-heading">
-        <div>
-          <h1>
-            {authorSearch
-              ? "作者作品"
-              : view === "favorites"
-                ? "在线收藏"
-                : view === "following"
-                  ? "关注"
-                  : "来源搜索"}
-          </h1>
-          <p className="source-muted">
-            {sourceLabel(source)} ·{" "}
-            {loadingAccounts
-              ? "正在恢复账号…"
-              : account?.state === "connected"
-                ? (account.displayName ?? account.accountId)
-                : "尚未连接账号"}
-          </p>
-        </div>
+  const body =
+    detail && isContentHidden(detail) ? (
+      <div className="source-empty">
+        <p>该作品已按内容偏好隐藏。</p>
+        <button onClick={back}>返回列表</button>
       </div>
-      {view === "search" && discoveryNavigation}
-      <div className="source-page-tools">
-        {!searchHost && searchControl}
-        <div className="source-tabs" role="group" aria-label="来源">
-          {sources.map((item) => (
+    ) : detailRef ? (
+      <div className="source-detail" data-testid="source-detail">
+        {!searchHost && (
+          <div className="source-page-tools">{searchControl}</div>
+        )}
+        <button
+          type="button"
+          className="text-button"
+          data-testid="source-detail-back"
+          onClick={back}
+        >
+          ← 返回列表
+        </button>
+        {detailLoading && <p role="status">正在读取作品详情…</p>}
+        {detailError && (
+          <div className="source-notice">
+            <p role="alert">{detailError}</p>
             <button
               type="button"
-              key={item}
-              className={source === item ? "active" : ""}
-              aria-pressed={source === item}
-              data-testid={"source-tab-" + item}
-              onClick={() => changeSource(item)}
+              className="text-button"
+              disabled={detailLoading}
+              data-testid="source-detail-reload"
+              onClick={() => void openDetail(detailRef)}
             >
-              {sourceLabel(item)}
+              重新读取当前作品
             </button>
-          ))}
-        </div>
-      </div>
-      {!connected ? (
-        <div className="source-empty" data-testid="source-account-required">
-          <h2>
-            {loadingAccounts
-              ? "正在恢复账号会话"
-              : !adapter.available
-                ? "请使用桌面应用"
-                : account?.state === "expired"
-                  ? "账号需要重新登录"
-                  : "连接当前来源账号"}
-          </h2>
-          <p>
-            {loadingAccounts
-              ? "读取完成后可继续操作。"
-              : !adapter.available
-                ? "浏览器预览不会连接真实来源，也不会显示模拟的登录成功。"
-                : "未连接不代表空收藏。连接后可读取该账号的来源数据。"}
-          </p>
-          <button
-            type="button"
-            className="button primary"
-            disabled={loadingAccounts}
-            onClick={() => onOpenAccounts(source)}
-          >
-            前往账号设置
-          </button>
-          <button
-            type="button"
-            className="text-button"
-            disabled={loadingAccounts}
-            onClick={() => void refreshAccounts()}
-          >
-            重新读取账号状态
-          </button>
-        </div>
-      ) : (
-        <>
-          {view === "following" && !authorSearch && (
-            <div className="source-following-tabs source-tabs">
-              <button
-                type="button"
-                aria-pressed={followingTab === "authors"}
-                onClick={() => {
-                  setFollowingTab("authors");
-                  clearSelection();
-                }}
-              >
-                作者关注 {following?.authors.length ?? "—"}
-              </button>
-              <button
-                type="button"
-                aria-pressed={followingTab === "works"}
-                onClick={() => {
-                  setFollowingTab("works");
-                  clearSelection();
-                }}
-              >
-                作品关注 {following?.works.length ?? "—"}
-              </button>
-              <button
-                type="button"
-                className="text-button"
-                disabled={followingBusy}
-                onClick={() => void readFollowing()}
-              >
-                重新读取本机关注
-              </button>
-            </div>
-          )}
-          <div className="source-toolbar">
-            <div className="source-toolbar-leading">
-              <button
-                type="button"
-                className="text-button"
-                data-testid="source-cover-retry"
-                onClick={retryCovers}
-              >
-                重试封面
-              </button>
-              {view === "favorites" && source === "JM" && (
-                <label>
-                  网站收藏夹{" "}
-                  <select
-                    data-testid="source-folder"
-                    value={folder ?? ""}
-                    disabled={loading}
-                    onChange={(event) => {
-                      collectionReadAll.current = false;
-                      collector.current?.stopReadAll();
-                      setSort("source");
-                      setFolder(event.target.value || null);
-                      clearSelection();
-                      pendingAnchor.current = null;
-                      savedAnchor.current = null;
-                      main()?.scrollTo(0, 0);
-                    }}
-                  >
-                    <option value="">全部收藏</option>
-                    {pageInfo?.folders.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                        {item.count === null ? "" : " · " + item.count}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {searching && !authorSearch && (
-                <label>
-                  查询方式{" "}
-                  <select
-                    value={queryMode}
-                    onChange={(event) => {
-                      setQueryMode(
-                        event.target.value as "author" | "search" | "detail",
-                      );
-                      setShowOtherAuthorResults(false);
-                      clearSelection();
-                      listRequest.current += 1;
-                      setLoading(false);
-                      setItems([]);
-                      setPageInfo(null);
-                      setSearchComplete(false);
-                      setError("");
-                    }}
-                    data-testid="source-query-mode"
-                  >
-                    <option value="author">按作者搜索</option>
-                    <option value="search">作品关键词搜索</option>
-                    <option value="detail">单个编号或链接</option>
-                  </select>
-                </label>
-              )}
-              {view === "favorites" && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  disabled={loading}
-                  data-testid="source-refresh"
-                  onClick={() => {
-                    refreshCollection();
-                  }}
-                >
-                  刷新收藏
-                </button>
-              )}
-              {view === "favorites" && (
-                <>
-                  {!completeIndex && (
-                    <button
-                      className="button secondary"
-                      data-testid="collection-read-all"
-                      onClick={() => {
-                        collectionReadAll.current = true;
-                        setAutoPaused(false);
-                        resumeCollection(true);
-                      }}
-                    >
-                      读取全部收藏
-                    </button>
-                  )}
-                </>
-              )}
-              {authorSearch && (
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => {
-                    setAuthorSearch(false);
-                    setSort("source");
-                    setQuery("");
-                    clearSelection();
-                  }}
-                >
-                  返回本机关注
-                </button>
-              )}
-            </div>
-            {!(
-              view === "following" &&
-              followingTab === "authors" &&
-              !authorSearch
-            ) && densityControl()}
           </div>
-          {notice && (
-            <p
-              role="status"
-              className="source-notice"
-              data-testid="source-notice"
-            >
-              {notice}
-            </p>
-          )}
-          {error && (
-            <div className="source-notice">
-              <p role="alert">{error}</p>
-              <button
-                type="button"
-                className="text-button"
-                disabled={loading}
-                data-testid="source-retry"
-                onClick={() =>
-                  void readList(
-                    lastRead.current.kind,
-                    lastRead.current.query,
-                    lastRead.current.folderId,
-                    lastRead.current.page,
-                    lastRead.current.append,
-                  )
-                }
-              >
-                重试读取
-              </button>
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => onOpenAccounts(source)}
-              >
-                账号设置
-              </button>
-            </div>
-          )}
-          {view === "following" && followingFeedback()}
-          {view === "following" &&
-          !authorSearch &&
-          followingTab === "authors" ? (
-            <>
-              <p className="source-muted">
-                这里的关注保存在本机当前账号下。点击作者会读取本次来源的完整查询。双来源查询可使用侧栏“作者搜索”。
-              </p>
-              <div className="source-authors" data-testid="source-authors">
-                <div className="source-author-head">
-                  <span>作者</span>
-                  <span>来源</span>
-                  <span>检查方式</span>
-                  <span>操作</span>
-                </div>
-                {(following?.authors ?? [])
-                  .filter((name) => name.includes(query.trim()))
-                  .map((author) => (
-                    <div className="source-author-row" key={author}>
-                      <strong>{author}</strong>
-                      <span>{sourceLabel(source)}</span>
-                      <span className="source-muted">手动查看与检查</span>
-                      <div className="source-actions">
-                        <button
-                          type="button"
-                          className="button secondary"
-                          onClick={() => {
-                            setAuthorSearch(true);
-                            setSort(searchSort());
-                            setQuery(author);
-                            setQueryMode("author");
-                            setShowOtherAuthorResults(false);
-                            clearSelection();
-                            void readList(
-                              "search",
-                              author,
-                              null,
-                              1,
-                              false,
-                              true,
-                            );
-                          }}
-                        >
-                          搜索该作者
-                        </button>
+        )}
+        {detail && scope && (
+          <>
+            <div className="source-detail-main">
+              <SourceCover
+                adapter={adapter}
+                scope={scope}
+                work={detail}
+                retryVersion={coverEpoch}
+              />
+              <div className="source-detail-info">
+                <p className="source-muted">
+                  {sourceLabel(source)} · 来源作品详情
+                </p>
+                <h1>{detail.title}</h1>
+                <div className="source-detail-authors">
+                  {displayDetail?.authors.length ? (
+                    displayDetail.authors.map((author) => (
+                      <div key={author}>
+                        <span>{author}</span>
                         <button
                           type="button"
                           className="text-button"
-                          disabled={followingBusy}
+                          disabled={!following || followingBusy}
+                          data-testid={"source-follow-author-" + author}
                           onClick={() =>
                             void changeFollow({
                               kind: "author",
                               value: author,
-                              desired: false,
+                              desired: !following?.authors.includes(author),
                             })
                           }
                         >
-                          取消关注
+                          {following?.authors.includes(author)
+                            ? "取消作者关注"
+                            : "关注作者"}
                         </button>
+                        <SpecialFollowButton
+                          author={author}
+                          disabled={!following || followingBusy}
+                          beforeEnable={async () =>
+                            following?.authors.includes(author)
+                              ? true
+                              : changeFollow({
+                                  kind: "author",
+                                  value: author,
+                                  desired: true,
+                                })
+                          }
+                        />
                       </div>
-                    </div>
-                  ))}
-              </div>
-              {followingBusy && <p role="status">正在读取本机关注…</p>}
-              {following && !following.authors.length && (
-                <p className="source-empty">
-                  还没有关注作者。可从作品详情加入本机关注。
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="source-results-heading">
-                <span>
-                  {view === "following" && !authorSearch
-                    ? "已关注作品 " + followedWorks.length + " 部"
-                    : "已读取 " +
-                      items.length +
-                      " 部" +
-                      (totalKnown
-                        ? " / 来源报告 " + pageInfo!.total + " 部"
-                        : " · 总数未知")}
-                </span>
-                <div className="source-actions">
-                  <label className="source-sort">
-                    排序{" "}
-                    <select
-                      data-testid="source-sort"
-                      value={sort}
-                      onChange={(event) => changeSort(event.target.value)}
-                    >
-                      {searching && (
-                        <>
-                          <option value="updated-desc">
-                            更新时间：从新到旧
-                          </option>
-                          <option value="updated-asc">
-                            更新时间：从旧到新
-                          </option>
-                        </>
-                      )}
-                      <option value="source">
-                        {source === "Pica" && view === "favorites"
-                          ? "收藏时间：从新到旧"
-                          : "来源顺序"}
-                      </option>
-                      <option value="source-reverse">
-                        {source === "Pica" && view === "favorites"
-                          ? "收藏时间：从旧到新"
-                          : "来源倒序"}
-                      </option>
-                      <option value="title">
-                        作品名称：升序（已读取范围）
-                      </option>
-                      <option value="title-desc">
-                        作品名称：降序（已读取范围）
-                      </option>
-                    </select>
-                  </label>
-                  {!showingOtherAuthors && (
-                    <button
-                      type="button"
-                      className="text-button"
-                      data-testid="source-toggle-selection"
-                      aria-pressed={selectionMode}
-                      onClick={() => {
-                        setSelectionMode(!selectionMode);
-                        setSelection([]);
-                        setFullSelectionScope(null);
-                      }}
-                    >
-                      {selectionMode ? "退出多选" : "多选"}
-                    </button>
-                  )}
-                  {selectionMode && !showingOtherAuthors && (
-                    <button
-                      type="button"
-                      className="text-button"
-                      data-testid="source-select-all"
-                      disabled={
-                        !visible.length ||
-                        Boolean(fullSelectionScope) ||
-                        (!selectionComplete && view !== "favorites")
-                      }
-                      onClick={() => {
-                        if (selectionComplete) {
-                          setSelection(selectable.map(sourceWorkKey));
-                          return;
-                        }
-                        setFullSelectionScope(selectionScope);
-                        collectionReadAll.current = true;
-                        setAutoPaused(false);
-                        resumeCollection(true);
-                      }}
-                    >
-                      {fullSelectionScope
-                        ? "正在读完收藏，完成后全选…"
-                        : selectionComplete
-                          ? "全选当前筛选范围"
-                          : view === "favorites"
-                            ? "读完收藏并全选当前筛选范围"
-                            : "读完后可全选当前筛选范围"}
-                    </button>
+                    ))
+                  ) : (
+                    <p>作者资料未取得</p>
                   )}
                 </div>
-              </div>
-              {searching && sort.startsWith("updated-") && (
-                <p
-                  className="source-muted"
-                  data-testid="source-date-sort-scope"
-                >
-                  {complete
-                    ? issues.length
-                      ? "分页已读完，按可展示作品的网站更新时间排序；异常记录仍待核对。"
-                      : "按当前已读取完整范围的网站更新时间排序。"
-                    : "范围尚未读完，更新时间排序仅覆盖已读取结果。"}
-                  更新时间未知的作品排在最后。
-                </p>
-              )}
-              {authorQuery && pageInfo && (
-                <div
-                  className="source-notice"
-                  data-testid="source-author-evidence"
-                >
-                  {searchPolicy &&
-                    (searchPolicy.queries.length > 1 ||
-                      searchPolicy.queries[0] !== searchPolicy.author) && (
-                      <p className="source-muted">
-                        网站检索词：{searchPolicy.queries.join(" / ")}
-                        ；各词分页读完后合并同一来源编号。
-                      </p>
+                {displayDetail && <AuthorCreditNote work={displayDetail} />}
+                <div className="source-tags">
+                  <SourceLanguageBadge
+                    tags={detail.tags}
+                    work={detail}
+                    scope={scope}
+                    inline
+                  />
+                  {detail.tags.map((tag) => (
+                    <button
+                      className="tag-link"
+                      key={tag}
+                      onClick={() =>
+                        tagSearch?.(
+                          detail.source,
+                          tag,
+                          detail.categories?.includes(tag),
+                        )
+                      }
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+                <dl className="source-facts">
+                  <div>
+                    <dt>网站更新</dt>
+                    <dd data-testid="source-updated-at">
+                      {formatWorkDate(detail.sourceUpdatedAt, true) ??
+                        "更新时间未知"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>章节</dt>
+                    <dd>
+                      {detail.chapterCount === null
+                        ? "未知"
+                        : detail.chapterCount}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>页数</dt>
+                    <dd>
+                      {detail.pageCount === null ? "未知" : detail.pageCount}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>本地库存</dt>
+                    <dd data-testid="source-detail-stock">
+                      {inventoryLabel(inventory(detail))}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="source-actions">
+                  {readerAccess.available && scope && (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      data-testid="source-read"
+                      onClick={() =>
+                        readerAccess.read(sourceReaderRequest(scope, detail))
+                      }
+                    >
+                      阅读
+                    </button>
+                  )}
+                  {onOpenLibrary &&
+                    inventory(detail).kind === "owned" &&
+                    inventory(detail).items.length > 0 && (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        data-testid="source-open-library"
+                        onClick={() =>
+                          onOpenLibrary(detail, inventory(detail).items[0]?.id)
+                        }
+                      >
+                        查看电脑文件
+                      </button>
                     )}
-                  <p>
-                    作者作品 {authorResults.confirmed.length} 部 ·
-                    其他关键词结果 {authorResults.other.length}{" "}
-                    部。只按来源作者字段确认作者作品；其他命中不计入作者作品统计或批量选择。
-                  </p>
+                  <DownloadWorkButton
+                    className="button primary"
+                    testId="source-download"
+                    work={detail}
+                    ready={!!onDownload && downloadReady && !downloadBusy}
+                    owned={inventory(detail).kind === "owned"}
+                    onClick={() => onDownload?.(detail)}
+                  />
+
                   <button
                     type="button"
                     className="text-button"
-                    data-testid="source-author-results-toggle"
-                    aria-pressed={showingOtherAuthors}
-                    onClick={() => {
-                      clearSelection();
-                      setSelectionMode(false);
-                      setInventoryFilter("all");
-                      setShowOtherAuthorResults(!showingOtherAuthors);
-                      main()?.scrollTo(0, 0);
-                    }}
+                    data-testid="source-favorite"
+                    disabled={favoriteBusy || detail.favorite === null}
+                    aria-pressed={
+                      detail.favorite === null ? undefined : detail.favorite
+                    }
+                    onClick={() => void changeFavorite()}
                   >
-                    {showingOtherAuthors
-                      ? "返回作者作品"
-                      : "查看其他关键词结果"}
+                    {favoriteBusy
+                      ? "正在确认网站状态…"
+                      : detail.favorite === null
+                        ? "收藏状态待核对"
+                        : detail.favorite
+                          ? "取消网站收藏"
+                          : "收藏到网站"}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={!following || followingBusy}
+                    data-testid="source-follow-work"
+                    onClick={() =>
+                      void changeFollow({
+                        kind: "work",
+                        value: detail.workId,
+                        desired: !following?.works.some(
+                          (work) => work.workId === detail.workId,
+                        ),
+                      })
+                    }
+                  >
+                    {following?.works.some(
+                      (work) => work.workId === detail.workId,
+                    )
+                      ? "取消作品关注"
+                      : "关注作品"}
                   </button>
                 </div>
-              )}
-              {searching && !authorQuery && queryMode === "search" && (
-                <p className="source-muted" data-testid="source-keyword-scope">
-                  作品关键词搜索保留来源返回的所有命中，不代表这些作品属于同一作者。查找作者作品请切换“按作者搜索”。
+                <p className="source-muted">
+                  网站收藏与本机关注分别保存。作品下载经确认后加入电脑队列。
+                  <button
+                    type="button"
+                    className="text-button"
+                    data-testid="source-detail-cover-retry"
+                    onClick={retryCovers}
+                  >
+                    重试封面
+                  </button>
                 </p>
-              )}
-              <div
-                className="result-filters"
-                role="group"
-                aria-label="来源作品状态筛选"
+                {followingFeedback()}
+                <section className="source-description">
+                  <h2>简介</h2>
+                  <p className={expanded ? "" : "is-collapsed"}>
+                    {detail.description ?? "来源未提供简介。"}
+                  </p>
+                  {detail.description && detail.description.length > 180 && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setExpanded(!expanded)}
+                    >
+                      {expanded ? "收起简介" : "展开简介"}
+                    </button>
+                  )}
+                </section>
+                <section>
+                  <h2>来源信息</h2>
+                  <p>
+                    {sourceLabel(source)} · {detail.workId}
+                  </p>
+                  <p className="source-muted">
+                    可在上方确认下载到电脑，下载进度与结果在队列中查看。
+                  </p>
+                </section>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    ) : (
+      <>
+        <div className="page-heading source-heading">
+          <div>
+            <h1>
+              {authorSearch
+                ? "作者作品"
+                : view === "favorites"
+                  ? "在线收藏"
+                  : view === "following"
+                    ? "关注"
+                    : "搜索"}
+            </h1>
+            <p className="source-muted">
+              {sourceLabel(source)} ·{" "}
+              {loadingAccounts
+                ? "正在恢复账号…"
+                : account?.state === "connected"
+                  ? (account.displayName ?? account.accountId)
+                  : "尚未连接账号"}
+            </p>
+          </div>
+        </div>
+        {view === "search" && discoveryNavigation}
+        <div className="source-page-tools">
+          {!searchHost && searchControl}
+          <div className="source-tabs" role="group" aria-label="来源">
+            {sources.map((item) => (
+              <button
+                type="button"
+                key={item}
+                className={source === item ? "active" : ""}
+                aria-pressed={source === item}
+                data-testid={"source-tab-" + item}
+                onClick={() => changeSource(item)}
               >
-                {(Object.keys(inventoryFilterLabels) as InventoryFilter[]).map(
-                  (value) => (
+                {sourceLabel(item)}
+              </button>
+            ))}
+          </div>
+        </div>
+        {!connected ? (
+          <div className="source-empty" data-testid="source-account-required">
+            <h2>
+              {loadingAccounts
+                ? "正在恢复账号会话"
+                : !adapter.available
+                  ? "请使用桌面应用"
+                  : account?.state === "expired"
+                    ? "账号需要重新登录"
+                    : "连接当前来源账号"}
+            </h2>
+            <p>
+              {loadingAccounts
+                ? "读取完成后可继续操作。"
+                : !adapter.available
+                  ? "浏览器预览不会连接真实来源，也不会显示模拟的登录成功。"
+                  : "未连接不代表空收藏。连接后可读取该账号的来源数据。"}
+            </p>
+            <button
+              type="button"
+              className="button primary"
+              disabled={loadingAccounts}
+              onClick={() => onOpenAccounts(source)}
+            >
+              前往账号设置
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              disabled={loadingAccounts}
+              onClick={() => void refreshAccounts()}
+            >
+              重新读取账号状态
+            </button>
+          </div>
+        ) : (
+          <>
+            {view === "following" && !authorSearch && (
+              <div className="source-following-tabs source-tabs">
+                <button
+                  type="button"
+                  aria-pressed={followingTab === "authors"}
+                  onClick={() => {
+                    setFollowingTab("authors");
+                    clearSelection();
+                  }}
+                >
+                  作者关注 {following?.authors.length ?? "—"}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={followingTab === "works"}
+                  onClick={() => {
+                    setFollowingTab("works");
+                    clearSelection();
+                  }}
+                >
+                  作品关注 {following?.works.length ?? "—"}
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={followingBusy}
+                  onClick={() => void readFollowing()}
+                >
+                  重新读取本机关注
+                </button>
+              </div>
+            )}
+            <div className="source-toolbar">
+              <div className="source-toolbar-leading">
+                <button
+                  type="button"
+                  className="text-button"
+                  data-testid="source-cover-retry"
+                  onClick={retryCovers}
+                >
+                  重试封面
+                </button>
+                {view === "favorites" && source === "JM" && (
+                  <label>
+                    网站收藏夹{" "}
+                    <select
+                      data-testid="source-folder"
+                      value={folder ?? ""}
+                      disabled={loading}
+                      onChange={(event) => {
+                        collectionReadAll.current = false;
+                        collector.current?.stopReadAll();
+                        setSort("source");
+                        setFolder(event.target.value || null);
+                        clearSelection();
+                        pendingAnchor.current = null;
+                        savedAnchor.current = null;
+                        main()?.scrollTo(0, 0);
+                      }}
+                    >
+                      <option value="">全部收藏</option>
+                      {pageInfo?.folders.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                          {item.count === null ? "" : " · " + item.count}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {searching && !authorSearch && !searchMode && (
+                  <label>
+                    查询方式{" "}
+                    <select
+                      value={queryMode}
+                      onChange={(event) => {
+                        setQueryMode(
+                          event.target.value as
+                            "author" | "search" | "detail" | "tag",
+                        );
+                        setShowOtherAuthorResults(false);
+                        clearSelection();
+                        listRequest.current += 1;
+                        setLoading(false);
+                        setItems([]);
+                        setPageInfo(null);
+                        setSearchComplete(false);
+                        setError("");
+                      }}
+                      data-testid="source-query-mode"
+                    >
+                      <option value="author">按作者搜索</option>
+                      <option value="search">作品关键词搜索</option>
+                      <option value="detail">单个编号或链接</option>
+                      <option value="tag">标签搜索</option>
+                    </select>
+                  </label>
+                )}
+                {view === "favorites" && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={loading}
+                    data-testid="source-refresh"
+                    onClick={() => {
+                      refreshCollection();
+                    }}
+                  >
+                    刷新收藏
+                  </button>
+                )}
+                {view === "favorites" && (
+                  <>
+                    {!completeIndex && (
+                      <button
+                        className="button secondary"
+                        data-testid="collection-read-all"
+                        onClick={() => {
+                          collectionReadAll.current = true;
+                          setAutoPaused(false);
+                          resumeCollection(true);
+                        }}
+                      >
+                        读取全部收藏
+                      </button>
+                    )}
+                  </>
+                )}
+                {authorSearch && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      setAuthorSearch(false);
+                      setSort("source");
+                      setQuery("");
+                      clearSelection();
+                    }}
+                  >
+                    返回本机关注
+                  </button>
+                )}
+              </div>
+              {!(
+                view === "following" &&
+                followingTab === "authors" &&
+                !authorSearch
+              ) && densityControl()}
+            </div>
+            {notice && (
+              <p
+                role="status"
+                className="source-notice"
+                data-testid="source-notice"
+              >
+                {notice}
+              </p>
+            )}
+            {error && (
+              <div className="source-notice">
+                <p role="alert">{error}</p>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={loading}
+                  data-testid="source-retry"
+                  onClick={() =>
+                    void readList(
+                      lastRead.current.kind,
+                      lastRead.current.query,
+                      lastRead.current.folderId,
+                      lastRead.current.page,
+                      lastRead.current.append,
+                    )
+                  }
+                >
+                  重试读取
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => onOpenAccounts(source)}
+                >
+                  账号设置
+                </button>
+              </div>
+            )}
+            {view === "following" && followingFeedback()}
+            {view === "following" &&
+            !authorSearch &&
+            followingTab === "authors" ? (
+              <>
+                <p className="source-muted">
+                  这里的关注保存在本机当前账号下。点击作者会在搜索页读取 JM
+                  与哔咔的完整查询。
+                </p>
+                <div className="source-authors" data-testid="source-authors">
+                  <div className="source-author-head">
+                    <span>作者</span>
+                    <span>来源</span>
+                    <span>检查方式</span>
+                    <span>操作</span>
+                  </div>
+                  {(following?.authors ?? [])
+                    .filter((name) => name.includes(query.trim()))
+                    .map((author) => (
+                      <div className="source-author-row" key={author}>
+                        <strong>{author}</strong>
+                        <span>{sourceLabel(source)}</span>
+                        <span className="source-muted">手动查看与检查</span>
+                        <div className="source-actions">
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => {
+                              if (onAuthorSearch) {
+                                onAuthorSearch(author);
+                                return;
+                              }
+                              setAuthorSearch(true);
+                              setSort(searchSort());
+                              setQuery(author);
+                              setQueryMode("author");
+                              setShowOtherAuthorResults(false);
+                              clearSelection();
+                              void readList(
+                                "search",
+                                author,
+                                null,
+                                1,
+                                false,
+                                true,
+                              );
+                            }}
+                          >
+                            搜索该作者
+                          </button>
+                          <SpecialFollowButton author={author} />
+                          <button
+                            type="button"
+                            className="text-button"
+                            disabled={followingBusy}
+                            onClick={() =>
+                              void changeFollow({
+                                kind: "author",
+                                value: author,
+                                desired: false,
+                              })
+                            }
+                          >
+                            取消关注
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+                {followingBusy && <p role="status">正在读取本机关注…</p>}
+                {following && !following.authors.length && (
+                  <p className="source-empty">
+                    还没有关注作者。可从作品详情加入本机关注。
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="source-results-heading">
+                  <span>
+                    {view === "following" && !authorSearch
+                      ? "已关注作品 " + followedWorks.length + " 部"
+                      : "已读取 " +
+                        (items.length - searchSupplement.count) +
+                        " 部" +
+                        (totalKnown
+                          ? " / 来源报告 " + pageInfo!.total + " 部"
+                          : " · 总数未知")}
+                  </span>
+                  <div className="source-actions">
+                    <label className="source-sort">
+                      排序{" "}
+                      <select
+                        data-testid="source-sort"
+                        value={sort}
+                        onChange={(event) => changeSort(event.target.value)}
+                      >
+                        {searching && (
+                          <>
+                            <option value="updated-desc">
+                              更新时间：从新到旧
+                            </option>
+                            <option value="updated-asc">
+                              更新时间：从旧到新
+                            </option>
+                          </>
+                        )}
+                        <option value="source">
+                          {source === "Pica" && view === "favorites"
+                            ? "收藏时间：从新到旧"
+                            : "来源顺序"}
+                        </option>
+                        <option value="source-reverse">
+                          {source === "Pica" && view === "favorites"
+                            ? "收藏时间：从旧到新"
+                            : "来源倒序"}
+                        </option>
+                        <option value="title">
+                          作品名称：升序（已读取范围）
+                        </option>
+                        <option value="title-desc">
+                          作品名称：降序（已读取范围）
+                        </option>
+                      </select>
+                    </label>
+                    {selectionMode && !showingOtherAuthors && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        data-testid="source-select-all"
+                        disabled={
+                          !visible.length ||
+                          Boolean(fullSelectionScope) ||
+                          (!selectionComplete && view !== "favorites")
+                        }
+                        onClick={() => {
+                          if (selectionComplete) {
+                            setSelection(selectable.map(sourceWorkKey));
+                            return;
+                          }
+                          setFullSelectionScope(selectionScope);
+                          collectionReadAll.current = true;
+                          setAutoPaused(false);
+                          resumeCollection(true);
+                        }}
+                      >
+                        {fullSelectionScope
+                          ? "正在读完收藏，完成后全选…"
+                          : selectionComplete
+                            ? "全选当前筛选范围"
+                            : view === "favorites"
+                              ? "读完收藏并全选当前筛选范围"
+                              : "读完后可全选当前筛选范围"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {searching && sort.startsWith("updated-") && (
+                  <p
+                    className="source-muted"
+                    data-testid="source-date-sort-scope"
+                  >
+                    {complete
+                      ? issues.length
+                        ? "分页已读完，按可展示作品的网站更新时间排序；异常记录仍待核对。"
+                        : "按已读取内容的网站更新时间排序。"
+                      : "范围尚未读完，更新时间排序仅覆盖已读取结果。"}
+                    更新时间未知的作品排在最后。
+                  </p>
+                )}
+                {authorQuery && pageInfo && (
+                  <div
+                    className="source-notice"
+                    data-testid="source-author-evidence"
+                  >
+                    {searchPolicy &&
+                      (searchPolicy.queries.length > 1 ||
+                        searchPolicy.queries[0] !== searchPolicy.author) && (
+                        <p className="source-muted">
+                          网站检索词：{searchPolicy.queries.join(" / ")}
+                          ；各词分页读完后合并同一来源编号。
+                        </p>
+                      )}
+                    <p>
+                      作者作品 {authorResults.confirmed.length} 部 ·
+                      其他关键词结果 {authorResults.other.length}{" "}
+                      部。只按来源作者字段确认作者作品；其他命中不计入作者作品统计或批量选择。
+                    </p>
+                    <button
+                      type="button"
+                      className="text-button"
+                      data-testid="source-author-results-toggle"
+                      aria-pressed={showingOtherAuthors}
+                      onClick={() => {
+                        clearSelection();
+                        setSelectionMode(false);
+                        setInventoryFilter("all");
+                        setShowOtherAuthorResults(!showingOtherAuthors);
+                        main()?.scrollTo(0, 0);
+                      }}
+                    >
+                      {showingOtherAuthors
+                        ? "返回作者作品"
+                        : "查看其他关键词结果"}
+                    </button>
+                  </div>
+                )}
+                {searching && !authorQuery && queryMode === "search" && (
+                  <p
+                    className="source-muted"
+                    data-testid="source-keyword-scope"
+                  >
+                    作品关键词搜索保留来源返回的命中，不代表同一作者的作品。按浏览续页，筛选与统计只覆盖已读取内容；查找作者作品请选择“作者”。
+                  </p>
+                )}
+                {searching && queryMode === "tag" && (
+                  <p className="source-muted" data-testid="source-tag-scope">
+                    当前来源的{tagCategory.current ? "分类" : "标签"}
+                    结果；按浏览续页，筛选与统计只覆盖已读取内容。
+                  </p>
+                )}
+                {authorQuery &&
+                  (searchSupplement.count > 0 || searchSupplement.failed) && (
+                    <p
+                      className="source-muted"
+                      data-testid="source-author-history"
+                    >
+                      已知作者目录补充 {searchSupplement.count}{" "}
+                      部；这部分不计入本次网站分页条数。
+                      {searchSupplement.checkedAt
+                        ? ` 目录最近核验：${new Date(searchSupplement.checkedAt).toLocaleString()}。`
+                        : ""}
+                      {searchSupplement.failed
+                        ? " 历史目录补充未全部读取，可靠的已保存作品继续显示；请重试搜索核对。"
+                        : ""}
+                    </p>
+                  )}
+                <div
+                  className="result-filters"
+                  role="group"
+                  aria-label="来源作品状态筛选"
+                >
+                  {(
+                    Object.keys(inventoryFilterLabels) as InventoryFilter[]
+                  ).map((value) => (
                     <button
                       key={value}
                       data-testid={"source-filter-" + value}
@@ -2192,300 +2595,311 @@ export function SourceWorkbench({
                         }
                       </span>
                     </button>
-                  ),
-                )}
-              </div>
-              <p className="page-summary" data-testid="source-filter-count">
-                已入库{" "}
-                {
-                  searchedWorks.filter(
-                    (work) => inventoryFor(work).kind === "owned",
-                  ).length
-                }{" "}
-                部 · 未入库{" "}
-                {
-                  searchedWorks.filter(
-                    (work) => inventoryFor(work).kind === "missing",
-                  ).length
-                }{" "}
-                部 · 当前显示 {visible.length} 部 · 筛选覆盖已读取的{" "}
-                {browsingWorks.length} 部
-                {authorQuery
-                  ? showingOtherAuthors
-                    ? "其他关键词结果"
-                    : "作者作品"
-                  : "作品"}
-                {(view !== "following" || authorSearch) && pageInfo && (
-                  <span data-testid="source-completeness">
-                    {" · "}
-                    {error ||
-                    (view === "favorites" && collectionState.error !== null)
-                      ? "本次读取未完成，保留上次已读结果"
-                      : complete
-                        ? issues.length
-                          ? "分页已读完，来源记录仍待核对"
-                          : searching
-                            ? "已读完当前来源的搜索范围"
-                            : "已读取完整范围"
-                        : "范围尚未读全，未读取作品尚未参与筛选"}
-                  </span>
-                )}
-                。
-              </p>
-              <SourceIssues
-                source={source}
-                issues={issues}
-                pagesComplete={complete}
-              />
-              <details className="page-scope-details">
-                <summary>
-                  筛选范围与入库说明
-                  {searching && source === "JM"
-                    ? " · JM 不含 English Manga"
-                    : ""}
-                </summary>
-                <p className="source-muted">{inventoryScopeNote}</p>
-                {searching && source === "JM" && (
-                  <p className="source-muted">{jmSearchScopeNote}</p>
-                )}
-              </details>
-              {visible.length === 0 && browsingWorks.length > 0 && (
-                <p className="source-empty">
-                  当前筛选没有结果
-                  {!complete && view === "favorites"
-                    ? "；还有未读取的收藏，可以继续读取全部收藏"
-                    : ""}
-                  。
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setInventoryFilter("all");
-                      if (!searching) setQuery("");
-                    }}
-                  >
-                    {searching ? "清空状态筛选" : "清空筛选与搜索"}
-                  </button>
-                </p>
-              )}
-              {grid(visible)}
-              {view === "favorites" && (
-                <div
-                  ref={sentinel}
-                  data-testid="collection-sentinel"
-                  className="collection-status"
-                >
-                  <p role="status" data-testid="collection-progress">
-                    {collectionState.phase === "error"
-                      ? "读取已停止，已读内容保留，请点击重试读取"
-                      : collectionState.phase === "complete"
-                        ? issues.length
-                          ? "收藏分页已读完，来源记录仍待核对"
-                          : "已读取全部收藏"
-                        : collectionState.phase === "restoring"
-                          ? "正在读取本机缓存…"
-                          : collectionState.phase === "verifying"
-                            ? "正在核对来源首页…"
-                            : collectionState.phase === "reading"
-                              ? "正在读取下一页…"
-                              : autoPaused
-                                ? "自动续读已暂停"
-                                : query.trim() || inventoryFilter !== "all"
-                                  ? "仅筛选已读取范围；清空筛选后继续自动读取"
-                                  : "向下滚动继续读取"}
-                    {" · 已读取 " +
-                      collectionRecords +
-                      (collectionState.snapshot?.total === null ||
-                      !collectionState.snapshot
-                        ? " · 总数未知"
-                        : " / " + collectionState.snapshot.total)}
-                    {source === "Pica" &&
-                      " 条来源记录 · " + collectionWorks + " 部不同作品"}
-                    {source === "Pica" &&
-                      collectionDuplicates > 0 &&
-                      " · " + collectionDuplicates + " 条重复记录"}
-                  </p>
-                  {collectionState.displaySnapshot && (
-                    <p
-                      className="source-muted"
-                      data-testid="collection-freshness"
-                    >
-                      {collectionState.freshness === "cached"
-                        ? "本机缓存，尚待核对"
-                        : collectionState.freshness === "verified-cache"
-                          ? "本机缓存，首页已核对"
-                          : "本次已读取结果"}
-                      {" · " +
-                        new Date(
-                          collectionState.displaySnapshot.updatedAt,
-                        ).toLocaleString()}
-                    </p>
-                  )}
-                  {reversePreparing && collectionState.phase !== "error" && (
-                    <p role="status">
-                      正在准备完整来源倒序，当前仍显示已读来源顺序。可暂停或改回来源顺序。
-                    </p>
-                  )}
-                  {collectionState.error !== null && (
-                    <p role="alert">
-                      {sourceErrorMessage(collectionState.error)}
-                    </p>
-                  )}
-                  {collectionState.cacheWarning && (
-                    <p role="status">{collectionState.cacheWarning}</p>
-                  )}
-                  {collectionState.phase === "error" && (
-                    <button
-                      type="button"
-                      className="text-button"
-                      data-testid="collection-retry"
-                      onClick={() => {
-                        setAutoPaused(false);
-                        resumeCollection(true);
-                      }}
-                    >
-                      重试读取
-                    </button>
-                  )}
-                  {!complete && collectionState.phase !== "error" && (
-                    <button
-                      type="button"
-                      className="text-button"
-                      data-testid="collection-pause"
-                      onClick={() => {
-                        if (autoPaused) {
-                          setAutoPaused(false);
-                        } else {
-                          setAutoPaused(true);
-                          collector.current?.pause();
-                        }
-                      }}
-                    >
-                      {autoPaused ? "继续自动读取" : "暂停自动读取"}
-                    </button>
-                  )}
+                  ))}
                 </div>
-              )}
-              {loading && (
-                <p role="status">
-                  {queryProgress && queryProgress.count > 1
-                    ? `正在读取检索词 ${queryProgress.index} / ${queryProgress.count} · 第 ${queryProgress.page} 页…`
-                    : `正在读取第 ${queryProgress?.page ?? lastRead.current.page} 页…`}
-                </p>
-              )}
-              {!loading && !error && !visible.length && (
-                <div className="source-empty" data-testid="source-empty">
-                  <h2>
-                    {searching && !pageInfo
-                      ? "搜索当前来源"
-                      : query.trim()
-                        ? "当前范围没有匹配作品"
-                        : pageInfo
+                <p className="page-summary" data-testid="source-filter-count">
+                  已入库{" "}
+                  {
+                    searchedWorks.filter(
+                      (work) => inventoryFor(work).kind === "owned",
+                    ).length
+                  }{" "}
+                  部 · 未入库{" "}
+                  {
+                    searchedWorks.filter(
+                      (work) => inventoryFor(work).kind === "missing",
+                    ).length
+                  }{" "}
+                  部 · 当前显示 {visible.length} 部 · 筛选覆盖已读取的{" "}
+                  {browsingWorks.length} 部
+                  {authorQuery
+                    ? showingOtherAuthors
+                      ? "其他关键词结果"
+                      : "作者作品"
+                    : "作品"}
+                  {(view !== "following" || authorSearch) && pageInfo && (
+                    <span data-testid="source-completeness">
+                      {" · "}
+                      {error ||
+                      (view === "favorites" && collectionState.error !== null)
+                        ? "本次读取未完成，保留上次已读结果"
+                        : complete
                           ? issues.length
-                            ? "尚无可展示作品，来源记录待核对"
-                            : "当前来源范围没有作品"
-                          : "尚未读取作品"}
-                  </h2>
-                  <p>
-                    {searching && !pageInfo
-                      ? "提交关键词，或切换到单个编号 / 链接直接查看。"
-                      : authorQuery &&
-                          !showingOtherAuthors &&
-                          authorResults.other.length
-                        ? "没有作者字段可确认的作品，可查看其他关键词结果。"
-                        : "可修改搜索条件、重新读取或切换来源。"}
-                  </p>
-                </div>
-              )}
-              {searching && loading && (
-                <p role="status" data-testid="search-progress">
-                  正在读取完整查询 · 已读取 {pageInfo?.page ?? 0} 页、
-                  {items.length} 部作品{" "}
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      listRequest.current++;
-                      setLoading(false);
-                      setError(
-                        "读取已停止，已读结果保留。可以继续读取剩余分页。",
-                      );
-                    }}
-                  >
-                    停止读取
-                  </button>
+                            ? "分页已读完，来源记录仍待核对"
+                            : searching
+                              ? "已读完当前来源的搜索范围"
+                              : "已读取完整范围"
+                          : "范围尚未读全，未读取作品尚未参与筛选"}
+                    </span>
+                  )}
+                  。
                 </p>
-              )}
-              {searching &&
-                complete &&
-                issues.length === 0 &&
-                !showingOtherAuthors &&
-                (!authorQuery || authorResults.other.length === 0) &&
-                browsingWorks.length > 0 &&
-                browsingWorks.every(
-                  (work) => inventoryFor(work).kind === "owned",
-                ) && (
-                  <p role="status" data-testid="source-all-owned">
-                    {authorQuery
-                      ? "本次作者作品已全部入库。"
-                      : "本次查询结果已全部入库。"}
-                    范围：{sourceLabel(source)} · {lastListQuery.current.query}{" "}
-                    ·{" "}
-                    {searchReadAt
-                      ? new Date(searchReadAt).toLocaleString()
+                <SourceIssues
+                  source={source}
+                  issues={issues}
+                  pagesComplete={complete}
+                />
+                <details className="page-scope-details">
+                  <summary>
+                    筛选范围与入库说明
+                    {searching && source === "JM"
+                      ? " · JM 不含 English Manga"
+                      : ""}
+                  </summary>
+                  <p className="source-muted">{inventoryScopeNote}</p>
+                  {searching && source === "JM" && (
+                    <p className="source-muted">{jmSearchScopeNote}</p>
+                  )}
+                </details>
+                {visible.length === 0 && browsingWorks.length > 0 && (
+                  <p className="source-empty">
+                    当前筛选没有结果
+                    {!complete && view === "favorites"
+                      ? "；还有未读取的收藏，可以继续读取全部收藏"
                       : ""}
                     。
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        setInventoryFilter("all");
+                        if (!searching) setQuery("");
+                      }}
+                    >
+                      {searching ? "清空状态筛选" : "清空筛选与搜索"}
+                    </button>
                   </p>
                 )}
-              {selectedWorks.length > 0 && (
-                <div
-                  className="source-selection-bar"
-                  data-testid="source-selection-bar"
-                >
-                  <strong>已选 {selectedWorks.length} 部</strong>
-                  <span>
-                    {selectionComplete
-                      ? "包含当前筛选范围中未进入视口的作品"
-                      : "仅选择已读取作品，完整范围尚未读完"}
-                  </span>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setSelection([])}
+                {grid(visible)}
+                {searching &&
+                  !authorQuery &&
+                  queryMode !== "detail" &&
+                  pageInfo &&
+                  !searchComplete && (
+                    <div ref={searchSentinel} className="source-more">
+                      <button
+                        disabled={loading || !!error}
+                        onClick={() =>
+                          void readList(
+                            "search",
+                            lastListQuery.current.query,
+                            null,
+                            lastRead.current.page,
+                            true,
+                            false,
+                          )
+                        }
+                      >
+                        {loading ? "正在读取…" : "读取下一页"}
+                      </button>
+                      <span>继续浏览会读取下一页；筛选仅覆盖已读取作品。</span>
+                    </div>
+                  )}
+                {view === "favorites" && (
+                  <div
+                    ref={sentinel}
+                    data-testid="collection-sentinel"
+                    className="collection-status"
                   >
-                    取消选择
-                  </button>
-
-                  <button
-                    type="button"
-                    className="button primary"
-                    data-testid="source-batch-download"
+                    <p role="status" data-testid="collection-progress">
+                      {collectionState.phase === "error"
+                        ? "读取已停止，已读内容保留，请点击重试读取"
+                        : collectionState.phase === "complete"
+                          ? issues.length
+                            ? "收藏分页已读完，来源记录仍待核对"
+                            : "已读取全部收藏"
+                          : collectionState.phase === "restoring"
+                            ? "正在读取本机缓存…"
+                            : collectionState.phase === "verifying"
+                              ? "正在核对来源首页…"
+                              : collectionState.phase === "reading"
+                                ? "正在读取下一页…"
+                                : autoPaused
+                                  ? "自动续读已暂停"
+                                  : query.trim() || inventoryFilter !== "all"
+                                    ? "仅筛选已读取范围；清空筛选后继续自动读取"
+                                    : "向下滚动继续读取"}
+                      {" · 已读取 " +
+                        collectionRecords +
+                        (collectionState.snapshot?.total === null ||
+                        !collectionState.snapshot
+                          ? " · 总数未知"
+                          : " / " + collectionState.snapshot.total)}
+                      {source === "Pica" &&
+                        " 条来源记录 · " + collectionWorks + " 部不同作品"}
+                      {source === "Pica" &&
+                        collectionDuplicates > 0 &&
+                        " · " + collectionDuplicates + " 条重复记录"}
+                    </p>
+                    {collectionState.displaySnapshot && (
+                      <p
+                        className="source-muted"
+                        data-testid="collection-freshness"
+                      >
+                        {collectionState.freshness === "cached"
+                          ? "本机缓存，尚待核对"
+                          : collectionState.freshness === "verified-cache"
+                            ? "本机缓存，首页已核对"
+                            : "本次已读取结果"}
+                        {" · " +
+                          new Date(
+                            collectionState.displaySnapshot.updatedAt,
+                          ).toLocaleString()}
+                      </p>
+                    )}
+                    {reversePreparing && collectionState.phase !== "error" && (
+                      <p role="status">
+                        正在准备完整来源倒序，当前仍显示已读来源顺序。可暂停或改回来源顺序。
+                      </p>
+                    )}
+                    {collectionState.error !== null && (
+                      <p role="alert">
+                        {sourceErrorMessage(collectionState.error)}
+                      </p>
+                    )}
+                    {collectionState.cacheWarning && (
+                      <p role="status">{collectionState.cacheWarning}</p>
+                    )}
+                    {collectionState.phase === "error" && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        data-testid="collection-retry"
+                        onClick={() => {
+                          setAutoPaused(false);
+                          resumeCollection(true);
+                        }}
+                      >
+                        重试读取
+                      </button>
+                    )}
+                    {!complete && collectionState.phase !== "error" && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        data-testid="collection-pause"
+                        onClick={() => {
+                          if (autoPaused) {
+                            setAutoPaused(false);
+                          } else {
+                            setAutoPaused(true);
+                            collector.current?.pause();
+                          }
+                        }}
+                      >
+                        {autoPaused ? "继续自动读取" : "暂停自动读取"}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {loading && (
+                  <p role="status">
+                    {queryProgress && queryProgress.count > 1
+                      ? `正在读取检索词 ${queryProgress.index} / ${queryProgress.count} · 第 ${queryProgress.page} 页…`
+                      : `正在读取第 ${queryProgress?.page ?? lastRead.current.page} 页…`}
+                  </p>
+                )}
+                {!loading && !error && !visible.length && (
+                  <div className="source-empty" data-testid="source-empty">
+                    <h2>
+                      {searching && !pageInfo
+                        ? "搜索当前来源"
+                        : query.trim()
+                          ? "当前范围没有匹配作品"
+                          : pageInfo
+                            ? issues.length
+                              ? "尚无可展示作品，来源记录待核对"
+                              : "当前来源范围没有作品"
+                            : "尚未读取作品"}
+                    </h2>
+                    <p>
+                      {searching && !pageInfo
+                        ? "提交关键词，或切换到单个编号 / 链接直接查看。"
+                        : authorQuery &&
+                            !showingOtherAuthors &&
+                            authorResults.other.length
+                          ? "没有作者字段可确认的作品，可查看其他关键词结果。"
+                          : "可修改搜索条件、重新读取或切换来源。"}
+                    </p>
+                  </div>
+                )}
+                {searching && loading && (
+                  <p role="status" data-testid="search-progress">
+                    {authorQuery ? "正在读取完整作者结果" : "正在读取下一页"} ·
+                    已读取 {pageInfo?.page ?? 0} 页、
+                    {items.length} 部作品{" "}
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        listRequest.current++;
+                        setLoading(false);
+                        setError(
+                          "读取已停止，已读结果保留。可以继续读取剩余分页。",
+                        );
+                      }}
+                    >
+                      停止读取
+                    </button>
+                  </p>
+                )}
+                {searching &&
+                  complete &&
+                  issues.length === 0 &&
+                  !showingOtherAuthors &&
+                  (!authorQuery || authorResults.other.length === 0) &&
+                  browsingWorks.length > 0 &&
+                  browsingWorks.every(
+                    (work) => inventoryFor(work).kind === "owned",
+                  ) && (
+                    <p role="status" data-testid="source-all-owned">
+                      {authorQuery
+                        ? "本次作者作品已全部入库。"
+                        : "本次查询结果已全部入库。"}
+                      范围：{sourceLabel(source)} ·{" "}
+                      {lastListQuery.current.query} ·{" "}
+                      {searchReadAt
+                        ? new Date(searchReadAt).toLocaleString()
+                        : ""}
+                      。
+                    </p>
+                  )}
+                {!showingOtherAuthors && (
+                  <FloatingSelection
+                    visible={active && !detailRef}
+                    active={selectionMode}
+                    selectedCount={selectedWorks.length}
+                    onEnter={() => setSelectionMode(true)}
+                    onCancel={() => {
+                      clearSelection();
+                      setSelectionMode(false);
+                    }}
                     disabled={
                       !onDownloadMany ||
                       !downloadReady ||
-                      downloadBusy ||
                       selectedWorks.length > downloadSelectionLimit
                     }
-                    onClick={() => onDownloadMany?.(selectedWorks)}
-                  >
-                    {downloadBusy ? "正在准备…" : "准备下载"}
-                  </button>
-                  {selectedWorks.length > downloadSelectionLimit && (
-                    <span>
-                      一次最多选择 500 本，请缩小范围；没有截取后续作品。
-                    </span>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </>
-      )}
-      {view === "following" && followingTab === "works" && !authorSearch && (
-        <p className="source-muted">
-          作品关注保存在本机当前账号下，选择作品即可查看来源详情。作者更新由你在“作者更新”页手动检查。
-        </p>
-      )}
-    </>
-  );
+                    onDownload={() => {
+                      void Promise.resolve(
+                        onDownloadMany?.(selectedWorks),
+                      ).then((keys) => {
+                        if (keys)
+                          setSelection((old) =>
+                            old.filter((key) => !keys.includes(key)),
+                          );
+                      });
+                    }}
+                  />
+                )}
+              </>
+            )}
+          </>
+        )}
+        {view === "following" && followingTab === "works" && !authorSearch && (
+          <p className="source-muted">
+            作品关注保存在本机当前账号下，选择作品即可查看来源详情。作者更新由你在“作者更新”页手动检查。
+          </p>
+        )}
+      </>
+    );
   return (
     <section
       ref={host}
@@ -2563,11 +2977,7 @@ export function SourceWorkGrid({
                   {work.title}
                 </button>
               </h3>
-              <p>
-                {work.authors.length
-                  ? work.authors.join("、")
-                  : "作者资料未取得"}
-              </p>
+              <AuthorLinks authors={work.authors} />
               <p className="source-card-state">
                 {sourceLabel(work.source)} · 库存状态待核对
               </p>

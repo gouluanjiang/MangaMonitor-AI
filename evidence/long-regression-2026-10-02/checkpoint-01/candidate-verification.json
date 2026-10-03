@@ -1,0 +1,15 @@
+{
+  "artifactId": 11208604714,
+  "commit": "159f4f725200d639d080fd719d9d7fae2eb92936",
+  "verifiedFiles": [
+    "LICENSE.txt",
+    "licenses/inventory.json",
+    "licenses/THIRD_PARTY_LICENSES.txt",
+    "MangaMonitor Dev_1.0.2-rc.3_x64-setup.exe",
+    "mangamonitor-workbench-preview.exe",
+    "RELEASE_NOTES.md",
+    "THIRD_PARTY_NOTICES.md",
+    "USER_GUIDE.md"
+  ],
+  "allHashesMatch": true
+}

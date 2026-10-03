@@ -1,5 +1,6 @@
 //! Account and catalog operations only. No task authority, chapter/media routes,
 //! filesystem writes, automatic pagination, retries, or production-state access.
+mod content;
 mod cover;
 mod language;
 mod protocol;
@@ -8,6 +9,10 @@ mod recent;
 mod thumbnail;
 mod types;
 
+pub use content::{
+    inherit_content_tags, is_ai_tag, is_bl_tag, is_blocked_tag, is_jm_english_category,
+    is_jm_female_tag, retained_content_tags,
+};
 pub use language::{
     inherit_language_tags, language_tag_kind, retained_language_tags, LanguageTagKind,
 };
@@ -24,6 +29,14 @@ use std::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 use workbench_credentials::{CredentialKind, StoredCredential};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchKind {
+    Keyword,
+    Author,
+    Tag,
+    Category,
+}
 
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const MAX_KNOWN_WORKS: usize = 20_000;
@@ -355,6 +368,52 @@ impl WorkbenchSources {
         keyword: &str,
         page: u64,
     ) -> SourceResult<SourcePage> {
+        self.search_kind(session, keyword, page, SearchKind::Keyword)
+            .await
+    }
+
+    /// JM's dedicated author field; Pica retains its keyword route. Neither
+    /// route proves authorship: callers must check the returned credit fields.
+    pub async fn author(
+        &self,
+        session: &SourceSession,
+        author: &str,
+        page: u64,
+    ) -> SourceResult<SourcePage> {
+        self.search_kind(session, author, page, SearchKind::Author)
+            .await
+    }
+
+    /// Native tag browsing, one requested page; never a keyword approximation.
+    pub async fn tag(
+        &self,
+        session: &SourceSession,
+        tag: &str,
+        page: u64,
+    ) -> SourceResult<SourcePage> {
+        self.search_kind(session, tag, page, SearchKind::Tag).await
+    }
+
+    pub async fn category(
+        &self,
+        session: &SourceSession,
+        category: &str,
+        page: u64,
+    ) -> SourceResult<SourcePage> {
+        if session.source != Source::Pica {
+            return Err(error("SOURCE_CATEGORY_UNSUPPORTED"));
+        }
+        self.search_kind(session, category, page, SearchKind::Category)
+            .await
+    }
+
+    async fn search_kind(
+        &self,
+        session: &SourceSession,
+        keyword: &str,
+        page: u64,
+        kind: SearchKind,
+    ) -> SourceResult<SourcePage> {
         protocol::validate_page(page)?;
         if keyword.trim().is_empty()
             || keyword.len() > 1024
@@ -368,13 +427,43 @@ impl WorkbenchSources {
                 let mut url = Url::parse(&format!("https://{JM_HOST}/search"))
                     .map_err(|_| error("SOURCE_CLIENT_FAILED"))?;
                 url.query_pairs_mut()
-                    .append_pair("main_tag", "0")
+                    // Existing JM Python pin 9fddb049: jm_client_interface.py
+                    // search_author uses main_tag=2; search_tag uses 3.
+                    .append_pair(
+                        "main_tag",
+                        match kind {
+                            SearchKind::Author => "2",
+                            SearchKind::Tag => "3",
+                            SearchKind::Keyword | SearchKind::Category => "0",
+                        },
+                    )
                     .append_pair("search_query", keyword)
                     .append_pair("page", &page.to_string())
                     .append_pair("o", "mr");
                 (
                     Method::GET,
                     format!("/search?{}", url.query().unwrap_or_default()),
+                    None,
+                )
+            }
+            Source::Pica if matches!(kind, SearchKind::Tag | SearchKind::Category) => {
+                // Existing PicaComic-go pin: Comics(block, tag, sort, page).
+                let mut url = Url::parse(&format!("https://{PICA_HOST}/comics"))
+                    .map_err(|_| error("SOURCE_CLIENT_FAILED"))?;
+                url.query_pairs_mut()
+                    .append_pair(
+                        if kind == SearchKind::Category {
+                            "c"
+                        } else {
+                            "t"
+                        },
+                        keyword,
+                    )
+                    .append_pair("s", "dd")
+                    .append_pair("page", &page.to_string());
+                (
+                    Method::GET,
+                    format!("comics?{}", url.query().unwrap_or_default()),
                     None,
                 )
             }
@@ -395,6 +484,9 @@ impl WorkbenchSources {
             )
             .await?;
         if session.source == Source::Jm && !data["redirect_aid"].is_null() {
+            if kind != SearchKind::Keyword {
+                return Err(error("SOURCE_RESPONSE_INVALID"));
+            }
             if page != 1 {
                 return Err(error("SOURCE_PAGINATION_INVALID"));
             }

@@ -1,14 +1,30 @@
 # Current development handoff
 
-## Windows local follow-up — validation in progress (2026-10-02)
+## Windows local follow-up — recycle rejection repair (2026-10-03)
 
 The authorized local follow-up fixes stale recent-card metadata after opening
 details and adds test-only Windows fault probes. See
 [the follow-up contract](WINDOWS_LOCAL_VALIDATION_FOLLOWUP_2026-10-02.md).
 It is isolated on `codex/windows-metadata-validation-20261002`, based on the
-cloud handoff below. CI, exact-candidate local retests and user acceptance are
-still pending. No merge, release or shortcut replacement has occurred. The
-original local development checkout is unchanged.
+cloud handoff below. The metadata fix passed CI and targeted exact-frontend
+retests at `161348698ce746ce719420b65a635676d4eb6175`; that exact Windows
+candidate was also used for the authorized native checks. The cumulative local
+matrix is 28 passed, 8 not fully covered, and 1 natural-update notification case
+still requiring user experience. Evidence remains revision- and layer-qualified;
+this is not 37 native passes on one candidate.
+
+Native validation found LOCAL-02: a reader-busy recycle rejection incorrectly
+invalidated every displayed library status. The user authorized a narrow repair.
+Pre-operation busy/unsupported refusals now report through the existing file-action
+message and retain inventory readiness. Unknown failures and uncertain recycle
+outcomes remain conservative; actual inventory errors also make the counts and
+filters agree with the pending-verification cards. Synthetic controller/browser
+regressions were added. CI and exact-new-candidate native retest are pending for
+this follow-up; do not reuse the 1613486 results as its acceptance.
+
+No merge, release or shortcut replacement has occurred. The original local
+development checkout is unchanged. No further test-isolation application code
+or test-only production bypass is authorized by this repair.
 
 ## Cloud long regression and measured fixes — candidate for local acceptance (2026-10-02)
 

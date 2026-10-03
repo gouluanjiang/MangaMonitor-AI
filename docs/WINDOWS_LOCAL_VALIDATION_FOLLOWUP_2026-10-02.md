@@ -49,3 +49,29 @@ ACL modification, permanent-delete fallback or disk-filling test is allowed.
 Adding a special follow and establishing its baseline tests that workflow.
 An actual future source update is still required to verify natural-update
 notifications; rewriting a baseline does not satisfy that requirement.
+
+## LOCAL-02: refused recycle invalidates the displayed inventory
+
+Windows validation of `1613486` opened a generated ZIP in a small reader, then
+requested its recycle action. The backend correctly refused the occupied file;
+file bytes, registrations, history and reading progress did not change. The
+controller nevertheless treated this action error as a failed inventory read,
+so the card said pending verification while its filter still counted it as
+available. The user authorized the narrow follow-up on 2026-10-03.
+
+Only explicitly pre-operation busy/unsupported rejections are kept local to the
+file action. They do not clear or replace a pre-existing inventory failure, and
+they do not transiently clear it while the operation is running. Cancellation
+preserves the old snapshot and failure. Successful verified responses replace
+the snapshot as before. Unknown errors, changed files, malformed responses and
+uncertain recycle outcomes continue to require an inventory recheck. Actual
+inventory errors project consistent pending-verification counts and filtering.
+The existing backend file identity, download/reader exclusion, confirmation,
+recycle-only operation and partial-result handling are unchanged.
+
+Controller regressions cover repeated calls, refusal, preserved read failure,
+cancellation, successful retry, uncertain results and late disposal. Browser
+regressions check the card, detail and filter counts after refusal, successful
+retry feedback, and actual scan-error filtering/recovery. No real files or
+credentials are involved in these regressions; formal tests and Windows builds
+run through the existing CI. Exact-new-candidate native verification is pending.

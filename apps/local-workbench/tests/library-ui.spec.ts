@@ -979,6 +979,20 @@ test("scan errors retain the partial catalog across settings and require an expl
     "data-total-items",
     "20",
   );
+  await expect(page.getByTestId("library-filter-owned")).toHaveText(
+    "文件可用 0",
+  );
+  await expect(page.getByTestId("library-filter-review")).toHaveText(
+    "文件待核对 20",
+  );
+  await expect(page.getByTestId("library-card-" + id(1))).toContainText(
+    "文件待核对",
+  );
+  await page.getByTestId("library-filter-owned").click();
+  await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
+  await page.getByTestId("library-filter-review").click();
+  await expect(page.getByTestId("library-card-" + id(1))).toBeVisible();
+  await page.getByTestId("library-filter-all").click();
   const before = (await commands(page, "library_scan")).length;
   await page.getByTestId("nav-settings").click();
   await page.getByTestId("nav-library").click();
@@ -988,6 +1002,12 @@ test("scan errors retain the partial catalog across settings and require an expl
   await expect(page.getByTestId("library-grid")).toHaveAttribute(
     "data-total-items",
     "60",
+  );
+  await expect(page.getByTestId("library-filter-owned")).toHaveText(
+    "文件可用 60",
+  );
+  await expect(page.getByTestId("library-filter-review")).toHaveText(
+    "文件待核对 0",
   );
   expect(
     (await commands(page, "library_scan")).some(
@@ -1237,6 +1257,23 @@ test("library context menu exposes five actions and recycle cancellation/failure
     "正在被读取",
   );
   await expect(cover).toBeVisible();
+  await expect(page.getByTestId("library-card-" + id(1))).toContainText(
+    "已入库",
+  );
+  await expect(page.getByTestId("library-card-" + id(1))).not.toContainText(
+    "文件待核对",
+  );
+  await expect(page.getByTestId("library-filter-owned")).toHaveText(
+    "文件可用 4",
+  );
+  await expect(page.getByTestId("library-filter-review")).toHaveText(
+    "文件待核对 0",
+  );
+  await cover.click();
+  await expect(page.getByTestId("library-detail-stock")).toContainText(
+    "已入库",
+  );
+  await page.getByTestId("library-detail-back").click();
   await cover.click({ button: "right" });
   await menu.getByRole("menuitem", { name: "删除漫画", exact: true }).click();
   await expect(page.getByTestId("library-card-" + id(1))).toHaveCount(0);
@@ -1246,6 +1283,9 @@ test("library context menu exposes five actions and recycle cancellation/failure
   );
   await expect(page.getByTestId("library-file-message")).toContainText(
     "已移到回收站",
+  );
+  await expect(page.getByTestId("library-file-message")).not.toContainText(
+    "正在被读取",
   );
   const calls = await commands(page, "library_recycle");
   expect(calls).toHaveLength(3);

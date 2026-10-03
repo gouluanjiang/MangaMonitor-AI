@@ -111,12 +111,90 @@ test("cancel and failure preserve the original library, repeated clicks cannot s
     (e) => e.code === "LIBRARY_ITEM_BUSY",
   );
   assert.equal(controller.getState().snapshot, expected);
-  assert.match(controller.getState().error, /正在被读取/);
+  assert.equal(controller.getState().error, "");
+  assert.equal(controller.getState().failure, undefined);
+  assert.equal(controller.getState().busy, false);
   await assert.rejects(
     controller.recycle(entryId, { ...expected, revision: 1 }),
     (e) => e.code === "LIBRARY_STALE_SNAPSHOT",
   );
   controller.dispose();
+});
+
+test("pre-operation rejection and cancellation cannot clear a real inventory failure", async () => {
+  const controller = new LibraryController({
+    read: async () => snapshot(),
+    recycle: async () => {
+      throw { code: "LIBRARY_ITEM_BUSY" };
+    },
+  });
+  await controller.read();
+  const expected = controller.getState().snapshot;
+  controller.adapter.read = async () => {
+    throw { code: "LIBRARY_UNAVAILABLE" };
+  };
+  await controller.read();
+  const failure = controller.getState().failure;
+  const error = controller.getState().error;
+  assert.ok(error);
+  const published = [];
+  const unsubscribe = controller.subscribe((state) => published.push(state));
+  for (const code of [
+    "LIBRARY_ITEM_BUSY",
+    "LIBRARY_BUSY",
+    "LIBRARY_RECYCLE_FORMAT_UNSUPPORTED",
+    "LIBRARY_RECYCLE_UNSUPPORTED",
+  ]) {
+    controller.adapter.recycle = async () => {
+      throw { code };
+    };
+    await assert.rejects(
+      controller.recycle(entryId, expected),
+      (e) => e.code === code,
+    );
+  }
+  controller.adapter.recycle = async () => null;
+  assert.equal(await controller.recycle(entryId, expected), null);
+  assert.ok(published.every((state) => state.error === error));
+  assert.ok(published.every((state) => state.failure === failure));
+  assert.equal(controller.getState().snapshot, expected);
+  unsubscribe();
+  controller.adapter.recycle = async () => outcome();
+  assert.equal((await controller.recycle(entryId, expected)).recycled, true);
+  assert.equal(controller.getState().error, "");
+  assert.equal(controller.getState().failure, undefined);
+  assert.equal(
+    controller.getState().snapshot.items[0].errorCode,
+    "LIBRARY_RECYCLED",
+  );
+  controller.dispose();
+});
+
+test("unknown or uncertain recycle failures still invalidate inventory readiness", async () => {
+  for (const code of [
+    "LIBRARY_RECYCLE_RESULT_UNCERTAIN",
+    "LIBRARY_RESPONSE_INVALID",
+    "LIBRARY_FILE_CHANGED",
+    "DOCUMENT_CORRUPT",
+  ]) {
+    const controller = new LibraryController({
+      read: async () => snapshot(),
+      recycle: async () => {
+        throw { code };
+      },
+    });
+    await controller.read();
+    const before = controller.getState().snapshot;
+    await assert.rejects(
+      controller.recycle(entryId, before),
+      (e) => e.code === code,
+    );
+    assert.ok(controller.getState().error);
+    assert.equal(controller.getState().failure.cause.code, code);
+    assert.equal(controller.getState().snapshot, before);
+    assert.equal(controller.getState().busy, false);
+    controller.dispose();
+  }
 });
 
 test("success and partial registration results publish missing file state without erasing identity", async () => {

@@ -613,17 +613,31 @@ export function LibraryWorkbench({
       ),
     [library.snapshot.items, contentRevision],
   );
-  const searched = useMemo(
-    () => searchLibraryItems(visibleItems, query),
-    [visibleItems, query],
-  );
+  const inventoryFailed = Boolean(library.error);
+  const searched = useMemo(() => {
+    const result = searchLibraryItems(visibleItems, query);
+    return inventoryFailed
+      ? {
+          ...result,
+          counts: {
+            all: result.items.length,
+            owned: 0,
+            review: result.items.length,
+          },
+        }
+      : result;
+  }, [visibleItems, query, inventoryFailed]);
   const items = useMemo(
     () =>
       sortLibraryItems(
-        searched.items.filter((item) => libraryFilterMatches(item, filter)),
+        searched.items.filter((item) =>
+          inventoryFailed
+            ? filter !== "owned"
+            : libraryFilterMatches(item, filter),
+        ),
         sort,
       ),
-    [searched, sort, filter],
+    [searched, sort, filter, inventoryFailed],
   );
   const detail = visibleItems.find((item) => item.id === detailId);
   const itemKeys = useMemo(() => items.map((item) => item.id), [items]);

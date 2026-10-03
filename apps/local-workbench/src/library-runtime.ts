@@ -371,6 +371,19 @@ export interface LibraryControllerState {
   busy: boolean;
   migrationNotice: string;
 }
+// These native rejections occur before a file operation is attempted. They
+// belong to the requesting action, not to the validity of the last inventory.
+// Unknown failures and uncertain recycle outcomes must still require a reread.
+function recycleWasNotAttempted(cause: unknown): boolean {
+  const code =
+    typeof cause === "string" ? cause : (cause as { code?: string })?.code;
+  return (
+    code === "LIBRARY_ITEM_BUSY" ||
+    code === "LIBRARY_BUSY" ||
+    code === "LIBRARY_RECYCLE_FORMAT_UNSUPPORTED" ||
+    code === "LIBRARY_RECYCLE_UNSUPPORTED"
+  );
+}
 /** One bounded native batch at a time. Only explicit actions start scanning. */
 export class LibraryController {
   readonly adapter: LibraryAdapter;
@@ -413,6 +426,7 @@ export class LibraryController {
   private async run(
     operation: () => Promise<LibrarySnapshot | null>,
     drive = false,
+    failureScope: "inventory" | "recycle" = "inventory",
   ) {
     if (this.state.busy) return;
     const wasDriving = this.timer !== undefined;
@@ -422,7 +436,10 @@ export class LibraryController {
     const previousError = this.state.error;
     const previousFailure = this.state.failure;
     let accepted = false;
-    this.publish({ busy: true, error: "" });
+    this.publish({
+      busy: true,
+      ...(failureScope === "inventory" ? { error: "" } : {}),
+    });
     try {
       const snapshot = await operation();
       if (token !== this.epoch) return;
@@ -445,7 +462,11 @@ export class LibraryController {
         this.publish({ error: previousError, failure: previousFailure });
       }
     } catch (cause) {
-      if (token === this.epoch) this.fail(cause);
+      if (token === this.epoch) {
+        if (failureScope === "recycle" && recycleWasNotAttempted(cause))
+          throw cause;
+        this.fail(cause);
+      }
     } finally {
       if (token === this.epoch) {
         this.publish({ busy: false });
@@ -490,15 +511,19 @@ export class LibraryController {
       throw new LibraryError("LIBRARY_STALE_SNAPSHOT");
     const token = this.epoch;
     let result: LibraryRecycleResult | null | undefined;
-    await this.run(async () => {
-      result = await this.adapter.recycle(
-        expected.rootId!,
-        expected.generation,
-        entryId,
-        expected.revision,
-      );
-      return result?.snapshot ?? null;
-    });
+    await this.run(
+      async () => {
+        result = await this.adapter.recycle(
+          expected.rootId!,
+          expected.generation,
+          entryId,
+          expected.revision,
+        );
+        return result?.snapshot ?? null;
+      },
+      false,
+      "recycle",
+    );
     if (token !== this.epoch) return null;
     if (result === undefined)
       throw (

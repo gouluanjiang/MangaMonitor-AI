@@ -1269,7 +1269,8 @@ test("library context menu exposes five actions and recycle cancellation/failure
   await expect(page.getByTestId("library-filter-review")).toHaveText(
     "文件待核对 0",
   );
-  await cover.click();
+  await cover.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "作品详细", exact: true }).click();
   await expect(page.getByTestId("library-detail-stock")).toContainText(
     "已入库",
   );

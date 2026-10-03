@@ -1,27 +1,38 @@
 # Current development handoff
 
-## 1.0.2 formal release closure (2026-10-03)
+## 1.0.2 formal delivery completed (2026-10-03)
 
-The user has explicitly authorized merging, publishing and replacing the desktop
-shortcut installation with the formal build. Release work is isolated on
-`codex/release-1.0.2-20261003`, starting at
-`8cb85a67dafdb1c1850bb50ae81fd7f2414ec561`; the original development checkouts
-remain unchanged. This includes the cumulative PR #23–#27 application changes.
-Only version metadata and delivery documentation change in release preparation.
-See [the release record](RELEASE_1.0.2_2026-10-03.md) for gates and actual evidence;
-preparation is not a completed release or installation.
+[v1.0.2 is public](https://github.com/gouluanjiang/MangaMonitor-AI/releases/tag/v1.0.2).
+PR #28 merged the cumulative work; GitHub also marks #23–#27 merged through
+ancestry. The reviewed source is `2a6aa1faef5b4353b555a97cfc19a0b8847c087f`,
+the build checkout is `d991753ca1e52b4a76d450167ff88375ce5e8d5d`, and the actual
+merge / release tag is `457e6fef9ceebaa220ebcb0223da30de7be00c9c`.
+All three share tree `76732cebfefe1e03b5eb9f4093fd86f249975217`.
+Release-source CI and the automatically triggered main CI all passed.
+The public ZIP, installer, manifest and checksums were downloaded back and
+verified. Do not rebuild, replace those assets or move the tag for these
+documentation-only updates. See [the release record](RELEASE_1.0.2_2026-10-03.md).
 
-The exact `068b66b` candidate was installed by explicit user authorization on
-2026-10-03. The generated validation files have subsequently been moved outside
-the real library, and only the identified test registrations were removed.
-File/document integrity evidence is private; the cleanup UI recheck was stopped
-by the user and is not counted as UI acceptance.
+After user authorization and a fresh backup, the existing current-user desktop
+installation was upgraded and its seven payloads checked against the manifest.
+Local NSIS attempts did not replace the target; delivery used atomic replacement
+from the verified release payloads, retaining the compatible existing uninstaller.
+The original desktop shortcut launched the exact final executable. The app ID,
+credential namespace and data directory remain unchanged. Profile documents were
+byte-identical across installation; startup effects and native-UI limitations
+are recorded separately, without treating process launch as UI acceptance.
+Original development checkouts were not switched or overwritten.
 
-The final local matrix is 28 PASS, 0 FAIL, 0 BLOCKED, 8 WAIVED, 1 UNTESTED.
+The local matrix remains 28 PASS, 0 FAIL, 0 BLOCKED, 8 WAIVED, 1 UNTESTED.
 R05/D02/P01/P02/P03/P04/B03/B05 were explicitly waived; do not restart them.
-B06 remains the user's future natural-update experience. LOCAL-03 is unresolved,
-not repaired by an unchanged-SHA successful retry. Historical sections below
-describe their original dates and no longer override this release authority.
+B06 remains the user's natural future-update experience. LOCAL-03 is unresolved,
+not repaired by an unchanged-SHA successful retry. Generated test media and their
+identified records are absent from the real library. No real manga was downloaded
+or deleted for release validation, and cloud monitoring remains disabled.
+
+Later work is maintenance requested by the user, not a revival of old roadmaps.
+The dated sections below retain their original evidence and authority boundaries;
+their historical “unmerged / uninstalled” states do not describe current delivery.
 
 ## Windows local follow-up — recycle rejection repair (2026-10-03)
 

@@ -19,8 +19,21 @@ Pre-operation busy/unsupported refusals now report through the existing file-act
 message and retain inventory readiness. Unknown failures and uncertain recycle
 outcomes remain conservative; actual inventory errors also make the counts and
 filters agree with the pending-verification cards. Synthetic controller/browser
-regressions were added. CI and exact-new-candidate native retest are pending for
-this follow-up; do not reuse the 1613486 results as its acceptance.
+regressions were added. Candidate
+`068b66b9ee0a9684472318af10bb60b08384e443` passed baseline, frontend (362 logic /
+269 browser, frontend attempt 2) and Windows desktop CI. Its manifest, all eight
+payload hashes and runtime source revision were verified before the targeted
+native retest. On 2026-10-03 the generated ZIP passed two occupied-file refusals,
+available-filter and detail consistency, reader-close recovery, and cancellation
+of the native recycle confirmation. File hashes and protected library records
+remained intact. No deletion was confirmed in this retest. See the follow-up
+contract for candidate hashes, run links and remaining limitations.
+
+The first frontend attempt also recorded LOCAL-03: an existing recent-feed test
+observed scrollTop 15 instead of 0 after cold reload. The unchanged-SHA retry
+passed, without relaxing the assertion. Its trace is retained; the root cause
+is unresolved and must not be reported as repaired. The cumulative 28/8/1 matrix
+still retains each case's actual revision and test layer.
 
 No merge, release or shortcut replacement has occurred. The original local
 development checkout is unchanged. No further test-isolation application code

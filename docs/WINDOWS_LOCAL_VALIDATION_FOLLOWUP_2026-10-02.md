@@ -74,4 +74,58 @@ cancellation, successful retry, uncertain results and late disposal. Browser
 regressions check the card, detail and filter counts after refusal, successful
 retry feedback, and actual scan-error filtering/recovery. No real files or
 credentials are involved in these regressions; formal tests and Windows builds
-run through the existing CI. Exact-new-candidate native verification is pending.
+run through the existing CI.
+
+## LOCAL-02 delivery and exact-candidate retest (2026-10-03)
+
+Application/test candidate: `068b66b9ee0a9684472318af10bb60b08384e443`.
+The repair is in `5f021ae`; the next commit corrects a test-only assumption to
+use the existing right-click detail action. Later documentation commits do not
+replace this candidate. Draft [PR #27](https://github.com/gouluanjiang/MangaMonitor-AI/pull/27)
+remains stacked on the cloud handoff branch and unmerged.
+
+- [Baseline CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/37099576526): passed.
+- [Frontend CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/37099576517):
+  362 logic and 269 browser tests passed on attempt 2, including the new refusal,
+  cancellation, actual inventory failure, filter and recovery checks.
+- [Windows desktop CI](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/37099576518):
+  passed, including native storage/IPC, credential and window boundaries,
+  Clippy, WebView startup/restart and isolated installer/data-retention checks.
+- [Windows candidate artifact](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/37099576518/artifacts/11265574475):
+  archive SHA-256 `778406c10ac103157f654867159340a2ea2734c2d8953a6c93db885d8dbcdcdc`;
+  manifest SHA-256 `57464359575df5add8754521e41541cb4e94d26dd915f06eb490400824d01325`;
+  delivered EXE SHA-256 `4b650ec7990074bfc39cea25d271aab53acaab778ed55c6e91ffc4117efd4ea7`.
+
+The local run started at 13:46:32 UTC+08; the last targeted UI observation was
+14:03:29. The exact source/checkout SHA, manifest, all eight payload hashes,
+documented installer patch and running-process identity were verified. Testing
+used the authorized existing profile with separate WebView cache, not a wholly
+isolated account profile. Only a generated three-page ZIP was opened for the
+fault case. Two recycle requests while its small reader was open were safely
+refused; card, detail and available-filter state stayed consistent. Closing the
+reader permitted the normal confirmation; selecting Cancel preserved the file
+and cleared the previous operation message. No deletion was confirmed.
+
+Seven synthetic file hashes, all library registrations, downloads and ordinary
+following were preserved. History and reading changes affected only the accessed
+synthetic record. Existing special-follow startup checks refreshed observation
+fields in their already authorized scope; catalog identities and work metadata
+were preserved. The formal installed executable and shortcut were unchanged.
+Private local evidence includes `LOCAL-02-result.json` and the revision-qualified
+native/protected-data snapshots. No private title list or credentials are in Git.
+
+The first frontend attempt passed the new LOCAL-02 cases but the existing
+recent-feed cold-reload test observed scrollTop 15 instead of 0. Source/section
+return anchors passed. The preceding candidate passed this test, and the only
+intervening change was in the LOCAL-02 test. An unchanged-SHA retry passed all
+269 browser cases. This independent LOCAL-03 observation remains unresolved;
+its trace was saved and no assertion was weakened or unrelated source repaired.
+
+The 37-case cumulative matrix remains 28 passed / 8 incompletely covered /
+1 natural-update experience untested, with actual revisions/layers retained.
+The remaining gaps need controlled native transport/fault/performance fixtures;
+current account permission is not the blocker. Native injection of a genuine
+inventory read failure was not repeated on the formal profile; synthetic CI
+covers that changed behavior. No performance improvement is claimed by this
+correctness fix. User acceptance, formal installation, merge and release remain
+separate from the targeted fix validation.

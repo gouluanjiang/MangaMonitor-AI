@@ -1,5 +1,28 @@
 # Current development handoff
 
+## 1.0.2 formal release closure (2026-10-03)
+
+The user has explicitly authorized merging, publishing and replacing the desktop
+shortcut installation with the formal build. Release work is isolated on
+`codex/release-1.0.2-20261003`, starting at
+`8cb85a67dafdb1c1850bb50ae81fd7f2414ec561`; the original development checkouts
+remain unchanged. This includes the cumulative PR #23–#27 application changes.
+Only version metadata and delivery documentation change in release preparation.
+See [the release record](RELEASE_1.0.2_2026-10-03.md) for gates and actual evidence;
+preparation is not a completed release or installation.
+
+The exact `068b66b` candidate was installed by explicit user authorization on
+2026-10-03. The generated validation files have subsequently been moved outside
+the real library, and only the identified test registrations were removed.
+File/document integrity evidence is private; the cleanup UI recheck was stopped
+by the user and is not counted as UI acceptance.
+
+The final local matrix is 28 PASS, 0 FAIL, 0 BLOCKED, 8 WAIVED, 1 UNTESTED.
+R05/D02/P01/P02/P03/P04/B03/B05 were explicitly waived; do not restart them.
+B06 remains the user's future natural-update experience. LOCAL-03 is unresolved,
+not repaired by an unchanged-SHA successful retry. Historical sections below
+describe their original dates and no longer override this release authority.
+
 ## Windows local follow-up — recycle rejection repair (2026-10-03)
 
 The authorized local follow-up fixes stale recent-card metadata after opening

@@ -9,6 +9,7 @@ if (-not $IsWindows -or $env:CI -cne 'true' -or $env:GITHUB_ACTIONS -cne 'true' 
     $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
     throw 'Installer smoke requires a disposable GitHub-hosted Windows runner.'
 }
+Import-Module (Join-Path $PSScriptRoot '../tools/windows-install-verification.psm1') -Force -DisableNameChecking
 if ($env:MANGAMONITOR_BUILD_REVISION -cnotmatch '^[0-9a-fA-F]{40}$' -or
     $env:GITHUB_SHA -cnotmatch '^[0-9a-fA-F]{40}$') {
     throw 'Release evidence requires exact source and checkout revisions.'
@@ -60,7 +61,7 @@ $evidence = [ordered]@{
     sourceRevision = $env:MANGAMONITOR_BUILD_REVISION
     checkoutRevision = $env:GITHUB_SHA
     workflowRun = $env:GITHUB_RUN_ID
-    scope = 'fresh install, installed WebView startup/restart, same-version reinstall, uninstall preserving synthetic data, install again'
+    scope = 'fresh install, installed WebView startup/restart, same-version reinstall, synthetic stale-target replacement, uninstall preserving synthetic data, install again'
     historical034Upgrade = 'not tested'
     interactiveInstallerPages = 'not tested; silent current-user installation'
     binary = $null
@@ -122,6 +123,16 @@ function Assert-Installed {
     } finally {
         [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
     }
+    # Reuse the local delivery gate. The expected EXE hash comes from the
+    # independently checked Tauri marker transform, not the just-read target.
+    $payloads = @(
+        @{ file = $binaryName; sha256 = $evidence.binary.installedSha256; bytes = [long](Get-Item -LiteralPath $builtExecutable).Length }
+        foreach ($resource in $resources.GetEnumerator()) {
+            $identity = Get-InstallFileIdentity $resource.Value
+            @{ file = $resource.Key; sha256 = $identity.sha256; bytes = [long]$identity.bytes }
+        }
+    )
+    $null = Assert-VerifiedWindowsInstallation $installDirectory $config.version $payloads
 }
 function Read-DocumentHashes {
     $hashes = [ordered]@{}
@@ -166,6 +177,18 @@ try {
     Assert-Installed
     Assert-Retained
     $evidence.steps.Add('same-version-reinstall-preserved-synthetic-documents')
+
+    # Only the disposable installation is deliberately made stale. This is a
+    # synthetic replacement regression, not a historical-release upgrade test.
+    [IO.File]::AppendAllText($installedExecutable, 'synthetic-stale-target')
+    Set-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -Value '0.0.0'
+    $staleRejected = $false
+    try { Assert-Installed } catch { $staleRejected = $true }
+    if (-not $staleRejected) { throw 'The stale-target fixture was incorrectly accepted.' }
+    Invoke-InstallerProcess $installerPath "/S /D=$installDirectory"
+    Assert-Installed
+    Assert-Retained
+    $evidence.steps.Add('synthetic-stale-exe-and-registration-rejected-then-replaced')
 
     # _?= keeps this process synchronous; the silent uninstall leaves the
     # Delete app data checkbox unselected. No recursive shell deletion is used.

@@ -46,4 +46,6 @@ jobs:
           }
       - name: Test fail-closed installation and privacy contracts
         shell: pwsh
-        run: ./apps/local-workbench/tests/windows-install-verification.tests.ps1
+        # -File reports the suite's completion/exception, not the expected exit
+        # code left by its last negative CLI fixture. All assertions still gate.
+        run: pwsh -NoProfile -File ./apps/local-workbench/tests/windows-install-verification.tests.ps1

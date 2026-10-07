@@ -16,6 +16,7 @@ export interface GridAnchor {
 export interface SourceGridHandle {
   capture(preferred?: string): GridAnchor | null;
   restore(anchor: GridAnchor | null): void;
+  isRestoring(): boolean;
 }
 interface Props<T> {
   items: T[];
@@ -44,6 +45,7 @@ function Grid<T>(
   const pending = useRef<GridAnchor | null>(null);
   const restoreFrame = useRef(0);
   const measure = useRef<() => void>(() => {});
+  const measuredRows = useRef(false);
   function capture(preferred?: string): GridAnchor | null {
     const main = element.current?.closest("main");
     const data = current.current;
@@ -89,40 +91,78 @@ function Grid<T>(
     const settle = () => {
       if (!pending.current) return;
       measure.current();
-      applyAnchor(pending.current);
-      if (++attempts < 4) restoreFrame.current = requestAnimationFrame(settle);
-      else pending.current = null;
+      // Measurement updates metrics before React commits the matching extent.
+      // A browser-clamped scroll on the old extent is not a restored anchor.
+      attempts = applyAnchor(pending.current) ? attempts + 1 : 0;
+      if (!pending.current) return;
+      if (attempts >= 4) pending.current = null;
+      else restoreFrame.current = requestAnimationFrame(settle);
     };
     applyAnchor(anchor);
-    restoreFrame.current = requestAnimationFrame(settle);
+    if (pending.current) restoreFrame.current = requestAnimationFrame(settle);
   }
   function cancelRestore() {
     pending.current = null;
     cancelAnimationFrame(restoreFrame.current);
   }
-  function applyAnchor(anchor: GridAnchor | null) {
-    const main = element.current?.closest("main");
-    if (!main || !anchor) return;
-    if (anchor.atTop) {
-      main.scrollTop = 0;
-      measure.current();
-      return;
+  function applyAnchor(anchor: GridAnchor | null): boolean {
+    const root = element.current;
+    const main = root?.closest("main");
+    if (!anchor) return false;
+    if (
+      !root ||
+      !main ||
+      !root.getClientRects().length ||
+      !root.clientWidth ||
+      !main.clientHeight
+    ) {
+      cancelRestore();
+      return false;
     }
     const index = current.current.items.findIndex(
       (item) => current.current.itemKey(item) === anchor.key,
     );
-    if (index < 0) return;
+    if (index < 0 && !anchor.atTop) {
+      cancelRestore();
+      return false;
+    }
+    if (anchor.atTop) main.scrollTop = 0;
+    if (anchor.atTop && !current.current.items.length) return true;
     const value = metrics.current;
-    main.scrollTop =
-      value.offset +
-      Math.floor(index / value.columns) * value.rowHeight -
-      anchor.offset;
+    const height =
+      Math.ceil(current.current.items.length / value.columns) * value.rowHeight;
+    if (
+      !measuredRows.current ||
+      value.width <= 0 ||
+      Math.abs(root.getBoundingClientRect().height - height) > 0.5
+    ) {
+      measure.current();
+      return false;
+    }
+    const target = anchor.atTop
+      ? 0
+      : value.offset +
+        Math.floor(index / value.columns) * value.rowHeight -
+        anchor.offset;
+    // A shorter list or a larger viewport can legitimately make the previous
+    // offset unreachable. Clamp only after the complete measured extent exists.
+    const scroll = Math.max(
+      0,
+      Math.min(main.scrollHeight - main.clientHeight, target),
+    );
+    main.scrollTop = scroll;
     measure.current();
+    return Math.abs(main.scrollTop - scroll) <= 1;
   }
-  useImperativeHandle(forwarded, () => ({ capture, restore }), [
-    items,
-    density,
-  ]);
+  useImperativeHandle(
+    forwarded,
+    () => ({
+      capture,
+      restore,
+      isRestoring: () => pending.current !== null,
+    }),
+    [items, density],
+  );
   useLayoutEffect(() => {
     const root = element.current;
     const main = root?.closest("main");
@@ -162,6 +202,7 @@ function Grid<T>(
             : 0,
         ),
       );
+      measuredRows.current = measured > 50;
       const geometryChanged =
         columns !== metrics.current.columns ||
         Math.abs(width - metrics.current.width) > 0.5;
@@ -209,6 +250,14 @@ function Grid<T>(
       }
       metrics.current = next;
       setLayout((old) =>
+        // Subpixel stride changes can add up to a material extent difference.
+        // The restore guard must not wait for a commit this tolerance suppresses.
+        Math.abs(
+          Math.ceil(current.current.items.length / old.columns) *
+            old.rowHeight -
+            Math.ceil(current.current.items.length / next.columns) *
+              next.rowHeight,
+        ) > 0.5 ||
         Object.keys(next).some(
           (key) =>
             Math.abs(
@@ -271,7 +320,8 @@ function Grid<T>(
     schedule();
     return () => {
       cancelAnimationFrame(frame);
-      cancelAnimationFrame(restoreFrame.current);
+      cancelRestore();
+      measuredRows.current = false;
       measure.current = () => {};
       observer.disconnect();
       main.removeEventListener("scroll", schedule);

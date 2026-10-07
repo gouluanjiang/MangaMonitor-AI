@@ -745,6 +745,35 @@ for (const interrupt of [false, true]) {
             ),
           )
           .toBeLessThanOrEqual(2);
+        if (!interrupt) {
+          const fractionalBefore = (
+            await record("before-fractional-stride")
+          ).at(-1)!;
+          const rowHeight = await grid.evaluate((element) =>
+            Math.max(
+              ...Array.from(
+                element.querySelectorAll<HTMLElement>(".source-virtual-row"),
+                (row) => row.getBoundingClientRect().height,
+              ),
+            ),
+          );
+          // A quarter-pixel row change is below the per-field update tolerance,
+          // but ten such rows need a real 2.5 px extent commit.
+          await page.addStyleTag({
+            content: `${panelSelector} .source-virtual-row { min-height: ${rowHeight + 0.25}px !important; }`,
+          });
+          const fractional = (await record("fractional-stride", 16)).at(-1)!;
+          const increase =
+            fractional.measuredStride - fractionalBefore.measuredStride;
+          expect(increase).toBeGreaterThan(0);
+          expect(increase).toBeLessThanOrEqual(0.5);
+          expect(
+            Math.abs(
+              fractional.gridHeight -
+                Math.ceil(20 / fractional.columns) * fractional.measuredStride,
+            ),
+          ).toBeLessThanOrEqual(0.5);
+        }
         expect(
           await page.evaluate(() => window.workflowTest.unexpectedCommands),
         ).toEqual([]);

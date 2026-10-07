@@ -1,5 +1,34 @@
 # Current development handoff
 
+## Discovery author-position restore follow-up (2026-10-07)
+
+The user requested an independent **draft** repair for the post-merge UI failure
+on main `5f74c6731c0fcb7d80fd507710952202e40832ea`, tracked in
+[PR #33](https://github.com/gouluanjiang/MangaMonitor-AI/pull/33).
+Keep this PR draft and do not merge automatically. Its body records the exact
+reproduction and repair revisions, CI runs and geometry evidence.
+
+[UI run 37621645636](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/37621645636)
+retained the selected author and works, but returning from the library first
+rendered a 4228 px estimated grid, then a 5463.75 px measured grid. The browser
+clamped the saved 6077 scroll position to 4841 during the smaller layout and the
+application did not restore it after the final height arrived. This is a product
+restore lifecycle defect; a successful unchanged-source retry is not a repair.
+
+The test-only revision `ffe7db456d37de4d4b1317b7e4390499f04a2c97`
+[reproduced a 124 px position loss](https://github.com/gouluanjiang/MangaMonitor-AI/actions/runs/37626861950)
+after deliberately delayed row measurement, failing the unchanged 2 px position
+limit while the other 273 browser cases passed.
+
+The follow-up keeps the original anchor until real rows are measured, their
+extent is committed and the browser reaches the corresponding scroll target.
+The browsing cache waits for that restore to finish. Real user input still
+cancels the old restore. Controlled synthetic regressions hold row measurement
+across remount, retain the original strict assertions and check a second page
+round trip. Formal verification stays in CI; current-head results belong to
+PR #33. No source requests, release, installation, dependency or CI migration
+changes are part of this repair. Production monitoring stays disabled.
+
 ## Whole-project stability maintenance (2026-10-07)
 
 The user requested a full-project stability review after the review and merge of

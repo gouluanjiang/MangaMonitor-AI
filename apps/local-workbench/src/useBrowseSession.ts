@@ -186,7 +186,9 @@ export function useBrowseSession({
       } else main.scrollTop = position.anchor ? 0 : position.scroll;
       let settling = 0;
       const settle = () => {
-        if (++settling < 6)
+        // A remounted grid can still be waiting for its real row measurement
+        // and committed extent. Do not replace its saved anchor with a clamp.
+        if (++settling < 6 || grid?.current?.isRestoring())
           restoreFrame.current = requestAnimationFrame(settle);
         else {
           restoring.current = false;

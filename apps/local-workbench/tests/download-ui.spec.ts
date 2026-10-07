@@ -2140,6 +2140,10 @@ test("reopened completed staging requires explicit cleanup and retains completio
   await expect(cleanup).toContainText(
     "已下载记录、最终 ZIP、漫画目录和库索引均保留",
   );
+  await page.screenshot({
+    path: "visual-evidence/completed-staging-cleanup.png",
+    fullPage: true,
+  });
   await cleanup.getByRole("button", { name: "取消", exact: true }).click();
   expect(await calls(page, "jm_download_control")).toEqual([]);
 

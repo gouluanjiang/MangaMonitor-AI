@@ -519,6 +519,7 @@ fn batch_history_keeps_every_record_when_one_completed_command_still_has_staging
     let first = complete_for_presence(&f, record(&f));
     let mut next = first.metadata.clone();
     next.work_id = "1002".into();
+    next.title = "Second synthetic maintenance book".into();
     let plan = f
         .service
         .prepare(&f.store, &first.root.id, first.generation, next)
@@ -535,6 +536,7 @@ fn batch_history_keeps_every_record_when_one_completed_command_still_has_staging
         .into_iter()
         .find(|task| task.id == plan.plan_id)
         .unwrap();
+    assert_ne!(pending.destination, first.destination);
     let second = complete_before_cleanup(&f, pending);
     let before = f.store.read_downloads().unwrap();
     assert_eq!(

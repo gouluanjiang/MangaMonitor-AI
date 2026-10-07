@@ -11,6 +11,8 @@ with no application-source difference introduced by #31.
 See [the stability review](STABILITY_REVIEW_2026-10-07.md) for concrete findings,
 targeted repairs, dependency advisory provenance, measured cache retention,
 required CI evidence and long-term capacity/acceptance boundaries.
+The repair and current-head CI evidence are tracked in
+[PR #32](https://github.com/gouluanjiang/MangaMonitor-AI/pull/32).
 
 This batch addresses JM preflight cancellation, completed staging cleanup and
 history proof retention, bounded browsing/session caches, page-origin anchoring,

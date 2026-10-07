@@ -537,3 +537,226 @@ test("a hidden open author's current position survives eviction of old query var
   await expect(pressure).toHaveCount(0);
   await expect(retained).toHaveAttribute("aria-selected", "true");
 });
+
+for (const interrupt of [false, true]) {
+  test(
+    interrupt
+      ? "user scrolling cancels an author's pending restore before delayed rows are measured"
+      : "an author's bottom anchor survives delayed row measurement and a second page round trip",
+    async ({ page }) => {
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.setViewportSize({ width: 560, height: 900 });
+      await installWorkflow(page);
+      const author =
+        "完整合成作者名（" + "LongUnbrokenAuthorName".repeat(6) + "）";
+      await page.evaluate((author) => {
+        const original = window.__TAURI_INTERNALS__!.invoke;
+        window.__TAURI_INTERNALS__!.invoke = async (command, args = {}) => {
+          if (command === "source_author_known_works")
+            return {
+              ...args,
+              items: [],
+              checkedAt: 1000,
+              discoveryRevision: 0,
+              historyComplete: true,
+            };
+          if (command === "source_query" && args.kind === "author") {
+            const source = String(args.source);
+            return {
+              ...args,
+              items: Array.from({ length: 20 }, (_, index) => ({
+                source,
+                workId:
+                  source === "JM"
+                    ? String(1001 + index)
+                    : (1001 + index).toString(16).padStart(24, "0"),
+                title: `${author} 的合成作品 ${index + 1}`,
+                authors: [author],
+                tags: [],
+                description: null,
+                favorite: null,
+                chapterCount: null,
+                pageCount: null,
+                coverAvailable: false,
+                sourceUpdatedAt: "2026-09-01T00:00:00Z",
+              })),
+              page: 1,
+              pages: 1,
+              total: 20,
+              hasMore: false,
+              folders: [],
+            };
+          }
+          return original(command, args);
+        };
+      }, author);
+      await openUnifiedSearch(page);
+      await page.getByLabel("搜索作者名").fill(author);
+      await page.getByTestId("completion-start").click();
+      await expect(page.getByTestId("completion-counts")).toContainText(
+        "当前检查范围已读完",
+      );
+      await page.getByLabel("更新来源").selectOption("Pica");
+      const panel = page.getByRole("tabpanel");
+      const grid = panel.locator(".source-virtual-grid");
+      const main = page.getByRole("main");
+      const lastWork = page.getByTestId(
+        "author-update-Pica:" + (1020).toString(16).padStart(24, "0"),
+      );
+      const sampleFrames = (count = 8) =>
+        grid.evaluate(
+          (element, count) =>
+            new Promise<
+              {
+                scroll: number;
+                scrollHeight: number;
+                viewport: number;
+                gridHeight: number;
+                columns: number;
+                fallbackStride: number;
+                measuredStride: number;
+              }[]
+            >((resolve) => {
+              const values: {
+                scroll: number;
+                scrollHeight: number;
+                viewport: number;
+                gridHeight: number;
+                columns: number;
+                fallbackStride: number;
+                measuredStride: number;
+              }[] = [];
+              const sample = () => {
+                const main = element.closest("main")!;
+                const css = getComputedStyle(element);
+                const columns = css.gridTemplateColumns
+                  .split(" ")
+                  .filter(Boolean).length;
+                const gap = Number.parseFloat(css.rowGap);
+                const width =
+                  (element.clientWidth -
+                    Number.parseFloat(css.columnGap) * (columns - 1)) /
+                  columns;
+                const measured = Math.max(
+                  0,
+                  ...Array.from(
+                    element.querySelectorAll<HTMLElement>(
+                      ".source-virtual-row",
+                    ),
+                    (row) =>
+                      row.dataset.columns === String(columns)
+                        ? row.getBoundingClientRect().height
+                        : 0,
+                  ),
+                );
+                values.push({
+                  scroll: main.scrollTop,
+                  scrollHeight: main.scrollHeight,
+                  viewport: main.clientHeight,
+                  gridHeight: element.getBoundingClientRect().height,
+                  columns,
+                  fallbackStride: (width * 7) / 5 + 90 + gap,
+                  measuredStride: measured ? measured + gap : 0,
+                });
+                if (values.length === count) resolve(values);
+                else requestAnimationFrame(sample);
+              };
+              requestAnimationFrame(sample);
+            }),
+          count,
+        );
+      const evidence: { phase: string; frames: unknown[] }[] = [];
+      const record = async (phase: string, count = 8) => {
+        const frames = await sampleFrames(count);
+        evidence.push({ phase, frames });
+        return frames;
+      };
+      const artifact = interrupt
+        ? "author-restore-user-cancellation"
+        : "author-restore-delayed-measurement";
+      try {
+        await expect(grid).toHaveAttribute("data-total-items", "20");
+        const ready = (await record("initial-measurement", 16)).at(-1)!;
+        expect(ready.columns).toBe(2);
+        expect(ready.measuredStride).toBeGreaterThan(ready.fallbackStride + 50);
+        await main.hover();
+        await page.mouse.wheel(
+          0,
+          await main.evaluate((element) => element.scrollHeight),
+        );
+        await expect(lastWork).toBeInViewport();
+        const before = await record("before-navigation", 16);
+        const scroll = before.at(-1)!.scroll;
+        expect(before.slice(-8).every((frame) => frame.scroll === scroll)).toBe(
+          true,
+        );
+        expect(scroll).toBeGreaterThan(1000);
+        const panelSelector = await panel.evaluate(
+          (element) => "#" + CSS.escape(element.id),
+        );
+        await page.getByTestId("nav-library").click();
+        // Hold only the first real row measurement across the remount. The
+        // grid, CSS columns, browser scroll clamping and ResizeObserver remain
+        // real; no production state or browser measurement API is replaced.
+        const heldRows = await page.addStyleTag({
+          content: `${panelSelector} .source-virtual-row { display: none !important; }`,
+        });
+        await page.getByTestId("nav-discovery").click();
+        const held = await record("measurement-held", 8);
+        const estimated = held.at(-1)!;
+        expect(estimated.columns).toBe(2);
+        expect(held.every((frame) => frame.measuredStride === 0)).toBe(true);
+        expect(
+          Math.abs(estimated.gridHeight - 10 * estimated.fallbackStride),
+        ).toBeLessThanOrEqual(2);
+        expect(estimated.scroll).toBeLessThan(scroll - 100);
+        if (interrupt) {
+          // Real upward input must supersede the saved bottom anchor, including
+          // while its rows are still awaiting their first usable measurement.
+          await main.hover();
+          await page.mouse.wheel(0, -estimated.scrollHeight);
+          await expect
+            .poll(() => main.evaluate((element) => element.scrollTop))
+            .toBe(0);
+          await record("user-returned-to-origin");
+        }
+        await heldRows.evaluate((style) => style.remove());
+        const expected = interrupt ? 0 : scroll;
+        await record("measurement-released", 16);
+        if (!interrupt) await expect(lastWork).toBeInViewport();
+        await expect
+          .poll(async () =>
+            Math.abs(
+              (await main.evaluate((element) => element.scrollTop)) - expected,
+            ),
+          )
+          .toBeLessThanOrEqual(2);
+        // A visually successful first restore must also retain the right
+        // cached position after the hook's own settling period.
+        await page.getByTestId("nav-library").click();
+        await page.getByTestId("nav-discovery").click();
+        await record("second-round-trip", 16);
+        if (!interrupt) await expect(lastWork).toBeInViewport();
+        await expect
+          .poll(async () =>
+            Math.abs(
+              (await main.evaluate((element) => element.scrollTop)) - expected,
+            ),
+          )
+          .toBeLessThanOrEqual(2);
+        expect(
+          await page.evaluate(() => window.workflowTest.unexpectedCommands),
+        ).toEqual([]);
+        expect(errors).toEqual([]);
+      } finally {
+        await mkdir("visual-evidence", { recursive: true });
+        await writeFile(
+          `visual-evidence/${artifact}.json`,
+          JSON.stringify(evidence, null, 2) + "\n",
+        );
+        await page.screenshot({ path: `visual-evidence/${artifact}.png` });
+      }
+    },
+  );
+}

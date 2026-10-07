@@ -1,0 +1,51 @@
+name: Windows install verification contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/local-workbench/tools/**'
+      - 'apps/local-workbench/tests/windows-install-verification.tests.ps1'
+      - '.github/workflows/windows-install-verification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/local-workbench/tools/**'
+      - 'apps/local-workbench/tests/windows-install-verification.tests.ps1'
+      - '.github/workflows/windows-install-verification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-install-verification-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  installation-contract:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Parse the PowerShell entrypoints before execution
+        shell: pwsh
+        run: |
+          $paths = @(
+            'apps/local-workbench/tools/windows-install-verification.psm1',
+            'apps/local-workbench/tools/verify-windows-install.ps1',
+            'apps/local-workbench/tests/windows-install-verification.tests.ps1',
+            'apps/local-workbench/tests/installer-smoke.ps1'
+          )
+          foreach ($path in $paths) {
+            $tokens = $null; $errors = $null
+            $null = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $path), [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { throw 'PowerShell parse validation failed.' }
+          }
+      - name: Test fail-closed installation and privacy contracts
+        shell: pwsh
+        # -File reports the suite's completion/exception, not the expected exit
+        # code left by its last negative CLI fixture. All assertions still gate.
+        run: pwsh -NoProfile -File ./apps/local-workbench/tests/windows-install-verification.tests.ps1

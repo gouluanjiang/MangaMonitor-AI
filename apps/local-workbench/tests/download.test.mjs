@@ -170,6 +170,91 @@ test("only complete registered desktop output is accepted as downloaded", () => 
   );
 });
 
+test("completed output allows only explicit staging cleanup without relaxing completion proof", async () => {
+  const completed = task({
+    phase: "downloaded",
+    filesDone: 3,
+    allowedActions: ["cleanup"],
+    libraryEntryId: entryId,
+    localFiles: "present",
+  });
+  assert.equal(
+    validateDownloadSnapshot(snapshot([completed])).tasks[0].phase,
+    "downloaded",
+  );
+  for (const change of [
+    { filesDone: 2 },
+    { libraryEntryId: null },
+    { errorCode: "DOWNLOAD_CLEANUP_INCOMPLETE" },
+    { allowedActions: ["cleanup", "retry"] },
+    { allowedActions: ["abandon"] },
+  ])
+    assert.throws(() =>
+      validateDownloadSnapshot(snapshot([{ ...completed, ...change }])),
+    );
+
+  let response = snapshot([completed]);
+  const calls = [];
+  const controller = new DownloadController({
+    read: async () => snapshot([completed]),
+    control: async (...args) => {
+      calls.push(args);
+      return response;
+    },
+  });
+  await controller.read();
+  await controller.control(null, completed, "cleanup");
+  assert.equal(controller.getState().error, "");
+  assert.deepEqual(controller.getState().snapshot.tasks, [completed]);
+  assert.equal(calls[0][0].sessionId, "");
+  assert.equal(calls[0][3], "cleanup");
+  for (const rows of [
+    [],
+    [
+      {
+        ...completed,
+        phase: "abandoned",
+        libraryEntryId: null,
+        localFiles: null,
+      },
+    ],
+    [{ ...completed, revision: completed.revision + 1 }],
+    [{ ...completed, libraryEntryId: "d".repeat(64) }],
+  ]) {
+    response = snapshot(rows, 2);
+    await controller.control(null, completed, "cleanup");
+    assert.ok(controller.getState().error);
+    assert.deepEqual(controller.getState().snapshot.tasks, [completed]);
+  }
+  controller.dispose();
+});
+
+test("history cleanup refusals retain visible completion and explain the explicit recovery action", async () => {
+  const completed = task({
+    phase: "downloaded",
+    filesDone: 3,
+    allowedActions: ["cleanup"],
+    libraryEntryId: entryId,
+    localFiles: "present",
+  });
+  const controller = new DownloadController({
+    read: async () => snapshot([completed]),
+    removeHistory: async () => {
+      throw new DownloadError("DOWNLOAD_HISTORY_CLEANUP_REQUIRED");
+    },
+  });
+  await controller.read();
+  assert.equal(await controller.removeHistory([completed]), false);
+  assert.deepEqual(controller.getState().snapshot.tasks, [completed]);
+  assert.match(controller.getState().error, /完成记录已保留/);
+  assert.match(controller.getState().error, /清理临时文件/);
+  assert.match(
+    downloadErrorMessage("DOWNLOAD_HISTORY_CLEANUP_UNCONFIRMED"),
+    /无法确认.*完成记录已保留/,
+  );
+  controller.dispose();
+});
+
 test("plan identities retain twenty digit JM strings and reject malformed bindings", () => {
   const id = "12345678901234567890";
   assert.equal(validateDownloadPlan(plan({ revision: 0 })).revision, 0);

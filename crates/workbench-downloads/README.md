@@ -77,8 +77,13 @@ After durable registration, the desktop layer attempts to remove only this
 completed task's exact hashed files under its private staging command directory,
 then removes empty directories. It never removes final work files or failed or
 paused staging. Unknown/changed temporary content is retained; cleanup failure
-does not undo the completed download. The historical A6 CLI deletion flags and
-materialization policy are unchanged.
+does not undo the completed download. An idle completed task also exposes an
+explicit staging-cleanup retry, including after restart. It reuses the current
+output verification and exact staging allowlist under the exclusive workspace
+lease, preflights all remaining files before deleting any, and retains the
+completed task's revision and timestamp. No cleanup runs merely because a queue
+is reopened. The historical A6 CLI deletion flags and materialization policy are
+unchanged.
 
 Historical completion and current local file presence remain separate. Polling
 can reuse the process-local presence cache; prepare and explicit confirmation
@@ -89,7 +94,11 @@ sources, manual associations, unavailable roots, and existing media remain intac
 Visible full history is bounded at 500 tasks, with the existing 32 MiB private
 document ceiling retained. `remove_history` accepts only explicitly selected,
 revision-current completed records and never writes media, PC index, or phone
-state. It retains compact source/root/original-destination/entry evidence (bounded
+state. Before forgetting a task, it holds the exclusive workspace lease through
+the history CAS and checks that the task's own derived command directory is
+positively absent. Residual or unreadable staging retains the entire task and
+its cleanup proof; explicit cleanup and history removal remain separate actions.
+It retains compact source/root/original-destination/entry evidence (bounded
 at 20,000 identities) so clearing history cannot remove same-source duplicate or
 manual association protection. Full image manifests and checkpoints leave the
 visible ledger with the removed history entry. Empty evidence is omitted when

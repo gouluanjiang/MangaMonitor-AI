@@ -47,7 +47,7 @@ export function sourceErrorMessage(error: unknown): string {
   if (code === "RECENT_PAGE_STALLED")
     return "来源分页没有返回新的记录，已停止继续读取。已读内容保留，可以刷新最近更新后重试。";
   if (code === "RECENT_LIMIT")
-    return "最近更新达到 20000 条、1000 页或 32 MiB 浏览上限，已读内容保留。可以刷新最近更新重新浏览。";
+    return "最近更新达到浏览或历史保存上限，已读内容保留。刷新可重新读取最近列表，但不会释放已保存的历史容量。";
   if (code === "DESKTOP_REQUIRED")
     return "请在桌面应用中连接来源账号。浏览器预览不会连接真实账号。";
   if (code === "LOGIN_REMEMBER_INVALID")

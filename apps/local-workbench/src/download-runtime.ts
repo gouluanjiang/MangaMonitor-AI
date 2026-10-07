@@ -174,12 +174,15 @@ export function validateDownloadSnapshot(value: unknown): DownloadSnapshot {
         filesTotal === 0 ||
         filesDone !== filesTotal ||
         errorCode !== null ||
-        task.allowedActions.length !== 0)
+        task.allowedActions.some((action) => action !== "cleanup"))
     )
       return invalid();
     if (task.phase !== "downloaded" && libraryEntryId !== null)
       return invalid();
-    if (task.allowedActions.includes("cleanup") && task.phase !== "abandoned")
+    if (
+      task.allowedActions.includes("cleanup") &&
+      !["abandoned", "downloaded"].includes(task.phase as string)
+    )
       return invalid();
     if (
       task.allowedActions.includes("abandon") &&
@@ -523,7 +526,11 @@ export function downloadErrorMessage(cause: unknown): string {
     code === "DOWNLOAD_CLEANUP_INCOMPLETE" ||
     code === "DOWNLOAD_CLEANUP_REVIEW_REQUIRED"
   )
-    return "临时目录含未知或已改变的内容，未完成清理；已放弃记录仍保留，请先核对，程序不会删除最终漫画文件。";
+    return "临时目录含未知或已改变的内容，未完成清理；下载记录仍保留，请先核对，程序不会删除最终漫画文件。";
+  if (code === "DOWNLOAD_HISTORY_CLEANUP_REQUIRED")
+    return "此任务仍有下载临时文件，完成记录已保留。请先在此任务详情中清理临时文件，再整理历史。";
+  if (code === "DOWNLOAD_HISTORY_CLEANUP_UNCONFIRMED")
+    return "此任务的下载临时文件状态无法确认，完成记录已保留。请核对临时文件后再整理历史。";
   if (code === "DOWNLOAD_HISTORY_NOT_COMPLETED")
     return "只能整理已完成的下载记录，未完成任务的进度会保留。";
   if (code === "DOWNLOAD_HISTORY_LIMIT_REACHED")
@@ -1617,14 +1624,20 @@ export class DownloadController {
         task.revision,
         action,
       );
+      const completedCleanup =
+        action === "cleanup" && task.phase === "downloaded";
       if (
-        action === "cleanup"
+        action === "cleanup" && !completedCleanup
           ? next.tasks.some((result) => result.id === task.id)
           : !next.tasks.some(
               (result) =>
                 result.id === task.id &&
                 result.source === task.source &&
-                result.workId === task.workId,
+                result.workId === task.workId &&
+                (!completedCleanup ||
+                  (result.phase === "downloaded" &&
+                    result.revision === task.revision &&
+                    result.libraryEntryId === task.libraryEntryId)),
             )
       )
         return invalid();

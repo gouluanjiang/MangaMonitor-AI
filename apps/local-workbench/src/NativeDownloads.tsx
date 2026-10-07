@@ -83,7 +83,9 @@ function TaskMaintenanceConfirmation({
       <p>
         {action === "abandon"
           ? "任务将停止并保留为待清理记录。已有暂存、最终 ZIP 和漫画库均不会删除。"
-          : "仅清理此任务有记录且核验通过的下载暂存。成功后移除已放弃记录；最终 ZIP、漫画目录和库索引均保留。未知或已改变的内容会阻止清理。"}
+          : task.phase === "downloaded"
+            ? "仅清理此任务有记录且核验通过的下载暂存。已下载记录、最终 ZIP、漫画目录和库索引均保留。未知或已改变的内容会阻止清理；清理完成后可另行整理历史。"
+            : "仅清理此任务有记录且核验通过的下载暂存。成功后移除已放弃记录；最终 ZIP、漫画目录和库索引均保留。未知或已改变的内容会阻止清理。"}
       </p>
       {downloads.error && <p role="alert">{downloads.error}</p>}
       <div className="dialog-actions">
@@ -223,6 +225,7 @@ function HistoryConfirmation({
       </div>
       <p>
         从队列移除以下 {tasks.length} 条完成记录。漫画文件和漫画库索引会保留。
+        如仍有下载临时文件，完成记录也会保留，请先在任务详情中明确清理。
       </p>
       {downloads.error && (
         <p role="alert" className="source-notice">
@@ -825,6 +828,18 @@ export function NativeDownloads({
                         {task.destinationDisplay}
                       </p>
                       <p className="quiet">电脑文件已保存并登记到漫画库。</p>
+                      {task.allowedActions.includes("cleanup") && (
+                        <button
+                          className="text-button"
+                          data-testid={"download-cleanup-" + task.id}
+                          disabled={downloads.busy}
+                          onClick={() =>
+                            setMaintenance({ task, action: "cleanup" })
+                          }
+                        >
+                          清理临时文件
+                        </button>
+                      )}
                       <button
                         className="text-button"
                         data-testid={"download-history-remove-" + task.id}
@@ -912,7 +927,9 @@ export function NativeDownloads({
                                 : action === "abandon"
                                   ? "放弃任务"
                                   : action === "cleanup"
-                                    ? "清理临时文件并移除记录"
+                                    ? task.phase === "downloaded"
+                                      ? "清理临时文件"
+                                      : "清理临时文件并移除记录"
                                     : "重试"}
                           </button>
                         ))}

@@ -80,6 +80,11 @@ export function RecentUpdatesPanel({
   const root = useRef<HTMLElement>(null);
   const membership = useAuthorCatalogMembership(accounts, active);
   const [source, setSource] = useState<RecentSourceChoice>("Pica");
+  const accountScopes = accounts.flatMap((account) => {
+    const scope = accountScope(account);
+    return scope ? [scope] : [];
+  });
+  const accountScopeKey = JSON.stringify(accountScopes);
   const selectedSources: Source[] =
     source === "both" ? ["JM", "Pica"] : [source];
   const scopes = selectedSources.flatMap((selectedSource) => {
@@ -114,10 +119,12 @@ export function RecentUpdatesPanel({
   const [filter, setFilter] = useBrowseSessionState<InventoryFilter>(
     "recent-filter:" + scopeKey,
     "all",
+    scopes,
   );
   const [query, setQuery] = useBrowseSessionState(
     "recent-query:" + scopeKey,
     "",
+    scopes,
   );
   const [selectionMode, setSelectionMode] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
@@ -127,7 +134,14 @@ export function RecentUpdatesPanel({
     new Map<string, { adapter: SourceAdapter; reader: RecentUpdatesReader }>(),
   );
   const views = useRef(
-    new Map<string, { adapter: SourceAdapter; reader: RecentUpdatesView }>(),
+    new Map<
+      string,
+      {
+        adapter: SourceAdapter;
+        scopes: SourceScope[];
+        reader: RecentUpdatesView;
+      }
+    >(),
   );
   const currentView = useRef({ active, scopeKey });
   currentView.current = { active, scopeKey };
@@ -149,6 +163,23 @@ export function RecentUpdatesPanel({
     [accounts, adapter],
   );
   useEffect(() => {
+    const valid = new Set(accountScopes.map((scope) => JSON.stringify(scope)));
+    // Retain source/combined views only for currently connected sessions. Dispose
+    // views first so their subscriptions cannot keep a retired reader alive.
+    for (const [key, entry] of views.current) {
+      if (
+        entry.adapter === adapter &&
+        entry.scopes.every((scope) => valid.has(JSON.stringify(scope)))
+      )
+        continue;
+      entry.reader.dispose();
+      views.current.delete(key);
+    }
+    for (const [key, entry] of readers.current) {
+      if (entry.adapter === adapter && valid.has(key)) continue;
+      entry.reader.dispose();
+      readers.current.delete(key);
+    }
     setSelection([]);
     setSelectionMode(false);
     if (!scopes.length) {
@@ -176,7 +207,7 @@ export function RecentUpdatesPanel({
     });
     const next =
       retained?.reader ?? new RecentUpdatesView(source, sourceReaders);
-    views.current.set(scopeKey, { adapter, reader: next });
+    views.current.set(scopeKey, { adapter, scopes, reader: next });
     let previous: SourceWork[] | null = null;
     const unsubscribe = next.subscribe((state) => {
       const items = state.displayItems;
@@ -218,7 +249,7 @@ export function RecentUpdatesPanel({
     return () => {
       unsubscribe();
     };
-  }, [adapter, scopeKey]);
+  }, [adapter, scopeKey, accountScopeKey]);
   useEffect(
     () => () => {
       for (const value of views.current.values()) value.reader.dispose();
@@ -295,6 +326,7 @@ export function RecentUpdatesPanel({
   );
   useBrowseSession({
     scope: JSON.stringify(["recent", scopeKey, query, filter]),
+    sessions: scopes,
     active,
     root,
     grid,

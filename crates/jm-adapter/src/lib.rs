@@ -5,6 +5,8 @@
 pub mod media_descriptors;
 #[cfg(test)]
 mod media_fetch;
+#[cfg(test)]
+mod preflight_tests;
 pub mod reader;
 
 use aes::{
@@ -76,6 +78,23 @@ pub struct JmPreflightChapter {
     pub chapter_order: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JmChapterPreflight {
+    pub chapter_id: String,
+    pub chapter_order: u64,
+    pub expected_images: u64,
+}
+
+type MetadataResponse = (Option<u16>, Result<Value, String>);
+
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+struct RecordedRequest {
+    domain: String,
+    path: String,
+    query: Vec<(String, String)>,
+}
+
 #[derive(Clone, Copy)]
 enum MetadataPacing {
     Monitor,
@@ -97,6 +116,10 @@ pub struct JmClient {
     domains: Vec<String>,
     pacing: MetadataPacing,
     pub traces: Vec<RequestTrace>,
+    #[cfg(test)]
+    script: Option<std::collections::VecDeque<MetadataResponse>>,
+    #[cfg(test)]
+    requests: Vec<RecordedRequest>,
 }
 impl JmClient {
     pub fn new(domain: &str) -> Result<Self, String> {
@@ -130,6 +153,10 @@ impl JmClient {
             domains: ordered_domains(domain),
             pacing,
             traces: vec![],
+            #[cfg(test)]
+            script: None,
+            #[cfg(test)]
+            requests: Vec::new(),
         })
     }
     pub fn domain(&self) -> &str {
@@ -169,40 +196,7 @@ impl JmClient {
             }
             before_request()?;
             let started = Instant::now();
-            let ts = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| "CLOCK_ERROR")?
-                .as_secs();
-            let token = format!("{:x}", md5::compute(format!("{ts}18comicAPP")));
-            let response = self
-                .client
-                .get(format!("https://{domain}{path}"))
-                .query(query)
-                .header("token", token)
-                .header("tokenparam", format!("{ts},2.0.13"))
-                .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-                .send()
-                .await;
-            let mut http_status = None;
-            let result = async {
-                let response = response.map_err(|e| transport_code(&e))?;
-                let status = response.status().as_u16();
-                http_status = Some(status);
-                if !response.status().is_success() {
-                    return Err(format!("HTTP_{status}"));
-                }
-                let body = read_json_response(response).await?;
-                if number(&body["code"]) != Some(200) {
-                    return Err(format!(
-                        "API_CODE_{}",
-                        number(&body["code"])
-                            .map(|n| n.to_string())
-                            .unwrap_or("UNKNOWN".into())
-                    ));
-                }
-                decode(ts, body["data"].as_str().ok_or("MISSING_ENCRYPTED_DATA")?)
-            }
-            .await;
+            let (http_status, result) = self.request_domain(&domain, path, query).await?;
             let retryable = match (&result, http_status) {
                 (Err(code), None) => is_retryable_transport(code),
                 (Err(_), Some(status)) => retryable_http_status(status),
@@ -227,6 +221,78 @@ impl JmClient {
         }
 
         Err(last_retryable_error.unwrap_or_else(|| "JM_ALL_PINNED_DOMAINS_FAILED".into()))
+    }
+
+    async fn request_domain(
+        &mut self,
+        domain: &str,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<MetadataResponse, String> {
+        #[cfg(test)]
+        if let Some(response) = self.scripted_response(domain, path, query) {
+            return Ok(response);
+        }
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "CLOCK_ERROR")?
+            .as_secs();
+        let token = format!("{:x}", md5::compute(format!("{ts}18comicAPP")));
+        let response = self
+            .client
+            .get(format!("https://{domain}{path}"))
+            .query(query)
+            .header("token", token)
+            .header("tokenparam", format!("{ts},2.0.13"))
+            .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+            .send()
+            .await;
+        let mut http_status = None;
+        let result = async {
+            let response = response.map_err(|e| transport_code(&e))?;
+            let status = response.status().as_u16();
+            http_status = Some(status);
+            if !response.status().is_success() {
+                return Err(format!("HTTP_{status}"));
+            }
+            let body = read_json_response(response).await?;
+            if number(&body["code"]) != Some(200) {
+                return Err(format!(
+                    "API_CODE_{}",
+                    number(&body["code"])
+                        .map(|n| n.to_string())
+                        .unwrap_or("UNKNOWN".into())
+                ));
+            }
+            decode(ts, body["data"].as_str().ok_or("MISSING_ENCRYPTED_DATA")?)
+        }
+        .await;
+        Ok((http_status, result))
+    }
+
+    #[cfg(test)]
+    fn scripted_response(
+        &mut self,
+        domain: &str,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Option<MetadataResponse> {
+        self.requests.push(RecordedRequest {
+            domain: domain.into(),
+            path: path.into(),
+            query: query
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.clone()))
+                .collect(),
+        });
+        // Intercept every unit-test request, including absent/exhausted fixtures.
+        // Production guard, domain iteration and request accounting still run.
+        Some(
+            self.script
+                .as_mut()
+                .and_then(std::collections::VecDeque::pop_front)
+                .unwrap_or_else(|| (None, Err("TEST_SOURCE_REQUEST_FORBIDDEN".into()))),
+        )
     }
     pub async fn search(&mut self, author: &str, page: u64) -> Result<SearchPage, String> {
         let body = self
@@ -290,10 +356,23 @@ impl JmClient {
         &mut self,
         id: &str,
     ) -> Result<Vec<JmPreflightChapter>, String> {
+        self.preflight_chapters_with_guard(id, || Ok(())).await
+    }
+
+    pub async fn preflight_chapters_with_guard<Guard>(
+        &mut self,
+        id: &str,
+        before_request: Guard,
+    ) -> Result<Vec<JmPreflightChapter>, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
         if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
             return Err("INVALID_JM_ID".into());
         }
-        let body = self.request("/album", &[("id", id.into())], None).await?;
+        let body = self
+            .request_with_guard("/album", &[("id", id.into())], None, before_request)
+            .await?;
         let body_id = string(&body["id"]).ok_or("MISSING_JM_ID")?;
         if body_id != id {
             return Err("PREFLIGHT_DETAIL_ID_MISMATCH".into());
@@ -304,17 +383,62 @@ impl JmClient {
     /// Count the exact image entries the pinned JM worker would schedule from
     /// `/chapter`: GIF and WEBP entries only. No image URL is fetched here.
     pub async fn preflight_chapter_image_count(&mut self, chapter_id: &str) -> Result<u64, String> {
+        self.preflight_chapter_image_count_with_guard(chapter_id, || Ok(()))
+            .await
+    }
+
+    pub async fn preflight_chapter_image_count_with_guard<Guard>(
+        &mut self,
+        chapter_id: &str,
+        before_request: Guard,
+    ) -> Result<u64, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
         if chapter_id.is_empty() || !chapter_id.bytes().all(|b| b.is_ascii_digit()) {
             return Err("INVALID_JM_CHAPTER_ID".into());
         }
         let body = self
-            .request("/chapter", &[("id", chapter_id.into())], None)
+            .request_with_guard(
+                "/chapter",
+                &[("id", chapter_id.into())],
+                None,
+                before_request,
+            )
             .await?;
         let returned_id = string(&body["id"]).ok_or("MISSING_JM_CHAPTER_ID")?;
         if returned_id != chapter_id {
             return Err("PREFLIGHT_CHAPTER_ID_MISMATCH".into());
         }
         count_preflight_images(&body)
+    }
+
+    /// Metadata only. The caller's current task/session guard runs before each
+    /// physical album/chapter request, including any pinned-domain failover.
+    /// A failed guard or incomplete response never returns a partial scope.
+    pub async fn preflight_with_guard<Guard>(
+        &mut self,
+        work_id: &str,
+        mut before_request: Guard,
+    ) -> Result<Vec<JmChapterPreflight>, String>
+    where
+        Guard: FnMut() -> Result<(), String>,
+    {
+        let chapters = self
+            .preflight_chapters_with_guard(work_id, &mut before_request)
+            .await?;
+        let mut result = Vec::with_capacity(chapters.len());
+        for chapter in chapters {
+            let expected_images = self
+                .preflight_chapter_image_count_with_guard(&chapter.chapter_id, &mut before_request)
+                .await?;
+            result.push(JmChapterPreflight {
+                chapter_id: chapter.chapter_id,
+                chapter_order: chapter.chapter_order,
+                expected_images,
+            });
+        }
+        Ok(result)
     }
 }
 

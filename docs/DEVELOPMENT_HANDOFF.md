@@ -1,5 +1,29 @@
 # Current development handoff
 
+## Whole-project stability maintenance (2026-10-07)
+
+The user requested a full-project stability review after the review and merge of
+[PR #30](https://github.com/gouluanjiang/MangaMonitor-AI/pull/30).
+The reviewed main baseline is `012146b1a78c76013019276fe29b7f6d42099ab7`.
+Before submission, CI-only PR #31 independently merged as
+`f90bdae7a7c9d6cee9a4553775780346d796f860`; this repair is based on that latest main,
+with no application-source difference introduced by #31.
+See [the stability review](STABILITY_REVIEW_2026-10-07.md) for concrete findings,
+targeted repairs, dependency advisory provenance, measured cache retention,
+required CI evidence and long-term capacity/acceptance boundaries.
+The repair and current-head CI evidence are tracked in
+[PR #32](https://github.com/gouluanjiang/MangaMonitor-AI/pull/32).
+
+This batch addresses JM preflight cancellation, completed staging cleanup and
+history proof retention, bounded browsing/session caches, page-origin anchoring,
+and minimal Tauri/rustls/source-map-js security patches. The repeated LOCAL-03
+cold-reload failure retains its strict zero-scroll assertion and gains a
+deterministic geometry regression; an unchanged-source retry is not a repair.
+Formal acceptance belongs to this maintenance PR's current-head CI.
+No public release or installed application is replaced. Node Action/Ubuntu
+migration was handled separately by PR #31; production monitoring stays disabled.
+Historical waived cases and the installation/native UI limits below remain.
+
 ## 1.0.2 formal delivery completed (2026-10-03)
 
 [v1.0.2 is public](https://github.com/gouluanjiang/MangaMonitor-AI/releases/tag/v1.0.2).

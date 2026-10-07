@@ -115,7 +115,16 @@ fn put(f: &Fixture, record: DownloadRecord) {
 
 // Materialize and index only synthetic, already verified staging. No source
 // request or real-account state is involved in these presence regressions.
-fn complete_for_presence(f: &Fixture, mut value: DownloadRecord) -> DownloadRecord {
+fn complete_for_presence(f: &Fixture, value: DownloadRecord) -> DownloadRecord {
+    let value = complete_before_cleanup(f, value);
+    let workspace = f.store.open_download_workspace().unwrap();
+    materialize::cleanup_completed(&value, workspace.path()).unwrap();
+    value
+}
+
+// Deliberately stop at the durable completion point, as if the process exited
+// before its best-effort cleanup. Only recovery tests should use this helper.
+fn complete_before_cleanup(f: &Fixture, mut value: DownloadRecord) -> DownloadRecord {
     let (stage, report) = report(f, &value);
     value.files_done = 2;
     value.files_total = Some(2);
@@ -228,7 +237,7 @@ fn file_status_is_advisory_read_only_and_polling_reuses_only_the_same_revision()
     let view = f.service.read(&f.store).unwrap();
     assert_eq!(view.tasks[0].phase, DownloadPhase::Downloaded);
     assert_eq!(view.tasks[0].local_files, Some(LocalFiles::Missing));
-    assert!(view.tasks[0].allowed_actions.is_empty());
+    assert_eq!(view.tasks[0].allowed_actions, vec![Control::Cleanup]);
     assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
     assert_eq!(f.store.read_library().unwrap(), index_before);
 }

@@ -562,14 +562,29 @@ impl DownloadService {
                     | DownloadPhase::Saving
             );
         if action == Control::Cleanup {
-            if task.phase != DownloadPhase::Abandoned || runtime.active.is_some() {
+            if !matches!(
+                task.phase,
+                DownloadPhase::Abandoned | DownloadPhase::Downloaded
+            ) || runtime.active.is_some()
+            {
                 return Err(error("DOWNLOAD_WORKER_BUSY"));
             }
-            let abandoned = task.clone();
+            let selected = task.clone();
             // Lock the shared staging workspace as well as the service runtime.
             // No task/queue record disappears until exact temporary cleanup succeeds.
             let workspace = store.open_download_workspace()?;
-            materialize::cleanup_abandoned(&abandoned, workspace.path())?;
+            if selected.phase == DownloadPhase::Downloaded {
+                materialize::cleanup_completed(&selected, workspace.path())?;
+                // Completion identity, revision and timestamp are unchanged.
+                // History removal remains a separate explicit action.
+                return Ok(snapshot(
+                    &document,
+                    &mut runtime,
+                    false,
+                    store.read_library_shared()?.as_ref(),
+                ));
+            }
+            materialize::cleanup_abandoned(&selected, workspace.path())?;
             document.value.tasks.retain(|task| task.id != task_id);
             let saved = store.write_downloads(document.revision, document.value)?;
             return Ok(snapshot(
@@ -729,8 +744,9 @@ impl DownloadService {
             store.read_library_shared()?.as_ref(),
         ))
     }
-    /// Removes only completed display/history records. Compact identity evidence
-    /// remains private, and neither library document nor any media file is written.
+    /// Removes only completed display/history records whose own command staging
+    /// is positively absent. Compact identity evidence remains private, and
+    /// neither library document nor any media file is written.
     pub fn remove_history(
         &self,
         store: &WorkbenchStore,
@@ -761,6 +777,14 @@ impl DownloadService {
                     .ok_or(error("DOWNLOAD_DOCUMENT_INVALID"))?,
                 output_identity: task.output_identity.clone(),
             });
+        }
+        // Hold through the history CAS: no local or other-process worker can
+        // recreate command staging after this read-only check. A crash after
+        // durable completion but before cleanup still retains its full proof.
+        let workspace = store.open_download_workspace()?;
+        for selection in selections {
+            let task = selected_task(&mut document.value, selection)?;
+            materialize::require_completed_staging_absent(task, workspace.path())?;
         }
         for item in evidence {
             if !document.value.history_evidence.contains(&item) {
@@ -1536,7 +1560,11 @@ fn snapshot(
                     | DownloadPhase::Verifying => vec![Control::Pause],
                     DownloadPhase::Paused if !active => vec![Control::Resume, Control::Abandon],
                     DownloadPhase::Error if !active => vec![Control::Retry, Control::Abandon],
-                    DownloadPhase::Abandoned if runtime.active.is_none() => vec![Control::Cleanup],
+                    DownloadPhase::Abandoned | DownloadPhase::Downloaded
+                        if runtime.active.is_none() =>
+                    {
+                        vec![Control::Cleanup]
+                    }
                     _ => Vec::new(),
                 };
                 let relocated = presence::relocation(t, &library.value);

@@ -16,12 +16,21 @@ export function createAuthorCatalogIndex() {
     }
   >();
   const minimum = new Map<string, AuthorCatalogChange>();
+  let current: Set<string> | null = null;
   return {
+    retainScopes(scopes: SourceScope[]) {
+      current = new Set(scopes.map((scope) => JSON.stringify(scope)));
+      for (const key of entries.keys())
+        if (!current.has(key)) entries.delete(key);
+      for (const key of minimum.keys())
+        if (!current.has(key)) minimum.delete(key);
+    },
     invalidate(change: AuthorCatalogChange) {
       const key = JSON.stringify({
         source: change.source,
         sessionId: change.sessionId,
       });
+      if (current && !current.has(key)) return;
       const previous = minimum.get(key);
       minimum.set(key, {
         ...change,
@@ -43,6 +52,7 @@ export function createAuthorCatalogIndex() {
           previous = entries.get(key),
           floor = minimum.get(key);
         return (
+          (!current || current.has(key)) &&
           snapshot.revision >=
             Math.max(previous?.revision ?? 0, floor?.revision ?? 0) &&
           (snapshot.followingRevision ?? 0) >=

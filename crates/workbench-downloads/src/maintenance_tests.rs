@@ -185,6 +185,404 @@ fn active_task_cannot_be_abandoned_and_cleanup_requires_exclusive_worker_workspa
     assert_eq!(record(&f).phase, DownloadPhase::Abandoned);
 }
 
+fn selection(task: &DownloadRecord) -> TaskSelection {
+    TaskSelection {
+        task_id: task.id.clone(),
+        expected_revision: task.revision,
+    }
+}
+
+fn staged_command(f: &Fixture, task: &DownloadRecord) -> PathBuf {
+    let report: LocalExecutionReport =
+        serde_json::from_str(task.staging_report_json.as_deref().unwrap()).unwrap();
+    downloads_path(f)
+        .parent()
+        .unwrap()
+        .join("download-staging-v1")
+        .join(report.staging_subdir)
+}
+
+#[test]
+fn completed_before_cleanup_reopens_with_proof_until_explicit_cleanup_then_history_removal() {
+    for zip in [false, true] {
+        let f = if zip { zip_fixture() } else { fixture() };
+        // Simulate a process exiting after the durable completion write and
+        // before it could attempt cleanup or record a cleanup error.
+        let completed = complete_before_cleanup(&f, record(&f));
+        let command = staged_command(&f, &completed);
+        let before = fs::read(downloads_path(&f)).unwrap();
+        let library = f.store.read_library().unwrap();
+        let phone = f.store.read_phone_library().unwrap();
+        let reopened = WorkbenchStore::open(f._temp.path().join("private")).unwrap();
+        let service = DownloadService::new();
+        let restored = service.read(&reopened).unwrap();
+        assert_eq!(restored.tasks[0].phase, DownloadPhase::Downloaded);
+        assert!(restored.tasks[0]
+            .allowed_actions
+            .contains(&Control::Cleanup));
+        assert!(
+            command.is_dir(),
+            "reading must not automatically delete staging"
+        );
+        assert_eq!(
+            service
+                .remove_history(&reopened, &[selection(&completed)])
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_HISTORY_CLEANUP_REQUIRED"
+        );
+        assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
+        for _ in 0..2 {
+            let cleaned = service
+                .control(
+                    &reopened,
+                    &completed.id,
+                    completed.revision,
+                    Control::Cleanup,
+                )
+                .unwrap();
+            assert_eq!(cleaned.tasks[0].phase, DownloadPhase::Downloaded);
+            assert_eq!(cleaned.tasks[0].revision, completed.revision);
+            assert_eq!(cleaned.tasks[0].updated_at, completed.updated_at);
+            assert_eq!(fs::read(downloads_path(&f)).unwrap(), before);
+            assert!(!command.exists());
+            materialize::verify_output(&completed).unwrap();
+        }
+        assert!(service
+            .remove_history(&reopened, &[selection(&completed)])
+            .unwrap()
+            .tasks
+            .is_empty());
+        assert_eq!(
+            reopened
+                .read_downloads()
+                .unwrap()
+                .value
+                .history_evidence
+                .len(),
+            1
+        );
+        assert_eq!(reopened.read_library().unwrap(), library);
+        assert_eq!(reopened.read_phone_library().unwrap(), phone);
+        materialize::verify_output(&completed).unwrap();
+    }
+}
+
+#[test]
+fn completed_cleanup_resumes_after_the_last_file_or_chapters_directory_was_removed() {
+    for empty_command in [false, true] {
+        let f = zip_fixture();
+        let completed = complete_before_cleanup(&f, record(&f));
+        let command = staged_command(&f, &completed);
+        let report: LocalExecutionReport =
+            serde_json::from_str(completed.staging_report_json.as_deref().unwrap()).unwrap();
+        let mut chapter_paths = std::collections::BTreeSet::new();
+        for artifact in &report.source_completion.manifest.artifacts {
+            let relative = Path::new(&artifact.relative_path);
+            fs::remove_file(command.join(relative)).unwrap();
+            chapter_paths.insert(relative.parent().unwrap().to_path_buf());
+        }
+        for chapter in chapter_paths {
+            fs::remove_dir(command.join(chapter)).unwrap();
+        }
+        if empty_command {
+            fs::remove_dir(command.join("chapters")).unwrap();
+        }
+        let before = f.store.read_downloads().unwrap();
+        let library = f.store.read_library().unwrap();
+        let reopened = WorkbenchStore::open(f._temp.path().join("private")).unwrap();
+        let service = DownloadService::new();
+        assert_eq!(
+            service
+                .remove_history(&reopened, &[selection(&completed)])
+                .unwrap_err()
+                .code,
+            "DOWNLOAD_HISTORY_CLEANUP_REQUIRED"
+        );
+        let cleaned = service
+            .control(
+                &reopened,
+                &completed.id,
+                completed.revision,
+                Control::Cleanup,
+            )
+            .unwrap();
+        assert_eq!(cleaned.tasks[0].phase, DownloadPhase::Downloaded);
+        assert!(!command.exists());
+        assert_eq!(f.store.read_downloads().unwrap(), before);
+        assert_eq!(f.store.read_library().unwrap(), library);
+        materialize::verify_output(&completed).unwrap();
+    }
+}
+
+#[test]
+fn missing_private_staging_tree_does_not_permanently_block_completed_history() {
+    for missing_root in [false, true] {
+        let f = zip_fixture();
+        let completed = complete_for_presence(&f, record(&f));
+        let staging = downloads_path(&f)
+            .parent()
+            .unwrap()
+            .join("download-staging-v1");
+        // Only known, generated empty directories and the released fixture lock
+        // are removed. Opening a workspace safely recreates these ancestors.
+        fs::remove_dir(staging.join("commands")).unwrap();
+        if missing_root {
+            fs::remove_file(staging.join("worker.lock")).unwrap();
+            fs::remove_dir(&staging).unwrap();
+        }
+        let library = f.store.read_library().unwrap();
+        let reopened = WorkbenchStore::open(f._temp.path().join("private")).unwrap();
+        let service = DownloadService::new();
+        assert!(service
+            .remove_history(&reopened, &[selection(&completed)])
+            .unwrap()
+            .tasks
+            .is_empty());
+        assert_eq!(
+            reopened
+                .read_downloads()
+                .unwrap()
+                .value
+                .history_evidence
+                .len(),
+            1
+        );
+        assert!(staging.join("commands").is_dir());
+        assert_eq!(reopened.read_library().unwrap(), library);
+        materialize::verify_output(&completed).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn failed_post_registration_cleanup_keeps_completion_and_reopens_for_explicit_retry() {
+    let f = zip_fixture();
+    seed_report(&f);
+    let receipt = f
+        .service
+        .run(&f.store, &f.id, || Ok(()))
+        .await
+        .unwrap()
+        .unwrap();
+    let indexed = workbench_library::LibraryService::new()
+        .register_completed(
+            &f.store,
+            &receipt.root_id,
+            receipt.generation,
+            &receipt.relative_path,
+            &workbench_storage::LibraryReference {
+                source: Source::Jm,
+                work_id: receipt.work_id.clone(),
+            },
+            receipt.expected_pages,
+        )
+        .unwrap();
+    let entry = indexed
+        .items
+        .iter()
+        .find(|item| item.relative_path == receipt.relative_path)
+        .unwrap();
+    let command = staged_command(&f, &record(&f));
+    let unknown = command.join("unrecognized-synthetic.txt");
+    fs::write(&unknown, b"retain this unrecognized file").unwrap();
+    let finished = f
+        .service
+        .mark_indexed(&f.store, &receipt, &entry.id)
+        .unwrap();
+    assert_eq!(finished.tasks[0].phase, DownloadPhase::Downloaded);
+    assert_eq!(finished.tasks[0].error_code, None);
+    let completed = record(&f);
+    let before = f.store.read_downloads().unwrap();
+    let service = DownloadService::new();
+    assert_eq!(
+        service
+            .remove_history(&f.store, &[selection(&completed)])
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_HISTORY_CLEANUP_REQUIRED"
+    );
+    assert!(service
+        .control(
+            &f.store,
+            &completed.id,
+            completed.revision,
+            Control::Cleanup
+        )
+        .is_err());
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    assert_eq!(
+        fs::read(&unknown).unwrap(),
+        b"retain this unrecognized file"
+    );
+    // Remove only the deliberately injected synthetic blocker, then use the
+    // same explicit service action a restarted desktop exposes.
+    fs::remove_file(unknown).unwrap();
+    service
+        .control(
+            &f.store,
+            &completed.id,
+            completed.revision,
+            Control::Cleanup,
+        )
+        .unwrap();
+    assert!(!command.exists());
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    materialize::verify_output(&completed).unwrap();
+}
+
+#[test]
+fn completed_cleanup_preflights_changed_staging_and_final_output_without_losing_proof() {
+    for change_final in [false, true] {
+        let f = zip_fixture();
+        let completed = complete_before_cleanup(&f, record(&f));
+        let command = staged_command(&f, &completed);
+        let report: LocalExecutionReport =
+            serde_json::from_str(completed.staging_report_json.as_deref().unwrap()).unwrap();
+        let artifacts = &report.source_completion.manifest.artifacts;
+        let first = command.join(&artifacts[0].relative_path);
+        let second = command.join(&artifacts[1].relative_path);
+        let first_bytes = fs::read(&first).unwrap();
+        let target = if change_final {
+            f.library.join(&completed.destination)
+        } else {
+            second.clone()
+        };
+        fs::write(&target, b"changed synthetic content").unwrap();
+        let before = f.store.read_downloads().unwrap();
+        let service = DownloadService::new();
+        assert!(service
+            .control(
+                &f.store,
+                &completed.id,
+                completed.revision,
+                Control::Cleanup
+            )
+            .is_err());
+        assert_eq!(fs::read(&first).unwrap(), first_bytes);
+        assert!(second.is_file());
+        assert_eq!(fs::read(&target).unwrap(), b"changed synthetic content");
+        assert_eq!(f.store.read_downloads().unwrap(), before);
+        assert!(service
+            .remove_history(&f.store, &[selection(&completed)])
+            .is_err());
+        assert_eq!(f.store.read_downloads().unwrap(), before);
+    }
+}
+
+#[test]
+fn completed_cleanup_and_history_checks_require_workspace_and_current_task_revision() {
+    let f = zip_fixture();
+    let completed = complete_before_cleanup(&f, record(&f));
+    let before = f.store.read_downloads().unwrap();
+    let service = DownloadService::new();
+    let worker = f.store.open_download_workspace().unwrap();
+    assert_eq!(
+        service
+            .control(
+                &f.store,
+                &completed.id,
+                completed.revision,
+                Control::Cleanup
+            )
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_WORKER_BUSY"
+    );
+    assert_eq!(
+        service
+            .remove_history(&f.store, &[selection(&completed)])
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_WORKER_BUSY"
+    );
+    drop(worker);
+    assert_eq!(
+        service
+            .control(
+                &f.store,
+                &completed.id,
+                completed.revision + 1,
+                Control::Cleanup
+            )
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_TASK_STALE"
+    );
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    assert!(staged_command(&f, &completed).is_dir());
+    materialize::verify_output(&completed).unwrap();
+}
+
+#[test]
+fn batch_history_keeps_every_record_when_one_completed_command_still_has_staging() {
+    let f = zip_fixture();
+    let first = complete_for_presence(&f, record(&f));
+    let mut next = first.metadata.clone();
+    next.work_id = "1002".into();
+    next.title = "Second synthetic maintenance book".into();
+    let plan = f
+        .service
+        .prepare(&f.store, &first.root.id, first.generation, next)
+        .unwrap();
+    f.service
+        .confirm(&f.store, &plan.plan_id, plan.revision)
+        .unwrap();
+    let pending = f
+        .store
+        .read_downloads()
+        .unwrap()
+        .value
+        .tasks
+        .into_iter()
+        .find(|task| task.id == plan.plan_id)
+        .unwrap();
+    assert_ne!(pending.destination, first.destination);
+    let second = complete_before_cleanup(&f, pending);
+    let before = f.store.read_downloads().unwrap();
+    assert_eq!(
+        f.service
+            .remove_history(&f.store, &[selection(&first), selection(&second)])
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_HISTORY_CLEANUP_REQUIRED"
+    );
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    assert!(before.value.history_evidence.is_empty());
+    materialize::verify_output(&first).unwrap();
+    materialize::verify_output(&second).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn redirected_completed_staging_blocks_history_forgetting_and_cleanup_without_following_links() {
+    let f = zip_fixture();
+    let completed = complete_before_cleanup(&f, record(&f));
+    let command = staged_command(&f, &completed);
+    let saved = command.with_extension("saved-synthetic");
+    fs::rename(&command, &saved).unwrap();
+    std::os::unix::fs::symlink(&saved, &command).unwrap();
+    let before = f.store.read_downloads().unwrap();
+    let service = DownloadService::new();
+    assert_eq!(
+        service
+            .remove_history(&f.store, &[selection(&completed)])
+            .unwrap_err()
+            .code,
+        "DOWNLOAD_HISTORY_CLEANUP_UNCONFIRMED"
+    );
+    assert!(service
+        .control(
+            &f.store,
+            &completed.id,
+            completed.revision,
+            Control::Cleanup
+        )
+        .is_err());
+    assert_eq!(f.store.read_downloads().unwrap(), before);
+    assert!(saved.join("chapters").is_dir());
+    materialize::verify_output(&completed).unwrap();
+}
+
 #[test]
 fn v1_download_migration_preserves_revision_and_bytes_until_a_write() {
     let f = zip_fixture();

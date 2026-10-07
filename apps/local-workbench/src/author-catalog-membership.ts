@@ -39,6 +39,9 @@ export function useAuthorCatalogMembership(
   );
   const [failed, setFailed] = useState(false);
   useEffect(() => {
+    catalog.retainScopes(scopes);
+  }, [key]);
+  useEffect(() => {
     const listener = () => redraw((value) => value + 1);
     listeners.add(listener);
     return () => {

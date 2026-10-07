@@ -1272,6 +1272,58 @@ test("feed anchors and loaded pages survive section and source switches, while a
     .toBe(0);
 });
 
+test("the page origin survives delayed header and row measurement without losing mid-list anchoring", async ({
+  page,
+}) => {
+  await install(page);
+  await page.getByRole("button", { name: "读取下一页", exact: true }).click();
+  await expect(page.getByTestId("recent-counts")).toContainText("已读取 39 部");
+  const grid = page.getByTestId("recent-grid");
+  const settle = () =>
+    grid.evaluate(
+      (element) =>
+        new Promise<number[]>((resolve) => {
+          const values: number[] = [];
+          const sample = () => {
+            values.push(element.closest("main")!.scrollTop);
+            if (values.length === 16) resolve(values.slice(-8));
+            else requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+  await page.getByRole("main").evaluate((main) => {
+    main.scrollTop = 0;
+  });
+  await settle();
+  // The original cold-start failure moved the page by 15 px during the first
+  // grid measurement. Make that geometry change deterministic: a delayed
+  // header gains 15 px while a taller row triggers the grid ResizeObserver.
+  await grid.evaluate((element) => {
+    const panel = element.closest("section")!;
+    const heading = panel.querySelector<HTMLElement>(".page-heading")!;
+    heading.style.paddingBottom = "15px";
+    const row = element.querySelector<HTMLElement>(".source-virtual-row")!;
+    row.style.minHeight = row.getBoundingClientRect().height + 40 + "px";
+  });
+  expect(await settle()).toEqual(Array(8).fill(0));
+
+  await page.getByRole("main").evaluate((main) => {
+    main.scrollTop = 1000;
+  });
+  await settle();
+  const anchor = await captureRecentAnchor(page);
+  await grid.evaluate((element) => {
+    const panel = element.closest("section")!;
+    panel.querySelector<HTMLElement>(".page-heading")!.style.paddingBottom =
+      "30px";
+    const row = element.querySelector<HTMLElement>(".source-virtual-row")!;
+    row.style.minHeight = row.getBoundingClientRect().height + 40 + "px";
+  });
+  await settle();
+  await expectRecentAnchor(page, anchor);
+});
+
 test("recent source switches restore each feed's query and inventory filter without refetching its catalog", async ({
   page,
 }) => {

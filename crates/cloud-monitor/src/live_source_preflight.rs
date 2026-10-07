@@ -93,34 +93,37 @@ fn base_evidence(request: &SourceBridgeRequest) -> SourcePreflightEvidence {
     }
 }
 
-async fn enumerate_jm(
+async fn enumerate_jm<Guard>(
     request: &SourceBridgeRequest,
     download: bool,
-) -> Result<SourcePreflightEvidence, String> {
+    before_request: Guard,
+) -> Result<SourcePreflightEvidence, String>
+where
+    Guard: FnMut() -> Result<(), String>,
+{
     let mut client = if download {
         jm_adapter::JmClient::new_for_download(jm_adapter::DEFAULT_DOMAIN)?
     } else {
         jm_adapter::JmClient::new(jm_adapter::DEFAULT_DOMAIN)?
     };
-    let chapters = client.preflight_chapters(&request.source_work_id).await?;
+    let chapters = client
+        .preflight_with_guard(&request.source_work_id, before_request)
+        .await?;
     let expected_chapter_count =
         u64::try_from(chapters.len()).map_err(|_| "JM_PREFLIGHT_CHAPTER_COUNT_OVERFLOW")?;
     if expected_chapter_count == 0 {
         return Err("JM_PREFLIGHT_CHAPTERS_EMPTY".into());
     }
 
-    let mut result = Vec::with_capacity(chapters.len());
-    for chapter in chapters {
-        let expected_images = client
-            .preflight_chapter_image_count(&chapter.chapter_id)
-            .await?;
-        result.push(PreflightChapter {
+    let result = chapters
+        .into_iter()
+        .map(|chapter| PreflightChapter {
             chapter_id: chapter.chapter_id,
             chapter_order: chapter.chapter_order,
-            expected_images,
+            expected_images: chapter.expected_images,
             image_pagination: None,
-        });
-    }
+        })
+        .collect();
 
     let mut evidence = base_evidence(request);
     evidence.expected_chapter_count = expected_chapter_count;
@@ -197,14 +200,26 @@ async fn enumerate_source(
     pica_token: Option<&str>,
     download: bool,
 ) -> Result<SourcePreflightEvidence, String> {
+    enumerate_source_with_guard(request, pica_token, download, || Ok(())).await
+}
+
+async fn enumerate_source_with_guard<Guard>(
+    request: &SourceBridgeRequest,
+    pica_token: Option<&str>,
+    download: bool,
+    before_request: Guard,
+) -> Result<SourcePreflightEvidence, String>
+where
+    Guard: FnMut() -> Result<(), String>,
+{
     match request.source.as_str() {
-        "jm" => enumerate_jm(request, download).await,
+        "jm" => enumerate_jm(request, download, before_request).await,
         "pica" => {
             enumerate_pica(
                 request,
                 pica_token.ok_or("PICA_PREFLIGHT_TOKEN_REQUIRED")?,
                 download,
-                || Ok(()),
+                before_request,
             )
             .await
         }
@@ -229,6 +244,22 @@ where
     let before = source_preflight_authorization::authorize(state, ledger, command, plan, request)?;
     let evidence = enumerate().await?;
 
+    finish_enumeration(command, plan, request, evidence, before, reload)
+}
+
+/// Both legacy and desktop enumerators must still pass a final current-state
+/// check. Per-request guards never turn the initial approval into a permit.
+fn finish_enumeration<Reload>(
+    command: &ExecutorCommand,
+    plan: &LocalExecutionPlan,
+    request: &SourceBridgeRequest,
+    evidence: SourcePreflightEvidence,
+    before: SourcePreflightAuthorization,
+    reload: Reload,
+) -> Result<LiveSourcePreflightResult, String>
+where
+    Reload: FnOnce() -> Result<(State, GateLedger), String>,
+{
     let (post_state, post_ledger) = reload()?;
     let after = source_preflight_authorization::authorize(
         &post_state,
@@ -306,8 +337,9 @@ where
     .await
 }
 
-/// Explicit desktop downloads use immediate metadata pacing. Pica pagination
-/// also reloads the caller's account/task scope before every metadata request.
+/// Explicit desktop downloads use immediate metadata pacing. Both sources
+/// reload the account/task scope before every metadata request; JM also checks
+/// before advancing to another pinned API domain after a failed request.
 pub(crate) async fn run_for_download<Reload>(
     state: &State,
     ledger: &GateLedger,
@@ -320,18 +352,6 @@ pub(crate) async fn run_for_download<Reload>(
 where
     Reload: FnMut() -> Result<(State, GateLedger), String>,
 {
-    if request.source != "pica" {
-        return run_with_enumerator(
-            state,
-            ledger,
-            command,
-            plan,
-            request,
-            || enumerate_source(request, pica_token, true),
-            reload,
-        )
-        .await;
-    }
     let before = source_preflight_authorization::authorize(state, ledger, command, plan, request)?;
     let mut check_current = || {
         let (state, ledger) = reload()?;
@@ -339,17 +359,9 @@ where
             source_preflight_authorization::authorize(&state, &ledger, command, plan, request)?;
         authorization_unchanged(&before, &current)
     };
-    let evidence = enumerate_pica(
-        request,
-        pica_token.ok_or("PICA_PREFLIGHT_TOKEN_REQUIRED")?,
-        true,
-        &mut check_current,
-    )
-    .await?;
-    let (state, ledger) = reload()?;
-    let after = source_preflight_authorization::authorize(&state, &ledger, command, plan, request)?;
-    authorization_unchanged(&before, &after)?;
-    preflight_result(request, plan, evidence, before, after)
+    let evidence =
+        enumerate_source_with_guard(request, pica_token, true, &mut check_current).await?;
+    finish_enumeration(command, plan, request, evidence, before, reload)
 }
 
 #[cfg(test)]
@@ -467,25 +479,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pica_download_reloads_account_scope_before_its_first_metadata_request() {
-        let (state, ledger, command, plan, request, _) =
-            setup_source("pica", "111111111111111111111111");
-        let mut checks = 0;
-        let result = run_for_download(
-            &state,
-            &ledger,
-            &command,
-            &plan,
-            &request,
-            Some("synthetic-token"),
-            || {
-                checks += 1;
-                Err("SESSION_EXPIRED".into())
-            },
-        )
-        .await;
-        assert_eq!(result.unwrap_err(), "SESSION_EXPIRED");
-        assert_eq!(checks, 1);
+    async fn both_download_sources_reload_scope_before_their_first_metadata_request() {
+        for (source, id, token) in [
+            ("jm", "123456", None),
+            ("pica", "111111111111111111111111", Some("synthetic-token")),
+        ] {
+            let (state, ledger, command, plan, request, _) = setup_source(source, id);
+            let mut checks = 0;
+            let result =
+                run_for_download(&state, &ledger, &command, &plan, &request, token, || {
+                    checks += 1;
+                    Err("SESSION_EXPIRED".into())
+                })
+                .await;
+            assert_eq!(result.unwrap_err(), "SESSION_EXPIRED", "{source}");
+            assert_eq!(checks, 1, "{source}");
+        }
     }
 
     #[tokio::test]

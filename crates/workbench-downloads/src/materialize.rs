@@ -589,6 +589,25 @@ pub(crate) fn save(
     persist(record)
 }
 
+/// Forgetting a completed task must not orphan its only exact staging proof.
+/// The caller holds the workspace lease. Inspect only the command derived from
+/// this immutable approval; absence needs neither source access nor final media.
+pub(crate) fn require_completed_staging_absent(
+    record: &DownloadRecord,
+    staging: &Path,
+) -> Result<()> {
+    let absent = (|| {
+        let (_, _, command) = adapter::current(record)?;
+        let commands = Directory::open(staging)?.child("commands")?;
+        Ok::<_, crate::StoreError>(commands.probe(&command.command_id)?.is_none())
+    })()
+    .map_err(|_| error("DOWNLOAD_HISTORY_CLEANUP_UNCONFIRMED"))?;
+    if !absent {
+        return Err(error("DOWNLOAD_HISTORY_CLEANUP_REQUIRED"));
+    }
+    Ok(())
+}
+
 /// Desktop-only temporary-data lifecycle after durable PC registration. This
 /// never receives a user-selected root as its removal root, never recurses, and
 /// never removes paused/error staging or an unrecognized/changed file.
@@ -615,7 +634,15 @@ pub(crate) fn cleanup_completed(record: &DownloadRecord, staging: &Path) -> Resu
         return Ok(());
     }
     let command_root = commands.child(&command.command_id)?;
-    if command_root.names()? != vec!["chapters".to_string()] {
+    let children = command_root.names()?;
+    if children.is_empty() {
+        // A previous exact cleanup can have removed the last child before an
+        // interruption. The same complete proof permits only this empty dir.
+        drop(command_root);
+        commands.remove_empty_child(&command.command_id)?;
+        return commands.sync();
+    }
+    if children != vec!["chapters".to_string()] {
         return Err(error("DOWNLOAD_CLEANUP_INCOMPLETE"));
     }
     let chapters = command_root.child("chapters")?;
@@ -632,9 +659,12 @@ pub(crate) fn cleanup_completed(record: &DownloadRecord, staging: &Path) -> Resu
     if present.iter().any(|name| !expected.contains_key(name)) {
         return Err(error("DOWNLOAD_CLEANUP_INCOMPLETE"));
     }
-    for name in present {
-        let chapter = chapters.child(&name)?;
-        let artifacts = &expected[&name];
+    let mut removals = Vec::new();
+    // Validate all remaining files before deleting any. A later unknown or
+    // changed chapter must not consume another chapter's recovery bytes.
+    for name in &present {
+        let chapter = chapters.child(name)?;
+        let artifacts = &expected[name];
         let allowed: BTreeSet<_> = artifacts
             .iter()
             .filter_map(|a| a.relative_path.rsplit('/').next())
@@ -650,10 +680,23 @@ pub(crate) fn cleanup_completed(record: &DownloadRecord, staging: &Path) -> Resu
                 .next()
                 .ok_or(error("DOWNLOAD_PROOF_INVALID"))?;
             if existing.iter().any(|n| n == filename) {
-                chapter.remove_exact_file(filename, artifact.size_bytes, &artifact.sha256)?;
+                if fs::digest(&mut chapter.read(filename)?)?
+                    != (artifact.size_bytes, artifact.sha256.clone())
+                {
+                    return Err(error("DOWNLOAD_STAGING_CHANGED"));
+                }
+                removals.push((name.clone(), filename.to_owned(), artifact));
             }
         }
-        drop(chapter);
+    }
+    for (chapter, filename, artifact) in removals {
+        chapters.child(&chapter)?.remove_exact_file(
+            &filename,
+            artifact.size_bytes,
+            &artifact.sha256,
+        )?;
+    }
+    for name in present {
         chapters.remove_empty_child(&name)?;
     }
     drop(chapters);

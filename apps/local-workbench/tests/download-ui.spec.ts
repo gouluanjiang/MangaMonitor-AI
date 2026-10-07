@@ -20,6 +20,7 @@ type Options = {
   batchWorks?: boolean;
   initialTasks?: DownloadTask[];
   failPrepareIds?: string[];
+  pendingCompletedStaging?: boolean;
 };
 type Hooks = {
   calls: { command: string; args: Record<string, unknown> }[];
@@ -28,6 +29,8 @@ type Hooks = {
   blockedRead: boolean;
   filePresence: DownloadLocalFiles;
   accounts: AccountSummary[];
+  completedStagingPending: boolean;
+  failCompletedCleanup: boolean;
   advance(phase: "error" | "downloaded"): void;
 };
 declare global {
@@ -127,6 +130,12 @@ async function install(page: Page, options: Options = {}) {
       pc,
       blockedRead: Boolean(options.failRead),
       filePresence: "present",
+      completedStagingPending:
+        localStorage.getItem("synthetic.download.completed-staging") === null
+          ? Boolean(options.pendingCompletedStaging)
+          : localStorage.getItem("synthetic.download.completed-staging") ===
+            "true",
+      failCompletedCleanup: false,
       accounts: (["JM", "Pica"] as const).map((source) => ({
         source,
         sessionId: "session-" + source,
@@ -161,11 +170,16 @@ async function install(page: Page, options: Options = {}) {
       };
     if (!stored && options.initialTasks)
       hooks.queue = { revision: 1, tasks: clone(options.initialTasks) };
-    const save = () =>
+    const save = () => {
       localStorage.setItem(
         "synthetic.jm.download.queue",
         JSON.stringify(hooks.queue),
       );
+      localStorage.setItem(
+        "synthetic.download.completed-staging",
+        String(hooks.completedStagingPending),
+      );
+    };
     hooks.advance = (phase) => {
       hooks.queue = {
         revision: hooks.queue.revision + 1,
@@ -430,6 +444,8 @@ async function install(page: Page, options: Options = {}) {
               )
             )
               throw { code: "DOWNLOAD_TASK_STALE" };
+            if (hooks.completedStagingPending)
+              throw { code: "DOWNLOAD_HISTORY_CLEANUP_REQUIRED" };
             hooks.queue = {
               revision: hooks.queue.revision + 1,
               tasks: hooks.queue.tasks.filter(
@@ -510,6 +526,13 @@ async function install(page: Page, options: Options = {}) {
             if (target.revision !== args.expectedRevision)
               throw { code: "DOWNLOAD_TASK_STALE" };
             if (args.action === "cleanup") {
+              if (target.phase === "downloaded") {
+                if (hooks.failCompletedCleanup)
+                  throw { code: "DOWNLOAD_CLEANUP_INCOMPLETE" };
+                hooks.completedStagingPending = false;
+                save();
+                return clone(hooks.queue);
+              }
               if (target.phase !== "abandoned")
                 throw { code: "DOWNLOAD_CONTROL_INVALID" };
               hooks.queue = {
@@ -2080,4 +2103,94 @@ test("pause during saving keeps finalization active and stops every waiting task
     ),
   ).toEqual(["saving", "paused"]);
   expect(await calls(page, "jm_download_resume_many")).toEqual([]);
+});
+
+test("reopened completed staging requires explicit cleanup and retains completion across refusal and retry", async ({
+  page,
+}) => {
+  const completed = queueTask(1, "downloaded", { allowedActions: ["cleanup"] });
+  await install(page, {
+    initialTasks: [completed],
+    completed: true,
+    pendingCompletedStaging: true,
+  });
+  await page.getByTestId("nav-queue").click();
+  await expect(page.getByTestId("download-filter-downloaded")).toBeVisible();
+  await page.reload();
+  await page.getByTestId("nav-queue").click();
+  await page.getByTestId("download-filter-downloaded").click();
+  await expectQueueCounts(page, 0, 0, 1);
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+  const libraryBefore = await page.evaluate(() => window.downloadTest.pc);
+  await page
+    .getByTestId("download-details-" + completed.id)
+    .getByText("查看详情", { exact: true })
+    .click();
+  await page.getByTestId("download-history-remove-" + completed.id).click();
+  await page.getByTestId("download-history-confirm").click();
+  const history = page.getByRole("dialog", { name: "整理下载历史" });
+  await expect(history).toContainText("完成记录已保留");
+  expect(
+    await page.evaluate(() => window.downloadTest.queue.tasks[0].phase),
+  ).toBe("downloaded");
+  await history.getByRole("button", { name: "取消", exact: true }).click();
+
+  await page.getByTestId("download-cleanup-" + completed.id).click();
+  const cleanup = page.getByRole("dialog", { name: "清理下载临时文件" });
+  await expect(cleanup).toContainText(
+    "已下载记录、最终 ZIP、漫画目录和库索引均保留",
+  );
+  await page.screenshot({
+    path: "visual-evidence/completed-staging-cleanup.png",
+    fullPage: true,
+  });
+  await cleanup.getByRole("button", { name: "取消", exact: true }).click();
+  expect(await calls(page, "jm_download_control")).toEqual([]);
+
+  await page.getByTestId("download-cleanup-" + completed.id).click();
+  await page.evaluate(() => {
+    window.downloadTest.failCompletedCleanup = true;
+  });
+  await cleanup.getByRole("button", { name: "确认清理临时文件" }).click();
+  await expect(cleanup).toContainText("下载记录仍保留");
+  expect(
+    await page.evaluate(() => window.downloadTest.completedStagingPending),
+  ).toBe(true);
+  expect(
+    await page.evaluate(() => window.downloadTest.queue.tasks[0].phase),
+  ).toBe("downloaded");
+  await page.evaluate(() => {
+    window.downloadTest.failCompletedCleanup = false;
+  });
+  await cleanup.getByRole("button", { name: "确认清理临时文件" }).click();
+  await expect(cleanup).not.toBeVisible();
+  expect(
+    await page.evaluate(() => window.downloadTest.completedStagingPending),
+  ).toBe(false);
+  expect(await page.evaluate(() => window.downloadTest.queue.tasks[0])).toEqual(
+    completed,
+  );
+  expect(await page.evaluate(() => window.downloadTest.pc)).toEqual(
+    libraryBefore,
+  );
+  const cleanupCalls = await calls(page, "jm_download_control");
+  expect(cleanupCalls.map((call) => call.args.action)).toEqual([
+    "cleanup",
+    "cleanup",
+  ]);
+  expect(cleanupCalls[1].args).toEqual({
+    scope: { source: "JM", sessionId: "" },
+    taskId: completed.id,
+    expectedRevision: completed.revision,
+    action: "cleanup",
+  });
+  await page.getByTestId("download-history-remove-" + completed.id).click();
+  await page.getByTestId("download-history-confirm").click();
+  await expect(history).not.toBeVisible();
+  expect(await page.evaluate(() => window.downloadTest.queue.tasks)).toEqual(
+    [],
+  );
+  expect(await page.evaluate(() => window.downloadTest.pc)).toEqual(
+    libraryBefore,
+  );
 });

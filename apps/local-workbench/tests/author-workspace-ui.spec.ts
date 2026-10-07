@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { installWorkflow } from "./workflow-fixture.ts";
 import { openUnifiedSearch } from "./browse-ui-helpers.ts";
+import { browseCacheLimits } from "../src/browse-session.ts";
 
 test("many author tabs wrap at narrow widths with complete names, visible close buttons and retained keyboard and tab state", async ({
   page,
@@ -420,4 +421,119 @@ test("author tabs stream cached results, isolate state, retain positions and ign
     .toBeGreaterThan(scroll - 20);
   await page.screenshot({ path: "visual-evidence/author-workspace-tabs.png" });
   expect(errors).toEqual([]);
+});
+
+test("a hidden open author's current position survives eviction of old query variants", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installWorkflow(page);
+  await page.evaluate(() => {
+    const previous = window.__TAURI_INTERNALS__!.invoke;
+    window.__TAURI_INTERNALS__!.invoke = async (command, args = {}) => {
+      if (command === "source_author_known_works")
+        return {
+          ...args,
+          items: [],
+          checkedAt: 1000,
+          discoveryRevision: 0,
+          historyComplete: true,
+        };
+      if (command === "source_query" && args.kind === "author") {
+        const source = String(args.source),
+          author = String(args.query);
+        return {
+          ...args,
+          items: Array.from({ length: 60 }, (_, i) => ({
+            source,
+            workId:
+              source === "JM"
+                ? String(i + 1)
+                : (i + 1).toString(16).padStart(24, "0"),
+            title: `${author} ${i + 1}`,
+            authors: [author],
+            tags: [],
+            description: null,
+            favorite: null,
+            chapterCount: null,
+            pageCount: null,
+            coverAvailable: false,
+            sourceUpdatedAt: "2026-09-01T00:00:00Z",
+          })),
+          page: 1,
+          pages: 1,
+          total: 60,
+          hasMore: false,
+          folders: [],
+        };
+      }
+      return previous(command, args);
+    };
+  });
+  await openUnifiedSearch(page);
+  for (const name of ["Retained", "Query pressure"]) {
+    await page.getByLabel("搜索作者名").fill(name);
+    await page.getByTestId("completion-start").click();
+    await expect(page.getByTestId("completion-counts")).toContainText(
+      "当前检查范围已读完",
+    );
+  }
+  const retained = page.getByRole("tab", { name: "Retained", exact: true });
+  const pressure = page.getByRole("tab", {
+    name: "Query pressure",
+    exact: true,
+  });
+  // Programmatic tab activation avoids scrolling the top toolbar into view.
+  await retained.evaluate((button: HTMLButtonElement) => button.click());
+  await expect(retained).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("main").hover();
+  await page.mouse.wheel(0, 800);
+  await expect
+    .poll(() => page.getByRole("main").evaluate((main) => main.scrollTop))
+    .toBeGreaterThan(700);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  const position = await page
+    .getByRole("main")
+    .evaluate((main) => main.scrollTop);
+  await pressure.evaluate((button: HTMLButtonElement) => button.click());
+  await expect(pressure).toHaveAttribute("aria-selected", "true");
+  const variants = browseCacheLimits.positions + 8;
+  await page
+    .getByLabel("筛选作者更新")
+    .evaluate(async (input: HTMLInputElement, count) => {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      for (let i = 1; i <= count; i++) {
+        // Distinct controls/scopes, identical matching rows; no extra source calls.
+        setValue.call(input, " ".repeat(i));
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      }
+    }, variants);
+  await expect(page.getByLabel("筛选作者更新")).toHaveValue(
+    " ".repeat(variants),
+  );
+  await retained.evaluate((button: HTMLButtonElement) => button.click());
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await page.getByRole("main").evaluate((main) => main.scrollTop)) -
+          position,
+      ),
+    )
+    .toBeLessThanOrEqual(2);
+  await page
+    .getByRole("button", { name: "关闭作者标签 Query pressure", exact: true })
+    .click();
+  await expect(pressure).toHaveCount(0);
+  await expect(retained).toHaveAttribute("aria-selected", "true");
 });

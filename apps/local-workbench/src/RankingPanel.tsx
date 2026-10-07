@@ -208,6 +208,7 @@ export function RankingPanel({
   const complete = !error && !busy && data?.page.hasMore === false;
   useBrowseSession({
     scope: JSON.stringify(["ranking", key, query, filter]),
+    sessions: scope ? [scope] : [],
     active,
     root,
     grid,

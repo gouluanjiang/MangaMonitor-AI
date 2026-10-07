@@ -81,6 +81,7 @@ export function SpecialFollowsPanel(props: Props) {
   const accountKey = JSON.stringify(snapshot?.scopes ?? []);
   useBrowseSession({
     scope: `special:${accountKey}:${onlyUnread}:${query}`,
+    sessions: snapshot?.scopes ?? [],
     active: !!props.active,
     root,
     grid,

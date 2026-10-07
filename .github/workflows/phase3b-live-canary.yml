@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   canary:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -21,7 +21,7 @@ jobs:
       PICA_EMAIL: ${{ secrets.PICA_EMAIL }}
       PICA_PASSWORD: ${{ secrets.PICA_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Require usable Pica authentication
         shell: bash
@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload sanitized live-canary evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: phase3b-live-canary-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

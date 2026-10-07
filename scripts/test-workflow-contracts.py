@@ -234,5 +234,171 @@ class WorkflowContracts(unittest.TestCase):
                 self.assertIs(json.loads((ROOT / name).read_text(encoding='utf-8'))[flag], False)
 
 
+class CIMaintenanceContracts(unittest.TestCase):
+    """Enforce the reviewed pins and exercise actual maintenance routing.
+
+    The pin catalog records the upstream runtime audit. These offline checks
+    prevent mutable references and drift; they do not refetch or trust upstream
+    releases at test time. New YAML forms must be reviewed before being accepted.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        directory = ROOT / '.github/workflows'
+        cls.workflows = {
+            path.name: path.read_text(encoding='utf-8').splitlines()
+            for path in sorted(directory.iterdir()) if path.suffix in ('.yml', '.yaml')
+        }
+
+    def job(self, workflow: str, name: str) -> list[str]:
+        _, jobs = field(self.workflows[workflow], 'jobs', 0)
+        return field(jobs, name, 2)[1]
+
+    def test_all_action_references_match_audited_commit_pins(self):
+        catalog = json.loads((ROOT / '.github/action-pins.json').read_text(encoding='utf-8'))
+        self.assertEqual(catalog['schema_version'], 1)
+        self.assertEqual(catalog['runtime'], 'node24')
+        actions = catalog['actions']
+        self.assertIsInstance(actions, dict)
+        self.assertTrue(actions)
+        for action, pin in actions.items():
+            with self.subTest(action=action):
+                self.assertRegex(action, r'^[\w.-]+/[\w.-]+(?:/[\w.-]+)*$')
+                self.assertRegex(pin['commit'], r'\A[0-9a-f]{40}\Z')
+                self.assertRegex(pin['version'], r'^v\d+\.\d+\.\d+(?:[-+][\w.-]+)?$')
+
+        references = 0
+        for workflow, lines in self.workflows.items():
+            for number, line in enumerate(lines, 1):
+                if line.lstrip().startswith('#') or not re.search(r'''\buses['"]?\s*:''', line):
+                    continue
+                with self.subTest(workflow=workflow, line=number):
+                    # Reject unsupported flow/quoted-key forms instead of
+                    # silently skipping a newly introduced Action reference.
+                    match = re.fullmatch(r'\s*(?:-\s+)?uses:\s*(\S+)(?:\s+#.*)?\s*', line)
+                    self.assertIsNotNone(match, 'unsupported uses field syntax')
+                    action, separator, commit = scalar(match.group(1)).rpartition('@')
+                    self.assertEqual(separator, '@')
+                    self.assertRegex(commit, r'\A[0-9a-f]{40}\Z')
+                    self.assertIn(action, actions, 'Action is missing its reviewed catalog entry')
+                    self.assertEqual(commit, actions[action]['commit'])
+                    references += 1
+        self.assertGreater(references, 0)
+
+    def windows_triggered(self, event: str, branch: str, changed: list[str]) -> bool:
+        _, events = field(self.workflows['windows-install-verification.yml'], 'on', 0)
+        value, config = field(events, event, 2)
+        self.assertEqual(value, '')
+        self.assertEqual(keys(config, 4), {'branches', 'paths'})
+        branches = sequence(*field(config, 'branches', 4), 6)
+        paths = sequence(*field(config, 'paths', 4), 6)
+        return (any(glob_matches(branch, pattern) for pattern in branches)
+                and any(glob_matches(path, pattern) for path in changed for pattern in paths))
+
+    def test_windows_contract_preserves_paths_and_covers_development_pushes(self):
+        _, events = field(self.workflows['windows-install-verification.yml'], 'on', 0)
+        self.assertEqual(keys(events, 2), {'push', 'pull_request', 'workflow_dispatch'})
+        protected_paths = [
+            'apps/local-workbench/tools/**',
+            'apps/local-workbench/tests/windows-install-verification.tests.ps1',
+            '.github/workflows/windows-install-verification.yml',
+        ]
+        for event, branches in (('push', ['main', 'assistant-*', 'codex/**']),
+                                ('pull_request', ['main'])):
+            _, config = field(events, event, 2)
+            self.assertEqual(sequence(*field(config, 'branches', 4), 6), branches)
+            self.assertEqual(sequence(*field(config, 'paths', 4), 6), protected_paths)
+
+        affected = (
+            'apps/local-workbench/tools/windows-install-verification.psm1',
+            'apps/local-workbench/tools/nested/new-helper.ps1',
+            'apps/local-workbench/tests/windows-install-verification.tests.ps1',
+            '.github/workflows/windows-install-verification.yml',
+        )
+        for branch, path in itertools.product(('main', 'assistant-audit', 'codex/fix', 'codex/a/b'), affected):
+            with self.subTest(event='push', branch=branch, path=path):
+                self.assertTrue(self.windows_triggered('push', branch, [path]))
+                self.assertTrue(self.windows_triggered('push', branch, ['README.md', path]))
+        for path in affected:
+            self.assertTrue(self.windows_triggered('pull_request', 'main', [path]))
+            # Pull-request branch filters apply to the base, not the head.
+            self.assertFalse(self.windows_triggered('pull_request', 'codex/fix', [path]))
+        for branch in ('other', 'codex-other', 'assistant/audit'):
+            self.assertFalse(self.windows_triggered('push', branch, list(affected)))
+        unrelated = ('README.md', '.github/workflows/ai-ci.yml',
+                     'apps/local-workbench/tools-old/helper.ps1',
+                     'apps/local-workbench/tests/windows-install-verification.tests.ps1.bak')
+        for event in ('push', 'pull_request'):
+            self.assertFalse(self.windows_triggered(event, 'main', list(unrelated)))
+            self.assertFalse(self.windows_triggered(event, 'main', []))
+
+    def test_ubuntu26_is_bounded_opt_in_with_ubuntu24_defaults(self):
+        for workflow, job in (('ai-ci.yml', 'rust-regression'), ('local-workbench.yml', 'frontend')):
+            with self.subTest(workflow=workflow):
+                _, events = field(self.workflows[workflow], 'on', 0)
+                _, dispatch = field(events, 'workflow_dispatch', 2)
+                _, inputs = field(dispatch, 'inputs', 4)
+                _, runner = field(inputs, 'linux_runner', 6)
+                self.assertEqual(scalar(field(runner, 'type', 8)[0]), 'choice')
+                self.assertEqual(sequence(*field(runner, 'options', 8), 10),
+                                 ['ubuntu-24.04', 'ubuntu-26.04'])
+                self.assertEqual(scalar(field(runner, 'default', 8)[0]), 'ubuntu-24.04')
+                selection = scalar(field(self.job(workflow, job), 'runs-on', 4)[0])
+                for requested, expected in (('', 'ubuntu-24.04'), ('ubuntu-24.04', 'ubuntu-24.04'),
+                                             ('ubuntu-26.04', 'ubuntu-26.04'),
+                                             ('self-hosted', 'ubuntu-24.04'), ('other', 'ubuntu-24.04')):
+                    self.assertEqual(Expression(selection, {'inputs.linux_runner': requested}).parse(), expected)
+        for workflow, lines in self.workflows.items():
+            for line in lines:
+                if re.match(r'^\s*runs-on:', line):
+                    with self.subTest(workflow=workflow, runner=line.strip()):
+                        self.assertNotIn('ubuntu-latest', line)
+
+    def test_ubuntu_validation_queues_and_cargo_restore_are_isolated(self):
+        for workflow in ('ai-ci.yml', 'local-workbench.yml'):
+            _, concurrency = field(self.workflows[workflow], 'concurrency', 0)
+            template = scalar(field(concurrency, 'group', 2)[0])
+
+            def group(requested: str, ref: str = 'codex/maintenance') -> str:
+                context = {'inputs.linux_runner': requested, 'github.head_ref': '', 'github.ref_name': ref}
+                return re.sub(r'\$\{\{.*?\}\}', lambda match: str(Expression(match.group(), context).parse()), template)
+
+            with self.subTest(workflow=workflow):
+                self.assertEqual(group(''), group('ubuntu-24.04'))
+                self.assertNotEqual(group('ubuntu-24.04'), group('ubuntu-26.04'))
+                self.assertNotEqual(group('ubuntu-26.04'), group('ubuntu-26.04', 'codex/other'))
+
+        linux = self.job('ai-ci.yml', 'rust-regression')
+        _, environment = field(linux, 'env', 4)
+        cache_runner = scalar(field(environment, 'CI_LINUX_RUNNER', 6)[0])
+        for requested in ('', 'ubuntu-24.04', 'ubuntu-26.04'):
+            self.assertEqual(Expression(cache_runner, {'inputs.linux_runner': requested}).parse(),
+                             requested or 'ubuntu-24.04')
+        _, steps = field(linux, 'steps', 4)
+        starts = [i for i, line in enumerate(steps) if line.startswith('      - ')]
+        blocks = [steps[start:end] for start, end in zip(starts, starts[1:] + [len(steps)])]
+        caches = [block for block in blocks if any(re.match(r'\s*uses:\s*actions/cache@', line) for line in block)]
+        self.assertEqual(len(caches), 1)
+        _, cache = field(caches[0], 'with', 8)
+        marker = '${{ env.CI_LINUX_RUNNER }}'
+        self.assertIn(marker, field(cache, 'key', 10)[0])
+        style, restores = field(cache, 'restore-keys', 10)
+        self.assertEqual(style, '|')
+        prefixes = [line.strip() for line in restores if line.strip() and not line.lstrip().startswith('#')]
+        self.assertTrue(prefixes)
+        for prefix in prefixes:
+            self.assertIn(marker, prefix, 'a generic fallback would mix Ubuntu target caches')
+
+    def test_ubuntu26_dispatch_does_not_repeat_the_windows_baseline(self):
+        condition = scalar(field(self.job('ai-ci.yml', 'windows-local-executor'), 'if', 4)[0])
+        if not condition.startswith('${{'):
+            condition = '${{ ' + condition + ' }}'
+        for event, requested in itertools.product(('push', 'pull_request', 'workflow_dispatch'),
+                                                   ('', 'ubuntu-24.04', 'ubuntu-26.04')):
+            with self.subTest(event=event, runner=requested):
+                actual = Expression(condition, {'github.event_name': event, 'inputs.linux_runner': requested}).parse()
+                self.assertEqual(actual, not (event == 'workflow_dispatch' and requested == 'ubuntu-26.04'))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

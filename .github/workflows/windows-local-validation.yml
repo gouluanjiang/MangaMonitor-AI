@@ -31,13 +31,13 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: Set up the existing pinned Rust toolchain
         run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
       - name: Restore existing native dependency cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -63,7 +63,7 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $PWD 'windows-validation-format/source-revision.txt'), (git rev-parse HEAD).Trim())
           # The original formatting gate stays failed. Compilation/qualification
           # below is skipped; applying the patch requires a new source commit.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: failure() && steps.formatting.outcome == 'failure'
         with:
           name: windows-validation-rust-format-${{ github.sha }}
@@ -144,7 +144,7 @@ jobs:
               "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
             } | Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS.txt') -Encoding utf8
           }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: always() && steps.compile.outcome != 'skipped'
         with:
           name: windows-local-validation-${{ github.sha }}

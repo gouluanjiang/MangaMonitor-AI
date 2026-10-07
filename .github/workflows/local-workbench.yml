@@ -12,31 +12,40 @@ on:
       - 'apps/local-workbench/**'
       - '.github/workflows/local-workbench.yml'
   workflow_dispatch:
+    inputs:
+      linux_runner:
+        description: Ubuntu image for a separate UI migration validation
+        type: choice
+        default: ubuntu-24.04
+        options:
+          - ubuntu-24.04
+          - ubuntu-26.04
 
 permissions:
   contents: read
 
 concurrency:
-  group: local-workbench-${{ github.head_ref || github.ref_name }}
+  group: local-workbench-${{ github.head_ref || github.ref_name }}-${{ inputs.linux_runner || 'ubuntu-24.04' }}
   cancel-in-progress: true
 
 jobs:
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.linux_runner == 'ubuntu-26.04' && 'ubuntu-26.04' || 'ubuntu-24.04' }}
     timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/local-workbench
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Set up pinned pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           version: '11.19.0'
           run_install: false
@@ -49,7 +58,7 @@ jobs:
       - name: Type-check and build the web app
         run: pnpm build
       - name: Upload the static preview
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: local-workbench-preview
           path: apps/local-workbench/dist/
@@ -65,7 +74,7 @@ jobs:
           node tests/soak/source-render-cost.mjs --output=visual-evidence/source-render-cost
       - name: Upload synthetic UI visual review
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: local-workbench-visual-review
           path: apps/local-workbench/visual-evidence/
@@ -73,7 +82,7 @@ jobs:
           if-no-files-found: ignore
       - name: Upload UI failure evidence
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: local-workbench-ui-failure-${{ github.run_attempt }}
           path: |

@@ -14,10 +14,10 @@ concurrency:
   cancel-in-progress: false
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install pinned Rust
         run: rustup toolchain install 1.98.1 --profile minimal
       - name: Preserve all Phase 1A tests and validate Phase 3A transitions
@@ -59,7 +59,7 @@ jobs:
           jq -e '[.records[] | (.unavailable_streak == 0 and .active == true)] | all' reports/phase3a-source-error/catalog.json
       - name: Preserve sanitized evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: phase3a-evidence-${{ github.run_id }}
           path: reports/

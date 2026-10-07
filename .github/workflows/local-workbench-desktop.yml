@@ -88,10 +88,10 @@ concurrency:
 jobs:
   rust-format:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.format_only && !inputs.author_audit_build_only }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: Install pinned formatter only
@@ -103,7 +103,7 @@ jobs:
           git diff --binary > rust-format.patch
           git diff --stat
       - name: Upload formatting patch for local review
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: rust-format-patch-${{ github.sha }}
           path: rust-format.patch
@@ -120,7 +120,7 @@ jobs:
       FORMAT_ONLY: ${{ inputs.format_only }}
       PACKAGE_INSTALLER: ${{ inputs.package_installer }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -140,7 +140,7 @@ jobs:
       - name: Install the pinned compiler only
         run: rustup toolchain install 1.98.1 --profile minimal --target x86_64-pc-windows-msvc
       - name: Restore existing native dependencies for the helper
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -187,7 +187,7 @@ jobs:
             formalSuitesRepeated = $false
           } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $auditStage 'manifest.json') -Encoding utf8
       - name: Upload only the optimized helper and identity manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: mangamonitor-author-coverage-audit-release-${{ github.sha }}
           path: |
@@ -205,7 +205,7 @@ jobs:
       RUST_BACKTRACE: '1'
       MANGAMONITOR_BUILD_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: Select release packaging once
@@ -218,11 +218,12 @@ jobs:
           $package = $appConfig.version -cmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc\.(0|[1-9]\d*))?\z' -or $env:REQUEST_INSTALLER -eq 'true'
           "installer=$($package.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Set up pinned pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           version: '11.19.0'
           run_install: false
@@ -230,7 +231,7 @@ jobs:
         run: rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
       - name: Restore native build dependencies
         id: native-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -295,7 +296,7 @@ jobs:
         run: pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis -- --locked
       - name: Save verified native build before WebView smoke
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -368,7 +369,7 @@ jobs:
         run: ./apps/local-workbench/tests/installer-smoke.ps1
       - name: Upload the verified private release package
         if: steps.packaging.outputs.installer == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: mangamonitor-windows-candidate-${{ github.sha }}
           path: apps/local-workbench/release-candidate/
@@ -377,28 +378,28 @@ jobs:
       - name: Upload verified executable for manual acceptance
         if: steps.packaging.outputs.installer != 'true'
         # Packaging runs upload this same tested executable inside the release package.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: mangamonitor-dev-executable-${{ github.sha }}
           path: apps/local-workbench/src-tauri/target/x86_64-pc-windows-msvc/release/mangamonitor-workbench-preview.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload local reviewed-library helper
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: mangamonitor-library-review-${{ github.sha }}
           path: target/debug/mangamonitor-library-review.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload local author coverage acceptance helper
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: mangamonitor-author-coverage-audit-${{ github.sha }}
           path: target/release/examples/author_coverage_audit.exe
           retention-days: 7
           if-no-files-found: error
       - name: Upload isolated catalog diagnostic
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: mangamonitor-catalog-probe-${{ github.sha }}
           path: target/release/examples/discovery_catalog_probe.exe
@@ -406,7 +407,7 @@ jobs:
           if-no-files-found: error
       # Private author policies are supplied locally; this artifact contains code only.
       - name: Upload reviewed author policy import helper
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: mangamonitor-author-policy-${{ github.sha }}
           path: target/debug/examples/author_query_policy.exe
@@ -414,7 +415,7 @@ jobs:
           if-no-files-found: error
       - name: Upload native smoke evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: native-webview-evidence
           path: apps/local-workbench/native-smoke-results/

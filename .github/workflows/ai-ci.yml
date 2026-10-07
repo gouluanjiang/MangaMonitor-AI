@@ -11,29 +11,39 @@ on:
     branches: [main]
     # Always report PR checks, including documentation/state-only PRs.
   workflow_dispatch:
+    inputs:
+      linux_runner:
+        description: Ubuntu image for a separate Linux migration validation
+        type: choice
+        default: ubuntu-24.04
+        options:
+          - ubuntu-24.04
+          - ubuntu-26.04
 concurrency:
-  group: mangamonitor-validation-${{ github.head_ref || github.ref_name }}
+  group: mangamonitor-validation-${{ github.head_ref || github.ref_name }}-${{ inputs.linux_runner || 'ubuntu-24.04' }}
   cancel-in-progress: true
 permissions:
   contents: read
 jobs:
   rust-regression:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.linux_runner == 'ubuntu-26.04' && 'ubuntu-26.04' || 'ubuntu-24.04' }}
     timeout-minutes: 25
+    env:
+      CI_LINUX_RUNNER: ${{ inputs.linux_runner == 'ubuntu-26.04' && 'ubuntu-26.04' || 'ubuntu-24.04' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Verify workflow scheduling and CI trigger contracts
         run: python3 scripts/test-workflow-contracts.py
       - name: Cache Cargo registry, git sources, and target
-        uses: actions/cache@v4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ env.CI_LINUX_RUNNER }}-rust-1.98.1-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-rust-1.98.1-
+            ${{ runner.os }}-${{ runner.arch }}-${{ env.CI_LINUX_RUNNER }}-rust-1.98.1-
       - name: Install pinned Rust
         run: rustup toolchain install 1.98.1 --profile minimal --component clippy
       - name: Workspace tests
@@ -51,7 +61,7 @@ jobs:
           PY
       - name: Upload synthetic storage and download fault evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: synthetic-enospc-evidence
           path: |
@@ -160,12 +170,14 @@ jobs:
         run: test "$(jq -r '.production_enabled' monitor-config.json)" = false
 
   windows-local-executor:
+    # The separate Ubuntu 26 dispatch reuses the already checked Windows target.
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.linux_runner != 'ubuntu-26.04' }}
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Cache Cargo registry, git sources, and target
-        uses: actions/cache@v4
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry

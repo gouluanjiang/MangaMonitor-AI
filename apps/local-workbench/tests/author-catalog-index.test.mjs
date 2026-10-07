@@ -76,3 +76,31 @@ test("revision ordering is per source session and does not leak across sign-ins"
   assert.deepEqual([...catalog.read([nextJm])], [key("new-account")]);
   assert.deepEqual([...catalog.read([jm])], [key("jm-high")]);
 });
+
+test("retiring sessions releases their membership and rejects late snapshots without clearing another source", () => {
+  const catalog = createAuthorCatalogIndex();
+  catalog.retainScopes([jm, pica]);
+  catalog.remember(
+    snapshot(50, [record("old-jm"), record("kept-pica", "Pica")]),
+  );
+  const nextJm = { ...jm, sessionId: "replacement-session" };
+  catalog.retainScopes([nextJm, pica]);
+  assert.equal(catalog.read([jm]).size, 0);
+  assert.deepEqual([...catalog.read([pica])], [key("kept-pica", "Pica")]);
+  assert.equal(
+    catalog.remember(snapshot(100, [record("late-old")], [jm])),
+    false,
+  );
+  catalog.invalidate({ ...jm, revision: 101 });
+  assert.equal(catalog.read([jm]).size, 0);
+  assert.equal(
+    catalog.remember(snapshot(1, [record("new-jm")], [nextJm])),
+    true,
+  );
+  assert.deepEqual(
+    [...catalog.read([nextJm, pica])],
+    [key("new-jm"), key("kept-pica", "Pica")],
+  );
+  catalog.retainScopes([]);
+  assert.equal(catalog.read([nextJm, pica]).size, 0);
+});

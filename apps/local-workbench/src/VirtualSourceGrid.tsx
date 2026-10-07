@@ -10,6 +10,8 @@ import { gridWindow } from "./source-grid-layout.ts";
 export interface GridAnchor {
   key: string;
   offset: number;
+  /** The page origin is stable even when content above the grid changes size. */
+  atTop?: boolean;
 }
 export interface SourceGridHandle {
   capture(preferred?: string): GridAnchor | null;
@@ -77,6 +79,7 @@ function Grid<T>(
           ? data.itemKey(data.items[preferredIndex])
           : data.itemKey(data.items[index]),
       offset: value.offset + row * value.rowHeight - main.scrollTop,
+      atTop: main.scrollTop === 0,
     };
   }
   function restore(anchor: GridAnchor | null) {
@@ -100,6 +103,11 @@ function Grid<T>(
   function applyAnchor(anchor: GridAnchor | null) {
     const main = element.current?.closest("main");
     if (!main || !anchor) return;
+    if (anchor.atTop) {
+      main.scrollTop = 0;
+      measure.current();
+      return;
+    }
     const index = current.current.items.findIndex(
       (item) => current.current.itemKey(item) === anchor.key,
     );
@@ -190,7 +198,8 @@ function Grid<T>(
         const index = current.current.items.findIndex(
           (item) => current.current.itemKey(item) === resizeAnchor.key,
         );
-        if (index >= 0)
+        if (resizeAnchor.atTop) next.scroll = 0;
+        else if (index >= 0)
           next.scroll = Math.max(
             0,
             offset +

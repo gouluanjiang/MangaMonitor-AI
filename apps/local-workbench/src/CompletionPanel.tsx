@@ -791,6 +791,7 @@ export function CompletionPanel({
   );
   useBrowseSession({
     retainOnUnmount: !searchTabId,
+    sessions: scopes,
     scope: JSON.stringify([
       mode,
       searchTabId ?? null,

@@ -13,22 +13,32 @@ import {
   resolveBrowseAnchor,
   saveBrowsePosition,
   saveBrowseState,
-  forgetBrowsePositions,
+  forgetBrowseOwner,
+  browseSessionKeys,
+  browseSessionsCurrent,
 } from "./browse-session.ts";
 import type { BrowsePosition } from "./browse-session.ts";
+import type { SourceScope } from "./source-types.ts";
+
+const noSessions: readonly SourceScope[] = [];
 
 export function useBrowseSessionState<T>(
   scope: string,
   initial: T | (() => T),
+  sessions: readonly SourceScope[] = noSessions,
 ): [T, Dispatch<SetStateAction<T>>] {
+  const sessionKeys = browseSessionKeys(sessions);
+  const sessionKey = JSON.stringify(sessionKeys);
   const makeInitial = () =>
     typeof initial === "function" ? (initial as () => T)() : initial;
   const [state, setState] = useState(() => ({
     scope,
-    value: readBrowseState(scope, makeInitial),
+    value: readBrowseState(scope, makeInitial, { sessions: sessionKeys }),
   }));
   const value =
-    state.scope === scope ? state.value : readBrowseState(scope, makeInitial);
+    state.scope === scope
+      ? state.value
+      : readBrowseState(scope, makeInitial, { sessions: sessionKeys });
   const valueRef = useRef(value);
   valueRef.current = value;
   const update = useCallback<Dispatch<SetStateAction<T>>>(
@@ -38,10 +48,10 @@ export function useBrowseSessionState<T>(
           ? (next as (old: T) => T)(valueRef.current)
           : next;
       valueRef.current = value;
-      saveBrowseState(scope, value);
+      saveBrowseState(scope, value, { sessions: sessionKeys });
       setState({ scope, value });
     },
-    [scope],
+    [scope, sessionKey],
   );
   return [value, update];
 }
@@ -55,6 +65,7 @@ export function useBrowseSession({
   active,
   enabled = true,
   retainOnUnmount = true,
+  sessions = noSessions,
   root,
   grid,
   itemKeys,
@@ -63,32 +74,42 @@ export function useBrowseSession({
   active: boolean;
   enabled?: boolean;
   retainOnUnmount?: boolean;
+  sessions?: readonly SourceScope[];
   root: RefObject<HTMLElement | null>;
   grid?: RefObject<SourceGridHandle | null>;
   itemKeys: readonly string[];
 }): void {
-  const ownedScopes = useRef(new Set<string>());
+  const owner = useRef(Symbol("browse-list"));
+  const sessionKeys = browseSessionKeys(sessions);
+  const sessionKey = JSON.stringify(sessionKeys);
   useEffect(() => {
     if (retainOnUnmount) return;
-    const owned = ownedScopes.current;
+    const owned = owner.current;
     // Passive unmount cleanup follows the layout cleanup below, which saves
     // the final position. Deleting earlier would let that save resurrect it.
     return () => {
-      forgetBrowsePositions(owned);
-      owned.clear();
+      forgetBrowseOwner(owned);
     };
   }, [retainOnUnmount]);
   const live = useRef({ active, enabled, itemKeys });
   live.current = { active, enabled, itemKeys };
   const last = useRef<BrowsePosition | undefined>(undefined);
+  const lastScope = useRef(scope);
+  const previousItems = useRef(itemKeys);
   const restoring = useRef(false);
   const waitingForItems = useRef(false);
   const restoreFrame = useRef(0);
   const capture = useRef<() => void>(() => {});
   const restore = useRef<(position: BrowsePosition) => void>(() => {});
   useLayoutEffect(() => {
-    if (!retainOnUnmount) ownedScopes.current.add(scope);
-    last.current = readBrowsePosition(scope);
+    last.current = readBrowsePosition(
+      scope,
+      last.current
+        ? { scope: lastScope.current, position: last.current }
+        : undefined,
+      sessionKeys,
+    );
+    lastScope.current = scope;
     const main = root.current?.closest("main");
     if (!main || !active || !enabled) return;
     // The grid settles its own anchor across several frames. Those frames must
@@ -113,7 +134,12 @@ export function useBrowseSession({
         : null;
     };
     const remember = () => {
-      if (restoring.current || !live.current.active || !live.current.enabled)
+      if (
+        restoring.current ||
+        !live.current.active ||
+        !live.current.enabled ||
+        !browseSessionsCurrent(sessionKeys)
+      )
         return;
       // Hidden panels share one scroll container and must never capture another page.
       if (!root.current?.getClientRects().length) return;
@@ -122,8 +148,10 @@ export function useBrowseSession({
         keys: live.current.itemKeys,
         scroll: main.scrollTop,
       };
-      last.current = next;
-      saveBrowsePosition(scope, next);
+      last.current = saveBrowsePosition(scope, next, {
+        owner: owner.current,
+        sessions: sessionKeys,
+      });
     };
     capture.current = remember;
     const schedule = () => {
@@ -191,7 +219,11 @@ export function useBrowseSession({
       restoring.current = false;
       waitingForItems.current = false;
       // Last visible snapshot survives unmount and hidden/detail transitions.
-      if (last.current) saveBrowsePosition(scope, last.current);
+      if (last.current)
+        saveBrowsePosition(scope, last.current, {
+          owner: owner.current,
+          sessions: sessionKeys,
+        });
       capture.current = () => {};
       restore.current = () => {};
       main.removeEventListener("scroll", schedule);
@@ -199,15 +231,17 @@ export function useBrowseSession({
       main.removeEventListener("pointerdown", interrupt);
       main.removeEventListener("touchstart", interrupt);
     };
-  }, [scope, active, enabled, root, grid, retainOnUnmount]);
+  }, [scope, active, enabled, root, grid, retainOnUnmount, sessionKey]);
   useLayoutEffect(() => {
+    const before = previousItems.current;
+    previousItems.current = itemKeys;
     if (!active || !enabled) return;
     const previous = last.current;
     if (
       previous &&
       (waitingForItems.current ||
-        previous.keys.length !== itemKeys.length ||
-        previous.keys.some((key, index) => key !== itemKeys[index]))
+        before.length !== itemKeys.length ||
+        before.some((key, index) => key !== itemKeys[index]))
     )
       restore.current(previous);
     else if (!restoring.current) capture.current();

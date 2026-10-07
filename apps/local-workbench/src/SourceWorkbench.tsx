@@ -6,6 +6,7 @@ import { useCoverRetry } from "./cover-retry.tsx";
 import { AuthorLinks } from "./AuthorLinks.tsx";
 import { FloatingSelection } from "./FloatingSelection.tsx";
 import { useBrowseSession } from "./useBrowseSession.ts";
+import { retainBrowseSessions } from "./browse-session.ts";
 import { useTagSearch } from "./TagSearch.tsx";
 import { DownloadWorkButton } from "./DownloadWorkButton.tsx";
 import { bindRecentUpdatesScroll } from "./recent-scroll.ts";
@@ -406,12 +407,12 @@ export function SourceWorkbench({
     [librarySnapshot, downloadInventory, inventoryReady, libraryReady],
   );
   useEffect(() => {
-    getCoverCache(adapter).retainScopes(
-      accounts.flatMap((account) => {
-        const scope = accountScope(account);
-        return scope ? [scope] : [];
-      }),
-    );
+    const scopes = accounts.flatMap((account) => {
+      const scope = accountScope(account);
+      return scope ? [scope] : [];
+    });
+    getCoverCache(adapter).retainScopes(scopes);
+    retainBrowseSessions(scopes);
   }, [adapter, accounts]);
   const [source, setSource] = useState<Source>(requestedSource ?? "JM");
   const [query, setQuery] = useState("");
@@ -592,6 +593,7 @@ export function SourceWorkbench({
     new Map<
       string,
       {
+        scope: SourceScope;
         items: SourceWork[];
         pageInfo: SourcePage | null;
         query: string;
@@ -613,6 +615,19 @@ export function SourceWorkbench({
       }
     >(),
   );
+  const validViewScopes = accounts.flatMap((account) => {
+    const scope = accountScope(account);
+    return scope ? [scopeKey(scope)] : [];
+  });
+  const validViewKey = JSON.stringify(validViewScopes);
+  const currentViewScopes = useRef(new Set(validViewScopes));
+  currentViewScopes.current = new Set(validViewScopes);
+  useEffect(() => {
+    for (const [key, saved] of savedViews.current) {
+      if (!currentViewScopes.current.has(scopeKey(saved.scope)))
+        savedViews.current.delete(key);
+    }
+  }, [validViewKey]);
   const savingView = useRef({
     items,
     pageInfo,
@@ -660,8 +675,12 @@ export function SourceWorkbench({
   ]);
   useEffect(() => {
     const key = savedViewKey;
+    const captured = scope;
     return () => {
-      savedViews.current.set(key, savingView.current);
+      // Account changes can run this cleanup after pruning. Never restore an
+      // already retired session through its final saved-view write.
+      if (captured && currentViewScopes.current.has(scopeKey(captured)))
+        savedViews.current.set(key, { ...savingView.current, scope: captured });
     };
   }, [savedViewKey]);
   useEffect(() => {
@@ -1637,6 +1656,7 @@ export function SourceWorkbench({
     ) : null;
   }
   useBrowseSession({
+    sessions: scope ? [scope] : [],
     scope: JSON.stringify([
       view,
       scopeId,
@@ -1703,6 +1723,7 @@ export function SourceWorkbench({
     pageInfo,
   ]);
   useBrowseSession({
+    sessions: scope ? [scope] : [],
     scope: JSON.stringify([
       "source-detail",
       scopeId,
